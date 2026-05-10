@@ -1,0 +1,8 @@
+# 開発・分析用 (任意)
+-r requirements.txt
+
+pytest>=7.0
+jupyter
+matplotlib
+seaborn
+optuna  # ハイパーパラメータ最適化 (任意)
