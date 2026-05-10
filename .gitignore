@@ -31,8 +31,14 @@ master/*.tsv
 # ============================================================
 # モデル成果物 (容量大、再学習で生成可能)
 # ============================================================
-models_artifacts/
-*.pkl
+# 本番デプロイで必要な v0.8 + cascade-v0.6 の 6 ファイルのみ追跡
+models_artifacts/*
+!models_artifacts/ranker_v0.8.pkl
+!models_artifacts/calibrators_v0.8.pkl
+!models_artifacts/cascade_cascade-v0.6.pkl
+!models_artifacts/cascade_pw_pw-v0.6.pkl
+!models_artifacts/joint_calib_cascade-v0.6.pkl
+!models_artifacts/joint_calib_pw-v0.6.pkl
 *.joblib
 *.h5
 *.pt
