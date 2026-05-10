@@ -1,0 +1,9 @@
+{
+  "_comment": "BOATRACE 公式の天候コード（Open API の race_weather_number と対応）",
+  "1": { "name": "晴",   "name_en": "sunny" },
+  "2": { "name": "曇",   "name_en": "cloudy" },
+  "3": { "name": "雨",   "name_en": "rainy" },
+  "4": { "name": "雪",   "name_en": "snowy" },
+  "5": { "name": "霧",   "name_en": "foggy" },
+  "6": { "name": "雷",   "name_en": "thunder" }
+}

@@ -1,0 +1,19 @@
+{
+  "_comment": "BOATRACE 風向コード。公式サイト「直前情報」での16方位表記。Open API の race_wind_direction_number と対応。北を1とする時計回り。",
+  "1":  { "name": "北",       "abbr": "N",   "deg": 0 },
+  "2":  { "name": "北北東",   "abbr": "NNE", "deg": 22.5 },
+  "3":  { "name": "北東",     "abbr": "NE",  "deg": 45 },
+  "4":  { "name": "東北東",   "abbr": "ENE", "deg": 67.5 },
+  "5":  { "name": "東",       "abbr": "E",   "deg": 90 },
+  "6":  { "name": "東南東",   "abbr": "ESE", "deg": 112.5 },
+  "7":  { "name": "南東",     "abbr": "SE",  "deg": 135 },
+  "8":  { "name": "南南東",   "abbr": "SSE", "deg": 157.5 },
+  "9":  { "name": "南",       "abbr": "S",   "deg": 180 },
+  "10": { "name": "南南西",   "abbr": "SSW", "deg": 202.5 },
+  "11": { "name": "南西",     "abbr": "SW",  "deg": 225 },
+  "12": { "name": "西南西",   "abbr": "WSW", "deg": 247.5 },
+  "13": { "name": "西",       "abbr": "W",   "deg": 270 },
+  "14": { "name": "西北西",   "abbr": "WNW", "deg": 292.5 },
+  "15": { "name": "北西",     "abbr": "NW",  "deg": 315 },
+  "16": { "name": "北北西",   "abbr": "NNW", "deg": 337.5 }
+}

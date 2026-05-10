@@ -1,0 +1,39 @@
+MIT License
+
+Copyright (c) 2026 boatrace-analysis contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------
+DISCLAIMER (重要):
+
+This software is a tool for analyzing publicly available data and visualizing
+expected values in Japanese public boat racing (公営競技ボートレース).
+
+- It is **NOT** a system that guarantees positive returns.
+- Public boat racing has a structural takeout rate of 25%, meaning the
+  long-term expected value is mathematically negative.
+- Backtesting (Bootstrap CI on a leak-free test set) shows the model's best
+  strategy converges to ROI -3.7% to -4.7% in real-world deployment.
+- Use this software for educational, analytical, and personal entertainment
+  purposes only. The authors assume no responsibility for any monetary loss
+  resulting from its use.
+- Gambling addiction is a serious issue. If you or someone you know struggles
+  with gambling, please contact a support hotline.
+----------------------------------------------------------------------

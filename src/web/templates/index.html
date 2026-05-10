@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ target_date }} のレース一覧{% endblock %}
+{% block content %}
+  <h2>{{ target_date }} のレース</h2>
+
+  {% if empty %}
+    <p class="empty">この日のデータはありません。バックフィルされていないか、未来日です。</p>
+  {% else %}
+    <p class="meta">{{ stadium_groups | length }} 会場 / 合計
+      {% set total = namespace(value=0) %}
+      {% for g in stadium_groups %}{% set total.value = total.value + (g.races | length) %}{% endfor %}
+      {{ total.value }} レース
+    </p>
+
+    <div class="ev-controls">
+      <span class="ev-status-prefix">★ EV+ 自動判定</span>
+      <select id="ev-snapshot" class="ev-select">
+        <option value="auto" selected>自動 (T-15→T-5→final)</option>
+        <option value="T-15min">T-15min</option>
+        <option value="T-5min">T-5min</option>
+        <option value="T-1min">T-1min</option>
+        <option value="final">確定オッズ</option>
+      </select>
+      <select id="ev-threshold" class="ev-select">
+        <option value="0.0" selected>EV ≥ 0%</option>
+        <option value="0.05">EV ≥ +5%</option>
+        <option value="0.10">EV ≥ +10%</option>
+        <option value="0.20">EV ≥ +20%</option>
+      </select>
+      <button type="button" id="ev-reload-btn" class="ev-btn ev-btn-mini">再計算</button>
+      <span class="ev-status" id="ev-status">読み込み中…</span>
+      {% if not is_pro() %}
+      <a href="{{ url_for('pro_login') }}" class="ev-btn ev-btn-mini" style="margin-left:auto;background:linear-gradient(135deg,#ffd700,#ff8c00);">⬢ Pro へ</a>
+      {% endif %}
+    </div>
+
+    <div class="stadium-grid">
+      {% for g in stadium_groups %}
+        <section class="stadium-card">
+          <h3>{{ g.stadium_number }}: {{ g.stadium_name }}</h3>
+          <ul class="race-list">
+            {% for r in g.races %}
+              <li class="race-item {% if r.results_count > 0 %}done{% endif %}" data-race-id="{{ r.race_id }}">
+                <a href="{{ url_for('race_detail', race_id=r.race_id) }}">
+                  <span class="rno">{{ r.race_number }}R</span>
+                  {% if r.race_closed_at %}
+                    {% set t = r.race_closed_at | string %}
+                    {% if t | length >= 8 %}
+                      <span class="closed">{{ t[-8:-3] }}</span>
+                    {% else %}
+                      <span class="closed">{{ t }}</span>
+                    {% endif %}
+                  {% endif %}
+                  {% if r.results_count > 0 %}<span class="badge">確定</span>{% endif %}
+                  <span class="ev-mark" hidden></span>
+                  <span class="ev-value" hidden></span>
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endfor %}
+    </div>
+
+    <script>
+      (function() {
+        const reloadBtn = document.getElementById('ev-reload-btn');
+        const snap = document.getElementById('ev-snapshot');
+        const thrSel = document.getElementById('ev-threshold');
+        const status = document.getElementById('ev-status');
+        const targetDate = "{{ target_date }}";
+        if (!status) return;  // 非会員
+
+        async function loadEvMarks() {
+          status.textContent = '計算中…';
+          if (reloadBtn) reloadBtn.disabled = true;
+          try {
+            const r = await fetch(`/api/ev-races?date=${targetDate}&snapshot=${snap.value}&ev=${thrSel.value}`);
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const data = await r.json();
+            const marks = data.marks || {};
+            // 既存マーククリア
+            document.querySelectorAll('.race-item .ev-mark, .race-item .ev-value').forEach(el => {
+              el.hidden = true; el.textContent = ''; el.className = el.classList[0];
+            });
+            document.querySelectorAll('.race-item').forEach(el => {
+              el.classList.remove('has-ev', 'has-ev-strong', 'has-ev-mid', 'has-ev-neg');
+            });
+            const thr = parseFloat(thrSel.value);
+            for (const [raceId, info] of Object.entries(marks)) {
+              const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
+              if (!item) continue;
+              const evPct = info.best_ev * 100;
+              const evValue = item.querySelector('.ev-value');
+              const mark = item.querySelector('.ev-mark');
+              // 全レースに best EV 値をインライン表示
+              evValue.hidden = false;
+              const sign = evPct >= 0 ? '+' : '';
+              evValue.textContent = sign + evPct.toFixed(0) + '%';
+              evValue.title = `${info.best_combo} (model ${(info.best_prob*100).toFixed(1)}% × odds ${info.best_odds.toFixed(1)}倍)`;
+              if (info.best_ev >= 0.20) {
+                evValue.classList.add('strong');
+                item.classList.add('has-ev', 'has-ev-strong');
+                mark.hidden = false;
+                mark.textContent = '★';
+              } else if (info.best_ev >= 0.05) {
+                evValue.classList.add('mid');
+                item.classList.add('has-ev', 'has-ev-mid');
+                mark.hidden = false;
+                mark.textContent = '★';
+              } else if (info.best_ev >= thr) {
+                evValue.classList.add('fair');
+                item.classList.add('has-ev');
+              } else {
+                evValue.classList.add('neg');
+                item.classList.add('has-ev-neg');
+              }
+            }
+            const used = data.snapshot;
+            const total = data.n_total || 0;
+            status.textContent = `${data.n_marked} レース が EV ≥ ${(thr*100).toFixed(0)}% (${total}レース中, ${used})`;
+          } catch (e) {
+            status.textContent = 'エラー: ' + e.message;
+          } finally {
+            if (reloadBtn) reloadBtn.disabled = false;
+          }
+        }
+
+        // ページ読み込み時に自動実行
+        loadEvMarks();
+        // 操作で再計算
+        if (reloadBtn) reloadBtn.addEventListener('click', loadEvMarks);
+        if (snap) snap.addEventListener('change', loadEvMarks);
+        if (thrSel) thrSel.addEventListener('change', loadEvMarks);
+      })();
+    </script>
+  {% endif %}
+{% endblock %}

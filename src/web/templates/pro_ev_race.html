@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ info.stadium_name }} {{ info.race_number }}R Pro EV{% endblock %}
+{% block content %}
+<div class="pro-wrap">
+  <div class="pro-header">
+    <div class="pro-header-left">
+      <span class="pro-badge-large">⬢ PRO</span>
+      <h2>{{ info.stadium_name }} {{ info.race_number }}R
+        <span class="pro-snap">{{ snapshot }} スナップショット</span>
+      </h2>
+    </div>
+    <div class="pro-header-right">
+      <span class="pro-stat sub">締切 {{ info.race_closed_at[-5:] if info.race_closed_at else '—' }}</span>
+      <a href="{{ url_for('pro_ev', date=info.race_date) }}" class="back-link">← 一覧へ</a>
+    </div>
+  </div>
+
+  {% if venue_warning %}
+  <div class="venue-banner {{ venue_warning.level }}">
+    <strong>{{ venue_warning.venue }}</strong>: {{ venue_warning.msg }}
+  </div>
+  {% endif %}
+
+  <!-- モデル予測 (1着確率) -->
+  <h3 class="section-title">モデル v0.8 予測 (1着確率)</h3>
+  <div class="boat-grid">
+    {% for p in preds %}
+    <div class="boat-card lane{{ p.boat_number }}">
+      <div class="boat-no">{{ p.boat_number }}</div>
+      <div class="racer-name">{{ racer_names.get(p.boat_number, '?') }}</div>
+      <div class="prob-bar">
+        <div class="prob-bar-fill" style="width: {{ '%.0f' | format(p.prob_first * 100) }}%"></div>
+      </div>
+      <div class="prob-text">{{ '%.1f%%' | format(p.prob_first * 100) }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- 期待値テーブル -->
+  <h3 class="section-title">三連単 期待値ランキング</h3>
+
+  {% if value_bet and value_bet.value_bets %}
+  <div class="ev-summary">
+    <span class="ev-summary-cell">
+      <span class="lbl">+EV 候補</span>
+      <span class="val">{{ value_bet.n_value_bets }} / {{ value_bet.value_bets | length }}件中</span>
+    </span>
+    <span class="ev-summary-cell">
+      <span class="lbl">最高 EV</span>
+      <span class="val ev-good">
+        {% if value_bet.best_ev is not none %}{{ '%+.1f%%' | format(value_bet.best_ev * 100) }}{% else %}—{% endif %}
+      </span>
+    </span>
+    <span class="ev-summary-cell">
+      <span class="lbl">推奨組合せ</span>
+      <span class="val">{{ value_bet.best_combo or '—' }}</span>
+    </span>
+  </div>
+
+  <table class="pro-ev-detail-table">
+    <thead>
+      <tr>
+        <th>組合せ</th>
+        <th>モデル予測</th>
+        <th>市場オッズ</th>
+        <th>フェアオッズ</th>
+        <th>EV</th>
+        <th>1/4 Kelly</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for bet in value_bet.value_bets %}
+      <tr class="{% if bet.adj_ev >= 0.05 %}row-good{% elif bet.adj_ev >= 0 %}row-fair{% else %}row-neg{% endif %}">
+        <td><span class="combo-tag">{{ bet.combination }}</span></td>
+        <td>{{ '%.2f%%' | format(bet.prob * 100) }}</td>
+        <td>{{ '%.1f' | format(bet.odds) }}倍</td>
+        <td>{{ '%.1f' | format(bet.fair_odds) if bet.fair_odds else '—' }}倍</td>
+        <td class="ev-cell">
+          {{ '%+.2f%%' | format(bet.adj_ev * 100) }}
+        </td>
+        <td>
+          {% if bet.kelly > 0.001 %}{{ '%.2f%%' | format(bet.kelly * 100) }}{% else %}—{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="ev-explanation">
+    <h4>表の見方</h4>
+    <ul>
+      <li><strong>モデル予測</strong>: v0.8 (PerWinner Cascade + 4年学習) によるレース固有の三連単確率</li>
+      <li><strong>フェアオッズ</strong>: モデル確率の逆数 (= 控除率0%なら平等な配当)</li>
+      <li><strong>EV</strong>: モデル確率 × 市場オッズ - 1。+5% 以上は緑、0〜+5% 黄、マイナス赤</li>
+      <li><strong>1/4 Kelly</strong>: バンクロールの何%を賭けるかの参考値 (Kelly基準の1/4倍で保守的)</li>
+    </ul>
+    <div class="caveat">
+      ⚠ これらは「モデルが正確で市場が非効率な前提」での理論値です。検証 (リーク無し test set, n=668-750) では Sweet Spot 戦略 ROI -3.7%〜-4.7% に収束しています。<br>
+      ⚠ 1ヶ月分の検証では P(>0)=4% 程度にとどまっており、CI 下限 -7% 〜 -8% です。長期で +EV を保証するものではありません。
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <p>このレースの T-15min オッズスナップショットがまだ取得されていません。</p>
+    <p class="hint">締切 15 分前 ±2 分の窓で自動取得されます。</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

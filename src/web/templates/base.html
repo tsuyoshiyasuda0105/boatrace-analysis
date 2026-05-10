@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}BOATRACE 予測{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1><a href="{{ url_for('index') }}">BOATRACE 予測 v{{ '0.8' }}</a></h1>
+      <form method="get" action="{{ url_for('races') }}" class="date-form">
+        <label for="date">日付:</label>
+        <input type="date" id="date" name="date" value="{{ target_date | default('') }}">
+        <button type="submit">表示</button>
+      </form>
+      <div class="auth-status">
+        {% if is_pro() %}
+          <a href="{{ url_for('pro_ev') }}" class="auth-badge pro">⬢ PRO EV</a>
+          <a href="{{ url_for('logout') }}" class="auth-link">ログアウト</a>
+        {% elif is_member() %}
+          <span class="auth-badge">★ MEMBER</span>
+          <a href="{{ url_for('pro_login') }}" class="auth-link pro-upsell">⬢ Pro へ</a>
+          <a href="{{ url_for('logout') }}" class="auth-link">ログアウト</a>
+        {% else %}
+          <a href="{{ url_for('login') }}" class="auth-link">ログイン</a>
+          <a href="{{ url_for('pro_login') }}" class="auth-link pro-upsell">⬢ Pro</a>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <div class="container">
+      <small>LightGBM Ranker v0.8 (recency 180d + 選手×会場/コース 100走長期) / Isotonic 較正 / PerWinner Cascade / 学習: 2022-04-01〜2026-03-31</small>
+    </div>
+  </footer>
+</body>
+</html>

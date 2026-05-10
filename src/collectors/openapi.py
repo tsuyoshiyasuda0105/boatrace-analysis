@@ -1,0 +1,306 @@
+"""
+Layer 2: Open API データ取得
+
+GitHub Pages 上で公開されている JSON API から、
+出走表・直前情報・結果を取得し DB に格納する。
+
+毎日 1日の終わりに実行することを想定:
+    python scripts/daily_collect.py --date 2026-05-08
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import logging
+from datetime import date
+from pathlib import Path
+from typing import Optional
+
+import requests
+
+import config
+from src.db.connection import connect as db_connect
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 共通: HTTP取得
+# ============================================================
+
+def _fetch_json(url: str) -> Optional[dict]:
+    """URLからJSONを取得。404時はNone (まだデータが無い場合)。"""
+    try:
+        resp = requests.get(
+            url,
+            timeout=config.REQUEST_TIMEOUT_SECONDS,
+            headers={"User-Agent": config.USER_AGENT},
+        )
+    except requests.RequestException as e:
+        logger.warning("取得失敗 %s: %s", url, e)
+        return None
+
+    if resp.status_code in (404, 503):
+        logger.info("データ未公開 (%s): %s", resp.status_code, url)
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _save_raw(name: str, target_date: date, payload: dict) -> None:
+    """生JSONを raw/openapi/ に保存（デバッグ・再処理用）"""
+    out = config.OPENAPI_RAW_DIR / f"{target_date.isoformat()}_{name}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _race_id(race_date: str, stadium: int, race_no: int) -> str:
+    """race_id 規約: 'YYYYMMDD-SS-RR'"""
+    d = race_date.replace("-", "")
+    return f"{d}-{stadium:02d}-{race_no:02d}"
+
+
+# ============================================================
+# Programs (出走表)
+# ============================================================
+
+def fetch_programs(target_date: date) -> Optional[dict]:
+    url = config.OPENAPI_PROGRAMS_URL.format(
+        year=target_date.year,
+        date=target_date.strftime("%Y%m%d"),
+    )
+    data = _fetch_json(url)
+    if data:
+        _save_raw("programs", target_date, data)
+    return data
+
+
+def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
+    """programs APIの結果を races / race_entries に投入"""
+    races = programs_payload.get("programs", [])
+    n_races = 0
+    n_entries = 0
+
+    for race in races:
+        rid = _race_id(race["race_date"], race["race_stadium_number"], race["race_number"])
+
+        conn.execute("""
+            INSERT OR REPLACE INTO races
+                (race_id, race_date, stadium_number, race_number,
+                 race_grade_number, race_title, race_subtitle,
+                 race_distance, race_closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            rid,
+            race["race_date"],
+            race["race_stadium_number"],
+            race["race_number"],
+            race.get("race_grade_number"),
+            race.get("race_title"),
+            race.get("race_subtitle"),
+            race.get("race_distance"),
+            race.get("race_closed_at"),
+        ))
+        n_races += 1
+
+        for boat in race.get("boats", []):
+            conn.execute("""
+                INSERT OR REPLACE INTO race_entries (
+                    race_id, boat_number, racer_number, racer_name,
+                    class_number, branch_number, birthplace_number,
+                    age, weight, flying_count, late_count, avg_start_timing,
+                    national_top_1_percent, national_top_2_percent, national_top_3_percent,
+                    local_top_1_percent, local_top_2_percent, local_top_3_percent,
+                    assigned_motor_number, assigned_motor_top_2_percent, assigned_motor_top_3_percent,
+                    assigned_boat_number, assigned_boat_top_2_percent, assigned_boat_top_3_percent
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                rid,
+                boat["racer_boat_number"],
+                boat["racer_number"],
+                boat.get("racer_name"),
+                boat.get("racer_class_number"),
+                boat.get("racer_branch_number"),
+                boat.get("racer_birthplace_number"),
+                boat.get("racer_age"),
+                boat.get("racer_weight"),
+                boat.get("racer_flying_count"),
+                boat.get("racer_late_count"),
+                boat.get("racer_average_start_timing"),
+                boat.get("racer_national_top_1_percent"),
+                boat.get("racer_national_top_2_percent"),
+                boat.get("racer_national_top_3_percent"),
+                boat.get("racer_local_top_1_percent"),
+                boat.get("racer_local_top_2_percent"),
+                boat.get("racer_local_top_3_percent"),
+                boat.get("racer_assigned_motor_number"),
+                boat.get("racer_assigned_motor_top_2_percent"),
+                boat.get("racer_assigned_motor_top_3_percent"),
+                boat.get("racer_assigned_boat_number"),
+                boat.get("racer_assigned_boat_top_2_percent"),
+                boat.get("racer_assigned_boat_top_3_percent"),
+            ))
+            n_entries += 1
+
+    logger.info("Programs: %d レース / %d 出走 投入", n_races, n_entries)
+    return n_races
+
+
+# ============================================================
+# Previews (直前情報)
+# ============================================================
+
+def fetch_previews(target_date: date) -> Optional[dict]:
+    url = config.OPENAPI_PREVIEWS_URL.format(
+        year=target_date.year,
+        date=target_date.strftime("%Y%m%d"),
+    )
+    data = _fetch_json(url)
+    if data:
+        _save_raw("previews", target_date, data)
+    return data
+
+
+def upsert_previews(conn: sqlite3.Connection, payload: dict) -> int:
+    races = payload.get("previews", [])
+    n = 0
+    for race in races:
+        rid = _race_id(race["race_date"], race["race_stadium_number"], race["race_number"])
+        weather_number = race.get("race_weather_number")
+        wind_speed = race.get("race_wind")
+        wind_dir = race.get("race_wind_direction_number")
+        wave = race.get("race_wave")
+        temp = race.get("race_temperature")
+        water_temp = race.get("race_water_temperature")
+
+        boats = race.get("boats", {})
+        # boats は API 仕様上 dict ('1', '2', ...) で来る
+        if isinstance(boats, dict):
+            boat_list = boats.values()
+        else:
+            boat_list = boats
+
+        for boat in boat_list:
+            conn.execute("""
+                INSERT OR REPLACE INTO race_previews (
+                    race_id, boat_number,
+                    weather_number, wind_speed, wind_direction_number,
+                    wave_height, temperature, water_temperature,
+                    course_number, exhibition_time, start_timing_exhibition,
+                    weight_adjustment, tilt_adjustment
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                rid,
+                boat["racer_boat_number"],
+                weather_number, wind_speed, wind_dir,
+                wave, temp, water_temp,
+                boat.get("racer_course_number"),
+                boat.get("racer_exhibition_time"),
+                boat.get("racer_start_timing"),
+                boat.get("racer_weight_adjustment"),
+                boat.get("racer_tilt_adjustment"),
+            ))
+            n += 1
+    logger.info("Previews: %d 出走 投入", n)
+    return n
+
+
+# ============================================================
+# Results (結果)
+# ============================================================
+
+def fetch_results(target_date: date) -> Optional[dict]:
+    url = config.OPENAPI_RESULTS_URL.format(
+        year=target_date.year,
+        date=target_date.strftime("%Y%m%d"),
+    )
+    data = _fetch_json(url)
+    if data:
+        _save_raw("results", target_date, data)
+    return data
+
+
+def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
+    """
+    Results API の構造はリポジトリ仕様に合わせて柔軟にパース。
+    結果が無いレース (中止/不成立) はスキップ。
+    """
+    races = payload.get("results", [])
+    n_results = 0
+    n_payouts = 0
+
+    for race in races:
+        rid = _race_id(race["race_date"], race["race_stadium_number"], race["race_number"])
+
+        # 着順 (キー名は API 仕様により 'boats' か 'results' のどちらかで来る想定)
+        boat_results = race.get("boats", race.get("results", []))
+        if isinstance(boat_results, dict):
+            boat_results = list(boat_results.values())
+
+        for r in boat_results:
+            conn.execute("""
+                INSERT OR REPLACE INTO race_results (
+                    race_id, boat_number, finishing_position,
+                    course_number, start_timing, race_time, remarks, kimarite
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                rid,
+                r.get("racer_boat_number"),
+                r.get("racer_place_number"),
+                r.get("racer_course_number"),
+                r.get("racer_start_timing"),
+                r.get("racer_race_time"),
+                r.get("racer_remarks"),
+                r.get("race_kimarite"),
+            ))
+            n_results += 1
+
+        # 払戻金 (API構造に合わせてフィールド名を調整する想定)
+        payouts = race.get("payouts", {})
+        for bet_type, items in payouts.items():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                conn.execute("""
+                    INSERT OR REPLACE INTO race_payouts
+                        (race_id, bet_type, combination, payout, popularity)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    rid,
+                    bet_type,
+                    item.get("combination", ""),
+                    item.get("payout", 0),
+                    item.get("popularity"),
+                ))
+                n_payouts += 1
+
+    logger.info("Results: %d 着順 / %d 払戻 投入", n_results, n_payouts)
+    return n_results
+
+
+# ============================================================
+# 統合エントリーポイント
+# ============================================================
+
+def collect_all(target_date: date, db_path: str = None) -> dict:
+    """指定日の出走表・直前情報・結果をすべて取得しDBに格納。"""
+    db_path = db_path or config.DB_PATH
+    config.ensure_dirs()
+
+    conn = db_connect(db_path)
+    summary = {"date": target_date.isoformat(), "programs": 0, "previews": 0, "results": 0}
+    try:
+        if (p := fetch_programs(target_date)):
+            summary["programs"] = upsert_programs(conn, p)
+        if (p := fetch_previews(target_date)):
+            summary["previews"] = upsert_previews(conn, p)
+        if (p := fetch_results(target_date)):
+            summary["results"] = upsert_results(conn, p)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return summary

@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+{% block title %}{{ info.stadium_name }} {{ info.race_number }}R 予測{% endblock %}
+{% block content %}
+  {% set target_date = info.race_date %}
+  <div class="race-header">
+    <div class="title">
+      <span class="breadcrumb">
+        <a href="{{ url_for('races', date=info.race_date) }}">{{ info.race_date }}</a>
+        &nbsp;/&nbsp;
+        {{ info.stadium_number }}: {{ info.stadium_name }}
+      </span>
+      <h2>
+        <span class="race-no">{{ info.race_number }}R</span>
+        <span class="stadium">{{ info.stadium_name }}</span>
+      </h2>
+      {% if info.race_title %}
+        <div class="subtitle">{{ info.race_title }}{% if info.race_subtitle %} — {{ info.race_subtitle }}{% endif %}</div>
+      {% endif %}
+    </div>
+    {% if info.race_closed_at %}
+      <div class="closed">
+        <span class="label">締切時刻</span>
+        <span class="value">{{ info.race_closed_at[-5:] if info.race_closed_at | length >= 5 else info.race_closed_at }}</span>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if venue_warning %}
+    <div class="venue-warning venue-{{ venue_warning.level }}">
+      <span class="vw-icon">{% if venue_warning.level == 'danger' %}⚠{% else %}△{% endif %}</span>
+      <span class="vw-title">{{ venue_warning.venue }}</span>
+      <span class="vw-msg">{{ venue_warning.msg }}</span>
+    </div>
+  {% endif %}
+
+  {% if sweet_spot %}
+    <div class="sweet-spot">
+      <span class="ss-icon">★</span>
+      <span class="ss-title">SWEET SPOT</span>
+      <span class="ss-msg">1号艇 prob 70%+ × 非マイナス会場 = 統計的に最良の単勝固定買いゾーン (検証 ROI -3.06%, CI 上限 -0.06%)</span>
+    </div>
+  {% endif %}
+
+  {% if actual_result %}
+    <div class="actual-result">
+      <div class="ar-header">
+        <span class="ar-flag">FINAL</span>
+        <span class="ar-label">実際の結果</span>
+        {% if actual_result.trifecta_combo %}
+          <span class="ar-combo">
+            {% set parts = actual_result.trifecta_combo.split('-') %}
+            <span class="lane lane-{{ parts[0] }}">{{ parts[0] }}</span>
+            <span class="ar-arrow">→</span>
+            <span class="lane lane-{{ parts[1] }}">{{ parts[1] }}</span>
+            <span class="ar-arrow">→</span>
+            <span class="lane lane-{{ parts[2] }}">{{ parts[2] }}</span>
+          </span>
+        {% endif %}
+        {% set first_boat = actual_result.by_position.get(1) %}
+        {% if first_boat %}
+          <span class="ar-kim">{{ racer_names.get(first_boat, '') }}</span>
+        {% endif %}
+      </div>
+      <div class="ar-body">
+        <div class="ar-finishers">
+          {% for f in actual_result.finishers[:3] %}
+            <span class="ar-fin">
+              <span class="ar-pos">{{ f.position }}着</span>
+              <span class="lane lane-{{ f.boat_number }}">{{ f.boat_number }}</span>
+              <span class="ar-name">{{ racer_names.get(f.boat_number, '—') }}</span>
+              {% if f.start_timing is not none %}<span class="ar-st">ST {{ '%.2f' | format(f.start_timing) }}</span>{% endif %}
+            </span>
+          {% endfor %}
+          {% set first_finisher = actual_result.finishers[0] %}
+          {% if first_finisher and first_finisher.kimarite %}
+            <span class="ar-kim-tag">決まり手: {{ first_finisher.kimarite }}</span>
+          {% endif %}
+        </div>
+        <div class="ar-payouts">
+          {% set type_labels = {
+            'win': '単勝', 'place': '複勝', 'exacta': '2連単', 'quinella': '2連複',
+            'trio': '3連複', 'trifecta': '3連単', 'quinella_place': 'ワイド'
+          } %}
+          {% set type_order = ['trifecta', 'trio', 'exacta', 'quinella', 'win', 'place', 'quinella_place'] %}
+          {% for bt in type_order %}
+            {% if actual_result.payouts.get(bt) %}
+              <div class="ar-pay-row">
+                <span class="ar-pay-label">{{ type_labels.get(bt, bt) }}</span>
+                {% for p in actual_result.payouts[bt] %}
+                  <span class="ar-pay-item">
+                    <span class="ar-pay-comb">{{ p.combination }}</span>
+                    <span class="ar-pay-yen">¥{{ '{:,}'.format(p.payout) }}</span>
+                  </span>
+                {% endfor %}
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div class="error-box">予測エラー: {{ error }}</div>
+  {% elif not preds %}
+    <div class="empty">
+      予測データがありません。モデル未学習、または対象日が学習範囲外です。
+    </div>
+  {% else %}
+    {% set top = preds[0] %}
+    <div class="top-pick">
+      <div class="pick-body">
+        <div>
+          <div class="label">▶ TOP PICK</div>
+          <div style="margin-top: 6px;">
+            <span class="lane lane-{{ top.boat_number }}">{{ top.boat_number }}</span>
+            <span class="pick-name">{{ racer_names.get(top.boat_number, '—') }}</span>
+          </div>
+        </div>
+        <div class="pick-prob">
+          {{ '%.1f' | format(top.prob_first * 100) }}<small>%</small>
+        </div>
+      </div>
+    </div>
+
+    {% if trifecta_pw or trifecta_unified %}
+    <div class="trifecta-section">
+      <h3 class="tri-heading">三連単 予測 (joint probability)</h3>
+      <div class="tri-grid">
+        {% if trifecta_pw %}
+        <div class="tri-card tri-pw">
+          <div class="tri-label">PerWinner <span class="tri-badge">Top-1 ピンポイント (ROI -7.05%)</span></div>
+          <ol class="tri-list">
+            {% for combo, prob in trifecta_pw %}
+              {% set parts = combo.split('-') %}
+              {% set is_hit = actual_result and actual_result.trifecta_combo == combo %}
+              <li class="{% if loop.index == 1 %}tri-top{% endif %} {% if is_hit %}tri-hit{% endif %}">
+                <span class="tri-rank">{{ loop.index }}</span>
+                <span class="tri-combo">
+                  <span class="lane lane-{{ parts[0] }}">{{ parts[0] }}</span>
+                  <span class="tri-arrow">→</span>
+                  <span class="lane lane-{{ parts[1] }}">{{ parts[1] }}</span>
+                  <span class="tri-arrow">→</span>
+                  <span class="lane lane-{{ parts[2] }}">{{ parts[2] }}</span>
+                </span>
+                <span class="tri-prob">{{ '%.2f' | format(prob * 100) }}%</span>
+                {% if is_hit %}<span class="tri-hit-badge">HIT</span>{% endif %}
+              </li>
+            {% endfor %}
+          </ol>
+        </div>
+        {% endif %}
+        {% if trifecta_unified %}
+        <div class="tri-card tri-uni">
+          <div class="tri-label">Unified <span class="tri-badge">Top-3 分散買い向け (ROI -15.6%)</span></div>
+          <ol class="tri-list">
+            {% for combo, prob in trifecta_unified %}
+              {% set parts = combo.split('-') %}
+              {% set is_hit = actual_result and actual_result.trifecta_combo == combo %}
+              <li class="{% if loop.index == 1 %}tri-top{% endif %} {% if is_hit %}tri-hit{% endif %}">
+                <span class="tri-rank">{{ loop.index }}</span>
+                <span class="tri-combo">
+                  <span class="lane lane-{{ parts[0] }}">{{ parts[0] }}</span>
+                  <span class="tri-arrow">→</span>
+                  <span class="lane lane-{{ parts[1] }}">{{ parts[1] }}</span>
+                  <span class="tri-arrow">→</span>
+                  <span class="lane lane-{{ parts[2] }}">{{ parts[2] }}</span>
+                </span>
+                <span class="tri-prob">{{ '%.2f' | format(prob * 100) }}%</span>
+                {% if is_hit %}<span class="tri-hit-badge">HIT</span>{% endif %}
+              </li>
+            {% endfor %}
+          </ol>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <h3 class="section-heading">What-if シミュレーター</h3>
+    <div class="whatif-panel" id="whatif-panel" data-race-id="{{ info.race_id }}">
+      <div class="whatif-current">
+        <span class="wc-label">現状</span>
+        <span class="wc-item">風 {{ conditions.wind_speed if conditions.wind_speed is not none else '—' }} m/s</span>
+        <span class="wc-item">波 {{ conditions.wave_height if conditions.wave_height is not none else '—' }} cm</span>
+        <span class="wc-item">気温 {{ conditions.temperature if conditions.temperature is not none else '—' }}°C</span>
+        <span class="wc-item">水温 {{ conditions.water_temperature if conditions.water_temperature is not none else '—' }}°C</span>
+        <span class="wc-hint">※ 各値は初期値として入力済。スライダー/入力で変更してから「再予測」</span>
+      </div>
+      <div class="whatif-controls">
+        <div class="wi-section">
+          <div class="wi-section-title">レース全体</div>
+          <div class="wi-grid">
+            <label class="wi-field">
+              <span class="wi-label">風速 (m/s)</span>
+              <input type="range" min="0" max="12" step="1" data-key="wind_speed" class="wi-slider"
+                {% if conditions.wind_speed is not none %}value="{{ conditions.wind_speed }}" data-default="{{ conditions.wind_speed }}"{% endif %}>
+              <span class="wi-value">{{ conditions.wind_speed if conditions.wind_speed is not none else '—' }}</span>
+            </label>
+            <label class="wi-field">
+              <span class="wi-label">波高 (cm)</span>
+              <input type="range" min="0" max="30" step="1" data-key="wave_height" class="wi-slider"
+                {% if conditions.wave_height is not none %}value="{{ conditions.wave_height }}" data-default="{{ conditions.wave_height }}"{% endif %}>
+              <span class="wi-value">{{ conditions.wave_height if conditions.wave_height is not none else '—' }}</span>
+            </label>
+            <label class="wi-field">
+              <span class="wi-label">気温 (°C)</span>
+              <input type="range" min="0" max="35" step="1" data-key="temperature" class="wi-slider"
+                {% if conditions.temperature is not none %}value="{{ conditions.temperature }}" data-default="{{ conditions.temperature }}"{% endif %}>
+              <span class="wi-value">{{ conditions.temperature if conditions.temperature is not none else '—' }}</span>
+            </label>
+            <label class="wi-field">
+              <span class="wi-label">水温 (°C)</span>
+              <input type="range" min="10" max="32" step="1" data-key="water_temperature" class="wi-slider"
+                {% if conditions.water_temperature is not none %}value="{{ conditions.water_temperature }}" data-default="{{ conditions.water_temperature }}"{% endif %}>
+              <span class="wi-value">{{ conditions.water_temperature if conditions.water_temperature is not none else '—' }}</span>
+            </label>
+          </div>
+        </div>
+        <div class="wi-section">
+          <div class="wi-section-title">艇別 展示タイム / ST / チルト</div>
+          <div class="wi-boats">
+            {% for n in range(1, 7) %}
+            {% set b = conditions.boats.get(n, {}) if conditions.boats else {} %}
+            <div class="wi-boat">
+              <span class="lane lane-{{ n }}">{{ n }}</span>
+              <label class="wi-field-mini">
+                <span class="wi-mini-label">展示T</span>
+                <input type="number" step="0.01" min="6.00" max="8.00"
+                       data-key="boat_{{ n }}.exhibition_time" class="wi-input"
+                       {% if b.exhibition_time is not none %}value="{{ '%.2f' | format(b.exhibition_time) }}" data-default="{{ '%.2f' | format(b.exhibition_time) }}"{% endif %}
+                       placeholder="6.80">
+              </label>
+              <label class="wi-field-mini">
+                <span class="wi-mini-label">展示ST</span>
+                <input type="number" step="0.01" min="-0.05" max="0.30"
+                       data-key="boat_{{ n }}.start_timing_exhibition" class="wi-input"
+                       {% if b.start_timing_exhibition is not none %}value="{{ '%.2f' | format(b.start_timing_exhibition) }}" data-default="{{ '%.2f' | format(b.start_timing_exhibition) }}"{% endif %}
+                       placeholder="0.10">
+              </label>
+              <label class="wi-field-mini">
+                <span class="wi-mini-label">チルト</span>
+                <select data-key="boat_{{ n }}.tilt_adjustment" class="wi-select"
+                        {% if b.tilt_adjustment is not none %}data-default="{{ '%.1f' | format(b.tilt_adjustment) }}"{% endif %}>
+                  <option value="">—</option>
+                  {% for v in ['-0.5', '-0.3', '-0.2', '0.0', '0.5', '1.0', '1.5', '2.0', '2.5', '3.0'] %}
+                  <option value="{{ v }}" {% if b.tilt_adjustment is not none and ('%.1f' | format(b.tilt_adjustment)) == v %}selected{% endif %}>{{ v }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="wi-actions">
+          <button type="button" id="wi-apply" class="wi-btn wi-btn-primary">▶ 再予測</button>
+          <button type="button" id="wi-reset" class="wi-btn wi-btn-secondary">Reset</button>
+          <span class="wi-status" id="wi-status"></span>
+        </div>
+      </div>
+      <div class="whatif-results" id="whatif-results" hidden>
+        <div class="wi-result-title">What-if 予測結果</div>
+        <div class="wi-result-grid">
+          <div>
+            <div class="wi-subtitle">6艇 1着確率</div>
+            <ol class="wi-boats-list" id="wi-boats-list"></ol>
+          </div>
+          <div>
+            <div class="wi-subtitle">三連単 Top-5 (PerWinner)</div>
+            <ol class="wi-tri-list" id="wi-tri-list"></ol>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function() {
+        const panel = document.getElementById('whatif-panel');
+        const raceId = panel.dataset.raceId;
+        const sliders = panel.querySelectorAll('.wi-slider');
+        sliders.forEach(s => {
+          const valEl = s.parentElement.querySelector('.wi-value');
+          s.addEventListener('input', () => { valEl.textContent = s.value; });
+        });
+        function gatherOverrides() {
+          const out = {};
+          panel.querySelectorAll('.wi-slider, .wi-input, .wi-select').forEach(el => {
+            if (el.value !== '' && el.value !== null) {
+              out[el.dataset.key] = parseFloat(el.value);
+            }
+          });
+          return out;
+        }
+        function renderBoats(boats) {
+          const ol = document.getElementById('wi-boats-list');
+          ol.innerHTML = '';
+          boats.forEach((b, i) => {
+            const li = document.createElement('li');
+            li.className = i === 0 ? 'wi-row wi-top' : 'wi-row';
+            li.innerHTML =
+              '<span class="lane lane-' + b.boat_number + '">' + b.boat_number + '</span>' +
+              '<span class="wi-name">' + (b.racer_name || '—') + '</span>' +
+              '<span class="wi-pct">' + (b.prob_first * 100).toFixed(1) + '%</span>';
+            ol.appendChild(li);
+          });
+        }
+        function renderCombos(combos) {
+          const ol = document.getElementById('wi-tri-list');
+          ol.innerHTML = '';
+          combos.slice(0, 5).forEach((c, i) => {
+            const [combo, prob] = c;
+            const parts = combo.split('-');
+            const li = document.createElement('li');
+            li.className = i === 0 ? 'wi-row wi-top' : 'wi-row';
+            li.innerHTML =
+              '<span class="wi-rank">' + (i + 1) + '</span>' +
+              '<span class="wi-combo">' +
+                '<span class="lane lane-' + parts[0] + '">' + parts[0] + '</span>→' +
+                '<span class="lane lane-' + parts[1] + '">' + parts[1] + '</span>→' +
+                '<span class="lane lane-' + parts[2] + '">' + parts[2] + '</span>' +
+              '</span>' +
+              '<span class="wi-pct">' + (prob * 100).toFixed(2) + '%</span>';
+            ol.appendChild(li);
+          });
+        }
+        document.getElementById('wi-apply').addEventListener('click', async () => {
+          const status = document.getElementById('wi-status');
+          status.textContent = '計算中…';
+          try {
+            const r = await fetch('/api/race/' + raceId + '/whatif', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({overrides: gatherOverrides()})
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const data = await r.json();
+            if (data.error) throw new Error(data.error);
+            renderBoats(data.boats);
+            renderCombos(data.top_combos);
+            document.getElementById('whatif-results').hidden = false;
+            status.textContent = '完了';
+            setTimeout(() => { status.textContent = ''; }, 2000);
+          } catch (e) {
+            status.textContent = 'エラー: ' + e.message;
+          }
+        });
+        document.getElementById('wi-reset').addEventListener('click', () => {
+          // 各 input/select を初期値 (data-default) に戻す。data-default が無いものは空に
+          panel.querySelectorAll('.wi-slider, .wi-input, .wi-select').forEach(el => {
+            el.value = el.dataset.default !== undefined ? el.dataset.default : '';
+          });
+          // スライダーの表示値も同期
+          panel.querySelectorAll('.wi-slider').forEach(s => {
+            const valEl = s.parentElement.querySelector('.wi-value');
+            if (valEl) valEl.textContent = s.value || '—';
+          });
+          document.getElementById('whatif-results').hidden = true;
+        });
+      })();
+    </script>
+
+    <h3 class="section-heading">6艇詳細</h3>
+    <div class="preds">
+      <table class="preds-table">
+        <thead>
+          <tr>
+            <th class="left">予測</th>
+            <th class="left">枠 / 選手</th>
+            <th>級</th>
+            <th>全国2連率</th>
+            <th>当地2連率</th>
+            <th>モーター2連率</th>
+            <th>展示T</th>
+            <th>展示ST</th>
+            <th>1着確率</th>
+            <th>2着以内</th>
+            <th>3着以内</th>
+            {% if preds[0].finishing_position is not none %}
+              <th>結果</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in preds %}
+            <tr class="{% if loop.index == 1 %}rank-1{% endif %}">
+              <td class="left">
+                <span class="rank-pill">{{ loop.index }}</span>
+              </td>
+              <td class="left">
+                <span class="lane lane-{{ p.boat_number }}">{{ p.boat_number }}</span>
+                <span style="display: inline-block; vertical-align: middle;">
+                  <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
+                  <div class="racer-meta">No. {{ p.racer_number }}</div>
+                </span>
+              </td>
+              <td>
+                {% set cls_map = {1: 'A1', 2: 'A2', 3: 'B1', 4: 'B2'} %}
+                <span class="muted">{{ cls_map.get(p.class_number, '-') }}</span>
+              </td>
+              <td>{{ '%.2f' | format(p.national_top_2_percent) if p.national_top_2_percent is not none else '—' }}</td>
+              <td>{{ '%.2f' | format(p.local_top_2_percent) if p.local_top_2_percent is not none else '—' }}</td>
+              <td>{{ '%.2f' | format(p.assigned_motor_top_2_percent) if p.assigned_motor_top_2_percent is not none else '—' }}</td>
+              <td>{{ '%.2f' | format(p.exhibition_time) if p.exhibition_time is not none else '—' }}</td>
+              <td>{{ '%.2f' | format(p.start_timing_exhibition) if p.start_timing_exhibition is not none else '—' }}</td>
+              <td>
+                <div class="prob-cell {% if loop.index == 1 %}first{% endif %}">
+                  <div class="prob-bar"><span style="width: {{ (p.prob_first * 100) | round(1) }}%"></span></div>
+                  <span class="prob-num">{{ '%.1f' | format(p.prob_first * 100) }}%</span>
+                </div>
+              </td>
+              <td>
+                <div class="prob-cell">
+                  <div class="prob-bar"><span style="width: {{ (p.prob_top_2 * 100) | round(1) }}%"></span></div>
+                  <span class="prob-num">{{ '%.1f' | format(p.prob_top_2 * 100) }}%</span>
+                </div>
+              </td>
+              <td>
+                <div class="prob-cell">
+                  <div class="prob-bar"><span style="width: {{ (p.prob_top_3 * 100) | round(1) }}%"></span></div>
+                  <span class="prob-num">{{ '%.1f' | format(p.prob_top_3 * 100) }}%</span>
+                </div>
+              </td>
+              {% if p.finishing_position is not none %}
+                <td>
+                  <span class="finish-badge f-{{ p.finishing_position | int }}">{{ p.finishing_position | int }}着</span>
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}
