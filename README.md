@@ -3,8 +3,9 @@
 > 競艇 (公営ボートレース) の機械学習による予測と期待値 (EV) 可視化システム。
 > **正直な数字を扱うツール**であり、利益保証ではありません。
 
+[![CI](https://github.com/tsuyoshiyasuda0105/boatrace-analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/tsuyoshiyasuda0105/boatrace-analysis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 
 ---
 
