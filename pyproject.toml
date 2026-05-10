@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+# テスト実行時にプロジェクトルートを sys.path に追加
+# (config.py や src/ パッケージを import 可能にするため)
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
