@@ -61,20 +61,70 @@ def _placeholder_pg(sql: str) -> str:
     return "".join(out)
 
 
-def _rewrite_sqlite_specific(sql: str) -> str:
-    """SQLite 固有の構文を Postgres 互換に書き換え (限定的)。
+# schema.sql で定義された各テーブルの主キー (UPSERT 変換用)
+_TABLE_PRIMARY_KEYS = {
+    "stadiums": ["stadium_number"],
+    "racers": ["racer_number"],
+    "racer_period_stats": ["racer_number", "period_year", "period_half"],
+    "races": ["race_id"],
+    "race_entries": ["race_id", "boat_number"],
+    "race_previews": ["race_id", "boat_number"],
+    "race_parts": ["race_id", "boat_number", "part_code"],
+    "race_results": ["race_id", "boat_number"],
+    "race_payouts": ["race_id", "bet_type", "combination"],
+    "odds_trifecta": ["race_id", "combination", "recorded_at"],
+    "predictions": ["race_id", "boat_number", "model_version"],
+    "value_bets": ["race_id", "bet_type", "combination", "model_version"],
+}
 
-    - INSERT OR REPLACE INTO t → INSERT INTO t ... ON CONFLICT DO UPDATE
-      (主キー名が分かる場合のみ。汎用的な書き換えは難しいので、コレクター側の
-       upsert ヘルパー利用を推奨)
-    - INSERT OR IGNORE INTO t → INSERT INTO t ... ON CONFLICT DO NOTHING
+
+def _build_upsert(table: str, columns: list[str]) -> str:
+    """ON CONFLICT (pk) DO UPDATE SET col=EXCLUDED.col の SQL 末尾を生成。"""
+    pk = _TABLE_PRIMARY_KEYS.get(table)
+    if not pk:
+        # 主キーが不明なテーブルは ON CONFLICT DO NOTHING (重複は無視)
+        return " ON CONFLICT DO NOTHING"
+    non_pk = [c for c in columns if c not in pk]
+    if not non_pk:
+        # 全列が主キー → DO NOTHING
+        return f" ON CONFLICT ({', '.join(pk)}) DO NOTHING"
+    set_clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in non_pk)
+    return f" ON CONFLICT ({', '.join(pk)}) DO UPDATE SET {set_clause}"
+
+
+_INSERT_PATTERN = re.compile(
+    r"\bINSERT\s+OR\s+(REPLACE|IGNORE)\s+INTO\s+(\w+)\s*\(([^)]+)\)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _rewrite_sqlite_specific(sql: str) -> str:
+    """SQLite 固有の構文を Postgres 互換に書き換え。
+    単一文 (1つの INSERT 文) を想定。
+
+    - INSERT OR REPLACE INTO t (cols) ... → INSERT INTO + ON CONFLICT (pk) DO UPDATE SET
+    - INSERT OR IGNORE INTO t (cols) ...  → INSERT INTO + ON CONFLICT DO NOTHING
     """
-    # まず IGNORE → ON CONFLICT DO NOTHING (主キー特定不要)
-    sql = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=re.I)
-    # OR REPLACE は upsert ヘルパーを使うべきだが、簡易対応として
-    # INSERT INTO に置換 (重複キーで失敗するので、呼び出し側で対応必須)
-    sql = re.sub(r"\bINSERT\s+OR\s+REPLACE\s+INTO\b", "INSERT INTO", sql, flags=re.I)
-    return sql
+    m = _INSERT_PATTERN.search(sql)
+    if not m:
+        return sql
+    kind = m.group(1).upper()
+    table = m.group(2)
+    cols_raw = m.group(3)
+    cols = [c.strip() for c in cols_raw.split(",") if c.strip()]
+    head = f"INSERT INTO {table} ({cols_raw})"
+    if kind == "IGNORE":
+        tail = " ON CONFLICT DO NOTHING"
+    else:
+        tail = _build_upsert(table, cols)
+    rewritten = sql[:m.start()] + head + sql[m.end():]
+    # 末尾セミコロンの前に ON CONFLICT を挿入
+    rewritten = rewritten.rstrip()
+    if rewritten.endswith(";"):
+        rewritten = rewritten[:-1].rstrip() + tail + ";"
+    else:
+        rewritten = rewritten + tail
+    return rewritten
 
 
 class _PgConnection:
@@ -100,16 +150,16 @@ class _PgConnection:
 
     def executescript(self, script: str):
         # psycopg3 は単一 execute() で複文を受け付けないため、文ごとに分割して実行
-        # まず行コメント (--) を除去してから ; で分割
+        # まず行コメント (--) を除去してから ; で分割し、各文に書き換えを適用
         cleaned = "\n".join(
-            line for line in _rewrite_sqlite_specific(script).splitlines()
+            line for line in script.splitlines()
             if not line.lstrip().startswith("--")
         )
         cur = self._conn.cursor()
         for stmt in cleaned.split(";"):
             stmt = stmt.strip()
             if stmt:
-                cur.execute(stmt)
+                cur.execute(_rewrite_sqlite_specific(stmt))
         return cur
 
     def cursor(self):

@@ -12,11 +12,13 @@ races / race_entries / race_previews / race_results を結合し、
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from typing import Literal
 import pandas as pd
 
 import config
+from src.db.connection import connect as db_connect
 
 
 PredictPhase = Literal["before_day", "before_race", "after_close"]
@@ -35,15 +37,16 @@ def load_base_dataframe(
     races x race_entries x race_previews x race_results を結合した
     1艇=1行の生 DataFrame を返す。
     """
-    db_path = db_path or config.DB_PATH
-
     where = ""
-    params = []
+    params: list = []
+    # DATABASE_URL があれば Postgres、無ければ SQLite を使う
+    use_postgres = bool(os.getenv("DATABASE_URL", "").strip())
+    placeholder = "%s" if use_postgres else "?"
     if date_from:
-        where += " AND r.race_date >= ?"
+        where += f" AND r.race_date >= {placeholder}"
         params.append(date_from)
     if date_to:
-        where += " AND r.race_date <= ?"
+        where += f" AND r.race_date <= {placeholder}"
         params.append(date_to)
 
     sql = f"""
@@ -80,8 +83,20 @@ def load_base_dataframe(
     ORDER BY r.race_date, r.stadium_number, r.race_number, e.boat_number
     """
 
-    with sqlite3.connect(db_path) as conn:
-        df = pd.read_sql_query(sql, conn, params=params)
+    if use_postgres:
+        # psycopg3 経由 (pandas は raw connection を受け付ける)
+        import psycopg
+        dsn = os.getenv("DATABASE_URL", "").strip()
+        if dsn.startswith("postgres://"):
+            dsn = "postgresql://" + dsn[len("postgres://"):]
+        if "sslmode=" not in dsn:
+            dsn += ("&" if "?" in dsn else "?") + "sslmode=require"
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            df = pd.read_sql_query(sql, conn, params=tuple(params))
+    else:
+        path = db_path or config.DB_PATH
+        with sqlite3.connect(path) as conn:
+            df = pd.read_sql_query(sql, conn, params=params)
     df["race_date"] = pd.to_datetime(df["race_date"])
     return df
 
