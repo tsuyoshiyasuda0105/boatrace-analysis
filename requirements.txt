@@ -13,6 +13,7 @@ lxml>=5.0
 
 # Web UI (予測表示)
 flask>=3.0
+gunicorn>=21.2     # 本番用 WSGI サーバー (Render / Heroku 等)
 
 # LZH 解凍 (Layer 1: 公式DLファイル用)
 # 7-Zip 経由の subprocess を使うのでパッケージは不要

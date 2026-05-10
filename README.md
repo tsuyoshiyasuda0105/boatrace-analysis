@@ -165,12 +165,22 @@ boatrace-analysis/
 
 ## デプロイ
 
-公開向けデプロイ手順は [DEPLOY.md](DEPLOY.md) を参照。
+### Render (推奨、最速で公開、月 ¥1,100〜)
 
-主な選択肢:
-- **Render / Railway**: Flask + SQLite (個人利用)
-- **VPS + Cloudflare Tunnel**: Pro 有料化、会員管理を本格化する場合
-- **GitHub Pages**: 不可 (Python ランタイム必要)
+`render.yaml` を含めているのでワンクリックデプロイ可能:
+
+1. https://render.com にサインアップ → GitHub 連携
+2. **New + → Blueprint** → このリポジトリを選択
+3. ダッシュボードで以下の環境変数を設定 (パスワードは自分で決める):
+   - `BOATRACE_MEMBER_PASSWORD`
+   - `BOATRACE_PRO_PASSWORD`
+4. Apply → 5-10 分でデプロイ完了 → `https://boatrace-web-XXXX.onrender.com` でアクセス可能
+5. 初回はデータ無し → Web Shell から:
+   ```
+   python scripts/daily_collect.py
+   ```
+
+詳細・他のデプロイ先 (Railway / VPS / Cloudflare Tunnel) は [DEPLOY.md](DEPLOY.md) を参照。
 
 ---
 

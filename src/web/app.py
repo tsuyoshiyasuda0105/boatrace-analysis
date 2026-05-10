@@ -212,6 +212,57 @@ def _race_current_conditions(race_id: str) -> dict:
 # Flask アプリ
 # ============================================================
 
+def _ensure_db_initialized() -> None:
+    """
+    DB ファイルとスキーマを必要に応じて初期化。Render など空ディスクに
+    マウントされた環境で初回起動時に実行される。
+    """
+    import json
+    from pathlib import Path
+
+    db_path = Path(config.DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    schema_path = Path(__file__).resolve().parents[1] / "db" / "schema.sql"
+    if not schema_path.exists():
+        return
+
+    with db_connect() as conn:
+        # races テーブルがあるか試して、無ければ schema.sql を実行
+        try:
+            conn.execute("SELECT 1 FROM races LIMIT 1").fetchone()
+        except Exception:
+            logger.info("initializing DB at %s from schema.sql", db_path)
+            with open(schema_path, "r", encoding="utf-8") as f:
+                conn.executescript(f.read())
+
+        # stadium マスタが空なら投入
+        cnt = conn.execute("SELECT COUNT(*) FROM stadiums").fetchone()[0]
+        if cnt == 0:
+            stadium_path = config.MASTER_DIR / "stadiums.json"
+            if stadium_path.exists():
+                with open(stadium_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                rows = []
+                for k, v in data.items():
+                    if k.startswith("_"):
+                        continue
+                    rows.append((
+                        int(k), v["name"], v["water"],
+                        1 if v["is_night"] else 0,
+                        v["in_strength"], v["tide_effect"],
+                        1 if v.get("altitude_high") else 0,
+                        v.get("notes"),
+                    ))
+                conn.executemany("""
+                    INSERT OR REPLACE INTO stadiums
+                        (stadium_number, name, water, is_night, in_strength,
+                         tide_effect, altitude_high, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, rows)
+                logger.info("loaded %d stadiums into DB", len(rows))
+
+
 def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app = Flask(
         __name__,
@@ -226,6 +277,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # テンプレートから is_member() / is_pro() を呼べるように
     app.jinja_env.globals["is_member"] = is_member
     app.jinja_env.globals["is_pro"] = is_pro
+
+    # DB 初期化 (空ディスクへの初回デプロイで必要)
+    try:
+        _ensure_db_initialized()
+    except Exception as e:
+        logger.warning("DB init skipped: %s", e)
+
     predictor = Predictor(version=version)
 
     # 起動時にモデルを先読み (失敗してもアプリは動かす)
