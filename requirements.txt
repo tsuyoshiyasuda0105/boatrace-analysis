@@ -15,6 +15,10 @@ lxml>=5.0
 flask>=3.0
 gunicorn>=21.2     # 本番用 WSGI サーバー (Render / Heroku 等)
 
+# DB (SQLite ローカル開発 / PostgreSQL 本番)
+# DATABASE_URL=postgresql://... が指定された場合のみ psycopg を使用
+psycopg[binary]>=3.1     # psycopg3 (新世代、推奨)
+
 # LZH 解凍 (Layer 1: 公式DLファイル用)
 # 7-Zip 経由の subprocess を使うのでパッケージは不要
 # lhafile>=0.3.0

@@ -165,22 +165,29 @@ boatrace-analysis/
 
 ## デプロイ
 
-### Render (推奨、最速で公開、月 ¥1,100〜)
+### Render Free + Supabase (完全無料)
 
-`render.yaml` を含めているのでワンクリックデプロイ可能:
+DB は Supabase 無料 Postgres、アプリは Render Free Web Service:
 
+**Step 1: Supabase 準備**
+1. https://supabase.com にサインアップ → New project (Region: Tokyo 推奨)
+2. Settings → Database → **Connection string** → URI 形式をコピー
+   - 例: `postgresql://postgres:[YOUR-PASSWORD]@db.xxxxx.supabase.co:5432/postgres`
+
+**Step 2: Render デプロイ**
 1. https://render.com にサインアップ → GitHub 連携
 2. **New + → Blueprint** → このリポジトリを選択
-3. ダッシュボードで以下の環境変数を設定 (パスワードは自分で決める):
-   - `BOATRACE_MEMBER_PASSWORD`
-   - `BOATRACE_PRO_PASSWORD`
-4. Apply → 5-10 分でデプロイ完了 → `https://boatrace-web-XXXX.onrender.com` でアクセス可能
-5. 初回はデータ無し → Web Shell から:
-   ```
-   python scripts/daily_collect.py
-   ```
+3. 環境変数を設定:
+   - `DATABASE_URL`: 上記 Supabase URI
+   - `BOATRACE_MEMBER_PASSWORD`: 任意
+   - `BOATRACE_PRO_PASSWORD`: 任意
+4. Apply → 5-10 分でデプロイ完了
 
-詳細・他のデプロイ先 (Railway / VPS / Cloudflare Tunnel) は [DEPLOY.md](DEPLOY.md) を参照。
+**制約**:
+- 15分アクセス無しで Sleep (復帰 30-60秒)
+- データ取得・モデル学習は **ローカルで実行 → DB 同期** が必要 (Render Free に Cron は無いため)
+
+詳細・他のデプロイ先 (有料 Render / Railway / VPS / Cloudflare Tunnel) は [DEPLOY.md](DEPLOY.md) を参照。
 
 ---
 

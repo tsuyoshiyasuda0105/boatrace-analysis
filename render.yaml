@@ -1,85 +1,50 @@
-# Render Blueprint (最小構成: Web サービスのみ)
+# Render Blueprint (無料プラン構成)
 # https://render.com/docs/blueprint-spec
 #
-# 使い方:
-#   1. Render に GitHub アカウントを接続
-#   2. New + → Blueprint → このリポジトリを選択
-#   3. デプロイ時にダッシュボードで Environment Variables を入力:
-#      - BOATRACE_MEMBER_PASSWORD  (会員ログイン用パスワード)
-#      - BOATRACE_PRO_PASSWORD     (Pro プランパスワード)
-#   4. デプロイ完了後、デプロイされたアプリのシェルから初回データ投入:
-#        python scripts/init_db.py
-#        python scripts/daily_collect.py
+# 構成: Render Free Web Service + Supabase Free Postgres
+# 月額コスト: 0円 (制約: 15分アクセス無しで Sleep / コールドスタート 30-60秒)
 #
-# 概算コスト: $7 (Starter) + $0.25 (1GB Disk) = 月 $7.25 (≈ ¥1,100)
+# 事前準備:
+#   1. https://supabase.com にサインアップ
+#   2. New project 作成 (Region: Tokyo or Singapore)
+#   3. Settings → Database → Connection string → URI 形式をコピー
+#      例: postgresql://postgres:[YOUR-PASSWORD]@db.xxxxx.supabase.co:5432/postgres
 #
-# データ取得 / 学習を自動化したい場合は cron や worker を後から追加可能。
-# (このファイル末尾のコメントアウト例を参照)
+# Render デプロイ手順:
+#   1. New + → Blueprint → このリポジトリを選択
+#   2. 環境変数を入力:
+#      - DATABASE_URL: 上記 Supabase URI を貼り付け
+#      - BOATRACE_MEMBER_PASSWORD: 任意
+#      - BOATRACE_PRO_PASSWORD: 任意
+#   3. Apply → 5-10 分でデプロイ完了
+#
+# データ投入は別途ローカルから (例: pg_dump → psql, or pandas で CSV → INSERT)
 services:
   - type: web
     name: boatrace-web
     runtime: python
-    plan: starter         # $7/mo: 常時稼働、512MB RAM
+    plan: free            # 無料プラン (15分Sleep, RAM 512MB)
     branch: main
-    region: singapore     # 日本に近い (oregon でも可)
-    autoDeploy: true      # main への push で自動デプロイ
+    region: singapore
+    autoDeploy: true
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
       pip install gunicorn
-    startCommand: gunicorn -w 2 -b 0.0.0.0:$PORT --timeout 120 'src.web.app:create_app()'
+    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT --timeout 120 'src.web.app:create_app()'
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
-      - key: BOATRACE_DB_PATH
-        value: /var/data/boatrace.db
+      - key: DATABASE_URL
+        sync: false                  # ダッシュボードで Supabase URI を入力
       - key: BOATRACE_WEB_SECRET
-        generateValue: true       # Render が長いランダム値を自動生成
+        generateValue: true          # Render が自動生成
       - key: BOATRACE_MEMBER_PASSWORD
-        sync: false               # ダッシュボードで手動入力
+        sync: false                  # ダッシュボードで手動入力
       - key: BOATRACE_PRO_PASSWORD
-        sync: false               # ダッシュボードで手動入力
+        sync: false                  # ダッシュボードで手動入力
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
-    disk:
-      name: boatrace-data
-      mountPath: /var/data        # SQLite DB + models_artifacts 永続化
-      sizeGB: 1                   # $0.25/GB/mo
-
-# ============================================================
-# 任意: 自動データ取得 / オッズスケジューラを追加する場合は
-# 下記をコメントアウト解除してください (各 +$1/mo 程度)。
-# ============================================================
-#
-#   # 毎日 JST 02:00 に Open API データ取得
-#   - type: cron
-#     name: boatrace-daily-collect
-#     runtime: python
-#     plan: starter
-#     schedule: "0 17 * * *"     # UTC, JST 02:00
-#     branch: main
-#     region: singapore
-#     buildCommand: pip install -r requirements.txt
-#     startCommand: python scripts/daily_collect.py
-#     envVars:
-#       - key: PYTHON_VERSION
-#         value: 3.12.0
-#       - key: BOATRACE_DB_PATH
-#         value: /var/data/boatrace.db
-#
-#   # オッズスケジューラ (worker、Pro EV の T-15min データ蓄積用)
-#   # 注: 毎分稼働させる場合は worker 化、cron 1分実行は課金面で非推奨
-#   - type: worker
-#     name: boatrace-odds-scheduler
-#     runtime: python
-#     plan: starter
-#     branch: main
-#     region: singapore
-#     buildCommand: pip install -r requirements.txt
-#     startCommand: python scripts/odds_scheduler.py --daemon --interval 60
-#     envVars:
-#       - key: PYTHON_VERSION
-#         value: 3.12.0
-#       - key: BOATRACE_DB_PATH
-#         value: /var/data/boatrace.db
+    # 注: Render Free プランは disk:対応外 のため、SQLite は使えない。
+    # 必ず DATABASE_URL に Supabase / Neon 等の外部 Postgres を指定すること。
