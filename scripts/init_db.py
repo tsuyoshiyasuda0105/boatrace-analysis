@@ -5,19 +5,21 @@ DB初期化スクリプト
 
 使い方:
     python scripts/init_db.py
+    DATABASE_URL=postgresql://... python scripts/init_db.py  # Postgres
 """
+import os
 import sys
 import json
-import sqlite3
 from pathlib import Path
 
 # プロジェクトルートを sys.path に追加
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
+from src.db.connection import connect
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
+def init_schema(conn) -> None:
     """schema.sqlを実行してテーブル作成"""
     schema_path = config.ROOT_DIR / "src" / "db" / "schema.sql"
     with open(schema_path, encoding="utf-8") as f:
@@ -25,7 +27,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     print(f"[OK] スキーマ作成: {schema_path}")
 
 
-def load_stadiums(conn: sqlite3.Connection) -> None:
+def load_stadiums(conn) -> None:
     """master/stadiums.jsonを読み込んでstadiumsテーブルに投入"""
     path = config.MASTER_DIR / "stadiums.json"
     with open(path, encoding="utf-8") as f:
@@ -56,12 +58,14 @@ def load_stadiums(conn: sqlite3.Connection) -> None:
 
 def main() -> None:
     config.ensure_dirs()
-    conn = sqlite3.connect(config.DB_PATH)
+    db_url = os.getenv("DATABASE_URL", "")
+    target = db_url if db_url else str(config.DB_PATH)
+    conn = connect()
     try:
         init_schema(conn)
         load_stadiums(conn)
         conn.commit()
-        print(f"[DONE] DB初期化完了: {config.DB_PATH}")
+        print(f"[DONE] DB初期化完了: {target}")
     finally:
         conn.close()
 

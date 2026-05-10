@@ -99,9 +99,17 @@ class _PgConnection:
         return cur
 
     def executescript(self, script: str):
-        # psycopg は複文 execute も可能 (autocommit 時)
+        # psycopg3 は単一 execute() で複文を受け付けないため、文ごとに分割して実行
+        # まず行コメント (--) を除去してから ; で分割
+        cleaned = "\n".join(
+            line for line in _rewrite_sqlite_specific(script).splitlines()
+            if not line.lstrip().startswith("--")
+        )
         cur = self._conn.cursor()
-        cur.execute(_rewrite_sqlite_specific(script))
+        for stmt in cleaned.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                cur.execute(stmt)
         return cur
 
     def cursor(self):
