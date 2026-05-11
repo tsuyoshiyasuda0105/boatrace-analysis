@@ -11,8 +11,9 @@ Flask Web UI: 予測表示
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date
-from typing import Optional
+from typing import Optional, Any
 
 from datetime import timedelta
 
@@ -27,6 +28,49 @@ from src.web.auth import (
 from src.web.predictor import Predictor
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# シンプルなインメモリ TTL キャッシュ (速度改善)
+# ============================================================
+_CACHE: dict[str, tuple[float, Any]] = {}
+_CACHE_DEFAULT_TTL = 300  # 5分
+
+
+def cached(ttl: int = _CACHE_DEFAULT_TTL):
+    """Flask view 用 TTL キャッシュデコレータ。
+    Args/kwargs と request.args をキーに使う。"""
+    def decorator(fn):
+        from functools import wraps
+
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                qs = request.query_string.decode("utf-8") if request else ""
+            except Exception:
+                qs = ""
+            key = f"{fn.__name__}:{args}:{kwargs}:{qs}"
+            now = time.time()
+            if key in _CACHE:
+                ts, val = _CACHE[key]
+                if now - ts < ttl:
+                    return val
+            val = fn(*args, **kwargs)
+            _CACHE[key] = (now, val)
+            # 簡易 GC (最大 1000 エントリ)
+            if len(_CACHE) > 1000:
+                # 古い順に半分削除
+                items = sorted(_CACHE.items(), key=lambda x: x[1][0])
+                for k, _ in items[:500]:
+                    _CACHE.pop(k, None)
+            return val
+        return wrapper
+    return decorator
+
+
+def invalidate_cache():
+    """全キャッシュクリア (デバッグ用)"""
+    _CACHE.clear()
 
 
 def _format_race_id(race_id: str) -> tuple[str, int, int]:
@@ -709,6 +753,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify(r)
 
     @app.route("/api/ev-races")
+    @cached(ttl=180)  # 3分キャッシュ (EV計算は重い)
     def ev_races_for_date():
         """指定日の EV+ レース一覧 (UI のマーク表示用)
         snapshot: T-15min / T-5min / T-1min / final / auto (利用可能な最良に自動選択)
@@ -791,6 +836,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify(result)
 
     @app.route("/api/race/<race_id>")
+    @cached(ttl=300)  # 5分キャッシュ
     def race_api(race_id: str):
         info = _race_basic_info(race_id)
         if not info:
@@ -802,6 +848,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify({"info": info, "predictions": preds})
 
     @app.route("/api/market-signals")
+    @cached(ttl=300)  # 5分キャッシュ
     def market_signals_for_date():
         """指定日のレース一覧で「市場非効率ベース +EV」シグナルを返す。
         判定優先度:
