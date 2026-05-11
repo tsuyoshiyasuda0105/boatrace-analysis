@@ -100,37 +100,58 @@ def sync_predictions_to_supabase():
     from src.db.connection import connect as db_connect
 
     src = sqlite3.connect(config.DB_PATH)
-    dst = db_connect()
 
     cur = src.execute("SELECT * FROM predictions")
     rows = cur.fetchall()
+    src.close()
     if not rows:
         print("ローカルに predictions なし")
         return 0
 
-    # スキーマ確保
-    dst.executescript("""
-        CREATE TABLE IF NOT EXISTS predictions (
-            race_id TEXT NOT NULL,
-            boat_number INTEGER NOT NULL,
-            model_version TEXT NOT NULL,
-            prob_first REAL,
-            prob_top_2 REAL,
-            prob_top_3 REAL,
-            predicted_at TEXT NOT NULL,
-            PRIMARY KEY (race_id, boat_number, model_version)
-        );
-    """)
+    # CREATE TABLE はスキップ (schema.sql で既に作成済、Supabase が Read-Only 時の Fallback)
+    try:
+        dst = db_connect()
+        # まずテーブル存在確認 (CREATE せずに SELECT)
+        try:
+            dst.execute("SELECT 1 FROM predictions LIMIT 1")
+        except Exception as table_err:
+            # テーブルなし → CREATE 試行 (失敗時はメッセージ)
+            print(f"predictions テーブルが Supabase に未作成: {table_err}")
+            print("init_db.py を Supabase に対して実行してください:")
+            print("  python scripts/init_db.py  (DATABASE_URL 設定済の状態で)")
+            return 0
 
-    dst.executemany("""
-        INSERT OR REPLACE INTO predictions
-        (race_id, boat_number, model_version, prob_first, prob_top_2, prob_top_3, predicted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, rows)
-    print(f"Supabase に {len(rows)} 行同期完了")
-    src.close()
-    dst.close()
-    return len(rows)
+        # INSERT バッチ (500行ずつ)
+        BATCH = 500
+        total_synced = 0
+        for i in range(0, len(rows), BATCH):
+            batch = rows[i:i+BATCH]
+            try:
+                dst.executemany("""
+                    INSERT OR REPLACE INTO predictions
+                    (race_id, boat_number, model_version, prob_first, prob_top_2, prob_top_3, predicted_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, batch)
+                total_synced += len(batch)
+                print(f"  {total_synced}/{len(rows)} 行同期...")
+            except Exception as e:
+                err_str = str(e)
+                if "read-only" in err_str.lower() or "ReadOnlySql" in err_str:
+                    print(f"\nSupabase が読み取り専用モードです (容量超過の可能性)")
+                    print("対処: Supabase ダッシュボードで Database Status を確認")
+                    print(f"ローカル predictions ({len(rows)} 行) は保存済。後で再同期可能。")
+                    dst.close()
+                    return total_synced
+                else:
+                    print(f"  エラー {i}-{i+BATCH}: {e}")
+                    continue
+        dst.close()
+        print(f"Supabase に {total_synced} 行同期完了")
+        return total_synced
+    except Exception as e:
+        print(f"Supabase 同期エラー: {e}")
+        print(f"ローカル predictions は保存済 ({len(rows)} 行)")
+        return 0
 
 
 def main():
