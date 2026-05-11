@@ -75,7 +75,51 @@ def _races_for_date(target_date: str) -> list[dict]:
     return [dict(zip(keys, r)) for r in rows]
 
 
+def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[dict]]:
+    """predictions テーブルからキャッシュ済予測を取得。
+    Supabase Free でも軽量に動作するため、まずキャッシュを試みる。
+    """
+    with db_connect() as conn:
+        try:
+            rows = conn.execute("""
+                SELECT p.boat_number, p.prob_first, p.prob_top_2, p.prob_top_3,
+                       e.racer_number, e.class_number,
+                       e.national_top_2_percent, e.local_top_2_percent,
+                       e.assigned_motor_top_2_percent,
+                       pv.exhibition_time, pv.start_timing_exhibition,
+                       res.finishing_position
+                FROM predictions p
+                JOIN race_entries e ON p.race_id = e.race_id AND p.boat_number = e.boat_number
+                LEFT JOIN race_previews pv ON p.race_id = pv.race_id AND p.boat_number = pv.boat_number
+                LEFT JOIN race_results res ON p.race_id = res.race_id AND p.boat_number = res.boat_number
+                WHERE p.race_id = ? AND p.model_version = ?
+                ORDER BY p.prob_first DESC
+            """, (race_id, version)).fetchall()
+        except Exception:
+            return None
+    if not rows:
+        return None
+    keys = ["boat_number", "prob_first", "prob_top_2", "prob_top_3",
+            "racer_number", "class_number",
+            "national_top_2_percent", "local_top_2_percent",
+            "assigned_motor_top_2_percent",
+            "exhibition_time", "start_timing_exhibition",
+            "finishing_position"]
+    out = []
+    for i, row in enumerate(rows, 1):
+        d = dict(zip(keys, row))
+        d["pred_rank"] = i
+        out.append(d)
+    return out
+
+
 def _race_predictions(predictor: Predictor, race_id: str) -> list[dict]:
+    # まずキャッシュを試す (Supabase Free 対策)
+    cached = _race_predictions_from_cache(race_id, predictor.version)
+    if cached:
+        return cached
+
+    # キャッシュが無ければライブ計算
     target_date = race_id[:8]
     target_date_iso = f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:8]}"
     df = predictor.predict_date(target_date_iso)
