@@ -110,13 +110,22 @@ _LOSING_VENUES = {2: "戸田", 7: "蒲郡", 10: "三国", 21: "芦屋"}
 _QUESTIONABLE_VENUES = {4: "平和島", 8: "常滑", 19: "下関", 24: "大村"}
 
 
-def _detect_market_inefficiency(race_id: str, preds: list[dict]) -> Optional[dict]:
+def _detect_market_inefficiency(
+    race_id: str,
+    preds: list[dict],
+    info: Optional[dict] = None,
+) -> Optional[dict]:
     """
     「市場非効率レース」検出。
-    検証結果:
-      - 三連単1番人気 500-1000円帯 + 1号艇単勝 → ROI +29.56% (P>0=100%)
-      - 三連単1番人気 <500円帯 → ROI +21.83%
-      - 三連単1番人気 1000-2000円帯 → ROI +19.86%
+    検証結果 (2026年データ):
+      - 三連単1番人気 500-1000円帯 + 1号艇単勝 → ROI +27.41% (P>0=100%)
+      - 三連単1番人気 <500円帯 → ROI +18.45%
+      - 三連単1番人気 1000-2000円帯 → ROI +17.92%
+
+    重ね掛け強化 (検証2026):
+      - 節後半 (5日目以降) + 500-1000帯 → ROI +28.36% (n=1,905)
+      - 一般戦 B1 1号艇 + 500-1000帯 → ROI +35.39% (n=738)
+      - 3連単 1-2-3 (同条件) → ROI +44.23% (n=3,465)
 
     Returns:
       {
@@ -125,6 +134,7 @@ def _detect_market_inefficiency(race_id: str, preds: list[dict]) -> Optional[dic
         "expected_roi": float,
         "title": str,
         "msg": str,
+        "extras": [list of additional +EV refinements]
       } or None
     """
     # 三連単の最小払戻 = 一番人気の払戻
@@ -138,53 +148,78 @@ def _detect_market_inefficiency(race_id: str, preds: list[dict]) -> Optional[dic
 
     # 事後判定 (race_payouts は確定後しか入らない)
     if min_payout is not None:
+        result = None
         if min_payout < 500:
-            return {
+            result = {
                 "favorite_trifecta_payout": min_payout,
                 "tier": "ultra_confident",
-                "expected_roi": 0.2183,
+                "expected_roi": 0.1845,
                 "title": "💎 超本命レース",
-                "msg": f"三連単1番人気 ¥{min_payout:,} (<500円帯)。検証 ROI +21.83% (CI +19.5%~+24.3%, P>0=100%)",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (<500円帯)。2026検証 ROI +18.45% (CI +15.3%~+21.7%, P>0=100%)",
             }
-        if min_payout < 1000:
-            return {
+        elif min_payout < 1000:
+            result = {
                 "favorite_trifecta_payout": min_payout,
                 "tier": "confident",
-                "expected_roi": 0.2956,
+                "expected_roi": 0.2741,
                 "title": "💎💎 完全 +EV レース",
-                "msg": f"三連単1番人気 ¥{min_payout:,} (500-1000円帯)。検証 ROI +29.56% (CI +28.0%~+31.1%, P>0=100%)",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (500-1000円帯)。2026検証 ROI +27.41% (CI +25.3%~+29.6%, P>0=100%)。3連単1-2-3で +44.23%",
             }
-        if min_payout < 2000:
-            return {
+        elif min_payout < 2000:
+            result = {
                 "favorite_trifecta_payout": min_payout,
                 "tier": "moderate",
-                "expected_roi": 0.1986,
+                "expected_roi": 0.1792,
                 "title": "💎 やや本命 +EV",
-                "msg": f"三連単1番人気 ¥{min_payout:,} (1k-2k帯)。検証 ROI +19.86%",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (1k-2k帯)。2026検証 ROI +17.92%",
             }
-        if min_payout < 5000:
-            return {
+        elif min_payout < 5000:
+            result = {
                 "favorite_trifecta_payout": min_payout,
                 "tier": "split",
-                "expected_roi": -0.0721,
+                "expected_roi": -0.0859,
                 "title": "拮抗レース",
-                "msg": f"三連単1番人気 ¥{min_payout:,} (拮抗)。ROI -7.21% (買い控え推奨)",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (拮抗)。2026検証 ROI -8.59% (買い控え推奨)",
             }
-        if min_payout < 10000:
-            return {
+        elif min_payout < 10000:
+            result = {
                 "favorite_trifecta_payout": min_payout,
                 "tier": "wild",
-                "expected_roi": -0.4079,
+                "expected_roi": -0.4310,
                 "title": "荒れ寄り",
-                "msg": f"三連単1番人気 ¥{min_payout:,}。ROI -40.79% (1号艇単勝非推奨)",
+                "msg": f"三連単1番人気 ¥{min_payout:,}。2026検証 ROI -43.10% (1号艇単勝非推奨)",
             }
-        return {
-            "favorite_trifecta_payout": min_payout,
-            "tier": "chaos",
-            "expected_roi": -0.7314,
-            "title": "波乱レース",
-            "msg": f"三連単1番人気 ¥{min_payout:,} (波乱)。ROI -73.14% (本命非推奨)",
-        }
+        else:
+            result = {
+                "favorite_trifecta_payout": min_payout,
+                "tier": "chaos",
+                "expected_roi": -0.7354,
+                "title": "波乱レース",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (波乱)。2026検証 ROI -73.54% (本命非推奨)",
+            }
+
+        # 重ね掛け強化シグナルを extras に追加
+        extras = []
+        if min_payout < 2000 and preds:
+            boat1 = next((p for p in preds if p.get("boat_number") == 1), None)
+            if boat1:
+                cls = boat1.get("class_number")
+                # 一般戦 + B1 1号艇 + 本命500-1k = ROI +35.39%
+                if info and info.get("race_grade_number") == 5 and cls == 3 and 500 <= min_payout < 1000:
+                    extras.append({
+                        "label": "🔥 一般戦+B1+本命",
+                        "msg": "一般戦 + B1 1号艇 + 本命500-1k は 検証 ROI +35.39% (CI +28.3%~+42.6%, n=738)",
+                    })
+                # SG/G1 + A1 1号艇 + 本命500-1k = ROI +27.03%
+                if info and info.get("race_grade_number") in (1, 2) and cls == 1 and 500 <= min_payout < 1000:
+                    extras.append({
+                        "label": "🔥 SG/G1+A1+本命",
+                        "msg": "SG/G1 + A1 1号艇 + 本命500-1k は 検証 ROI +27.03% (CI +22.6%~+32.4%, n=209)",
+                    })
+
+        if extras:
+            result["extras"] = extras
+        return result
 
     # 事前判定 (final odds がない場合、モデル予測から推定)
     # preds[0] が 1号艇でかつ prob_first が高ければ「超本命系」と推定
@@ -573,7 +608,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         niche_signals = _detect_niche_signals(preds, conditions)
 
         # 市場非効率レース検出 (三連単1番人気の払戻に基づく +EV ゾーン)
-        market_signal = _detect_market_inefficiency(race_id, preds)
+        market_signal = _detect_market_inefficiency(race_id, preds, info=info)
 
         # 三連単予測
         tri_pw = []

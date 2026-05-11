@@ -52,6 +52,16 @@
         {% endif %}
       </div>
       <div class="ms-msg">{{ market_signal.msg }}</div>
+      {% if market_signal.extras %}
+        <div class="ms-extras">
+          {% for ex in market_signal.extras %}
+            <div class="ms-extra-item">
+              <span class="ms-extra-label">{{ ex.label }}</span>
+              <span class="ms-extra-msg">{{ ex.msg }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
     </div>
   {% endif %}
 
