@@ -92,6 +92,14 @@ def load_base_dataframe(
         if "sslmode=" not in dsn:
             dsn += ("&" if "?" in dsn else "?") + "sslmode=require"
         with psycopg.connect(dsn, autocommit=True) as conn:
+            # Supabase Free tmp 領域節約
+            try:
+                cur = conn.cursor()
+                cur.execute("SET max_parallel_workers_per_gather = 0")
+                cur.execute("SET work_mem = '4MB'")
+                cur.close()
+            except Exception:
+                pass
             df = pd.read_sql_query(sql, conn, params=tuple(params))
     else:
         path = db_path or config.DB_PATH

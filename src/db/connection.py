@@ -135,6 +135,16 @@ class _PgConnection:
         import psycopg
         self._conn = psycopg.connect(dsn, autocommit=True)
         self._kind = "postgres"
+        # Supabase Free (Nano) の tmp 領域不足対策:
+        # 並列ワーカーを無効化し、work_mem を抑える
+        try:
+            cur = self._conn.cursor()
+            cur.execute("SET max_parallel_workers_per_gather = 0")
+            cur.execute("SET work_mem = '4MB'")
+            cur.execute("SET temp_buffers = '8MB'")
+            cur.close()
+        except Exception:
+            pass
 
     def execute(self, sql: str, params: Optional[tuple] = None):
         sql2 = _placeholder_pg(_rewrite_sqlite_specific(sql))
