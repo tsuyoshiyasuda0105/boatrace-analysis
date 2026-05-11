@@ -92,11 +92,12 @@ def load_base_dataframe(
         if "sslmode=" not in dsn:
             dsn += ("&" if "?" in dsn else "?") + "sslmode=require"
         with psycopg.connect(dsn, autocommit=True) as conn:
-            # Supabase Free tmp 領域節約
+            # Supabase Free tmp 領域節約 (work_mem 増でメモリ内処理)
             try:
                 cur = conn.cursor()
                 cur.execute("SET max_parallel_workers_per_gather = 0")
-                cur.execute("SET work_mem = '4MB'")
+                cur.execute("SET work_mem = '64MB'")
+                cur.execute("SET enable_mergejoin = off")
                 cur.close()
             except Exception:
                 pass
@@ -370,8 +371,19 @@ def build_inference_frame(
 
     - 直近 history_days 日のデータを履歴として読み込み (recent_form 計算用)
     - その後 target_date の行のみ返す (finishing_position が NaN でも残す)
+
+    Supabase Free 制約対策:
+      環境変数 BOATRACE_HISTORY_DAYS で上書き可能 (デフォルト 30 if Postgres)
     """
     from datetime import date as _date, timedelta as _td
+
+    # Postgres モードでは控えめな履歴日数 (Supabase Free tmp 制約)
+    use_postgres = bool(os.getenv("DATABASE_URL", "").strip())
+    env_hist = os.getenv("BOATRACE_HISTORY_DAYS", "").strip()
+    if env_hist:
+        history_days = int(env_hist)
+    elif use_postgres:
+        history_days = 30  # Postgres デフォルトは抑制
 
     target = _date.fromisoformat(target_date)
     date_from = (target - _td(days=history_days)).isoformat()

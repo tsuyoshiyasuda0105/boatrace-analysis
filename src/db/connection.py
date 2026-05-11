@@ -136,12 +136,13 @@ class _PgConnection:
         self._conn = psycopg.connect(dsn, autocommit=True)
         self._kind = "postgres"
         # Supabase Free (Nano) の tmp 領域不足対策:
-        # 並列ワーカーを無効化し、work_mem を抑える
+        # 並列ワーカー無効化 + work_mem 増 (メモリ内処理でtmp書出を減らす)
         try:
             cur = self._conn.cursor()
             cur.execute("SET max_parallel_workers_per_gather = 0")
-            cur.execute("SET work_mem = '4MB'")
-            cur.execute("SET temp_buffers = '8MB'")
+            cur.execute("SET work_mem = '64MB'")
+            cur.execute("SET enable_hashjoin = on")
+            cur.execute("SET enable_mergejoin = off")
             cur.close()
         except Exception:
             pass
