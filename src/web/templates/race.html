@@ -41,6 +41,29 @@
     </div>
   {% endif %}
 
+  {% if niche_signals %}
+    <div class="niche-signals">
+      {% for sig in niche_signals %}
+        <div class="niche-card niche-{{ sig.level }}">
+          <div class="niche-head">
+            <span class="niche-title">{{ sig.title }}</span>
+            <span class="niche-boat">
+              <span class="lane lane-{{ sig.boat_number }}">{{ sig.boat_number }}</span>
+              <span class="niche-meta">{{ sig.class_label }} / tilt {% if sig.tilt > 0 %}+{% endif %}{{ '%.1f' | format(sig.tilt) }}</span>
+            </span>
+          </div>
+          <div class="niche-body">
+            <div class="niche-desc">{{ sig.desc }}</div>
+            <div class="niche-recommend"><b>推奨:</b> {{ sig.recommend }}</div>
+            {% if sig.warning %}
+              <div class="niche-warning">⚠ {{ sig.warning }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {% if actual_result %}
     <div class="actual-result">
       <div class="ar-header">
