@@ -1395,6 +1395,79 @@ main h2 {
 }
 
 /* ============================================================
+   Market inefficiency signal (trifecta favorite payout based)
+   ============================================================ */
+.market-signal {
+  padding: 14px 18px;
+  margin-bottom: 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.market-ultra_confident {
+  background: linear-gradient(135deg, rgba(52, 232, 144, 0.16), rgba(0, 212, 255, 0.08));
+  border: 1px solid rgba(52, 232, 144, 0.55);
+  box-shadow: 0 0 22px rgba(52, 232, 144, 0.22);
+}
+.market-confident {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.18), rgba(255, 100, 200, 0.10));
+  border: 2px solid rgba(255, 215, 0, 0.6);
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.3);
+  animation: market-shine 3s ease-in-out infinite;
+}
+@keyframes market-shine {
+  0%, 100% { box-shadow: 0 0 30px rgba(255, 215, 0, 0.3); }
+  50% { box-shadow: 0 0 45px rgba(255, 235, 100, 0.5); }
+}
+.market-moderate {
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.10), rgba(120, 60, 255, 0.06));
+  border: 1px solid rgba(0, 212, 255, 0.35);
+}
+.market-predicted_confident {
+  background: linear-gradient(135deg, rgba(120, 200, 255, 0.10), rgba(180, 100, 255, 0.06));
+  border: 1px dashed rgba(120, 200, 255, 0.5);
+}
+.market-predicted_moderate {
+  background: rgba(150, 180, 220, 0.06);
+  border: 1px dashed rgba(150, 180, 220, 0.4);
+}
+.market-split {
+  background: rgba(180, 180, 180, 0.04);
+  border: 1px solid rgba(180, 180, 180, 0.15);
+}
+.market-wild, .market-chaos {
+  background: rgba(255, 100, 100, 0.05);
+  border: 1px solid rgba(255, 100, 100, 0.25);
+}
+.ms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.ms-title {
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+.ms-roi-positive {
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  color: var(--good);
+  font-size: 14px;
+}
+.ms-roi-negative {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.ms-msg {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ============================================================
    Niche signals (verified high-EV patterns)
    ============================================================ */
 .niche-signals {

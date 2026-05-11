@@ -110,6 +110,105 @@ _LOSING_VENUES = {2: "戸田", 7: "蒲郡", 10: "三国", 21: "芦屋"}
 _QUESTIONABLE_VENUES = {4: "平和島", 8: "常滑", 19: "下関", 24: "大村"}
 
 
+def _detect_market_inefficiency(race_id: str, preds: list[dict]) -> Optional[dict]:
+    """
+    「市場非効率レース」検出。
+    検証結果:
+      - 三連単1番人気 500-1000円帯 + 1号艇単勝 → ROI +29.56% (P>0=100%)
+      - 三連単1番人気 <500円帯 → ROI +21.83%
+      - 三連単1番人気 1000-2000円帯 → ROI +19.86%
+
+    Returns:
+      {
+        "favorite_trifecta_payout": int or None,
+        "tier": "ultra_confident" | "confident" | "moderate" | "split" | "wild" | None,
+        "expected_roi": float,
+        "title": str,
+        "msg": str,
+      } or None
+    """
+    # 三連単の最小払戻 = 一番人気の払戻
+    with db_connect() as conn:
+        cur = conn.execute(
+            "SELECT MIN(payout) FROM race_payouts WHERE race_id = ? AND bet_type = 'trifecta'",
+            (race_id,),
+        )
+        row = cur.fetchone()
+    min_payout = row[0] if row and row[0] else None
+
+    # 事後判定 (race_payouts は確定後しか入らない)
+    if min_payout is not None:
+        if min_payout < 500:
+            return {
+                "favorite_trifecta_payout": min_payout,
+                "tier": "ultra_confident",
+                "expected_roi": 0.2183,
+                "title": "💎 超本命レース",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (<500円帯)。検証 ROI +21.83% (CI +19.5%~+24.3%, P>0=100%)",
+            }
+        if min_payout < 1000:
+            return {
+                "favorite_trifecta_payout": min_payout,
+                "tier": "confident",
+                "expected_roi": 0.2956,
+                "title": "💎💎 完全 +EV レース",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (500-1000円帯)。検証 ROI +29.56% (CI +28.0%~+31.1%, P>0=100%)",
+            }
+        if min_payout < 2000:
+            return {
+                "favorite_trifecta_payout": min_payout,
+                "tier": "moderate",
+                "expected_roi": 0.1986,
+                "title": "💎 やや本命 +EV",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (1k-2k帯)。検証 ROI +19.86%",
+            }
+        if min_payout < 5000:
+            return {
+                "favorite_trifecta_payout": min_payout,
+                "tier": "split",
+                "expected_roi": -0.0721,
+                "title": "拮抗レース",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (拮抗)。ROI -7.21% (買い控え推奨)",
+            }
+        if min_payout < 10000:
+            return {
+                "favorite_trifecta_payout": min_payout,
+                "tier": "wild",
+                "expected_roi": -0.4079,
+                "title": "荒れ寄り",
+                "msg": f"三連単1番人気 ¥{min_payout:,}。ROI -40.79% (1号艇単勝非推奨)",
+            }
+        return {
+            "favorite_trifecta_payout": min_payout,
+            "tier": "chaos",
+            "expected_roi": -0.7314,
+            "title": "波乱レース",
+            "msg": f"三連単1番人気 ¥{min_payout:,} (波乱)。ROI -73.14% (本命非推奨)",
+        }
+
+    # 事前判定 (final odds がない場合、モデル予測から推定)
+    # preds[0] が 1号艇でかつ prob_first が高ければ「超本命系」と推定
+    if preds and preds[0].get("boat_number") == 1:
+        p1 = preds[0].get("prob_first") or 0
+        if p1 >= 0.80:
+            return {
+                "favorite_trifecta_payout": None,
+                "tier": "predicted_confident",
+                "expected_roi": 0.25,
+                "title": "💎 (予測) 完全 +EV ゾーン候補",
+                "msg": f"モデル予測 1号艇1着率 {p1*100:.1f}%。三連単1番人気が500-2000円帯になる可能性大。+EV ゾーン候補。実際の final odds で確定を",
+            }
+        if p1 >= 0.70:
+            return {
+                "favorite_trifecta_payout": None,
+                "tier": "predicted_moderate",
+                "expected_roi": 0.15,
+                "title": "🎯 (予測) +EV 候補",
+                "msg": f"モデル予測 1号艇1着率 {p1*100:.1f}%。1k-2k帯+EV ゾーン候補",
+            }
+    return None
+
+
 def _detect_niche_signals(preds: list[dict], conditions: dict) -> list[dict]:
     """
     検証済の「ニッチ大穴シグナル」を検出する。
@@ -473,6 +572,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # ニッチ大穴シグナル検出
         niche_signals = _detect_niche_signals(preds, conditions)
 
+        # 市場非効率レース検出 (三連単1番人気の払戻に基づく +EV ゾーン)
+        market_signal = _detect_market_inefficiency(race_id, preds)
+
         # 三連単予測
         tri_pw = []
         tri_uni = []
@@ -501,6 +603,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             sweet_spot=sweet_spot,
             actual_result=actual_result,
             niche_signals=niche_signals,
+            market_signal=market_signal,
             error=None,
         )
 

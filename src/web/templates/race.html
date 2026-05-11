@@ -41,6 +41,20 @@
     </div>
   {% endif %}
 
+  {% if market_signal %}
+    <div class="market-signal market-{{ market_signal.tier }}">
+      <div class="ms-head">
+        <span class="ms-title">{{ market_signal.title }}</span>
+        {% if market_signal.expected_roi > 0 %}
+          <span class="ms-roi-positive">想定 ROI {{ '%+.1f' | format(market_signal.expected_roi * 100) }}%</span>
+        {% else %}
+          <span class="ms-roi-negative">想定 ROI {{ '%+.1f' | format(market_signal.expected_roi * 100) }}%</span>
+        {% endif %}
+      </div>
+      <div class="ms-msg">{{ market_signal.msg }}</div>
+    </div>
+  {% endif %}
+
   {% if niche_signals %}
     <div class="niche-signals">
       {% for sig in niche_signals %}
