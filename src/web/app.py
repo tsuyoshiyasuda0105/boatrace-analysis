@@ -585,6 +585,39 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
+
+    # グローバルエラーハンドラ (500 を親切メッセージへ)
+    @app.errorhandler(500)
+    def handle_500(err):
+        logger.exception("500 error: %s", err)
+        err_str = str(err.original_exception) if hasattr(err, "original_exception") and err.original_exception else str(err)
+        if "No space left on device" in err_str:
+            return render_template(
+                "race.html",
+                info={"race_id": "", "race_date": "", "stadium_number": 0,
+                      "race_number": 0, "stadium_name": "Error"},
+                error="サーバー容量制限のためご利用いただけません (Supabase Free 制約)。少し時間をおいてから再度お試しください。",
+                preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
+                conditions={},
+            ), 500
+        if "connection" in err_str.lower() or "timeout" in err_str.lower():
+            return render_template(
+                "race.html",
+                info={"race_id": "", "race_date": "", "stadium_number": 0,
+                      "race_number": 0, "stadium_name": "Error"},
+                error="DB 接続エラー。30秒後に再度アクセスしてください。",
+                preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
+                conditions={},
+            ), 500
+        return render_template(
+            "race.html",
+            info={"race_id": "", "race_date": "", "stadium_number": 0,
+                  "race_number": 0, "stadium_name": "Error"},
+            error=f"サーバーエラー: {err_str[:200]}",
+            preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
+            conditions={},
+        ), 500
+
     # テンプレートから is_member() / is_pro() を呼べるように
     app.jinja_env.globals["is_member"] = is_member
     app.jinja_env.globals["is_pro"] = is_pro
@@ -654,11 +687,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             preds = _race_predictions(predictor, race_id)
         except Exception as e:
             logger.exception("prediction failed: %s", race_id)
+            # エラーをユーザー向けメッセージに変換
+            err_str = str(e)
+            if "No space left on device" in err_str:
+                user_msg = "サーバー容量制限により予測計算ができません。管理者にお知らせください。(Supabase Free tmp 制限)"
+            elif "no such table" in err_str or "relation" in err_str and "does not exist" in err_str:
+                user_msg = "予測データが未投入のためご利用いただけません。管理者がデータ投入を完了するまでお待ちください。"
+            elif "artifact not found" in err_str:
+                user_msg = "モデル未配置のため予測できません。"
+            elif "timeout" in err_str.lower() or "connection" in err_str.lower():
+                user_msg = "データベース接続エラー。少し時間をおいてから再度アクセスしてください。"
+            else:
+                user_msg = f"予測エラー: {err_str[:200]}"
             return render_template(
                 "race.html",
                 info=info,
                 preds=[],
-                error=str(e),
+                error=user_msg,
                 racer_names={},
                 trifecta_pw=[],
                 trifecta_unified=[],
