@@ -2,41 +2,61 @@ $TaskName = "BoatraceOddsScheduler"
 $BatPath = "C:\boat_project\boatrace-analysis\scripts\run_odds_scheduler.bat"
 
 Write-Host "============================================================"
-Write-Host "Boatrace Odds Scheduler Setup"
+Write-Host "Boatrace Odds Scheduler Setup (using schtasks.exe)"
 Write-Host "============================================================"
 
-$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Host "Removing existing task '$TaskName'..."
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+# Admin check
+$currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$isAdmin = $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Warning "Not running as Administrator. Task registration may fail."
+    Write-Host "Please re-run PowerShell as Administrator and try again."
 }
 
+# Verify bat exists
 if (-not (Test-Path $BatPath)) {
     Write-Error "Batch file not found: $BatPath"
     exit 1
 }
 
-$action = New-ScheduledTaskAction -Execute $BatPath -WorkingDirectory "C:\boat_project\boatrace-analysis"
+# Remove existing task if any
+schtasks /Query /TN $TaskName 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "Removing existing task '$TaskName'..."
+    schtasks /Delete /TN $TaskName /F | Out-Null
+}
 
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
-$repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
-$trigger.Repetition = $repetition
+# Register new task: run every minute, indefinitely
+# /SC MINUTE /MO 1  = every 1 minute
+# /ST 00:00         = start time
+# /DU 9999:00       = duration (effectively infinite)
+# /RU SYSTEM        = run as SYSTEM (no logon required)
+# /RL HIGHEST       = highest privileges
 
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -RestartCount 0 -MultipleInstances IgnoreNew
+Write-Host "Registering task..."
+$result = & schtasks /Create /TN $TaskName /TR "`"$BatPath`"" /SC MINUTE /MO 1 /RL HIGHEST /F 2>&1
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "Boatrace odds T-15/T-5 snapshot collector" -User $env:USERNAME -RunLevel Highest
+Write-Host $result
 
-Write-Host ""
-Write-Host "============================================================"
-Write-Host "[OK] Task '$TaskName' registered."
-Write-Host "  Trigger: every 1 minute (next 10 years)"
-Write-Host "  Action: $BatPath"
-Write-Host "  Log:    C:\boat_project\boatrace-analysis\logs\odds_scheduler.log"
-Write-Host ""
-Write-Host "Check command:"
-Write-Host "  Get-ScheduledTask -TaskName $TaskName"
-Write-Host "  Get-ScheduledTaskInfo -TaskName $TaskName"
-Write-Host ""
-Write-Host "Remove command:"
-Write-Host "  Unregister-ScheduledTask -TaskName $TaskName -Confirm:`$false"
-Write-Host "============================================================"
+if ($LASTEXITCODE -eq 0) {
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "[OK] Task '$TaskName' registered."
+    Write-Host "  Trigger: every 1 minute"
+    Write-Host "  Action:  $BatPath"
+    Write-Host "  Log:     C:\boat_project\boatrace-analysis\logs\odds_scheduler.log"
+    Write-Host ""
+    Write-Host "Verify:"
+    Write-Host "  schtasks /Query /TN $TaskName"
+    Write-Host ""
+    Write-Host "View log after 5 minutes:"
+    Write-Host "  Get-Content C:\boat_project\boatrace-analysis\logs\odds_scheduler.log -Tail 20"
+    Write-Host ""
+    Write-Host "Remove:"
+    Write-Host "  schtasks /Delete /TN $TaskName /F"
+    Write-Host "============================================================"
+} else {
+    Write-Error "Task registration failed. Exit code: $LASTEXITCODE"
+    Write-Host "Please run this script as Administrator."
+    exit 1
+}
