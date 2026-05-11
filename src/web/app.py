@@ -757,6 +757,80 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return jsonify({"error": str(e)}), 500
         return jsonify({"info": info, "predictions": preds})
 
+    @app.route("/api/market-signals")
+    def market_signals_for_date():
+        """指定日のレース一覧で「市場非効率ベース +EV」シグナルを返す。
+        判定優先度:
+          1. final オッズ (確定後)
+          2. T-5min オッズ (締切5分前)
+          3. T-15min オッズ (締切15分前)
+        各レースのトリフェクタ1番人気の払戻を見て +EV/-EV ゾーンを判定
+        """
+        target_date = request.args.get("date") or date.today().isoformat()
+
+        results: dict[str, dict] = {}
+        with db_connect() as conn:
+            # final 払戻 (確定済レース)
+            cur = conn.execute("""
+                SELECT r.race_id, MIN(pp.payout) as min_payout, 'final' as src
+                FROM races r
+                JOIN race_payouts pp ON r.race_id = pp.race_id AND pp.bet_type = 'trifecta'
+                WHERE r.race_date = ?
+                GROUP BY r.race_id
+            """, (target_date,))
+            for rid, mp, src in cur.fetchall():
+                if mp:
+                    results[rid] = {"min_payout": mp, "source": src}
+
+            # T-5min / T-15min オッズ (未確定レース)
+            for snap_label in ["T-5min", "T-15min"]:
+                cur = conn.execute("""
+                    SELECT r.race_id, MIN(o.odds) * 100 as min_payout
+                    FROM races r
+                    JOIN odds_trifecta o ON r.race_id = o.race_id
+                    WHERE r.race_date = ? AND o.snapshot_label = ?
+                    GROUP BY r.race_id
+                """, (target_date, snap_label))
+                for rid, mp in cur.fetchall():
+                    if mp and rid not in results:
+                        results[rid] = {"min_payout": int(mp), "source": snap_label}
+
+        signals = []
+        for rid, data in results.items():
+            mp = data["min_payout"]
+            src = data["source"]
+            tier = None
+            expected_roi = None
+            title = None
+            if mp < 500:
+                tier, expected_roi, title = "ultra_confident", 0.1845, "💎 超本命"
+            elif mp < 1000:
+                tier, expected_roi, title = "confident", 0.2741, "💎💎 完全+EV"
+            elif mp < 2000:
+                tier, expected_roi, title = "moderate", 0.1792, "💎 やや本命"
+            elif mp < 5000:
+                tier, expected_roi, title = "split", -0.0859, "拮抗"
+            elif mp < 10000:
+                tier, expected_roi, title = "wild", -0.4310, "荒れ寄り"
+            else:
+                tier, expected_roi, title = "chaos", -0.7354, "波乱"
+            signals.append({
+                "race_id": rid,
+                "tier": tier,
+                "min_payout": mp,
+                "source": src,
+                "expected_roi": expected_roi,
+                "title": title,
+                "is_positive_ev": expected_roi > 0,
+            })
+
+        return jsonify({
+            "date": target_date,
+            "n_races": len(signals),
+            "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
+            "signals": {s["race_id"]: s for s in signals},
+        })
+
     # =====================================================
     # Pro プラン: T-15min 期待値モニター
     # =====================================================

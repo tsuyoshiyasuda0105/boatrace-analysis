@@ -132,6 +132,33 @@
         if (reloadBtn) reloadBtn.addEventListener('click', loadEvMarks);
         if (snap) snap.addEventListener('change', loadEvMarks);
         if (thrSel) thrSel.addEventListener('change', loadEvMarks);
+
+        // 市場非効率ベース +EV シグナル (誰でも閲覧可)
+        async function loadMarketSignals() {
+          try {
+            const r = await fetch(`/api/market-signals?date=${targetDate}`);
+            if (!r.ok) return;
+            const data = await r.json();
+            const signals = data.signals || {};
+            for (const [raceId, sig] of Object.entries(signals)) {
+              const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
+              if (!item) continue;
+              // 既存の市場シグナルバッジを削除
+              const old = item.querySelector('.market-badge');
+              if (old) old.remove();
+              if (!sig.is_positive_ev) continue;  // +EV のみ表示
+              const badge = document.createElement('span');
+              badge.className = `market-badge market-${sig.tier}`;
+              badge.title = `${sig.title} (¥${sig.min_payout.toLocaleString()}本命, 想定ROI ${(sig.expected_roi*100).toFixed(1)}%, ${sig.source})`;
+              const roiStr = ((sig.expected_roi)*100).toFixed(0);
+              badge.textContent = `💎 +${roiStr}%`;
+              item.appendChild(badge);
+            }
+          } catch (e) {
+            console.warn('market-signals failed:', e);
+          }
+        }
+        loadMarketSignals();
       })();
     </script>
   {% endif %}

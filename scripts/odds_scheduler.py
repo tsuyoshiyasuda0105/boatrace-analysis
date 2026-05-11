@@ -122,13 +122,14 @@ def find_due_snapshots(now_jst: datetime, lookahead_min: int = 30) -> list[tuple
 
 
 def run_one_pass(verbose: bool = False) -> dict:
-    """1回スキャン → 該当レースに対しスナップショット取得"""
+    """1回スキャン → 該当レースに対しスナップショット取得 + ペーパートレード自動記録"""
     now_jst = datetime.now(tz=JST)
     due = find_due_snapshots(now_jst)
     if verbose:
         print(f"[{now_jst.strftime('%H:%M:%S')}] due snapshots: {len(due)}")
 
-    summary = {"now": now_jst.isoformat(), "n_due": len(due), "n_done": 0, "items": []}
+    summary = {"now": now_jst.isoformat(), "n_due": len(due), "n_done": 0,
+               "n_paper_signals": 0, "items": []}
     for race_id, label in due:
         try:
             r = collect_one_race(race_id, snapshot_label=label)
@@ -137,10 +138,108 @@ def run_one_pass(verbose: bool = False) -> dict:
                 summary["n_done"] += 1
             if verbose:
                 print(f"  {race_id} [{label}] inserted={r.get('odds_inserted', 0)}")
+
+            # T-5min スナップショット取得直後にペーパートレード記録
+            if label == "T-5min" and r.get("odds_inserted", 0) > 0:
+                try:
+                    n_sig = _auto_paper_trade(race_id, verbose=verbose)
+                    summary["n_paper_signals"] += n_sig
+                except Exception as e:
+                    if verbose:
+                        print(f"    paper_trade record FAILED: {e}")
         except Exception as e:
             if verbose:
                 print(f"  {race_id} [{label}] ERROR: {e}")
     return summary
+
+
+def _auto_paper_trade(race_id: str, verbose: bool = False) -> int:
+    """T-5min オッズ確定時にペーパートレード記録"""
+    from datetime import datetime as _dt
+    with db_connect() as conn:
+        # paper_trades テーブル存在確認 (なければ作る)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                race_id TEXT NOT NULL,
+                race_date TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                bet_type TEXT NOT NULL,
+                combination TEXT NOT NULL,
+                bet_amount INTEGER NOT NULL DEFAULT 100,
+                recorded_at TEXT NOT NULL,
+                t5_favorite_payout INTEGER,
+                t5_judgment TEXT,
+                settled INTEGER NOT NULL DEFAULT 0,
+                payout INTEGER,
+                hit INTEGER,
+                roi REAL,
+                UNIQUE(race_id, strategy, bet_type, combination)
+            );
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_date ON paper_trades(race_date);
+        """)
+
+        # T-5min での最低オッズ取得
+        cur = conn.execute(
+            "SELECT MIN(odds) FROM odds_trifecta WHERE race_id = ? AND snapshot_label = 'T-5min'",
+            (race_id,),
+        )
+        row = cur.fetchone()
+        t5_min_odds = row[0] if row else None
+        if t5_min_odds is None:
+            return 0
+
+        t5_payout = int(t5_min_odds * 100)
+        if t5_payout >= 2000:  # +EV ゾーン外
+            return 0
+
+        # レース情報取得
+        cur = conn.execute(
+            """SELECT r.race_date, r.race_grade_number, e.class_number
+               FROM races r
+               JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+               WHERE r.race_id = ?""",
+            (race_id,),
+        )
+        info_row = cur.fetchone()
+        if not info_row:
+            return 0
+        race_date, grade, cls1 = info_row
+
+        now_iso = _dt.now().isoformat()
+        n_recorded = 0
+
+        # 戦略パターン
+        strategies = []
+        if 500 <= t5_payout < 1000:
+            strategies.extend([
+                ("win_1_500_1k", "win", "1", "本命500-1k → 1号艇単勝 ROI +27.41%"),
+                ("tri_123_500_1k", "trifecta", "1-2-3", "本命500-1k → 3連単1-2-3 ROI +44.23%"),
+                ("exa_12_500_1k", "exacta", "1-2", "本命500-1k → 2連単1-2 ROI +27.48%"),
+            ])
+            if grade == 5 and cls1 == 3:
+                strategies.append(("ippan_b1_500_1k", "win", "1", "一般戦+B1+本命 → 1号艇 ROI +35.39%"))
+            if grade in (1, 2) and cls1 == 1:
+                strategies.append(("sgg1_a1_500_1k", "win", "1", "SG/G1+A1+本命 → 1号艇 ROI +27.03%"))
+        elif t5_payout < 500:
+            strategies.append(("win_1_super_fav", "win", "1", "超本命<500 → 1号艇 ROI +18.45%"))
+        elif 1000 <= t5_payout < 2000:
+            strategies.append(("win_1_1k_2k", "win", "1", "やや本命1k-2k → 1号艇 ROI +17.92%"))
+
+        for strategy, bet_type, combo, judgment in strategies:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO paper_trades
+                   (race_id, race_date, strategy, bet_type, combination, recorded_at,
+                    t5_favorite_payout, t5_judgment)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (race_id, race_date, strategy, bet_type, combo, now_iso, t5_payout, judgment),
+            )
+            if cur.rowcount > 0:
+                n_recorded += 1
+                if verbose:
+                    print(f"    paper: {strategy} → {bet_type} {combo}")
+        conn.commit()
+        return n_recorded
 
 
 def daemon_loop(interval_sec: int = 60, verbose: bool = False) -> None:
