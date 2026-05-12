@@ -238,3 +238,36 @@ CREATE TABLE IF NOT EXISTS value_bets (
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
 CREATE INDEX IF NOT EXISTS idx_value_bets_ev ON value_bets(expected_value DESC);
+
+-- ============================================================
+-- メール通知機能 (アラート購読者)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS alert_subscribers (
+  -- メールアドレス購読者
+  -- セキュリティ: 平文メアドは保存しない、AES-GCM 暗号化保存
+  email_hash         TEXT PRIMARY KEY,   -- SHA-256 ハッシュ (重複登録防止)
+  email_encrypted    TEXT NOT NULL,      -- AES-GCM 暗号化されたメアド (送信時のみ複号)
+  alert_types        TEXT NOT NULL DEFAULT '["L4_SG","L4_G1","L4_G2"]',  -- JSON 配列
+  min_recovery_rate  REAL NOT NULL DEFAULT 150.0,  -- 通知する最小回収率閾値 (%)
+  is_active          INTEGER NOT NULL DEFAULT 1,
+  is_verified        INTEGER NOT NULL DEFAULT 0,    -- 確認メール認証済か
+  verification_token TEXT,                          -- 確認メール用 (有効期限付き)
+  verification_expires_at TEXT,
+  unsubscribe_token  TEXT,                          -- ワンクリック解除用
+  created_at         TEXT NOT NULL,
+  last_notified_at   TEXT,
+  notify_count       INTEGER NOT NULL DEFAULT 0,
+  ip_at_signup       TEXT                            -- 不正登録対策 (ハッシュ化)
+);
+CREATE INDEX IF NOT EXISTS idx_alert_sub_active ON alert_subscribers(is_active, is_verified);
+
+CREATE TABLE IF NOT EXISTS alert_sent (
+  -- 送信履歴 (重複送信防止)
+  email_hash  TEXT NOT NULL,
+  race_id     TEXT NOT NULL,
+  alert_type  TEXT NOT NULL,
+  sent_at     TEXT NOT NULL,
+  PRIMARY KEY (email_hash, race_id, alert_type)
+);
+CREATE INDEX IF NOT EXISTS idx_alert_sent_at ON alert_sent(sent_at);

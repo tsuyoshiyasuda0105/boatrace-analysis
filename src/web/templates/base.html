@@ -16,6 +16,7 @@
         <button type="submit">表示</button>
       </form>
       <div class="auth-status">
+        <a href="/alerts/subscribe" class="auth-link" title="L4 シグナルをメール通知">📬 通知登録</a>
         {% if is_pro() %}
           <a href="{{ url_for('pro_ev') }}" class="auth-badge pro">⬢ PRO EV</a>
           <a href="{{ url_for('logout') }}" class="auth-link">ログアウト</a>

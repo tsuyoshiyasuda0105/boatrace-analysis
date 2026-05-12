@@ -872,6 +872,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
+    # メール購読 UI
+    try:
+        from src.web.subscriber_views import register_subscriber_routes
+        register_subscriber_routes(app)
+    except Exception as e:
+        logger.warning("subscriber routes not registered: %s", e)
 
     # グローバルエラーハンドラ (500 を親切メッセージへ)
     @app.errorhandler(500)
