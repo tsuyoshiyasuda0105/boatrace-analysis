@@ -1094,33 +1094,47 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     raise
 
         # === 朝判定用: 当日全レースの基本情報 + predictions を取得 ===
-        # results に含まれないレース (= まだオッズ未確定 = 朝) は予測ベース判定する
-        all_race_info: dict[str, dict] = {}  # 当日の全レース
-        with db_connect() as conn:
-            cur = conn.execute("""
-                SELECT r.race_id, r.stadium_number, r.race_grade_number,
-                       e.class_number
-                FROM races r
-                LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-                WHERE r.race_date = ?
-            """, (target_date,))
-            for rid, stadium, grade, cls in cur.fetchall():
-                all_race_info[rid] = {"stadium": stadium, "grade": grade, "class": cls}
+        # 例外は全て吸収し、本機能が使えなくても /api/market-signals は 200 を返す
+        all_race_info: dict[str, dict] = {}
+        morning_pred: dict[str, float] = {}
+        try:
+            with db_connect() as conn:
+                try:
+                    cur = conn.execute("""
+                        SELECT r.race_id, r.stadium_number, r.race_grade_number,
+                               e.class_number
+                        FROM races r
+                        LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                        WHERE r.race_date = ?
+                    """, (target_date,))
+                    for rid, stadium, grade, cls in cur.fetchall():
+                        all_race_info[rid] = {"stadium": stadium, "grade": grade, "class": cls}
+                except Exception as e:
+                    logger.warning("all_race_info query failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
 
-            # 朝判定用: predictions テーブルから 1号艇の prob_first を取得
-            morning_pred: dict[str, float] = {}
-            try:
-                cur = conn.execute("""
-                    SELECT p.race_id, p.prob_first
-                    FROM predictions p
-                    JOIN races r ON p.race_id = r.race_id
-                    WHERE r.race_date = ? AND p.boat_number = 1
-                """, (target_date,))
-                for rid, p1 in cur.fetchall():
-                    if p1 is not None:
-                        morning_pred[rid] = p1
-            except Exception:
-                pass  # predictions テーブル未マイグレでも縮退
+                # predictions テーブルから 1号艇の prob_first を取得
+                try:
+                    cur = conn.execute("""
+                        SELECT p.race_id, p.prob_first
+                        FROM predictions p
+                        JOIN races r ON p.race_id = r.race_id
+                        WHERE r.race_date = ? AND p.boat_number = 1
+                    """, (target_date,))
+                    for rid, p1 in cur.fetchall():
+                        if p1 is not None:
+                            morning_pred[rid] = p1
+                except Exception as e:
+                    logger.warning("morning_pred query failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.exception("morning L4 setup failed: %s", e)
 
         EXCLUDE_B = set(_LOSING_VENUES.keys()) | set(_QUESTIONABLE_VENUES.keys())
 
@@ -1189,7 +1203,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         signals = []
         # 当日全レースを走査 (確定済 → L4、未確定 → 朝L4候補)
-        for rid, info in all_race_info.items():
+        # all_race_info が空 (DB エラー等) なら results のレースだけ処理
+        race_iterable = all_race_info if all_race_info else {rid: {} for rid in results}
+        for rid, info in race_iterable.items():
             stadium = info.get("stadium")
             grade = info.get("grade")
             cls = info.get("class")
