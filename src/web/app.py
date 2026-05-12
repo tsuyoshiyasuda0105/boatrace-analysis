@@ -11,6 +11,7 @@ Flask Web UI: 予測表示
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import date
 from typing import Optional, Any
@@ -163,7 +164,18 @@ def _race_predictions(predictor: Predictor, race_id: str) -> list[dict]:
     if cached:
         return cached
 
-    # キャッシュが無ければライブ計算
+    # Render 等の本番環境ではライブ計算を行わない (OOM/timeout 防止)。
+    # キャッシュが無いレースは predictions テーブルへ事前投入が必要。
+    # ローカル開発 (DATABASE_URL 未設定 or RENDER 未設定) ではフォールバック計算する。
+    if os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT"):
+        logger.warning(
+            "live predict skipped on production for race_id=%s "
+            "(populate predictions table via scripts/cache_predictions.py)",
+            race_id,
+        )
+        return []
+
+    # キャッシュが無ければライブ計算 (ローカル開発のみ)
     target_date = race_id[:8]
     target_date_iso = f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:8]}"
     df = predictor.predict_date(target_date_iso)
@@ -631,10 +643,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     predictor = Predictor(version=version)
 
     # 起動時にモデルを先読み (失敗してもアプリは動かす)
-    try:
-        predictor.load()
-    except FileNotFoundError as e:
-        logger.warning("model not loaded: %s. UI will show error until model is trained.", e)
+    # Render 等の本番環境ではキャッシュ専用モードのためモデルロードを skip
+    # → LightGBM/cascade/per_winner で 200-300MB 節約 (Render Free 512MB 対策)
+    if os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT"):
+        logger.info(
+            "production mode: skipping predictor.load() to conserve memory. "
+            "predictions table must be populated via scripts/cache_predictions.py"
+        )
+    else:
+        try:
+            predictor.load()
+        except FileNotFoundError as e:
+            logger.warning("model not loaded: %s. UI will show error until model is trained.", e)
 
     @app.route("/healthz")
     def healthz():
@@ -743,21 +763,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 市場非効率レース検出 (三連単1番人気の払戻に基づく +EV ゾーン)
         market_signal = _detect_market_inefficiency(race_id, preds, info=info)
 
-        # 三連単予測
+        # 三連単予測 (本番 Render では heavy compute をスキップして OOM/timeout 防止)
         tri_pw = []
         tri_uni = []
-        try:
-            pw = predictor.predict_trifecta(target_date, race_id, mode="per_winner")
-            if pw:
-                tri_pw = pw[:10]  # top 10
-        except Exception as e:
-            logger.warning("per-winner trifecta failed for %s: %s", race_id, e)
-        try:
-            uni = predictor.predict_trifecta(target_date, race_id, mode="unified")
-            if uni:
-                tri_uni = uni[:10]
-        except Exception as e:
-            logger.warning("unified trifecta failed for %s: %s", race_id, e)
+        if not (os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT")):
+            try:
+                pw = predictor.predict_trifecta(target_date, race_id, mode="per_winner")
+                if pw:
+                    tri_pw = pw[:10]  # top 10
+            except Exception as e:
+                logger.warning("per-winner trifecta failed for %s: %s", race_id, e)
+            try:
+                uni = predictor.predict_trifecta(target_date, race_id, mode="unified")
+                if uni:
+                    tri_uni = uni[:10]
+            except Exception as e:
+                logger.warning("unified trifecta failed for %s: %s", race_id, e)
 
         return render_template(
             "race.html",
@@ -866,6 +887,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         info = _race_basic_info(race_id)
         if not info:
             return jsonify({"error": "race not found"}), 404
+        # 本番 Render では heavy compute 不可。ローカル用機能。
+        if os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT"):
+            return jsonify({
+                "error": "what-if simulation is unavailable on hosted env (memory limit). "
+                         "Use local dev environment.",
+            }), 503
         target_date = info["race_date"]
         overrides = (request.get_json(silent=True) or {}).get("overrides", {})
         try:
