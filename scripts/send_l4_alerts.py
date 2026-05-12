@@ -55,28 +55,118 @@ EXCLUDE_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
 
 
 def detect_l4_alerts(target_date: str) -> list[dict]:
-    """指定日の L4 該当レースを抽出"""
+    """指定日の L4 該当レースを抽出
+
+    優先順位:
+      1. T-5min オッズ (締切前 5 分のスナップショット) ← メール通知用
+      2. T-15min オッズ (締切前 15 分)
+      3. final 確定払戻 (レース後)
+
+    締切前のメール送信を成立させるため、odds_trifecta テーブルの
+    pre-race スナップショットを優先的に使う。
+    最低オッズ × 100 = 三連単本命払戻と等価。
+    """
     with db_connect() as conn:
-        # 3連単本命払戻が 500-1000 帯 + 1号艇 + B除外 + クラス情報
+        # 共通 SELECT 部分
+        base_query = """
+            SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
+                   r.race_grade_number,
+                   s.name AS stadium_name,
+                   e.class_number,
+                   pp.payout AS fav_payout,
+                   pp.src AS payout_src
+            FROM races r
+            JOIN stadiums s ON r.stadium_number = s.stadium_number
+            LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+            JOIN (
+              -- 1. T-5min を最優先 (締切前メール送信用)
+              SELECT race_id, MIN(odds)*100 AS payout, 'T-5min' AS src,
+                     1 AS priority
+              FROM odds_trifecta
+              WHERE snapshot_label = 'T-5min'
+              GROUP BY race_id
+              UNION ALL
+              -- 2. T-15min (T-5min がまだ無いレースに使う)
+              SELECT race_id, MIN(odds)*100 AS payout, 'T-15min' AS src,
+                     2 AS priority
+              FROM odds_trifecta
+              WHERE snapshot_label = 'T-15min'
+              GROUP BY race_id
+              UNION ALL
+              -- 3. 確定払戻 (レース後)
+              SELECT race_id, MIN(payout) AS payout, 'final' AS src,
+                     3 AS priority
+              FROM race_payouts
+              WHERE bet_type = 'trifecta'
+              GROUP BY race_id
+            ) all_payouts ON r.race_id = all_payouts.race_id
+            JOIN (
+              -- 各レースで最も優先度の高い (T-5min > T-15min > final) を選ぶ
+              SELECT race_id, MIN(priority) AS min_priority FROM (
+                SELECT race_id, 1 AS priority FROM odds_trifecta
+                  WHERE snapshot_label = 'T-5min'
+                UNION ALL
+                SELECT race_id, 2 AS priority FROM odds_trifecta
+                  WHERE snapshot_label = 'T-15min'
+                UNION ALL
+                SELECT race_id, 3 AS priority FROM race_payouts
+                  WHERE bet_type = 'trifecta'
+              ) GROUP BY race_id
+            ) best ON r.race_id = best.race_id
+                  AND all_payouts.race_id = best.race_id
+            JOIN (
+              -- 上記と整合させるため payout 行も priority 一致
+              SELECT race_id, payout, src,
+                CASE src WHEN 'T-5min' THEN 1 WHEN 'T-15min' THEN 2 ELSE 3 END AS priority
+              FROM (
+                SELECT race_id, MIN(odds)*100 AS payout, 'T-5min' AS src
+                  FROM odds_trifecta WHERE snapshot_label = 'T-5min' GROUP BY race_id
+                UNION ALL
+                SELECT race_id, MIN(odds)*100 AS payout, 'T-15min' AS src
+                  FROM odds_trifecta WHERE snapshot_label = 'T-15min' GROUP BY race_id
+                UNION ALL
+                SELECT race_id, MIN(payout) AS payout, 'final' AS src
+                  FROM race_payouts WHERE bet_type = 'trifecta' GROUP BY race_id
+              )
+            ) pp ON pp.race_id = r.race_id AND pp.priority = best.min_priority
+            WHERE r.race_date = ?
+            GROUP BY r.race_id
+        """
+        # シンプル版: T-5min > T-15min > final で COALESCE
         cur = conn.execute("""
             SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
                    r.race_grade_number,
                    s.name AS stadium_name,
                    e.class_number,
-                   pp.payout AS fav_payout
+                   COALESCE(t5.payout, t15.payout, final.payout) AS fav_payout,
+                   CASE
+                     WHEN t5.payout IS NOT NULL THEN 'T-5min'
+                     WHEN t15.payout IS NOT NULL THEN 'T-15min'
+                     ELSE 'final'
+                   END AS payout_src
             FROM races r
             JOIN stadiums s ON r.stadium_number = s.stadium_number
             LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-            JOIN (
+            LEFT JOIN (
+              SELECT race_id, MIN(odds)*100 AS payout FROM odds_trifecta
+              WHERE snapshot_label='T-5min' GROUP BY race_id
+            ) t5 ON r.race_id = t5.race_id
+            LEFT JOIN (
+              SELECT race_id, MIN(odds)*100 AS payout FROM odds_trifecta
+              WHERE snapshot_label='T-15min' GROUP BY race_id
+            ) t15 ON r.race_id = t15.race_id
+            LEFT JOIN (
               SELECT race_id, MIN(payout) AS payout FROM race_payouts
-              WHERE bet_type = 'trifecta' GROUP BY race_id
-            ) pp ON r.race_id = pp.race_id
+              WHERE bet_type='trifecta' GROUP BY race_id
+            ) final ON r.race_id = final.race_id
             WHERE r.race_date = ?
+              AND COALESCE(t5.payout, t15.payout, final.payout) IS NOT NULL
         """, (target_date,))
         rows = cur.fetchall()
 
     alerts = []
-    for (rid, stadium, rno, closed_at, grade, sname, cls, mp) in rows:
+    for row in rows:
+        rid, stadium, rno, closed_at, grade, sname, cls, mp, payout_src = row
         if not mp or stadium in EXCLUDE_VENUES:
             continue
         if cls != 1:  # A1 のみ (L4 の基本条件)
@@ -99,6 +189,11 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
         else:
             rule, alert_type = L4_RULES["L4_default"], "L4_default"
 
+        # final (確定後) のレースは「事後判定」なので通知しない
+        # T-5min / T-15min (締切前) のみ通知対象
+        if payout_src == "final":
+            continue
+
         alerts.append({
             "race_id": rid,
             "stadium_number": stadium,
@@ -109,6 +204,8 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
             "label": rule["label"],
             "recovery": rule["recovery"],
             "bet": rule["bet"],
+            "payout_src": payout_src,
+            "fav_payout": int(mp),
         })
     return alerts
 
