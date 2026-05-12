@@ -31,9 +31,12 @@ services:
       pip install --upgrade pip
       pip install -r requirements.txt
       pip install gunicorn
+    # --worker-class gthread --threads 4:
+    #   重い predict_date 処理中も /healthz を別スレッドで応答可能にする
+    #   (sync ワーカーだとブロックして 5 秒ヘルスチェック失敗→Render が再起動)
     # --max-requests: 200 リクエストごとにワーカー再起動 (メモリリーク防止)
     # --max-requests-jitter: 再起動タイミングを分散 (~150-250 で揺らぐ)
-    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT --timeout 120 --max-requests 200 --max-requests-jitter 50 'src.web.app:create_app()'
+    startCommand: gunicorn -w 1 --worker-class gthread --threads 4 -b 0.0.0.0:$PORT --timeout 120 --max-requests 200 --max-requests-jitter 50 'src.web.app:create_app()'
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
