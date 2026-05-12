@@ -38,9 +38,14 @@ _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_DEFAULT_TTL = 300  # 5分
 
 
-def cached(ttl: int = _CACHE_DEFAULT_TTL):
+def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
     """Flask view 用 TTL キャッシュデコレータ。
-    Args/kwargs と request.args をキーに使う。"""
+    Args:
+        ttl: 今日/未来のデータの TTL (秒)
+        past_ttl: 過去日付のデータの TTL (秒、デフォルト 1 時間)
+                  過去日は確定済みでデータが変わらないので長くキャッシュ可能。
+    キーは Args/kwargs と request.args。
+    """
     def decorator(fn):
         from functools import wraps
 
@@ -52,9 +57,18 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL):
                 qs = ""
             key = f"{fn.__name__}:{args}:{kwargs}:{qs}"
             now = time.time()
+            # 過去日リクエストは長期キャッシュ
+            effective_ttl = ttl
+            try:
+                if request:
+                    req_date = request.args.get("date", "")
+                    if req_date and req_date < date.today().isoformat():
+                        effective_ttl = past_ttl
+            except Exception:
+                pass
             if key in _CACHE:
                 ts, val = _CACHE[key]
-                if now - ts < ttl:
+                if now - ts < effective_ttl:
                     return val
             val = fn(*args, **kwargs)
             _CACHE[key] = (now, val)
@@ -716,6 +730,55 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.config["SECRET_KEY"] = config.WEB_SESSION_SECRET
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+
+    # ===== セキュリティ設定: Cookie 保護 =====
+    # 本番 (RENDER) では HTTPS 強制、開発時は HTTP 許可
+    is_production = bool(os.environ.get("RENDER"))
+    app.config["SESSION_COOKIE_SECURE"] = is_production       # HTTPS のみ送信
+    app.config["SESSION_COOKIE_HTTPONLY"] = True              # JS からアクセス不可
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"             # CSRF 緩和
+    app.config["SESSION_COOKIE_NAME"] = "boatrace_session"    # デフォルト名を変更
+    app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024         # POST body 1MB 上限
+
+    # WEB_SESSION_SECRET が本番でデフォルトのままだと警告
+    if is_production and config.WEB_SESSION_SECRET == "dev-only-do-not-use-in-prod":
+        logger.critical(
+            "SECURITY: WEB_SESSION_SECRET is using DEFAULT value in production. "
+            "Set BOATRACE_WEB_SECRET environment variable to a long random string."
+        )
+    if is_production:
+        for pw_name, pw_val, default in [
+            ("BOATRACE_MEMBER_PASSWORD", config.WEB_MEMBER_PASSWORD, "dev-member"),
+            ("BOATRACE_PRO_PASSWORD", config.WEB_PRO_PASSWORD, "dev-pro"),
+        ]:
+            if pw_val == default:
+                logger.critical(
+                    "SECURITY: %s is using DEFAULT value in production. "
+                    "Set this env var to a strong password (16+ chars).",
+                    pw_name,
+                )
+
+    # ===== セキュリティ HTTP ヘッダ =====
+    @app.after_request
+    def add_security_headers(response):
+        # XSS / clickjacking / sniffing 対策
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # 本番のみ HSTS (HTTPS 強制)
+        if is_production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # 簡易 CSP (テンプレ内 inline script を許可)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+        return response
+
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
 

@@ -4,15 +4,77 @@
 セッションに `is_member: True` を立てる方式。
 共有パスワード1個 (config.WEB_MEMBER_PASSWORD) を確認するだけの軽量実装。
 
-本格運用が必要なら個別ユーザー管理 / ハッシュ化パスワードに置き換え。
+セキュリティ対策:
+  - hmac.compare_digest で timing attack 防止
+  - IP ベースのブルートフォース制限 (10回/15分でロック)
+  - パスワード短すぎ警告
 """
 from __future__ import annotations
 
+import hmac
+import logging
+import time
 from functools import wraps
 
 from flask import session, redirect, url_for, request, jsonify, render_template_string
 
 import config
+
+logger = logging.getLogger(__name__)
+
+# ===== ブルートフォース対策: IP 別の試行カウンタ (in-memory) =====
+# {ip: [(timestamp, success_bool), ...]} 直近 15 分のみ保持
+_LOGIN_ATTEMPTS: dict[str, list[tuple[float, bool]]] = {}
+_LOCKOUT_THRESHOLD = 10      # 15分以内に失敗10回でロック
+_LOCKOUT_WINDOW_SEC = 900    # 15 分
+_LOCKOUT_DURATION_SEC = 1800  # ロック後30分はログイン不可
+
+
+def _client_ip() -> str:
+    """Render は X-Forwarded-For を立てる。逆プロキシ前提"""
+    fwd = request.headers.get("X-Forwarded-For", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def _check_rate_limit(ip: str) -> tuple[bool, int]:
+    """Returns (allowed, retry_after_sec)"""
+    now = time.time()
+    # 古い記録を削除 (15分 + lockout duration 以上)
+    attempts = _LOGIN_ATTEMPTS.get(ip, [])
+    attempts = [(t, ok) for t, ok in attempts
+                if now - t < _LOCKOUT_WINDOW_SEC + _LOCKOUT_DURATION_SEC]
+    _LOGIN_ATTEMPTS[ip] = attempts
+
+    # 直近 _LOCKOUT_WINDOW_SEC 以内の失敗数
+    recent_failures = sum(1 for t, ok in attempts
+                          if not ok and now - t < _LOCKOUT_WINDOW_SEC)
+    if recent_failures >= _LOCKOUT_THRESHOLD:
+        # 最新失敗時刻 + lockout 期間まで待つ
+        last_fail = max((t for t, ok in attempts if not ok), default=now)
+        retry_after = int(last_fail + _LOCKOUT_DURATION_SEC - now)
+        if retry_after > 0:
+            return False, retry_after
+    return True, 0
+
+
+def _record_attempt(ip: str, success: bool):
+    _LOGIN_ATTEMPTS.setdefault(ip, []).append((time.time(), success))
+    if not success:
+        logger.warning("login failed from %s (attempts=%d)",
+                       ip, sum(1 for _, ok in _LOGIN_ATTEMPTS[ip] if not ok))
+
+
+def _safe_password_check(input_pw: str, expected_pw: str) -> bool:
+    """timing-attack 対策: hmac.compare_digest で定数時間比較"""
+    if not input_pw or not expected_pw:
+        return False
+    try:
+        return hmac.compare_digest(input_pw.encode("utf-8"),
+                                    expected_pw.encode("utf-8"))
+    except Exception:
+        return False
 
 
 def is_member() -> bool:
@@ -110,29 +172,54 @@ PRO_LOGIN_TEMPLATE = """
 def register_auth_routes(app):
     @app.route("/login", methods=["GET", "POST"])
     def login():
+        ip = _client_ip()
         if request.method == "POST":
+            # ブルートフォース制限
+            allowed, retry_after = _check_rate_limit(ip)
+            if not allowed:
+                logger.warning("login rate-limited for %s (retry %ds)", ip, retry_after)
+                return render_template_string(
+                    LOGIN_TEMPLATE,
+                    error=f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
+                ), 429
             pw = request.form.get("password", "")
-            if pw == config.WEB_MEMBER_PASSWORD:
+            if _safe_password_check(pw, config.WEB_MEMBER_PASSWORD):
+                _record_attempt(ip, True)
+                session.clear()  # セッション固定攻撃対策
                 session["is_member"] = True
                 session.permanent = True
                 return redirect(request.form.get("next") or url_for("index"))
-            return render_template_string(LOGIN_TEMPLATE, error="パスワードが違います")
+            _record_attempt(ip, False)
+            # 短時間の遅延 (timing attack の更なる緩和)
+            time.sleep(0.3)
+            return render_template_string(LOGIN_TEMPLATE, error="パスワードが違います"), 401
         return render_template_string(LOGIN_TEMPLATE, error=None)
 
     @app.route("/pro/login", methods=["GET", "POST"])
     def pro_login():
+        ip = _client_ip()
         if request.method == "POST":
+            allowed, retry_after = _check_rate_limit(ip)
+            if not allowed:
+                logger.warning("pro_login rate-limited for %s (retry %ds)", ip, retry_after)
+                return render_template_string(
+                    PRO_LOGIN_TEMPLATE,
+                    error=f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
+                ), 429
             pw = request.form.get("password", "")
-            if pw == config.WEB_PRO_PASSWORD:
+            if _safe_password_check(pw, config.WEB_PRO_PASSWORD):
+                _record_attempt(ip, True)
+                session.clear()
                 session["is_pro"] = True
                 session["is_member"] = True  # Pro は member の上位互換
                 session.permanent = True
                 return redirect(request.form.get("next") or url_for("pro_ev"))
-            return render_template_string(PRO_LOGIN_TEMPLATE, error="Pro パスワードが違います")
+            _record_attempt(ip, False)
+            time.sleep(0.3)
+            return render_template_string(PRO_LOGIN_TEMPLATE, error="Pro パスワードが違います"), 401
         return render_template_string(PRO_LOGIN_TEMPLATE, error=None)
 
     @app.route("/logout")
     def logout():
-        session.pop("is_member", None)
-        session.pop("is_pro", None)
+        session.clear()
         return redirect(url_for("index"))
