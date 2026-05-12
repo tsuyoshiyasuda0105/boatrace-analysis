@@ -1593,6 +1593,44 @@ main h2 {
   border: 1px dashed rgba(100, 100, 200, 0.5);
 }
 
+/* ===== 朝L4候補 (確定前、予測ベース): 半透明 + dashed で「未確定」感 ===== */
+.l4-badge.l4-morning_SG,
+.l4-badge.l4-morning_G1,
+.l4-badge.l4-morning_G2,
+.l4-badge.l4-morning_general,
+.l4-badge.l4-morning_default,
+.l4-badge.l4-morning_a2 {
+  opacity: 0.85;
+  border-style: dashed;
+}
+.l4-badge.l4-morning_SG {
+  background: linear-gradient(135deg, rgba(255, 0, 110, 0.55), rgba(255, 190, 11, 0.55));
+  color: #fff;
+  border: 2px dashed #ffbe0b;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+}
+.l4-badge.l4-morning_G1 {
+  background: linear-gradient(135deg, rgba(255, 0, 110, 0.55), rgba(251, 86, 7, 0.55));
+  color: #fff;
+  border: 2px dashed #ff006e;
+}
+.l4-badge.l4-morning_G2 {
+  background: linear-gradient(135deg, rgba(251, 86, 7, 0.55), rgba(255, 190, 11, 0.55));
+  color: #fff;
+  border: 2px dashed #fb5607;
+}
+.l4-badge.l4-morning_general,
+.l4-badge.l4-morning_default {
+  background: rgba(52, 232, 144, 0.25);
+  color: #34e890;
+  border: 1px dashed rgba(52, 232, 144, 0.6);
+}
+.l4-badge.l4-morning_a2 {
+  background: rgba(100, 100, 200, 0.15);
+  color: #888;
+  border: 1px dashed rgba(100, 100, 200, 0.4);
+}
+
 @keyframes l4-pulse {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.06); }

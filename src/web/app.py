@@ -388,10 +388,62 @@ def _detect_market_inefficiency(
             result["extras"] = extras
         return result
 
-    # 事前判定 (final odds がない場合、モデル予測から推定)
-    # preds[0] が 1号艇でかつ prob_first が高ければ「超本命系」と推定
-    if preds and preds[0].get("boat_number") == 1:
-        p1 = preds[0].get("prob_first") or 0
+    # ===== 事前判定 (朝の段階、final odds が出る前のモデル予測ベース) =====
+    # 朝の出走表 + 予測のみで判定可能なシグナルを生成
+    boat1_pred = next((p for p in (preds or []) if p.get("boat_number") == 1), None)
+    if boat1_pred:
+        p1 = boat1_pred.get("prob_first") or 0
+        cls = boat1_pred.get("class_number")
+        stadium = info.get("stadium_number") if info else None
+        grade = info.get("race_grade_number") if info else None
+        b_excluded = stadium not in (_LOSING_VENUES.keys() | _QUESTIONABLE_VENUES.keys()) if stadium else False
+
+        # 【朝L4候補】 prob_first 0.65-0.85 (≒ 三連単本命500-2000円帯相当)
+        # + 1号艇A1 + B除外 → L4 戦略の有力候補
+        # データ検証: prob_first 0.65-0.85 帯のうち約 30-38% が実際に500-1000円帯に着地
+        if 0.65 <= p1 < 0.85 and cls == 1 and b_excluded:
+            morning_l4 = {
+                "tier": "morning_l4",
+                "expected_roi": 0.50,  # 期待値中央値 (G1なら高、一般戦なら低)
+                "title": "🌅 朝L4 候補",
+                "msg": (f"モデル予測 1号艇A1 1着率 {p1*100:.1f}% + B除外。"
+                        f"三連単本命が500-1000円帯になる確率 ~38%。"
+                        f"確定したら L4 戦略 (3連単1-2-3) を実行"),
+                "is_morning": True,
+                "favorite_trifecta_payout": None,
+            }
+            # グレード強化
+            if grade in (1, 2, 3):  # SG/G1/G2
+                grade_label = {1: "SG", 2: "G1", 3: "G2"}.get(grade)
+                morning_l4["title"] = f"🌅👑 朝L4★{grade_label} 強候補"
+                morning_l4["expected_roi"] = 1.5  # 過去実績 242-258%
+                morning_l4["msg"] = (
+                    f"{grade_label} + 1号艇A1 + B除外 + 予測 {p1*100:.1f}%。"
+                    f"L4 強化版 ({grade_label}×A1) は検証 回収率 242-258%。"
+                    f"確定オッズが500-1000円帯になれば 3連単1-2-3 を厚めに"
+                )
+            elif grade == 5:  # 一般戦
+                morning_l4["title"] = "🌅 朝L4 一般戦候補"
+                morning_l4["msg"] = (
+                    f"一般戦 + 1号艇A1 + B除外 + 予測 {p1*100:.1f}%。"
+                    f"L4 一般戦版 は検証 回収率 147.7% (CI 134-160%)。"
+                    f"確定後 500-1000円帯なら 3連単1-2-3 を実行"
+                )
+            return morning_l4
+
+        # 【朝L4 A2 派生】prob_first 0.55-0.75 + A2 + B除外 (やや弱め)
+        if 0.55 <= p1 < 0.75 and cls == 2 and b_excluded:
+            return {
+                "tier": "morning_l4_a2",
+                "expected_roi": 0.34,
+                "title": "🌅 朝L4 A2 派生候補",
+                "msg": (f"モデル予測 1号艇A2 1着率 {p1*100:.1f}% + B除外。"
+                        f"L4 A2派生 (検証 回収率 134%) の候補"),
+                "is_morning": True,
+                "favorite_trifecta_payout": None,
+            }
+
+        # 旧来の予測ベース判定 (A1/A2 ではないが 1号艇が強い)
         if p1 >= 0.80:
             return {
                 "favorite_trifecta_payout": None,
@@ -399,6 +451,7 @@ def _detect_market_inefficiency(
                 "expected_roi": 0.25,
                 "title": "💎 (予測) 完全 +EV ゾーン候補",
                 "msg": f"モデル予測 1号艇1着率 {p1*100:.1f}%。三連単1番人気が500-2000円帯になる可能性大。+EV ゾーン候補。実際の final odds で確定を",
+                "is_morning": True,
             }
         if p1 >= 0.70:
             return {
@@ -407,6 +460,7 @@ def _detect_market_inefficiency(
                 "expected_roi": 0.15,
                 "title": "🎯 (予測) +EV 候補",
                 "msg": f"モデル予測 1号艇1着率 {p1*100:.1f}%。1k-2k帯+EV ゾーン候補",
+                "is_morning": True,
             }
     return None
 
@@ -1039,89 +1093,159 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 else:
                     raise
 
-        # L4 判定に必要な情報をまとめ取り (会場・グレード・1号艇クラス)
-        l4_info: dict[str, dict] = {}
-        if results:
-            rids_list = list(results.keys())
-            placeholders = ",".join(["?"] * len(rids_list))
-            with db_connect() as conn:
-                cur = conn.execute(f"""
-                    SELECT r.race_id, r.stadium_number, r.race_grade_number,
-                           e.class_number
-                    FROM races r
-                    LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-                    WHERE r.race_id IN ({placeholders})
-                """, rids_list)
-                for rid, stadium, grade, cls in cur.fetchall():
-                    l4_info[rid] = {"stadium": stadium, "grade": grade, "class": cls}
+        # === 朝判定用: 当日全レースの基本情報 + predictions を取得 ===
+        # results に含まれないレース (= まだオッズ未確定 = 朝) は予測ベース判定する
+        all_race_info: dict[str, dict] = {}  # 当日の全レース
+        with db_connect() as conn:
+            cur = conn.execute("""
+                SELECT r.race_id, r.stadium_number, r.race_grade_number,
+                       e.class_number
+                FROM races r
+                LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                WHERE r.race_date = ?
+            """, (target_date,))
+            for rid, stadium, grade, cls in cur.fetchall():
+                all_race_info[rid] = {"stadium": stadium, "grade": grade, "class": cls}
+
+            # 朝判定用: predictions テーブルから 1号艇の prob_first を取得
+            morning_pred: dict[str, float] = {}
+            try:
+                cur = conn.execute("""
+                    SELECT p.race_id, p.prob_first
+                    FROM predictions p
+                    JOIN races r ON p.race_id = r.race_id
+                    WHERE r.race_date = ? AND p.boat_number = 1
+                """, (target_date,))
+                for rid, p1 in cur.fetchall():
+                    if p1 is not None:
+                        morning_pred[rid] = p1
+            except Exception:
+                pass  # predictions テーブル未マイグレでも縮退
 
         EXCLUDE_B = set(_LOSING_VENUES.keys()) | set(_QUESTIONABLE_VENUES.keys())
 
-        signals = []
-        for rid, data in results.items():
-            mp = data["min_payout"]
-            src = data["source"]
-            tier = None
-            expected_roi = None
-            title = None
-            if mp < 500:
-                tier, expected_roi, title = "ultra_confident", 0.1845, "💎 超本命"
-            elif mp < 1000:
-                tier, expected_roi, title = "confident", 0.2741, "💎💎 完全+EV"
-            elif mp < 2000:
-                tier, expected_roi, title = "moderate", 0.1792, "💎 やや本命"
-            elif mp < 5000:
-                tier, expected_roi, title = "split", -0.0859, "拮抗"
-            elif mp < 10000:
-                tier, expected_roi, title = "wild", -0.4310, "荒れ寄り"
-            else:
-                tier, expected_roi, title = "chaos", -0.7354, "波乱"
-
-            # L4 マーク判定
-            l4 = None
-            info_l4 = l4_info.get(rid, {})
-            stadium = info_l4.get("stadium")
-            grade = info_l4.get("grade")
-            cls = info_l4.get("class")
-            in_500_1000 = 500 <= mp < 1000
+        def _evaluate_l4(stadium, grade, cls, mp_int):
+            """確定オッズベース L4 マーク判定"""
+            in_500_1000 = mp_int is not None and 500 <= mp_int < 1000
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
-
-            if in_500_1000 and b_excluded and cls == 1:
+            if not (in_500_1000 and b_excluded):
+                return None
+            if cls == 1:
                 if grade == 1:
-                    l4 = {"level": "SG", "label": "👑L4 SG×A1",
-                          "recovery": 258.2, "bet": "3連単 1-2-3", "n": 40}
+                    return {"level": "SG", "label": "👑L4 SG×A1",
+                            "recovery": 258.2, "bet": "3連単 1-2-3", "n": 40}
                 elif grade == 2:
-                    l4 = {"level": "G1", "label": "👑L4 G1×A1",
-                          "recovery": 242.8, "bet": "3連単 1-2-3", "n": 227}
+                    return {"level": "G1", "label": "👑L4 G1×A1",
+                            "recovery": 242.8, "bet": "3連単 1-2-3", "n": 227}
                 elif grade == 3:
-                    l4 = {"level": "G2", "label": "👑L4 G2×A1",
-                          "recovery": 242.7, "bet": "3連単 1-2-3", "n": 30}
+                    return {"level": "G2", "label": "👑L4 G2×A1",
+                            "recovery": 242.7, "bet": "3連単 1-2-3", "n": 30}
                 elif grade == 5:
-                    l4 = {"level": "general", "label": "🎯L4 一般戦×A1",
-                          "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776}
+                    return {"level": "general", "label": "🎯L4 一般戦×A1",
+                            "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776}
                 else:
-                    l4 = {"level": "default", "label": "🎯L4 A1",
-                          "recovery": 160.8, "bet": "3連単 1-2-3", "n": 2210}
-            elif in_500_1000 and b_excluded and cls == 2:
-                l4 = {"level": "a2", "label": "📈L4派生 A2",
-                      "recovery": 134.0, "bet": "3連単 1-2-3", "n": 1645}
+                    return {"level": "default", "label": "🎯L4 A1",
+                            "recovery": 160.8, "bet": "3連単 1-2-3", "n": 2210}
+            elif cls == 2:
+                return {"level": "a2", "label": "📈L4派生 A2",
+                        "recovery": 134.0, "bet": "3連単 1-2-3", "n": 1645}
+            return None
 
-            signals.append({
-                "race_id": rid,
-                "tier": tier,
-                "min_payout": mp,
-                "source": src,
-                "expected_roi": expected_roi,
-                "title": title,
-                "is_positive_ev": expected_roi > 0,
-                "l4": l4,  # L4 マーク (該当時のみ)
-            })
+        def _evaluate_morning_l4(stadium, grade, cls, prob_first):
+            """朝判定用 L4 候補マーク (prob_first ベース)"""
+            if prob_first is None:
+                return None
+            b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
+            if not b_excluded:
+                return None
+            # 1号艇 A1 + prob_first 0.65-0.85 → 500-1000帯候補
+            if cls == 1 and 0.65 <= prob_first < 0.85:
+                if grade == 1:
+                    return {"level": "morning_SG", "label": "🌅👑朝L4 SG候補",
+                            "recovery": 258.2, "bet": "3連単 1-2-3 (確定後)", "n": 40,
+                            "is_morning": True, "prob_first": prob_first}
+                elif grade == 2:
+                    return {"level": "morning_G1", "label": "🌅👑朝L4 G1候補",
+                            "recovery": 242.8, "bet": "3連単 1-2-3 (確定後)", "n": 227,
+                            "is_morning": True, "prob_first": prob_first}
+                elif grade == 3:
+                    return {"level": "morning_G2", "label": "🌅👑朝L4 G2候補",
+                            "recovery": 242.7, "bet": "3連単 1-2-3 (確定後)", "n": 30,
+                            "is_morning": True, "prob_first": prob_first}
+                elif grade == 5:
+                    return {"level": "morning_general", "label": "🌅🎯朝L4 一般戦候補",
+                            "recovery": 147.7, "bet": "3連単 1-2-3 (確定後)", "n": 1776,
+                            "is_morning": True, "prob_first": prob_first}
+                else:
+                    return {"level": "morning_default", "label": "🌅🎯朝L4 候補",
+                            "recovery": 160.8, "bet": "3連単 1-2-3 (確定後)", "n": 2210,
+                            "is_morning": True, "prob_first": prob_first}
+            # 1号艇 A2 + prob_first 0.55-0.75 → A2 派生候補
+            elif cls == 2 and 0.55 <= prob_first < 0.75:
+                return {"level": "morning_a2", "label": "🌅📈朝L4 A2候補",
+                        "recovery": 134.0, "bet": "3連単 1-2-3 (確定後)", "n": 1645,
+                        "is_morning": True, "prob_first": prob_first}
+            return None
+
+        signals = []
+        # 当日全レースを走査 (確定済 → L4、未確定 → 朝L4候補)
+        for rid, info in all_race_info.items():
+            stadium = info.get("stadium")
+            grade = info.get("grade")
+            cls = info.get("class")
+            data = results.get(rid)
+
+            if data:
+                # === 確定オッズあり (L4 マーク) ===
+                mp = data["min_payout"]
+                src = data["source"]
+                if mp < 500:
+                    tier, expected_roi, title = "ultra_confident", 0.1845, "💎 超本命"
+                elif mp < 1000:
+                    tier, expected_roi, title = "confident", 0.2741, "💎💎 完全+EV"
+                elif mp < 2000:
+                    tier, expected_roi, title = "moderate", 0.1792, "💎 やや本命"
+                elif mp < 5000:
+                    tier, expected_roi, title = "split", -0.0859, "拮抗"
+                elif mp < 10000:
+                    tier, expected_roi, title = "wild", -0.4310, "荒れ寄り"
+                else:
+                    tier, expected_roi, title = "chaos", -0.7354, "波乱"
+
+                l4 = _evaluate_l4(stadium, grade, cls, mp)
+
+                signals.append({
+                    "race_id": rid,
+                    "tier": tier,
+                    "min_payout": mp,
+                    "source": src,
+                    "expected_roi": expected_roi,
+                    "title": title,
+                    "is_positive_ev": expected_roi > 0,
+                    "l4": l4,
+                })
+            else:
+                # === 未確定 (朝判定) → 予測ベース L4 候補 ===
+                prob_first = morning_pred.get(rid)
+                morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first)
+                if morning_l4:
+                    signals.append({
+                        "race_id": rid,
+                        "tier": "morning_l4",
+                        "min_payout": None,
+                        "source": "morning_predict",
+                        "expected_roi": (morning_l4["recovery"] - 100) / 100,
+                        "title": morning_l4["label"],
+                        "is_positive_ev": morning_l4["recovery"] >= 130,
+                        "l4": morning_l4,
+                    })
 
         return jsonify({
             "date": target_date,
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
+            "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
             "signals": {s["race_id"]: s for s in signals},
         })
 
