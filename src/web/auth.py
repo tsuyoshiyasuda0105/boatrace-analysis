@@ -77,6 +77,31 @@ def _safe_password_check(input_pw: str, expected_pw: str) -> bool:
         return False
 
 
+def _safe_redirect_url(next_url: str, default: str = "/") -> str:
+    """オープンリダイレクト対策。
+    next が以下のいずれかなら安全、それ以外は default に。
+      - / で始まる相対パス (例: /races?date=2026-05-12)
+    NG:
+      - // で始まる (プロトコル相対 URL)
+      - http:// https:// で始まる絶対 URL
+      - \ や @ などの細工
+    """
+    if not next_url:
+        return default
+    # 細工系の文字を弾く
+    if "\\" in next_url or "\x00" in next_url:
+        return default
+    # // または スキーム付きは外部 URL の可能性
+    if next_url.startswith("//"):
+        return default
+    if "://" in next_url:
+        return default
+    # /xxx で始まる相対パスのみ許可
+    if not next_url.startswith("/"):
+        return default
+    return next_url
+
+
 def is_member() -> bool:
     return bool(session.get("is_member") or session.get("is_pro"))
 
@@ -134,7 +159,7 @@ LOGIN_TEMPLATE = """
   <p class="login-hint">オンタイム予測 (EV+ マーク・Value Bet 検出) は会員限定です。</p>
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('login') }}" class="login-form">
-    <input type="hidden" name="next" value="{{ request.args.get('next', '/') }}">
+    <input type="hidden" name="next" value="{{ safe_next(request.args.get('next', '/'), '/') }}">
     <label>
       <span>パスワード</span>
       <input type="password" name="password" required autofocus>
@@ -157,7 +182,7 @@ PRO_LOGIN_TEMPLATE = """
     <strong>免責</strong>: 公営競技は控除率25%です。本ツールは支援のみで、利益保証ではありません。</p>
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('pro_login') }}" class="login-form">
-    <input type="hidden" name="next" value="{{ request.args.get('next', '/pro/ev') }}">
+    <input type="hidden" name="next" value="{{ safe_next(request.args.get('next', '/pro/ev'), '/pro/ev') }}">
     <label>
       <span>Pro パスワード</span>
       <input type="password" name="password" required autofocus>
@@ -170,6 +195,9 @@ PRO_LOGIN_TEMPLATE = """
 
 
 def register_auth_routes(app):
+    # テンプレートから _safe_redirect_url を使えるように (next の事前検証用)
+    app.jinja_env.globals["safe_next"] = _safe_redirect_url
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         ip = _client_ip()
@@ -188,7 +216,9 @@ def register_auth_routes(app):
                 session.clear()  # セッション固定攻撃対策
                 session["is_member"] = True
                 session.permanent = True
-                return redirect(request.form.get("next") or url_for("index"))
+                # オープンリダイレクト対策: next が外部 URL なら index へ
+                next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))
+                return redirect(next_url)
             _record_attempt(ip, False)
             # 短時間の遅延 (timing attack の更なる緩和)
             time.sleep(0.3)
@@ -213,7 +243,9 @@ def register_auth_routes(app):
                 session["is_pro"] = True
                 session["is_member"] = True  # Pro は member の上位互換
                 session.permanent = True
-                return redirect(request.form.get("next") or url_for("pro_ev"))
+                # オープンリダイレクト対策
+                next_url = _safe_redirect_url(request.form.get("next", ""), url_for("pro_ev"))
+                return redirect(next_url)
             _record_attempt(ip, False)
             time.sleep(0.3)
             return render_template_string(PRO_LOGIN_TEMPLATE, error="Pro パスワードが違います"), 401

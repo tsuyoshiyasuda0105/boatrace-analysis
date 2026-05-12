@@ -106,3 +106,5 @@ bandit_report.json
 audit_report.json
 check_sqli_risk.py
 parse_bandit.py
+
+.secrets.baseline
