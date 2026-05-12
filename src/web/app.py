@@ -919,17 +919,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     results[rid] = {"min_payout": mp, "source": src}
 
             # T-5min / T-15min オッズ (未確定レース)
-            for snap_label in ["T-5min", "T-15min"]:
-                cur = conn.execute("""
-                    SELECT r.race_id, MIN(o.odds) * 100 as min_payout
-                    FROM races r
-                    JOIN odds_trifecta o ON r.race_id = o.race_id
-                    WHERE r.race_date = ? AND o.snapshot_label = ?
-                    GROUP BY r.race_id
-                """, (target_date, snap_label))
-                for rid, mp in cur.fetchall():
-                    if mp and rid not in results:
-                        results[rid] = {"min_payout": int(mp), "source": snap_label}
+            # snapshot_label 列が未マイグレーションの環境 (Supabase など) では skip
+            try:
+                for snap_label in ["T-5min", "T-15min"]:
+                    cur = conn.execute("""
+                        SELECT r.race_id, MIN(o.odds) * 100 as min_payout
+                        FROM races r
+                        JOIN odds_trifecta o ON r.race_id = o.race_id
+                        WHERE r.race_date = ? AND o.snapshot_label = ?
+                        GROUP BY r.race_id
+                    """, (target_date, snap_label))
+                    for rid, mp in cur.fetchall():
+                        if mp and rid not in results:
+                            results[rid] = {"min_payout": int(mp), "source": snap_label}
+            except Exception as e:
+                # UndefinedColumn 等 (Supabase 側スキーマ未更新)。
+                # final 払戻のみで縮退判定する。
+                err = str(e).lower()
+                if "snapshot_label" in err or "undefinedcolumn" in err or "column" in err:
+                    # Postgres は失敗したトランザクションを ABORT 状態にするので rollback
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                else:
+                    raise
 
         signals = []
         for rid, data in results.items():

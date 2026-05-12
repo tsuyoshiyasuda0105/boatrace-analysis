@@ -193,11 +193,12 @@ CREATE TABLE IF NOT EXISTS race_payouts (
 
 CREATE TABLE IF NOT EXISTS odds_trifecta (
   -- 3連単オッズ。120通り×レース数なので肥大化注意。
-  race_id       TEXT NOT NULL,
-  combination   TEXT NOT NULL,        -- '1-2-3' 形式
-  odds          REAL NOT NULL,
-  is_final      INTEGER NOT NULL,     -- 1=確定オッズ, 0=途中
-  recorded_at   TEXT NOT NULL,        -- 取得日時
+  race_id        TEXT NOT NULL,
+  combination    TEXT NOT NULL,        -- '1-2-3' 形式
+  odds           REAL NOT NULL,
+  is_final       INTEGER NOT NULL,     -- 1=確定オッズ, 0=途中
+  recorded_at    TEXT NOT NULL,        -- 取得日時
+  snapshot_label TEXT,                 -- T-15min / T-5min / T-1min / final など
   PRIMARY KEY (race_id, combination, recorded_at),
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
