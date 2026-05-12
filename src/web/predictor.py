@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 class Predictor:
+    # Render Free (512MB) 対策: キャッシュ上限。超えたら古い順に削除。
+    _MAX_DATE_CACHE = 2   # predict_date の DataFrame (1 日 = 数万行)
+    _MAX_TRI_CACHE = 200  # predict_trifecta の 120 通り x N レース
+
     def __init__(self, version: str = config.DEFAULT_MODEL_VERSION,
                  cascade_version: str = "cascade-v0.6",
                  per_winner_version: str = "pw-v0.6"):
@@ -36,9 +40,16 @@ class Predictor:
         self.artifact: Optional[dict] = None
         self.cascade: Optional[dict] = None
         self.per_winner: Optional[dict] = None
+        # 挿入順を保つため通常 dict (Py3.7+ で順序保証)
         self._cache: dict[str, pd.DataFrame] = {}
-        self._tri_cache: dict[str, dict[str, dict[str, float]]] = {}
+        self._tri_cache: dict[str, list] = {}
         self._lock = threading.Lock()
+
+    def _evict_cache(self, target: dict, max_size: int):
+        """挿入順の古い方から削除して max_size 以内に収める。"""
+        while len(target) > max_size:
+            oldest_key = next(iter(target))
+            target.pop(oldest_key, None)
 
     def load(self) -> None:
         path = config.MODEL_DIR / f"ranker_{self.version}.pkl"
@@ -85,6 +96,7 @@ class Predictor:
         if df.empty:
             with self._lock:
                 self._cache[target_date] = df
+                self._evict_cache(self._cache, self._MAX_DATE_CACHE)
             return df
 
         # ranker_<v>.pkl 学習時の元 build_training_frame と列名を揃える
@@ -99,6 +111,7 @@ class Predictor:
 
         with self._lock:
             self._cache[target_date] = df_pred
+            self._evict_cache(self._cache, self._MAX_DATE_CACHE)
         return df_pred
 
     def predict_trifecta(self, target_date: str, race_id: str,
@@ -154,6 +167,7 @@ class Predictor:
         sorted_combos = sorted(combos.items(), key=lambda x: -x[1])
         with self._lock:
             self._tri_cache[cache_key] = sorted_combos
+            self._evict_cache(self._tri_cache, self._MAX_TRI_CACHE)
         return sorted_combos
 
     def predict_whatif(self, target_date: str, race_id: str,
