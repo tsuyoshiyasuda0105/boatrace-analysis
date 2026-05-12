@@ -741,15 +741,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024         # POST body 1MB 上限
 
     # WEB_SESSION_SECRET が本番でデフォルトのままだと警告
-    if is_production and config.WEB_SESSION_SECRET == "dev-only-do-not-use-in-prod":
+    # noqa: S105 は「デフォルト値リテラルとの比較」であり実パスワードではない
+    _DEFAULT_SECRET = "dev-only-do-not-use-in-prod"  # noqa: S105
+    _DEFAULT_MEMBER = "dev-member"  # noqa: S105
+    _DEFAULT_PRO = "dev-pro"  # noqa: S105
+    if is_production and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:
         logger.critical(
             "SECURITY: WEB_SESSION_SECRET is using DEFAULT value in production. "
             "Set BOATRACE_WEB_SECRET environment variable to a long random string."
         )
     if is_production:
         for pw_name, pw_val, default in [
-            ("BOATRACE_MEMBER_PASSWORD", config.WEB_MEMBER_PASSWORD, "dev-member"),
-            ("BOATRACE_PRO_PASSWORD", config.WEB_PRO_PASSWORD, "dev-pro"),
+            ("BOATRACE_MEMBER_PASSWORD", config.WEB_MEMBER_PASSWORD, _DEFAULT_MEMBER),
+            ("BOATRACE_PRO_PASSWORD", config.WEB_PRO_PASSWORD, _DEFAULT_PRO),
         ]:
             if pw_val == default:
                 logger.critical(

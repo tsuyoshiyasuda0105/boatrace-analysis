@@ -100,3 +100,9 @@ data/raw/programs/
 data/raw/results/
 data/raw/openapi/
 data/raw/beforeinfo/
+
+# セキュリティスキャン中間ファイル
+bandit_report.json
+audit_report.json
+check_sqli_risk.py
+parse_bandit.py
