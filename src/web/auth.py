@@ -7,16 +7,19 @@
 セキュリティ対策:
   - hmac.compare_digest で timing attack 防止
   - IP ベースのブルートフォース制限 (10回/15分でロック)
+  - CSRF トークン (セッションごとに生成、フォーム POST で検証)
+  - オープンリダイレクト対策 (相対パスのみ許可)
   - パスワード短すぎ警告
 """
 from __future__ import annotations
 
 import hmac
 import logging
+import secrets
 import time
 from functools import wraps
 
-from flask import session, redirect, url_for, request, jsonify, render_template_string
+from flask import session, redirect, url_for, request, jsonify, render_template_string, abort
 
 import config
 
@@ -75,6 +78,22 @@ def _safe_password_check(input_pw: str, expected_pw: str) -> bool:
                                     expected_pw.encode("utf-8"))
     except Exception:
         return False
+
+
+def _get_csrf_token() -> str:
+    """セッションに CSRF トークンを生成・取得"""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    return session["csrf_token"]
+
+
+def _verify_csrf_token() -> bool:
+    """POST 時の CSRF トークン検証"""
+    expected = session.get("csrf_token")
+    given = request.form.get("csrf_token", "")
+    if not expected or not given:
+        return False
+    return hmac.compare_digest(expected, given)
 
 
 def _safe_redirect_url(next_url: str, default: str = "/") -> str:
@@ -159,6 +178,7 @@ LOGIN_TEMPLATE = """
   <p class="login-hint">オンタイム予測 (EV+ マーク・Value Bet 検出) は会員限定です。</p>
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('login') }}" class="login-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="next" value="{{ safe_next(request.args.get('next', '/'), '/') }}">
     <label>
       <span>パスワード</span>
@@ -182,6 +202,7 @@ PRO_LOGIN_TEMPLATE = """
     <strong>免責</strong>: 公営競技は控除率25%です。本ツールは支援のみで、利益保証ではありません。</p>
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('pro_login') }}" class="login-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="next" value="{{ safe_next(request.args.get('next', '/pro/ev'), '/pro/ev') }}">
     <label>
       <span>Pro パスワード</span>
@@ -197,11 +218,20 @@ PRO_LOGIN_TEMPLATE = """
 def register_auth_routes(app):
     # テンプレートから _safe_redirect_url を使えるように (next の事前検証用)
     app.jinja_env.globals["safe_next"] = _safe_redirect_url
+    # テンプレートから {{ csrf_token() }} を使えるように
+    app.jinja_env.globals["csrf_token"] = _get_csrf_token
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
         ip = _client_ip()
         if request.method == "POST":
+            # CSRF トークン検証
+            if not _verify_csrf_token():
+                logger.warning("CSRF token mismatch on /login from %s", ip)
+                return render_template_string(
+                    LOGIN_TEMPLATE,
+                    error="セッションが無効です。ページを再読み込みしてください。"
+                ), 400
             # ブルートフォース制限
             allowed, retry_after = _check_rate_limit(ip)
             if not allowed:
@@ -229,6 +259,13 @@ def register_auth_routes(app):
     def pro_login():
         ip = _client_ip()
         if request.method == "POST":
+            # CSRF トークン検証
+            if not _verify_csrf_token():
+                logger.warning("CSRF token mismatch on /pro/login from %s", ip)
+                return render_template_string(
+                    PRO_LOGIN_TEMPLATE,
+                    error="セッションが無効です。ページを再読み込みしてください。"
+                ), 400
             allowed, retry_after = _check_rate_limit(ip)
             if not allowed:
                 logger.warning("pro_login rate-limited for %s (retry %ds)", ip, retry_after)

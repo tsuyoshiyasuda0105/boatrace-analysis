@@ -769,6 +769,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = (
+            "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+            "magnetometer=(), microphone=(), payment=(), usb=()"
+        )
         # 本番のみ HSTS (HTTPS 強制)
         if is_production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -779,9 +783,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "connect-src 'self'; "
-            "frame-ancestors 'none';"
+            "frame-ancestors 'none'; "
+            "form-action 'self'; "
+            "base-uri 'self';"
         )
+        # ログインや会員ページは絶対キャッシュさせない (機密情報漏洩防止)
+        path = request.path if request else ""
+        if path in ("/login", "/pro/login", "/logout") or "/api/" in path:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
         return response
+
+    # robots.txt と sitemap.xml は最低限のレスポンスを返す
+    # (ZAP の robots.txt パッシブスキャンで CSP/HSTS が無いと言われないように)
+    @app.route("/robots.txt")
+    def robots_txt():
+        return ("User-agent: *\nDisallow: /login\nDisallow: /pro/\nDisallow: /api/\n",
+                200, {"Content-Type": "text/plain"})
 
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
