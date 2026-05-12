@@ -143,9 +143,18 @@
             for (const [raceId, sig] of Object.entries(signals)) {
               const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
               if (!item) continue;
-              // 既存の市場シグナルバッジを削除
-              const old = item.querySelector('.market-badge');
-              if (old) old.remove();
+              // 既存の市場シグナル・L4バッジを削除
+              item.querySelectorAll('.market-badge, .l4-badge').forEach(el => el.remove());
+
+              // L4 マーク (該当時、市場バッジより優先表示)
+              if (sig.l4) {
+                const l4Badge = document.createElement('span');
+                l4Badge.className = `l4-badge l4-${sig.l4.level}`;
+                l4Badge.title = `${sig.l4.label} | 検証回収率 ${sig.l4.recovery}% (n=${sig.l4.n}) | 買い目: ${sig.l4.bet} 100円`;
+                l4Badge.textContent = `${sig.l4.label} ${sig.l4.recovery}%`;
+                item.appendChild(l4Badge);
+              }
+
               if (!sig.is_positive_ev) continue;  // +EV のみ表示
               const badge = document.createElement('span');
               badge.className = `market-badge market-${sig.tier}`;

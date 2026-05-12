@@ -1514,6 +1514,89 @@ main h2 {
 .ms-extra-msg {
   color: var(--text-dim);
 }
+.ms-extra-bet {
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: rgba(255, 215, 0, 0.12);
+  border-left: 3px solid #ffd700;
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: #ffd700;
+}
+.ms-extra-roi {
+  margin-left: 8px;
+  color: #34e890;
+  font-weight: 700;
+}
+
+/* ============================================================
+   L4 戦略バッジ (3連単 1-2-3 推奨マーク)
+   検証済み 回収率 142〜258%
+   ============================================================ */
+.l4-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  margin-left: 6px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.3px;
+  cursor: help;
+}
+/* SG: 最強 (258.2%) */
+.l4-badge.l4-SG {
+  background: linear-gradient(135deg, #ff006e 0%, #ffbe0b 100%);
+  color: #fff;
+  border: 2px solid #ffbe0b;
+  text-shadow: 0 0 6px rgba(255, 0, 110, 0.9);
+  box-shadow: 0 0 14px rgba(255, 190, 11, 0.6);
+  animation: l4-pulse 1.8s ease-in-out infinite;
+}
+/* G1: 超強力 (242.8%) */
+.l4-badge.l4-G1 {
+  background: linear-gradient(135deg, #ff006e 0%, #fb5607 100%);
+  color: #fff;
+  border: 2px solid #ff006e;
+  text-shadow: 0 0 5px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 12px rgba(255, 0, 110, 0.55);
+  animation: l4-pulse 2s ease-in-out infinite;
+}
+/* G2: 強力 (242.7%) */
+.l4-badge.l4-G2 {
+  background: linear-gradient(135deg, #fb5607 0%, #ffbe0b 100%);
+  color: #fff;
+  border: 2px solid #fb5607;
+  text-shadow: 0 0 5px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 10px rgba(251, 86, 7, 0.5);
+}
+/* 一般戦: 安定 (147.7%) */
+.l4-badge.l4-general {
+  background: linear-gradient(135deg, rgba(52, 232, 144, 0.5), rgba(0, 212, 255, 0.4));
+  color: #fff;
+  border: 1px solid #34e890;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 8px rgba(52, 232, 144, 0.4);
+}
+/* デフォルト/その他グレード */
+.l4-badge.l4-default {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.5), rgba(255, 100, 200, 0.4));
+  color: #fff;
+  border: 1px solid #ffd700;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+}
+/* A2 派生: 控えめ (134%) */
+.l4-badge.l4-a2 {
+  background: rgba(100, 100, 200, 0.2);
+  color: #aaa;
+  border: 1px dashed rgba(100, 100, 200, 0.5);
+}
+
+@keyframes l4-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
 
 /* ============================================================
    Niche signals (verified high-EV patterns)

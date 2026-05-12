@@ -58,6 +58,14 @@
             <div class="ms-extra-item">
               <span class="ms-extra-label">{{ ex.label }}</span>
               <span class="ms-extra-msg">{{ ex.msg }}</span>
+              {% if ex.bet %}
+                <div class="ms-extra-bet">
+                  <strong>買い目:</strong> {{ ex.bet }}
+                  {% if ex.expected_roi %}
+                    <span class="ms-extra-roi">(回収率 {{ '%.1f' | format(ex.expected_roi * 100) }}%)</span>
+                  {% endif %}
+                </div>
+              {% endif %}
             </div>
           {% endfor %}
         </div>

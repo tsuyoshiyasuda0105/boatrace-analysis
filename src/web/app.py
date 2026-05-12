@@ -304,17 +304,84 @@ def _detect_market_inefficiency(
             boat1 = next((p for p in preds if p.get("boat_number") == 1), None)
             if boat1:
                 cls = boat1.get("class_number")
+                stadium = info.get("stadium_number") if info else None
+                grade = info.get("race_grade_number") if info else None
+                exclude_b = stadium not in (_LOSING_VENUES | _QUESTIONABLE_VENUES.keys()) if stadium else False
+                in_500_1000 = 500 <= min_payout < 1000
+
                 # 一般戦 + B1 1号艇 + 本命500-1k = ROI +35.39%
-                if info and info.get("race_grade_number") == 5 and cls == 3 and 500 <= min_payout < 1000:
+                if grade == 5 and cls == 3 and in_500_1000:
                     extras.append({
                         "label": "🔥 一般戦+B1+本命",
                         "msg": "一般戦 + B1 1号艇 + 本命500-1k は 検証 ROI +35.39% (CI +28.3%~+42.6%, n=738)",
                     })
                 # SG/G1 + A1 1号艇 + 本命500-1k = ROI +27.03%
-                if info and info.get("race_grade_number") in (1, 2) and cls == 1 and 500 <= min_payout < 1000:
+                if grade in (1, 2) and cls == 1 and in_500_1000:
                     extras.append({
                         "label": "🔥 SG/G1+A1+本命",
                         "msg": "SG/G1 + A1 1号艇 + 本命500-1k は 検証 ROI +27.03% (CI +22.6%~+32.4%, n=209)",
+                    })
+
+                # ===== L4 戦略マーク (3連単1-2-3 + B除外 + 1号艇A1 + 500-1000帯) =====
+                # 通算回収率 160.8% (CI 148.9-173.7, n=2,210)
+                if in_500_1000 and exclude_b and cls == 1:
+                    # 強化版: G1 で 242.8% (CI 196.8-292.1, n=227)
+                    if grade == 2:
+                        extras.append({
+                            "label": "👑 L4★G1 (3連単1-2-3 推奨)",
+                            "msg": "G1 + 1号艇A1 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 242.8% (CI 196.8%-292.1%, n=227, HIT 31.3%)",
+                            "bet": "3連単 1-2-3 を 100円",
+                            "expected_roi": 1.428,
+                        })
+                    # 強化版: SG で 258.2% (CI 141.0-393.0, n=40)
+                    elif grade == 1:
+                        extras.append({
+                            "label": "👑 L4★SG (3連単1-2-3 超推奨)",
+                            "msg": "SG + 1号艇A1 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 258.2% (CI 141.0%-393.0%, n=40, HIT 32.5%)",
+                            "bet": "3連単 1-2-3 を 100円",
+                            "expected_roi": 1.582,
+                        })
+                    # 強化版: G2 で 242.7% (n=30、小サンプル)
+                    elif grade == 3:
+                        extras.append({
+                            "label": "👑 L4★G2 (3連単1-2-3 推奨)",
+                            "msg": "G2 + 1号艇A1 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 242.7% (CI 126.0%-375.3%, n=30, HIT 33.3%)",
+                            "bet": "3連単 1-2-3 を 100円",
+                            "expected_roi": 1.427,
+                        })
+                    # 一般戦 (大多数): 147.7% (CI 134.0-160.2, n=1,776)
+                    elif grade == 5:
+                        extras.append({
+                            "label": "🎯 L4 一般戦 (3連単1-2-3 推奨)",
+                            "msg": "一般戦 + 1号艇A1 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 147.7% (CI 134.0%-160.2%, n=1,776, HIT 21.4%)",
+                            "bet": "3連単 1-2-3 を 100円",
+                            "expected_roi": 1.477,
+                        })
+                    # それ以外 (G3 等)
+                    else:
+                        extras.append({
+                            "label": "🎯 L4 (3連単1-2-3 推奨)",
+                            "msg": "1号艇A1 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 通算回収率 160.8% (CI 148.9%-173.7%, n=2,210)",
+                            "bet": "3連単 1-2-3 を 100円",
+                            "expected_roi": 1.608,
+                        })
+
+                # L4 派生: A2 でも 134% (副推奨)
+                if in_500_1000 and exclude_b and cls == 2:
+                    extras.append({
+                        "label": "📈 L4 A2 派生 (3連単1-2-3)",
+                        "msg": "A2 1号艇 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 134.0% (CI 120.4%-148.9%, n=1,645)",
+                        "bet": "3連単 1-2-3 を 100円 (税引前トントン)",
+                        "expected_roi": 1.340,
+                    })
+
+                # L2 派生: 全クラス でも 145.7% (フィルタ緩め版)
+                if in_500_1000 and exclude_b and cls not in (1, 2):
+                    extras.append({
+                        "label": "📈 L2 (3連単1-2-3)",
+                        "msg": "B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 145.7% (CI 137.6%-154.1%, n=4,971)",
+                        "bet": "3連単 1-2-3 を 100円",
+                        "expected_roi": 1.457,
                     })
 
         if extras:
@@ -972,6 +1039,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 else:
                     raise
 
+        # L4 判定に必要な情報をまとめ取り (会場・グレード・1号艇クラス)
+        l4_info: dict[str, dict] = {}
+        if results:
+            rids_list = list(results.keys())
+            placeholders = ",".join(["?"] * len(rids_list))
+            with db_connect() as conn:
+                cur = conn.execute(f"""
+                    SELECT r.race_id, r.stadium_number, r.race_grade_number,
+                           e.class_number
+                    FROM races r
+                    LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                    WHERE r.race_id IN ({placeholders})
+                """, rids_list)
+                for rid, stadium, grade, cls in cur.fetchall():
+                    l4_info[rid] = {"stadium": stadium, "grade": grade, "class": cls}
+
+        EXCLUDE_B = set(_LOSING_VENUES.keys()) | set(_QUESTIONABLE_VENUES.keys())
+
         signals = []
         for rid, data in results.items():
             mp = data["min_payout"]
@@ -991,6 +1076,36 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 tier, expected_roi, title = "wild", -0.4310, "荒れ寄り"
             else:
                 tier, expected_roi, title = "chaos", -0.7354, "波乱"
+
+            # L4 マーク判定
+            l4 = None
+            info_l4 = l4_info.get(rid, {})
+            stadium = info_l4.get("stadium")
+            grade = info_l4.get("grade")
+            cls = info_l4.get("class")
+            in_500_1000 = 500 <= mp < 1000
+            b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
+
+            if in_500_1000 and b_excluded and cls == 1:
+                if grade == 1:
+                    l4 = {"level": "SG", "label": "👑L4 SG×A1",
+                          "recovery": 258.2, "bet": "3連単 1-2-3", "n": 40}
+                elif grade == 2:
+                    l4 = {"level": "G1", "label": "👑L4 G1×A1",
+                          "recovery": 242.8, "bet": "3連単 1-2-3", "n": 227}
+                elif grade == 3:
+                    l4 = {"level": "G2", "label": "👑L4 G2×A1",
+                          "recovery": 242.7, "bet": "3連単 1-2-3", "n": 30}
+                elif grade == 5:
+                    l4 = {"level": "general", "label": "🎯L4 一般戦×A1",
+                          "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776}
+                else:
+                    l4 = {"level": "default", "label": "🎯L4 A1",
+                          "recovery": 160.8, "bet": "3連単 1-2-3", "n": 2210}
+            elif in_500_1000 and b_excluded and cls == 2:
+                l4 = {"level": "a2", "label": "📈L4派生 A2",
+                      "recovery": 134.0, "bet": "3連単 1-2-3", "n": 1645}
+
             signals.append({
                 "race_id": rid,
                 "tier": tier,
@@ -999,12 +1114,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "expected_roi": expected_roi,
                 "title": title,
                 "is_positive_ev": expected_roi > 0,
+                "l4": l4,  # L4 マーク (該当時のみ)
             })
 
         return jsonify({
             "date": target_date,
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
+            "n_l4": sum(1 for s in signals if s["l4"]),
             "signals": {s["race_id"]: s for s in signals},
         })
 
