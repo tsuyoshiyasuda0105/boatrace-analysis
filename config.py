@@ -2,9 +2,20 @@
 BOATRACE データ分析プロジェクト - 設定
 
 環境変数で上書き可能にしておくと、本番/開発の切り替えが楽。
+.env ファイルがあれば自動読み込み (python-dotenv)。
 """
 from pathlib import Path
 import os
+
+# .env を自動読み込み (Render では env var が直接設定されているので二重設定でも害なし)
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).resolve().parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+except ImportError:
+    # dotenv 未インストール時は無視 (本番 Render では env var が直接設定済)
+    pass
 
 # ============================================================
 # ディレクトリ
