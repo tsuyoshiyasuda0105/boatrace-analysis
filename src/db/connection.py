@@ -212,7 +212,16 @@ def connect(db_path: Optional[str] = None) -> Union[sqlite3.Connection, "_PgConn
     if db_url and _is_postgres_url(db_url):
         return _PgConnection(_normalize_pg_url(db_url))
 
-    # SQLite path
+    # 本番 (Render) で DATABASE_URL 空はサイレント SQLite フォールバックで
+    # 壊滅的バグになる (空 DB で起動する)。明示的に失敗させる。
+    if os.getenv("RENDER", "").strip():
+        raise RuntimeError(
+            "DATABASE_URL is empty in RENDER environment. "
+            "Set DATABASE_URL to the Supabase Postgres URL. "
+            "Refusing to silently fall back to SQLite in production."
+        )
+
+    # SQLite path (ローカル開発時のみ)
     path = db_path or config.DB_PATH
     conn = sqlite3.connect(path, timeout=config.SQLITE_CONNECT_TIMEOUT_SECONDS)
     conn.execute("PRAGMA journal_mode=WAL;")

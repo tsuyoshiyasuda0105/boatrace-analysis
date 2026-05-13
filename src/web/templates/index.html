@@ -150,10 +150,17 @@
                 // L4 マーク (該当時、市場バッジより優先表示)
                 if (sig.l4) {
                   const l4Badge = document.createElement('span');
-                  l4Badge.className = `l4-badge l4-${sig.l4.level}`;
+                  const rank = sig.l4.rank || 'base';
+                  // rank クラスで色分け (plus_plus=金、plus=銀、base=従来)
+                  l4Badge.className = `l4-badge l4-${sig.l4.level} l4-rank-${rank}`;
                   const l4Rec = (sig.l4.recovery != null) ? sig.l4.recovery : '-';
                   const l4N = (sig.l4.n != null) ? sig.l4.n : '-';
-                  l4Badge.title = `${sig.l4.label} | 検証回収率 ${l4Rec}% (n=${l4N}) | 買い目: ${sig.l4.bet || ''} 100円`;
+                  const natl = (sig.l4.natl_1 != null) ? sig.l4.natl_1.toFixed(2) : '-';
+                  const local = (sig.l4.local_1 != null) ? sig.l4.local_1.toFixed(2) : '-';
+                  const rankLabel = sig.l4.rank_label || 'L4';
+                  l4Badge.title = `${sig.l4.label} | 検証回収率 ${l4Rec}% (n=${l4N}) | `
+                                + `1号艇 国1%=${natl} 局1%=${local} | `
+                                + `買い目: ${sig.l4.bet || ''} 100円 | ランク: ${rankLabel}`;
                   l4Badge.textContent = `${sig.l4.label} ${l4Rec}%`;
                   item.appendChild(l4Badge);
                 }

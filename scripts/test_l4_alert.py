@@ -30,37 +30,67 @@ def main():
 
     to = sys.argv[1]
 
-    # サンプル L4 (3件)
+    # サンプル L4 (5件) - 3ランク (L4 / L4+ / L4++) を全部含む
     alerts = [
         {
             "race_id": "20260514-01-12",
             "stadium_name": "桐生",
             "race_number": 12,
             "race_closed_at": "2026-05-14 20:50",
-            "label": "L4 SG×A1",
+            "label": "🥇L4 SG×A1 (国×局+)",
             "recovery": 258.2,
             "bet": "3連単 1-2-3",
             "alert_type": "L4_SG",
+            "rank": "plus_plus", "rank_label": "L4++", "rank_emoji": "🥇",
+            "natl_1": 7.85, "local_1": 8.21, "racer_name": "峰 竜太",
         },
         {
             "race_id": "20260514-04-09",
             "stadium_name": "多摩川",
             "race_number": 9,
             "race_closed_at": "2026-05-14 17:21",
-            "label": "L4 G1×A1",
-            "recovery": 242.8,
+            "label": "🥈L4 G1×A1 (国級+)",
+            "recovery": 188.2,
             "bet": "3連単 1-2-3",
             "alert_type": "L4_G1",
+            "rank": "plus", "rank_label": "L4+", "rank_emoji": "🥈",
+            "natl_1": 7.32, "local_1": 6.45, "racer_name": "白井 英治",
         },
         {
             "race_id": "20260514-22-11",
             "stadium_name": "福岡",
             "race_number": 11,
             "race_closed_at": "2026-05-14 18:30",
-            "label": "L4 一般戦×A1",
+            "label": "⭐L4 一般戦×A1",
             "recovery": 147.7,
             "bet": "3連単 1-2-3",
             "alert_type": "L4_general",
+            "rank": "base", "rank_label": "L4", "rank_emoji": "⭐",
+            "natl_1": 6.12, "local_1": 5.89, "racer_name": "佐藤 翼",
+        },
+        {
+            "race_id": "20260514-15-08",
+            "stadium_name": "丸亀",
+            "race_number": 8,
+            "race_closed_at": "2026-05-14 16:42",
+            "label": "🥇L4 G2×A1 (国×局+)",
+            "recovery": 190.3,
+            "bet": "3連単 1-2-3",
+            "alert_type": "L4_G2",
+            "rank": "plus_plus", "rank_label": "L4++", "rank_emoji": "🥇",
+            "natl_1": 7.10, "local_1": 7.45, "racer_name": "深谷 知博",
+        },
+        {
+            "race_id": "20260514-05-11",
+            "stadium_name": "多摩川",
+            "race_number": 11,
+            "race_closed_at": "2026-05-14 19:00",
+            "label": "🥈L4 一般戦×A1 (国級+)",
+            "recovery": 188.2,
+            "bet": "3連単 1-2-3",
+            "alert_type": "L4_general",
+            "rank": "plus", "rank_label": "L4+", "rank_emoji": "🥈",
+            "natl_1": 7.42, "local_1": 6.10, "racer_name": "毒島 誠",
         },
     ]
 

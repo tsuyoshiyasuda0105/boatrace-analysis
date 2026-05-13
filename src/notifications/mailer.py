@@ -21,6 +21,7 @@ SMTP メール送信
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -31,6 +32,13 @@ import urllib.error
 import urllib.request
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
+
+
+def _esc(value, default: str = "?") -> str:
+    """HTML エスケープのヘルパー (None と非文字列も安全に処理)"""
+    if value is None:
+        return default
+    return html.escape(str(value), quote=True)
 
 logger = logging.getLogger(__name__)
 
@@ -254,28 +262,53 @@ BOATRACE 予測 v0.8
 def send_l4_alert(email: str, alerts: list[dict], unsubscribe_token: str) -> bool:
     """L4 マーク発火時のアラートメール。
     alerts は次の形式のリスト:
-      {race_id, stadium_name, race_number, race_closed_at, label, recovery, bet, alert_type}
+      {race_id, stadium_name, race_number, race_closed_at,
+       label, recovery, bet, alert_type,
+       rank, rank_label, rank_emoji, natl_1, local_1, racer_name}
+    rank は "plus_plus" / "plus" / "base" のいずれか (省略時は base 扱い)。
     """
     if not alerts:
         return False
     site = _get_config()["site_url"]
     unsub = f"{site}/alerts/unsubscribe?token={unsubscribe_token}"
 
+    # ランク別に件数集計 (件名表示用)
+    n_plus_plus = sum(1 for a in alerts if a.get("rank") == "plus_plus")
+    n_plus = sum(1 for a in alerts if a.get("rank") == "plus")
+    n_base = len(alerts) - n_plus_plus - n_plus
     n = len(alerts)
-    subject = f"[BOATRACE] 🎯 L4 シグナル発火 ({n}件) - 高確度レース発見"
+
+    # 件名にランク分布を表示
+    rank_parts = []
+    if n_plus_plus: rank_parts.append(f"L4++ {n_plus_plus}")
+    if n_plus:      rank_parts.append(f"L4+ {n_plus}")
+    if n_base:      rank_parts.append(f"L4 {n_base}")
+    rank_summary = " / ".join(rank_parts)
+    subject = f"[BOATRACE] 🎯 L4 シグナル {n}件 ({rank_summary})"
 
     # text 版
     lines = [
         f"BOATRACE Alert: L4 シグナル {n} 件発火",
+        f"  内訳: {rank_summary}",
         "",
-        "検証回収率 150% 超の高確度レースが発見されました。",
+        "L4++ (🥇 国1%>=7 ∧ 局1%>=7) … 検証回収率 190.3%",
+        "L4+  (🥈 国1%>=7)            … 検証回収率 188.2%",
+        "L4   (⭐ 基本 A1)            … グレード別検証値",
+        "",
         "対象レース一覧 (締切時刻順):",
         "",
     ]
     for a in sorted(alerts, key=lambda x: x.get("race_closed_at", "")):
-        lines.append(f"  ▶ {a.get('race_closed_at','?')} | "
+        rk = a.get("rank_label", "L4")
+        rec = a.get("recovery", 0) or 0
+        natl = a.get("natl_1", 0) or 0
+        local = a.get("local_1", 0) or 0
+        racer = a.get("racer_name", "")
+        lines.append(f"  ▶ [{rk}] {a.get('race_closed_at','?')} | "
                      f"{a.get('stadium_name','?')} {a.get('race_number','?')}R | "
-                     f"{a.get('label','')} ({a.get('recovery',0):.1f}%)")
+                     f"{a.get('label','')} ({rec:.1f}%)")
+        if racer:
+            lines.append(f"    1号艇: {racer} (国1%={natl:.2f} / 局1%={local:.2f})")
         lines.append(f"    買い目推奨: {a.get('bet','?')}")
         lines.append(f"    詳細: {site}/race/{a.get('race_id','')}")
         lines.append("")
@@ -288,31 +321,66 @@ def send_l4_alert(email: str, alerts: list[dict], unsubscribe_token: str) -> boo
     text = "\n".join(lines)
 
     # html 版
+    def rank_chip(rank):
+        if rank == "plus_plus":
+            return ('<span style="display:inline-block;padding:2px 8px;border-radius:10px;'
+                    'background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#1f2937;'
+                    'font-weight:bold;font-size:11px">🥇 L4++</span>')
+        if rank == "plus":
+            return ('<span style="display:inline-block;padding:2px 8px;border-radius:10px;'
+                    'background:linear-gradient(135deg,#d1d5db,#9ca3af);color:#1f2937;'
+                    'font-weight:bold;font-size:11px">🥈 L4+</span>')
+        return ('<span style="display:inline-block;padding:2px 8px;border-radius:10px;'
+                'background:#374151;color:#fff;font-weight:bold;font-size:11px">⭐ L4</span>')
+
     rows = []
     for a in sorted(alerts, key=lambda x: x.get("race_closed_at", "")):
-        rec = a.get('recovery', 0)
+        rec = a.get('recovery', 0) or 0
         color = "#dc2626" if rec >= 200 else "#ea580c" if rec >= 150 else "#16a34a"
+        natl = a.get("natl_1", 0) or 0
+        local = a.get("local_1", 0) or 0
+        racer = _esc(a.get("racer_name", "") or "-")
+        rid_esc = _esc(a.get('race_id', ''), default="")
         rows.append(f"""
         <tr style="border-bottom:1px solid #eee">
-          <td style="padding:10px;font-size:12px;color:#666">{a.get('race_closed_at','?')}</td>
-          <td style="padding:10px"><strong>{a.get('stadium_name','?')} {a.get('race_number','?')}R</strong></td>
-          <td style="padding:10px"><span style="color:{color};font-weight:bold">{a.get('label','')} {rec:.1f}%</span></td>
-          <td style="padding:10px;font-size:13px">{a.get('bet','?')}</td>
-          <td style="padding:10px"><a href="{site}/race/{a.get('race_id','')}" style="color:#2563eb">詳細→</a></td>
+          <td style="padding:8px;font-size:12px;color:#666">{_esc(a.get('race_closed_at'))}</td>
+          <td style="padding:8px">{rank_chip(a.get('rank','base'))}</td>
+          <td style="padding:8px"><strong>{_esc(a.get('stadium_name'))} {_esc(a.get('race_number'))}R</strong></td>
+          <td style="padding:8px"><span style="color:{color};font-weight:bold">{_esc(a.get('label',''))}<br><span style="font-size:11px;color:#666;font-weight:normal">回収 {rec:.1f}%</span></span></td>
+          <td style="padding:8px;font-size:12px">
+            <div>{racer}</div>
+            <div style="color:#666;font-size:11px">国1%={natl:.2f} 局1%={local:.2f}</div>
+          </td>
+          <td style="padding:8px;font-size:13px">{_esc(a.get('bet'))}</td>
+          <td style="padding:8px"><a href="{site}/race/{rid_esc}" style="color:#2563eb">詳細→</a></td>
         </tr>""")
+
+    # ランク説明セクション
+    rank_legend = f"""
+    <div style="margin:16px 0;padding:12px;background:#f9fafb;border-radius:6px;font-size:12px">
+      <div style="font-weight:bold;margin-bottom:6px">ランクについて</div>
+      <div>{rank_chip('plus_plus')} 1号艇選手の国1%≥7.0 ∧ 局1%≥7.0 (検証回収率 <b>190.3%</b>)</div>
+      <div style="margin-top:4px">{rank_chip('plus')} 1号艇選手の国1%≥7.0 (検証回収率 <b>188.2%</b>)</div>
+      <div style="margin-top:4px">{rank_chip('base')} 基本 1号艇A1 (グレード別検証値)</div>
+    </div>
+    """
+
     html = f"""<!DOCTYPE html>
-<html><body style="font-family:sans-serif;max-width:800px;margin:auto;background:#f9fafb;padding:20px">
+<html><body style="font-family:sans-serif;max-width:880px;margin:auto;background:#f9fafb;padding:20px">
 <div style="background:#fff;padding:24px;border-radius:8px">
-<h2 style="margin-top:0">🎯 L4 シグナル {n} 件発火</h2>
+<h2 style="margin-top:0">🎯 L4 シグナル {n} 件 ({rank_summary})</h2>
 <p>検証回収率 <strong>150% 超</strong> の高確度レースが発見されました。</p>
-<table style="width:100%;border-collapse:collapse;margin-top:20px">
+{rank_legend}
+<table style="width:100%;border-collapse:collapse;margin-top:8px">
   <thead style="background:#f3f4f6">
     <tr>
-      <th style="padding:10px;text-align:left;font-size:12px">締切</th>
-      <th style="padding:10px;text-align:left;font-size:12px">レース</th>
-      <th style="padding:10px;text-align:left;font-size:12px">L4 タイプ</th>
-      <th style="padding:10px;text-align:left;font-size:12px">買い目</th>
-      <th style="padding:10px"></th>
+      <th style="padding:8px;text-align:left;font-size:12px">締切</th>
+      <th style="padding:8px;text-align:left;font-size:12px">ランク</th>
+      <th style="padding:8px;text-align:left;font-size:12px">レース</th>
+      <th style="padding:8px;text-align:left;font-size:12px">L4 タイプ</th>
+      <th style="padding:8px;text-align:left;font-size:12px">1号艇 選手成績</th>
+      <th style="padding:8px;text-align:left;font-size:12px">買い目</th>
+      <th style="padding:8px"></th>
     </tr>
   </thead>
   <tbody>{"".join(rows)}</tbody>

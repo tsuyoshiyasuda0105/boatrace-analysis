@@ -34,24 +34,23 @@ from src.notifications.subscribers import (
     already_sent,
 )
 from src.notifications.mailer import send_l4_alert
+# 単一情報源 (DRY): app.py と共通の L4 定義を使う
+from src.evaluation.l4_strategy import (
+    EXCLUDE_VENUES,
+    lookup_rule,
+    l4_rank,
+    is_l4_payout_range,
+    is_b_excluded,
+)
 
-# L4 マーク定義 (app.py と同期)
-L4_RULES = {
-    "L4_SG": {"grade": 1, "class": 1, "recovery": 258.2, "label": "L4 SG×A1",
-              "bet": "3連単 1-2-3"},
-    "L4_G1": {"grade": 2, "class": 1, "recovery": 242.8, "label": "L4 G1×A1",
-              "bet": "3連単 1-2-3"},
-    "L4_G2": {"grade": 3, "class": 1, "recovery": 242.7, "label": "L4 G2×A1",
-              "bet": "3連単 1-2-3"},
-    "L4_G3": {"grade": 4, "class": 1, "recovery": 149.2, "label": "L4 G3×A1",
-              "bet": "3連単 1-2-3"},
-    "L4_general": {"grade": 5, "class": 1, "recovery": 147.7,
-                   "label": "L4 一般戦×A1", "bet": "3連単 1-2-3"},
-    "L4_default": {"grade": None, "class": 1, "recovery": 160.8,
-                   "label": "L4 A1", "bet": "3連単 1-2-3"},
+# グレード番号 → alert_type のマッピング (購読者の alert_types フィルタ用)
+GRADE_TO_ALERT_TYPE = {
+    1: "L4_SG",
+    2: "L4_G1",
+    3: "L4_G2",
+    4: "L4_G3",
+    5: "L4_general",
 }
-
-EXCLUDE_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
 
 
 def detect_l4_alerts(target_date: str) -> list[dict]:
@@ -133,11 +132,14 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
             GROUP BY r.race_id
         """
         # シンプル版: T-5min > T-15min > final で COALESCE
+        # + 1号艇選手の国1%/局1% も取得 (L4+/L4++ ランク判定用)
         cur = conn.execute("""
             SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
                    r.race_grade_number,
                    s.name AS stadium_name,
                    e.class_number,
+                   e.national_top_1_percent, e.local_top_1_percent,
+                   e.racer_name,
                    COALESCE(t5.payout, t15.payout, final.payout) AS fav_payout,
                    CASE
                      WHEN t5.payout IS NOT NULL THEN 'T-5min'
@@ -166,33 +168,39 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
 
     alerts = []
     for row in rows:
-        rid, stadium, rno, closed_at, grade, sname, cls, mp, payout_src = row
-        if not mp or stadium in EXCLUDE_VENUES:
+        (rid, stadium, rno, closed_at, grade, sname, cls,
+         natl_1, local_1, racer_name, mp, payout_src) = row
+        if not mp or is_b_excluded(stadium):
             continue
         if cls != 1:  # A1 のみ (L4 の基本条件)
             continue
-        if not (500 <= mp < 1000):
+        if not is_l4_payout_range(mp):
             continue
-        # グレード別ルール選択
-        rule = None
-        alert_type = None
-        if grade == 1:
-            rule, alert_type = L4_RULES["L4_SG"], "L4_SG"
-        elif grade == 2:
-            rule, alert_type = L4_RULES["L4_G1"], "L4_G1"
-        elif grade == 3:
-            rule, alert_type = L4_RULES["L4_G2"], "L4_G2"
-        elif grade == 4:
-            rule, alert_type = L4_RULES["L4_G3"], "L4_G3"
-        elif grade == 5:
-            rule, alert_type = L4_RULES["L4_general"], "L4_general"
-        else:
-            rule, alert_type = L4_RULES["L4_default"], "L4_default"
-
         # final (確定後) のレースは「事後判定」なので通知しない
-        # T-5min / T-15min (締切前) のみ通知対象
         if payout_src == "final":
             continue
+
+        # 単一情報源からルール取得
+        rule = lookup_rule(grade, cls)
+        if rule is None:
+            continue
+        alert_type = GRADE_TO_ALERT_TYPE.get(grade, "L4_default")
+
+        # サブランク判定 (l4_strategy.py の関数を使用)
+        rank_code, rank_label, rank_emoji, rec_override = l4_rank(natl_1, local_1)
+
+        # ランク上位の場合は recovery を上書き
+        effective_recovery = rec_override if rec_override is not None else rule["recovery"]
+        label_with_rank = f"{rank_emoji}{rule['label']}"
+        if rank_code != "base":
+            label_with_rank += f" ({rank_label})"
+
+        # 後段で使う変数を保持
+        try:
+            n1 = float(natl_1) if natl_1 is not None else 0.0
+            l1 = float(local_1) if local_1 is not None else 0.0
+        except (TypeError, ValueError):
+            n1 = l1 = 0.0
 
         alerts.append({
             "race_id": rid,
@@ -201,11 +209,18 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
             "race_number": rno,
             "race_closed_at": closed_at,
             "alert_type": alert_type,
-            "label": rule["label"],
-            "recovery": rule["recovery"],
+            "label": label_with_rank,
+            "recovery": effective_recovery,
             "bet": rule["bet"],
             "payout_src": payout_src,
             "fav_payout": int(mp),
+            # ▼ ランク情報 (メール本文に表示)
+            "rank": rank_code,
+            "rank_label": rank_label,
+            "rank_emoji": rank_emoji,
+            "natl_1": n1,
+            "local_1": l1,
+            "racer_name": racer_name or "",
         })
     return alerts
 
@@ -228,6 +243,11 @@ def main():
     print(f"[{target_date}] L4 アラート判定中...")
     alerts = detect_l4_alerts(target_date)
     print(f"  L4 該当レース: {len(alerts)} 件")
+    if alerts:
+        n_pp = sum(1 for a in alerts if a.get("rank") == "plus_plus")
+        n_p  = sum(1 for a in alerts if a.get("rank") == "plus")
+        n_b  = len(alerts) - n_pp - n_p
+        print(f"    内訳: 🥇L4++ {n_pp} / 🥈L4+ {n_p} / ⭐L4 {n_b}")
     if not alerts:
         print("  通知対象なし")
         return

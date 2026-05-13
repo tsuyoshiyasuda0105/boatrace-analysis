@@ -1299,13 +1299,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 try:
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
-                               e.class_number
+                               e.class_number,
+                               e.national_top_1_percent, e.local_top_1_percent
                         FROM races r
                         LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                         WHERE r.race_date = ?
                     """, (target_date,))
-                    for rid, stadium, grade, cls in cur.fetchall():
-                        all_race_info[rid] = {"stadium": stadium, "grade": grade, "class": cls}
+                    for rid, stadium, grade, cls, natl1, loc1 in cur.fetchall():
+                        all_race_info[rid] = {
+                            "stadium": stadium, "grade": grade, "class": cls,
+                            "natl_1": natl1, "local_1": loc1,
+                        }
                 except Exception as e:
                     logger.warning("all_race_info query failed: %s", e)
                     try:
@@ -1335,32 +1339,69 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         EXCLUDE_B = set(_LOSING_VENUES.keys()) | set(_QUESTIONABLE_VENUES.keys())
 
-        def _evaluate_l4(stadium, grade, cls, mp_int):
-            """確定オッズベース L4 マーク判定"""
+        # 単一情報源 (src/evaluation/l4_strategy.py) からインポート
+        from src.evaluation.l4_strategy import (
+            l4_rank as _l4_rank_shared,
+            RANK_PLUS_PLUS_RECOVERY,
+            RANK_PLUS_RECOVERY,
+        )
+
+        def _l4_rank(natl_1, local_1):
+            """1号艇選手の成績から L4 のサブランク判定 (単一情報源を委譲)"""
+            return _l4_rank_shared(natl_1, local_1)
+
+        def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None):
+            """確定オッズベース L4 マーク判定 (L4+ / L4++ ランク付き)"""
             in_500_1000 = mp_int is not None and 500 <= mp_int < 1000
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
             if not (in_500_1000 and b_excluded):
                 return None
+
+            base = None
             if cls == 1:
                 if grade == 1:
-                    return {"level": "SG", "label": "👑L4 SG×A1",
+                    base = {"level": "SG", "label": "👑L4 SG×A1",
                             "recovery": 258.2, "bet": "3連単 1-2-3", "n": 40}
                 elif grade == 2:
-                    return {"level": "G1", "label": "👑L4 G1×A1",
+                    base = {"level": "G1", "label": "👑L4 G1×A1",
                             "recovery": 242.8, "bet": "3連単 1-2-3", "n": 227}
                 elif grade == 3:
-                    return {"level": "G2", "label": "👑L4 G2×A1",
+                    base = {"level": "G2", "label": "👑L4 G2×A1",
                             "recovery": 242.7, "bet": "3連単 1-2-3", "n": 30}
+                elif grade == 4:
+                    base = {"level": "G3", "label": "🎯L4 G3×A1",
+                            "recovery": 149.2, "bet": "3連単 1-2-3", "n": 195}
                 elif grade == 5:
-                    return {"level": "general", "label": "🎯L4 一般戦×A1",
+                    base = {"level": "general", "label": "🎯L4 一般戦×A1",
                             "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776}
                 else:
-                    return {"level": "default", "label": "🎯L4 A1",
+                    base = {"level": "default", "label": "🎯L4 A1",
                             "recovery": 160.8, "bet": "3連単 1-2-3", "n": 2210}
             elif cls == 2:
-                return {"level": "a2", "label": "📈L4派生 A2",
+                base = {"level": "a2", "label": "📈L4派生 A2",
                         "recovery": 134.0, "bet": "3連単 1-2-3", "n": 1645}
-            return None
+            if not base:
+                return None
+
+            # ▼ L4 サブランク (1号艇A1のみに適用、A2派生は対象外)
+            if cls == 1:
+                rank_code, rank_label, rank_emoji, rec_override = _l4_rank(natl_1, local_1)
+                base["rank"] = rank_code             # "base" / "plus" / "plus_plus"
+                base["rank_label"] = rank_label
+                base["rank_emoji"] = rank_emoji
+                base["natl_1"] = natl_1
+                base["local_1"] = local_1
+                # ランクに応じて recovery 値を補正 (検証実測値ベース)
+                if rec_override is not None:
+                    base["recovery"] = rec_override
+                    base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
+            else:
+                base["rank"] = "a2"
+                base["rank_label"] = "L4派生"
+                base["rank_emoji"] = "📈"
+                base["natl_1"] = natl_1
+                base["local_1"] = local_1
+            return base
 
         def _evaluate_morning_l4(stadium, grade, cls, prob_first):
             """朝判定用 L4 候補マーク (prob_first ベース)"""
@@ -1382,6 +1423,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 3:
                     return {"level": "morning_G2", "label": "🌅👑朝L4 G2候補",
                             "recovery": 242.7, "bet": "3連単 1-2-3 (確定後)", "n": 30,
+                            "is_morning": True, "prob_first": prob_first}
+                elif grade == 4:
+                    return {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
+                            "recovery": 149.2, "bet": "3連単 1-2-3 (確定後)", "n": 195,
                             "is_morning": True, "prob_first": prob_first}
                 elif grade == 5:
                     return {"level": "morning_general", "label": "🌅🎯朝L4 一般戦候補",
@@ -1406,6 +1451,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             stadium = info.get("stadium")
             grade = info.get("grade")
             cls = info.get("class")
+            natl_1 = info.get("natl_1")
+            local_1 = info.get("local_1")
             data = results.get(rid)
 
             if data:
@@ -1425,7 +1472,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 else:
                     tier, expected_roi, title = "chaos", -0.7354, "波乱"
 
-                l4 = _evaluate_l4(stadium, grade, cls, mp)
+                l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1)
 
                 signals.append({
                     "race_id": rid,

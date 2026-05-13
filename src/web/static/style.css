@@ -1761,6 +1761,27 @@ main h2 {
 }
 
 /* ============================================================
+   L4 ランク別装飾 (L4 / L4+ / L4++) — 1号艇選手の国1%/局1%絞り込み
+   検証: out-of-sample で +EV を確認
+     base:      回収 161% (従来 A1 のみ)
+     plus:      回収 188% (国1%>=7.0)
+     plus_plus: 回収 190% (国1%>=7 ∧ 局1%>=7)
+   ============================================================ */
+.l4-badge.l4-rank-plus {
+  /* 銀 (sliver) のグラデ縁取り、ボディは既存色を尊重 */
+  outline: 2px solid rgba(192, 192, 192, 0.9);
+  outline-offset: 1px;
+  box-shadow: 0 0 8px rgba(192, 192, 192, 0.5);
+}
+.l4-badge.l4-rank-plus_plus {
+  /* 金 (gold) のグラデ縁取り + 強パルス */
+  outline: 2px solid rgba(255, 215, 0, 0.95);
+  outline-offset: 1px;
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.7);
+  animation: l4-pulse 1.5s ease-in-out infinite;
+}
+
+/* ============================================================
    Niche signals (verified high-EV patterns)
    ============================================================ */
 .niche-signals {
