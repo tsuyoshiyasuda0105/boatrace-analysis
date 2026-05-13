@@ -1761,6 +1761,106 @@ main h2 {
 }
 
 /* ============================================================
+   マーク凡例セクション (折りたたみ式)
+   ============================================================ */
+.badge-legend {
+  margin: 12px 0 20px;
+  padding: 0;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius);
+}
+.badge-legend summary {
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent, #00d4ff);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.badge-legend summary::-webkit-details-marker { display: none; }
+.badge-legend summary::after {
+  content: "▸";
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+.badge-legend[open] summary::after {
+  transform: rotate(90deg);
+}
+.badge-legend summary:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.legend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 4px 16px 16px;
+}
+.legend-section h4 {
+  margin: 8px 0 8px;
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  padding-bottom: 4px;
+}
+.legend-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255,255,255,0.75);
+}
+.legend-list li {
+  padding: 3px 0;
+}
+.legend-list li b {
+  color: rgba(255,255,255,0.95);
+}
+.legend-note {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 200, 0, 0.08);
+  border-left: 2px solid rgba(255, 200, 0, 0.5);
+  border-radius: 3px;
+  font-size: 11px;
+}
+.legend-note-box {
+  grid-column: 1 / -1;
+  background: rgba(255, 80, 80, 0.06);
+  border: 1px solid rgba(255, 80, 80, 0.18);
+  border-radius: 6px;
+  padding: 8px 14px;
+}
+.legend-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: bold;
+  font-size: 11px;
+  background: rgba(80, 80, 80, 0.6);
+  color: #fff;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.legend-chip.l4-rank-plus {
+  background: linear-gradient(135deg, #d1d5db, #9ca3af);
+  color: #111;
+  outline: 1px solid rgba(192,192,192,0.8);
+}
+.legend-chip.l4-rank-plus_plus {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #111;
+  outline: 1px solid rgba(255,215,0,0.9);
+  box-shadow: 0 0 6px rgba(255, 215, 0, 0.4);
+}
+
+/* ============================================================
    L4 ランク別装飾 (L4 / L4+ / L4++) — 1号艇選手の国1%/局1%絞り込み
    検証: out-of-sample で +EV を確認
      base:      回収 161% (従来 A1 のみ)

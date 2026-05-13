@@ -3,6 +3,78 @@
 {% block content %}
   <h2>{{ target_date }} のレース</h2>
 
+  <!-- マーク凡例 (折りたたみ) -->
+  <details class="badge-legend">
+    <summary>📖 マークの説明を見る</summary>
+    <div class="legend-grid">
+
+      <div class="legend-section">
+        <h4>🏆 L4 ランク (1号艇選手成績で決まる)</h4>
+        <ul class="legend-list">
+          <li>
+            <span class="legend-chip l4-rank-plus_plus">🥇 L4++</span>
+            国1% ≥ 7.0 ∧ 局1% ≥ 7.0 — 検証回収率 <b>190.3%</b> (out-of-sample)
+          </li>
+          <li>
+            <span class="legend-chip l4-rank-plus">🥈 L4+</span>
+            国1% ≥ 7.0 — 検証回収率 <b>188.2%</b>
+          </li>
+          <li>
+            <span class="legend-chip">⭐ L4</span>
+            1号艇A1 + B除外会場 + 本命500-1000円 — 検証回収率 147〜258%(グレード別)
+          </li>
+        </ul>
+      </div>
+
+      <div class="legend-section">
+        <h4>🎯 L4 グレード別ラベル</h4>
+        <ul class="legend-list">
+          <li><b>👑 L4 SG×A1</b> 258.2%</li>
+          <li><b>👑 L4 G1×A1</b> 242.8%</li>
+          <li><b>👑 L4 G2×A1</b> 242.7%</li>
+          <li><b>🎯 L4 G3×A1</b> 149.2%</li>
+          <li><b>🎯 L4 一般戦×A1</b> 147.7%</li>
+          <li><b>📈 L4 派生 A2</b> 134.0% (1号艇A2のサブ条件)</li>
+          <li><b>🌅 朝L4候補</b> 予測ベース、オッズ確定前 (T-15min より早い)</li>
+        </ul>
+      </div>
+
+      <div class="legend-section">
+        <h4>💎 ダイヤモンド (本命オッズ帯シグナル)</h4>
+        <ul class="legend-list">
+          <li><b>💎💎 完全+EV</b> 本命 500-1000円 — 期待ROI +27.4%</li>
+          <li><b>💎 超本命</b> 本命 &lt; 500円 — 期待ROI +18.5%</li>
+          <li><b>💎 やや本命</b> 本命 1000-2000円 — 期待ROI +17.9%</li>
+          <li class="legend-note">
+            ※ ダイヤモンドは本命オッズだけで判定する <b>古い世代の簡易シグナル</b>。
+            L4 が付いているレースなら L4 のラベルを優先して見てください。
+          </li>
+        </ul>
+      </div>
+
+      <div class="legend-section">
+        <h4>その他のマーク</h4>
+        <ul class="legend-list">
+          <li><span class="badge">確定</span> レース結果が出ているレース</li>
+          <li><span class="legend-chip" style="background:#16a34a;color:#fff">+EV</span>
+              EV+ 自動判定 (上部の閾値設定で変動)</li>
+          <li>📬 通知登録 (上部ヘッダ) からメール通知の購読が可能。
+              <b>L4++</b> / <b>L4+</b> / <b>L4 SG/G1/G2</b> / <b>朝候補</b> など細かく選べる。</li>
+        </ul>
+      </div>
+
+      <div class="legend-section legend-note-box">
+        <h4>⚠️ 重要</h4>
+        <ul class="legend-list">
+          <li>すべての回収率は過去 10ヶ月の実測値です。 将来を保証するものではありません。</li>
+          <li>本サービスは投資助言ではありません。最終判断はご自身で。</li>
+          <li>L4 シグナルは <b>1点100円</b> の三連単 1-2-3 を想定した検証結果。資金管理は自己責任で。</li>
+        </ul>
+      </div>
+
+    </div>
+  </details>
+
   {% if empty %}
     <p class="empty">この日のデータはありません。バックフィルされていないか、未来日です。</p>
   {% else %}
