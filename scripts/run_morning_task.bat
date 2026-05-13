@@ -17,7 +17,10 @@ REM 1. Today's race data collection (programs / previews / results / payouts)
 REM 2. Predict today's races and sync to Supabase
 .venv\Scripts\python.exe scripts\cache_predictions.py --today --sync >> "%LOG%" 2>&1
 
-REM 3. L4 alert email send (subscribers receive notifications)
-.venv\Scripts\python.exe scripts\send_l4_alerts.py >> "%LOG%" 2>&1
+REM 3. Morning L4 candidate email (prediction-based, before odds confirmed)
+.venv\Scripts\python.exe scripts\send_l4_alerts.py --mode morning >> "%LOG%" 2>&1
+
+REM 4. Also try confirmed L4 (in case some races already have T-5/T-15 odds)
+.venv\Scripts\python.exe scripts\send_l4_alerts.py --mode confirmed >> "%LOG%" 2>&1
 
 echo === Morning task finished %date% %time% === >> "%LOG%"

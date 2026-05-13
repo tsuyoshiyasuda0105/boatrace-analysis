@@ -214,7 +214,110 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
             "bet": rule["bet"],
             "payout_src": payout_src,
             "fav_payout": int(mp),
+            "mode": "confirmed",
             # ▼ ランク情報 (メール本文に表示)
+            "rank": rank_code,
+            "rank_label": rank_label,
+            "rank_emoji": rank_emoji,
+            "natl_1": n1,
+            "local_1": l1,
+            "racer_name": racer_name or "",
+        })
+    return alerts
+
+
+def detect_morning_l4_candidates(target_date: str) -> list[dict]:
+    """朝判定モード: predictions テーブルの 1号艇 prob_first を使って
+    オッズ確定前に L4 候補レースを抽出する。
+
+    抽出条件 (app.py の _evaluate_morning_l4 と同じ):
+      - 1号艇 A1 ∧ prob_first ∈ [0.65, 0.85)  ← 本命 500-1000円帯候補
+      - 1号艇 A2 ∧ prob_first ∈ [0.55, 0.75)  ← A2 派生候補
+      - B 除外会場でない
+
+    alert_type は "L4_morning_*" で確定版と区別 (重複送信防止):
+      確定 L4_SG ↔ 朝 L4_morning_SG  (alert_sent では別レコードで管理されるが、
+      購読者が両方の alert_types を有効化していれば両方届く)
+    """
+    with db_connect() as conn:
+        cur = conn.execute("""
+            SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
+                   r.race_grade_number,
+                   s.name AS stadium_name,
+                   e.class_number,
+                   e.national_top_1_percent, e.local_top_1_percent,
+                   e.racer_name,
+                   p.prob_first
+            FROM races r
+            JOIN stadiums s ON r.stadium_number = s.stadium_number
+            LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+            JOIN predictions p ON r.race_id = p.race_id AND p.boat_number = 1
+            WHERE r.race_date = ?
+              AND p.prob_first IS NOT NULL
+        """, (target_date,))
+        rows = cur.fetchall()
+
+    alerts = []
+    for row in rows:
+        (rid, stadium, rno, closed_at, grade, sname, cls,
+         natl_1, local_1, racer_name, prob_first) = row
+        if is_b_excluded(stadium):
+            continue
+        if prob_first is None:
+            continue
+
+        # クラス別の prob_first 閾値
+        if cls == 1 and 0.65 <= prob_first < 0.85:
+            pass  # A1 候補
+        elif cls == 2 and 0.55 <= prob_first < 0.75:
+            pass  # A2 派生候補
+        else:
+            continue
+
+        # ルール取得 (確定版と同じ recovery を使うが、判定が予測ベースであること
+        # をラベルで明示する)
+        rule = lookup_rule(grade, cls)
+        if rule is None:
+            continue
+
+        # ランク判定 (A1 のみサブランク適用)
+        if cls == 1:
+            rank_code, rank_label, rank_emoji, rec_override = l4_rank(natl_1, local_1)
+        else:
+            rank_code, rank_label, rank_emoji, rec_override = "a2", "L4派生", "📈", None
+
+        effective_recovery = rec_override if rec_override is not None else rule["recovery"]
+
+        # 朝モード用ラベル (🌅 を先頭に)
+        morning_label = f"🌅{rank_emoji}朝{rule['label']}"
+        if rank_code not in ("base", "a2"):
+            morning_label += f" ({rank_label})"
+        morning_label += f" 候補"
+
+        # alert_type を確定版と区別
+        confirmed_at = GRADE_TO_ALERT_TYPE.get(grade, "L4_default")
+        morning_alert_type = f"L4_morning_{confirmed_at.replace('L4_', '')}"
+
+        try:
+            n1 = float(natl_1) if natl_1 is not None else 0.0
+            l1 = float(local_1) if local_1 is not None else 0.0
+        except (TypeError, ValueError):
+            n1 = l1 = 0.0
+
+        alerts.append({
+            "race_id": rid,
+            "stadium_number": stadium,
+            "stadium_name": sname,
+            "race_number": rno,
+            "race_closed_at": closed_at,
+            "alert_type": morning_alert_type,
+            "label": morning_label,
+            "recovery": effective_recovery,
+            "bet": rule["bet"] + " (確定後)",
+            "payout_src": "morning_predict",
+            "fav_payout": None,
+            "prob_first": prob_first,
+            "mode": "morning",
             "rank": rank_code,
             "rank_label": rank_label,
             "rank_emoji": rank_emoji,
@@ -229,6 +332,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=None,
                         help="対象日 (YYYY-MM-DD)、省略時は今日")
+    parser.add_argument("--mode", choices=["confirmed", "morning", "both"],
+                        default="confirmed",
+                        help="confirmed=確定オッズベース(従来) / morning=朝予測候補 / both=両方")
     parser.add_argument("--dry-run", action="store_true",
                         help="送信せずプレビュー表示")
     parser.add_argument("--verbose", action="store_true")
@@ -240,14 +346,31 @@ def main():
     )
 
     target_date = args.date or date.today().isoformat()
-    print(f"[{target_date}] L4 アラート判定中...")
-    alerts = detect_l4_alerts(target_date)
-    print(f"  L4 該当レース: {len(alerts)} 件")
-    if alerts:
-        n_pp = sum(1 for a in alerts if a.get("rank") == "plus_plus")
-        n_p  = sum(1 for a in alerts if a.get("rank") == "plus")
-        n_b  = len(alerts) - n_pp - n_p
-        print(f"    内訳: 🥇L4++ {n_pp} / 🥈L4+ {n_p} / ⭐L4 {n_b}")
+    print(f"[{target_date}] L4 アラート判定中 (mode={args.mode})...")
+
+    # モードに応じて検出ソースを選択
+    alerts: list[dict] = []
+    if args.mode in ("confirmed", "both"):
+        confirmed = detect_l4_alerts(target_date)
+        print(f"  確定 L4 (T-5/T-15): {len(confirmed)} 件")
+        if confirmed:
+            n_pp = sum(1 for a in confirmed if a.get("rank") == "plus_plus")
+            n_p  = sum(1 for a in confirmed if a.get("rank") == "plus")
+            n_b  = len(confirmed) - n_pp - n_p
+            print(f"    内訳: 🥇L4++ {n_pp} / 🥈L4+ {n_p} / ⭐L4 {n_b}")
+        alerts.extend(confirmed)
+
+    if args.mode in ("morning", "both"):
+        morning = detect_morning_l4_candidates(target_date)
+        print(f"  朝 L4 候補 (予測): {len(morning)} 件")
+        if morning:
+            n_pp = sum(1 for a in morning if a.get("rank") == "plus_plus")
+            n_p  = sum(1 for a in morning if a.get("rank") == "plus")
+            n_a2 = sum(1 for a in morning if a.get("rank") == "a2")
+            n_b  = len(morning) - n_pp - n_p - n_a2
+            print(f"    内訳: 🥇L4++ {n_pp} / 🥈L4+ {n_p} / ⭐L4 {n_b} / 📈A2派生 {n_a2}")
+        alerts.extend(morning)
+
     if not alerts:
         print("  通知対象なし")
         return

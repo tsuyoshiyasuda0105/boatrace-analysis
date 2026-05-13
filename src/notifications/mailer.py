@@ -272,10 +272,16 @@ def send_l4_alert(email: str, alerts: list[dict], unsubscribe_token: str) -> boo
     site = _get_config()["site_url"]
     unsub = f"{site}/alerts/unsubscribe?token={unsubscribe_token}"
 
+    # モード判定 (1件でも morning が混ざれば朝モード扱い)
+    has_morning = any(a.get("mode") == "morning" for a in alerts)
+    has_confirmed = any(a.get("mode") == "confirmed" or not a.get("mode") for a in alerts)
+    is_morning_only = has_morning and not has_confirmed
+
     # ランク別に件数集計 (件名表示用)
     n_plus_plus = sum(1 for a in alerts if a.get("rank") == "plus_plus")
     n_plus = sum(1 for a in alerts if a.get("rank") == "plus")
-    n_base = len(alerts) - n_plus_plus - n_plus
+    n_a2 = sum(1 for a in alerts if a.get("rank") == "a2")
+    n_base = len(alerts) - n_plus_plus - n_plus - n_a2
     n = len(alerts)
 
     # 件名にランク分布を表示
@@ -283,30 +289,56 @@ def send_l4_alert(email: str, alerts: list[dict], unsubscribe_token: str) -> boo
     if n_plus_plus: rank_parts.append(f"L4++ {n_plus_plus}")
     if n_plus:      rank_parts.append(f"L4+ {n_plus}")
     if n_base:      rank_parts.append(f"L4 {n_base}")
+    if n_a2:        rank_parts.append(f"A2派生 {n_a2}")
     rank_summary = " / ".join(rank_parts)
-    subject = f"[BOATRACE] 🎯 L4 シグナル {n}件 ({rank_summary})"
+
+    if is_morning_only:
+        subject = f"[BOATRACE] 🌅 朝L4候補 {n}件 ({rank_summary}) - オッズ確定前予報"
+    elif has_morning:
+        subject = f"[BOATRACE] 🎯 L4 + 🌅朝候補 {n}件 ({rank_summary})"
+    else:
+        subject = f"[BOATRACE] 🎯 L4 シグナル {n}件 ({rank_summary})"
 
     # text 版
+    header = "朝L4候補 (オッズ確定前予報)" if is_morning_only else "L4 シグナル"
     lines = [
-        f"BOATRACE Alert: L4 シグナル {n} 件発火",
+        f"BOATRACE Alert: {header} {n} 件発火",
         f"  内訳: {rank_summary}",
         "",
+    ]
+    if is_morning_only:
+        lines.extend([
+            "※ 朝の予測モデルベースの候補です。",
+            "  T-5min/T-15min オッズ確定後に再判定されます。",
+            "  本命オッズが 500-1000円帯に入らなければ取り消されます。",
+            "",
+        ])
+    lines.extend([
         "L4++ (🥇 国1%>=7 ∧ 局1%>=7) … 検証回収率 190.3%",
         "L4+  (🥈 国1%>=7)            … 検証回収率 188.2%",
         "L4   (⭐ 基本 A1)            … グレード別検証値",
         "",
         "対象レース一覧 (締切時刻順):",
         "",
-    ]
+    ])
     for a in sorted(alerts, key=lambda x: x.get("race_closed_at", "")):
         rk = a.get("rank_label", "L4")
         rec = a.get("recovery", 0) or 0
         natl = a.get("natl_1", 0) or 0
         local = a.get("local_1", 0) or 0
         racer = a.get("racer_name", "")
-        lines.append(f"  ▶ [{rk}] {a.get('race_closed_at','?')} | "
+        morn_tag = " 🌅朝候補" if a.get("mode") == "morning" else ""
+        lines.append(f"  ▶ [{rk}{morn_tag}] {a.get('race_closed_at','?')} | "
                      f"{a.get('stadium_name','?')} {a.get('race_number','?')}R | "
                      f"{a.get('label','')} ({rec:.1f}%)")
+        if a.get("mode") == "morning":
+            pf = a.get("prob_first")
+            if pf is not None:
+                lines.append(f"    予測 P(1着)={pf*100:.1f}% (オッズ確定後に再判定)")
+        else:
+            fp = a.get("fav_payout")
+            if fp:
+                lines.append(f"    本命オッズ: {fp}円")
         if racer:
             lines.append(f"    1号艇: {racer} (国1%={natl:.2f} / 局1%={local:.2f})")
         lines.append(f"    買い目推奨: {a.get('bet','?')}")
@@ -341,12 +373,25 @@ def send_l4_alert(email: str, alerts: list[dict], unsubscribe_token: str) -> boo
         local = a.get("local_1", 0) or 0
         racer = _esc(a.get("racer_name", "") or "-")
         rid_esc = _esc(a.get('race_id', ''), default="")
+        # 朝モードのレースは行全体を薄い橙背景でマーク
+        is_morn = a.get("mode") == "morning"
+        row_bg = "background:#fef3c7;" if is_morn else ""
+        morn_chip = ('<span style="display:inline-block;padding:1px 6px;margin-left:4px;'
+                     'border-radius:8px;background:#f59e0b;color:#fff;font-size:10px;'
+                     'font-weight:bold">🌅朝候補</span>') if is_morn else ""
+        # 朝モードは prob_first / 確定モードは fav_payout を表示
+        if is_morn:
+            pf = a.get("prob_first")
+            extra = f"P(1着)={pf*100:.1f}%" if pf is not None else ""
+        else:
+            fp = a.get("fav_payout")
+            extra = f"本命 ¥{fp:,}" if fp else ""
         rows.append(f"""
-        <tr style="border-bottom:1px solid #eee">
+        <tr style="border-bottom:1px solid #eee;{row_bg}">
           <td style="padding:8px;font-size:12px;color:#666">{_esc(a.get('race_closed_at'))}</td>
-          <td style="padding:8px">{rank_chip(a.get('rank','base'))}</td>
+          <td style="padding:8px">{rank_chip(a.get('rank','base'))}{morn_chip}</td>
           <td style="padding:8px"><strong>{_esc(a.get('stadium_name'))} {_esc(a.get('race_number'))}R</strong></td>
-          <td style="padding:8px"><span style="color:{color};font-weight:bold">{_esc(a.get('label',''))}<br><span style="font-size:11px;color:#666;font-weight:normal">回収 {rec:.1f}%</span></span></td>
+          <td style="padding:8px"><span style="color:{color};font-weight:bold">{_esc(a.get('label',''))}<br><span style="font-size:11px;color:#666;font-weight:normal">回収 {rec:.1f}% / {_esc(extra)}</span></span></td>
           <td style="padding:8px;font-size:12px">
             <div>{racer}</div>
             <div style="color:#666;font-size:11px">国1%={natl:.2f} 局1%={local:.2f}</div>
@@ -365,11 +410,23 @@ def send_l4_alert(email: str, alerts: list[dict], unsubscribe_token: str) -> boo
     </div>
     """
 
+    if is_morning_only:
+        html_heading = f'🌅 朝L4候補 {n} 件 ({rank_summary})'
+        html_lead = ('<p><strong>オッズ確定前の予測ベース</strong>の候補リストです。'
+                     'T-5min / T-15min オッズ取得後に再判定され、本命500-1000円帯に入らないものは取り消されます。</p>')
+    elif has_morning:
+        html_heading = f'🎯 L4 + 🌅朝候補 {n} 件 ({rank_summary})'
+        html_lead = ('<p>確定 L4 と 朝の予測候補が混在しています。'
+                     '朝候補は薄い橙背景でマークされています。</p>')
+    else:
+        html_heading = f'🎯 L4 シグナル {n} 件 ({rank_summary})'
+        html_lead = '<p>検証回収率 <strong>150% 超</strong> の高確度レースが発見されました。</p>'
+
     html = f"""<!DOCTYPE html>
 <html><body style="font-family:sans-serif;max-width:880px;margin:auto;background:#f9fafb;padding:20px">
 <div style="background:#fff;padding:24px;border-radius:8px">
-<h2 style="margin-top:0">🎯 L4 シグナル {n} 件 ({rank_summary})</h2>
-<p>検証回収率 <strong>150% 超</strong> の高確度レースが発見されました。</p>
+<h2 style="margin-top:0">{html_heading}</h2>
+{html_lead}
 {rank_legend}
 <table style="width:100%;border-collapse:collapse;margin-top:8px">
   <thead style="background:#f3f4f6">
