@@ -34,7 +34,7 @@
         </span>
         <span class="card-sub">
           n={{ totals.win_bets }} HIT={{ totals.win_hits }}
-          / 損益 {{ '%+,d' | format(totals.win_profit) }}円
+          / 損益 {{ totals.win_profit | signed_comma }}円
         </span>
       </div>
       <div class="summary-card {% if totals.exa_roi and totals.exa_roi > 0 %}positive{% elif totals.exa_roi is not none %}negative{% endif %}">
@@ -44,7 +44,7 @@
         </span>
         <span class="card-sub">
           n={{ totals.exa_bets }} HIT={{ totals.exa_hits }}
-          / 損益 {{ '%+,d' | format(totals.exa_profit) }}円
+          / 損益 {{ totals.exa_profit | signed_comma }}円
         </span>
       </div>
       <div class="summary-card {% if totals.tri_roi and totals.tri_roi > 0 %}positive{% elif totals.tri_roi is not none %}negative{% endif %}">
@@ -54,7 +54,7 @@
         </span>
         <span class="card-sub">
           n={{ totals.tri_bets }} HIT={{ totals.tri_hits }}
-          / 損益 {{ '%+,d' | format(totals.tri_profit) }}円
+          / 損益 {{ totals.tri_profit | signed_comma }}円
         </span>
       </div>
     </div>
@@ -99,7 +99,7 @@
                 {{ '%.0f' | format(r.win_recovery) }}%
               </td>
               <td class="num {% if r.win_profit > 0 %}pos{% elif r.win_profit < 0 %}neg{% endif %}">
-                {{ '%+,d' | format(r.win_profit) }}
+                {{ r.win_profit | signed_comma }}
               </td>
 
               <td class="num">{{ r.exa_hits }}/{{ r.exa_bets }}</td>
@@ -107,7 +107,7 @@
                 {{ '%.0f' | format(r.exa_recovery) }}%
               </td>
               <td class="num {% if r.exa_profit > 0 %}pos{% elif r.exa_profit < 0 %}neg{% endif %}">
-                {{ '%+,d' | format(r.exa_profit) }}
+                {{ r.exa_profit | signed_comma }}
               </td>
 
               <td class="num">{{ r.tri_hits }}/{{ r.tri_bets }}</td>
@@ -115,7 +115,7 @@
                 {{ '%.0f' | format(r.tri_recovery) }}%
               </td>
               <td class="num {% if r.tri_profit > 0 %}pos{% elif r.tri_profit < 0 %}neg{% endif %}">
-                {{ '%+,d' | format(r.tri_profit) }}
+                {{ r.tri_profit | signed_comma }}
               </td>
             {% else %}
               <td colspan="9" class="num muted">L4該当なし</td>

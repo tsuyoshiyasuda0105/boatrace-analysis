@@ -915,6 +915,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app.jinja_env.globals["is_member"] = is_member
     app.jinja_env.globals["is_pro"] = is_pro
 
+    # Jinja2 カスタムフィルタ: カンマ区切り符号付き整数 (Python %-format は ',' 非対応)
+    def _signed_comma(value):
+        try:
+            return f"{int(value):+,d}"
+        except (TypeError, ValueError):
+            return "-"
+    def _comma(value):
+        try:
+            return f"{int(value):,d}"
+        except (TypeError, ValueError):
+            return "-"
+    app.jinja_env.filters["signed_comma"] = _signed_comma
+    app.jinja_env.filters["comma"] = _comma
+
     # DB 初期化 (空ディスクへの初回デプロイで必要)
     try:
         _ensure_db_initialized()
