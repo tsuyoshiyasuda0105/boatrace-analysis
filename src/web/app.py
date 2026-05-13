@@ -1487,46 +1487,72 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             d = by_date.setdefault(rdate, {
                 "date": rdate,
                 "n_total": 0,
-                "n_l4": 0,
+                "n_l4": 0,         # L4 A1 のみ
+                "n_l4_a2": 0,      # L4 派生 A2
+                "n_l4_all": 0,     # L4 全体 (A1+A2)
+                # L4 [A1] のみの集計
                 "win_bets": 0, "win_hits": 0, "win_pay": 0,
                 "exa_bets": 0, "exa_hits": 0, "exa_pay": 0,
                 "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
-                "grade_breakdown": {},  # grade -> {n, hits, pay}
+                # L4 [A2 派生] の集計
+                "a2_tri_bets": 0, "a2_tri_hits": 0, "a2_tri_pay": 0,
+                # L4 [A1+A2 合算] の集計
+                "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
+                "grade_breakdown": {},
             })
             d["n_total"] += 1
-            # L4 条件
-            if (fav and 500 <= fav < 1000
-                and stadium not in EXCLUDE_B_VENUES
-                and cls == 1):
+
+            # L4 共通条件: 500-1000帯 + B除外
+            is_l4_base = (fav and 500 <= fav < 1000
+                          and stadium not in EXCLUDE_B_VENUES)
+            tri_hit = (w1 == 1 and w2 == 2 and w3 == 3)
+            tri_pay_v = (tri_pay or 0) if tri_hit else 0
+
+            if is_l4_base and cls == 1:
+                # L4 [A1]
                 d["n_l4"] += 1
-                # 単勝
+                d["n_l4_all"] += 1
                 d["win_bets"] += 1
                 if w1 == 1:
                     d["win_hits"] += 1
                     d["win_pay"] += (win_pay or 0)
-                # 2連単 1-2
                 d["exa_bets"] += 1
                 if w1 == 1 and w2 == 2:
                     d["exa_hits"] += 1
                     d["exa_pay"] += (ex_pay or 0)
-                # 3連単 1-2-3
                 d["tri_bets"] += 1
-                if w1 == 1 and w2 == 2 and w3 == 3:
+                if tri_hit:
                     d["tri_hits"] += 1
-                    d["tri_pay"] += (tri_pay or 0)
-                # グレード別集計
+                    d["tri_pay"] += tri_pay_v
+                # A1+A2 合算にも
+                d["all_tri_bets"] += 1
+                if tri_hit:
+                    d["all_tri_hits"] += 1
+                    d["all_tri_pay"] += tri_pay_v
+                # グレード別
                 g_key = grade or 5
-                gb = d["grade_breakdown"].setdefault(g_key, {
-                    "n": 0, "tri_hits": 0, "tri_pay": 0
-                })
+                gb = d["grade_breakdown"].setdefault(g_key, {"n": 0, "tri_hits": 0, "tri_pay": 0})
                 gb["n"] += 1
-                if w1 == 1 and w2 == 2 and w3 == 3:
+                if tri_hit:
                     gb["tri_hits"] += 1
-                    gb["tri_pay"] += (tri_pay or 0)
+                    gb["tri_pay"] += tri_pay_v
+            elif is_l4_base and cls == 2:
+                # L4 [A2 派生]
+                d["n_l4_a2"] += 1
+                d["n_l4_all"] += 1
+                d["a2_tri_bets"] += 1
+                if tri_hit:
+                    d["a2_tri_hits"] += 1
+                    d["a2_tri_pay"] += tri_pay_v
+                # A1+A2 合算にも
+                d["all_tri_bets"] += 1
+                if tri_hit:
+                    d["all_tri_hits"] += 1
+                    d["all_tri_pay"] += tri_pay_v
 
         # ROI 計算
         for d in by_date.values():
-            for bet in ("win", "exa", "tri"):
+            for bet in ("win", "exa", "tri", "a2_tri", "all_tri"):
                 n = d[f"{bet}_bets"]
                 pay = d[f"{bet}_pay"]
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None
@@ -1550,26 +1576,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         rows = _l4_daily_stats(from_d, to_d)
 
-        # 通算集計
+        # 通算集計 (L4 A1 + A2 派生 + 合算)
         totals = {
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
-            "win_bets": sum(r["win_bets"] for r in rows),
-            "win_hits": sum(r["win_hits"] for r in rows),
-            "win_pay": sum(r["win_pay"] for r in rows),
-            "exa_bets": sum(r["exa_bets"] for r in rows),
-            "exa_hits": sum(r["exa_hits"] for r in rows),
-            "exa_pay": sum(r["exa_pay"] for r in rows),
-            "tri_bets": sum(r["tri_bets"] for r in rows),
-            "tri_hits": sum(r["tri_hits"] for r in rows),
-            "tri_pay": sum(r["tri_pay"] for r in rows),
+            "n_l4_a2": sum(r["n_l4_a2"] for r in rows),
+            "n_l4_all": sum(r["n_l4_all"] for r in rows),
         }
-        for bet in ("win", "exa", "tri"):
-            n = totals[f"{bet}_bets"]
-            pay = totals[f"{bet}_pay"]
-            totals[f"{bet}_roi"] = (pay - 100*n)/(100*n)*100 if n else None
-            totals[f"{bet}_recovery"] = pay/(100*n)*100 if n else None
-            totals[f"{bet}_profit"] = pay - 100*n if n else 0
+        for k in ("win", "exa", "tri", "a2_tri", "all_tri"):
+            totals[f"{k}_bets"] = sum(r[f"{k}_bets"] for r in rows)
+            totals[f"{k}_hits"] = sum(r[f"{k}_hits"] for r in rows)
+            totals[f"{k}_pay"]  = sum(r[f"{k}_pay"]  for r in rows)
+            n = totals[f"{k}_bets"]; pay = totals[f"{k}_pay"]
+            totals[f"{k}_roi"] = (pay - 100*n)/(100*n)*100 if n else None
+            totals[f"{k}_recovery"] = pay/(100*n)*100 if n else None
+            totals[f"{k}_profit"] = pay - 100*n if n else 0
 
         return render_template(
             "member_strategy.html",

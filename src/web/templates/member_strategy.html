@@ -23,9 +23,9 @@
     <h3>📈 通算サマリ ({{ from_date }} 〜 {{ to_date }})</h3>
     <div class="summary-grid">
       <div class="summary-card">
-        <span class="card-label">対象レース</span>
-        <span class="card-value">{{ totals.n_l4 }} / {{ totals.n_total }}</span>
-        <span class="card-sub">L4 適合率 {% if totals.n_total %}{{ '%.1f' | format(totals.n_l4 / totals.n_total * 100) }}{% else %}-{% endif %}%</span>
+        <span class="card-label">対象レース (L4 A1 / A2派生)</span>
+        <span class="card-value">{{ totals.n_l4 }} + {{ totals.n_l4_a2 }}</span>
+        <span class="card-sub">全レース中 {{ totals.n_l4_all }} / {{ totals.n_total }}</span>
       </div>
       <div class="summary-card {% if totals.win_roi and totals.win_roi > 0 %}positive{% elif totals.win_roi is not none %}negative{% endif %}">
         <span class="card-label">単勝</span>
@@ -48,13 +48,33 @@
         </span>
       </div>
       <div class="summary-card {% if totals.tri_roi and totals.tri_roi > 0 %}positive{% elif totals.tri_roi is not none %}negative{% endif %}">
-        <span class="card-label">3連単 1-2-3</span>
+        <span class="card-label">3連単1-2-3 (A1のみ)</span>
         <span class="card-value">
           {% if totals.tri_roi is not none %}{{ '%+.1f' | format(totals.tri_roi) }}%{% else %}-{% endif %}
         </span>
         <span class="card-sub">
           n={{ totals.tri_bets }} HIT={{ totals.tri_hits }}
           / 損益 {{ totals.tri_profit | signed_comma }}円
+        </span>
+      </div>
+      <div class="summary-card {% if totals.a2_tri_roi and totals.a2_tri_roi > 0 %}positive{% elif totals.a2_tri_roi is not none %}negative{% endif %}">
+        <span class="card-label">3連単1-2-3 (A2派生)</span>
+        <span class="card-value">
+          {% if totals.a2_tri_roi is not none %}{{ '%+.1f' | format(totals.a2_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.a2_tri_bets }} HIT={{ totals.a2_tri_hits }}
+          / 損益 {{ totals.a2_tri_profit | signed_comma }}円
+        </span>
+      </div>
+      <div class="summary-card {% if totals.all_tri_roi and totals.all_tri_roi > 0 %}positive{% elif totals.all_tri_roi is not none %}negative{% endif %}">
+        <span class="card-label">3連単1-2-3 (A1+A2合算)</span>
+        <span class="card-value">
+          {% if totals.all_tri_roi is not none %}{{ '%+.1f' | format(totals.all_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.all_tri_bets }} HIT={{ totals.all_tri_hits }}
+          / 損益 {{ totals.all_tri_profit | signed_comma }}円
         </span>
       </div>
     </div>
@@ -68,7 +88,8 @@
 
   <!-- 日別テーブル -->
   <section class="daily-table-section">
-    <h3>📅 日別詳細 ({{ rows | length }} 日分)</h3>
+    <h3>📅 日別詳細 (A1 のみ集計、{{ rows | length }} 日分)</h3>
+    <p class="dashboard-hint">※ L4 該当 = A1 のみ。A2 派生 は上のサマリーで確認可能。</p>
     <div class="table-wrap">
       <table class="daily-table">
         <thead>
