@@ -19,10 +19,12 @@
         <a href="/alerts/subscribe" class="auth-link" title="L4 シグナルをメール通知">📬 通知登録</a>
         {% if is_pro() %}
           <a href="{{ url_for('member_strategy') }}" class="auth-link">📊 ROI</a>
+          <a href="{{ url_for('member_health') }}" class="auth-link">🩺 健全度</a>
           <a href="{{ url_for('pro_ev') }}" class="auth-badge pro">⬢ PRO EV</a>
           <a href="{{ url_for('logout') }}" class="auth-link">ログアウト</a>
         {% elif is_member() %}
           <a href="{{ url_for('member_strategy') }}" class="auth-link">📊 ROI</a>
+          <a href="{{ url_for('member_health') }}" class="auth-link">🩺 健全度</a>
           <span class="auth-badge">★ MEMBER</span>
           <a href="{{ url_for('pro_login') }}" class="auth-link pro-upsell">⬢ Pro へ</a>
           <a href="{{ url_for('logout') }}" class="auth-link">ログアウト</a>

@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}戦略 健全度監視{% endblock %}
+
+{% block content %}
+<div class="health-dashboard">
+  <h2>🩺 戦略 健全度監視ダッシュボード</h2>
+  <p class="dashboard-hint">
+    各戦略の直近 30日 ROI を検証ベースラインと比較し、健全度を判定します。
+    🔴 critical になったら停止を検討してください。
+  </p>
+
+  <form method="get" class="date-range-form">
+    <label>評価期間:
+      <input type="date" name="from" value="{{ from_date }}">
+      〜
+      <input type="date" name="to" value="{{ to_date }}">
+    </label>
+    <button type="submit">更新</button>
+  </form>
+
+  <!-- 全体サマリ -->
+  <section class="health-overview">
+    <div class="health-card-overview">
+      <span class="big-emoji">🟢</span>
+      <span class="card-value">{{ n_healthy }}</span>
+      <span class="card-label">healthy</span>
+    </div>
+    <div class="health-card-overview">
+      <span class="big-emoji">🟡</span>
+      <span class="card-value">{{ n_watch }}</span>
+      <span class="card-label">watch</span>
+    </div>
+    <div class="health-card-overview">
+      <span class="big-emoji">🟠</span>
+      <span class="card-value">{{ n_warning }}</span>
+      <span class="card-label">warning</span>
+    </div>
+    <div class="health-card-overview">
+      <span class="big-emoji">🔴</span>
+      <span class="card-value">{{ n_critical }}</span>
+      <span class="card-label">critical</span>
+    </div>
+  </section>
+
+  <!-- 戦略ごとのカード -->
+  <section class="health-cards">
+    {% for r in results %}
+    <article class="health-strategy-card status-{{ r.status }}">
+      <header class="health-card-header">
+        <h3>
+          <span class="status-emoji">{{ r.status_emoji }}</span>
+          {{ r.name }}
+        </h3>
+        <span class="health-status-pill status-{{ r.status }}">
+          {{ r.status | upper }}
+        </span>
+      </header>
+
+      <p class="health-description">{{ r.description }}</p>
+
+      <div class="health-metrics-grid">
+        <div class="metric">
+          <span class="metric-label">ベースライン</span>
+          <span class="metric-value">{{ '%.1f' | format(r.baseline_recovery) }}%</span>
+          <span class="metric-sub">10ヶ月検証</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">30日 ROI</span>
+          <span class="metric-value
+            {% if r.roi_30d and r.roi_30d >= r.baseline_recovery %}pos
+            {% elif r.roi_30d and r.roi_30d < 100 %}neg
+            {% endif %}">
+            {% if r.roi_30d %}{{ '%.1f' | format(r.roi_30d) }}%{% else %}-{% endif %}
+          </span>
+          <span class="metric-sub">n={{ r.n_bets_30d }}</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">14日 ROI</span>
+          <span class="metric-value">
+            {% if r.roi_14d %}{{ '%.1f' | format(r.roi_14d) }}%{% else %}-{% endif %}
+          </span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">7日 ROI</span>
+          <span class="metric-value">
+            {% if r.roi_7d %}{{ '%.1f' | format(r.roi_7d) }}%{% else %}-{% endif %}
+          </span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">通算 ROI</span>
+          <span class="metric-value">
+            {% if r.roi_all %}{{ '%.1f' | format(r.roi_all) }}%{% else %}-{% endif %}
+          </span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">連続赤字日</span>
+          <span class="metric-value
+            {% if r.consecutive_loss_days >= 10 %}neg
+            {% elif r.consecutive_loss_days >= 5 %}warn
+            {% endif %}">
+            {{ r.consecutive_loss_days }} 日
+          </span>
+        </div>
+      </div>
+
+      {% if r.baseline_ratio %}
+      {% set ratio_pct = (r.baseline_ratio * 100) | round | int %}
+      {% set bar_width = ratio_pct if ratio_pct <= 150 else 150 %}
+      <div class="health-progress-wrap">
+        <div class="health-progress-label">
+          ベースライン比: <strong>{{ ratio_pct }}%</strong>
+        </div>
+        <div class="health-progress-bar">
+          <div class="health-progress-fill status-{{ r.status }}"
+               style="width: {{ bar_width }}%;"></div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if r.reasons %}
+      <div class="health-reasons">
+        <span class="reasons-label">判定根拠:</span>
+        <ul>
+          {% for reason in r.reasons %}
+          <li>{{ reason }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      {% if r.recommendation %}
+      <div class="health-recommendation status-{{ r.status }}">
+        <strong>推奨アクション:</strong> {{ r.recommendation }}
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </section>
+
+  <section class="legend-section">
+    <details>
+      <summary>📖 判定基準の詳細</summary>
+      <ul>
+        <li><strong>🟢 healthy</strong>: 30日 ROI ≥ ベースライン × 0.9 — 順調、継続</li>
+        <li><strong>🟡 watch</strong>: 30日 ROI ≥ ベースライン × 0.7 — 監視継続</li>
+        <li><strong>🟠 warning</strong>: 30日 ROI < ベースライン × 0.7 or 連続赤字10日 — 縮小検討</li>
+        <li><strong>🔴 critical</strong>: 30日 ROI < 80% or 連続赤字14日 — <b>停止推奨</b></li>
+        <li><strong>⚪ insufficient</strong>: 30日サンプル不足 (n < 5) — 判定不可</li>
+      </ul>
+      <p><strong>ベースライン回収率</strong> は過去 10ヶ月の実測値です。
+         例: L4 基本 161.2%, L4+ 188.2%, L4++ 190.3%, A2派生 134.0%</p>
+    </details>
+  </section>
+</div>
+{% endblock %}

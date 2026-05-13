@@ -1669,6 +1669,45 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             to_date=to_d,
         )
 
+    @app.route("/member/health")
+    @login_required
+    def member_health():
+        """戦略の健全度監視ダッシュボード (会員限定)
+        各戦略 (L4/L4+/L4++/A2派生) の直近 ROI と健全度ステータスを表示。
+        """
+        from datetime import timedelta
+        from src.evaluation.strategy_monitor import evaluate_all_strategies
+        today = date.today()
+        to_d = request.args.get("to") or today.isoformat()
+        from_d = request.args.get("from") or (today - timedelta(days=90)).isoformat()
+        try:
+            date.fromisoformat(to_d); date.fromisoformat(from_d)
+        except ValueError:
+            return "Invalid date format", 400
+
+        try:
+            results = evaluate_all_strategies(from_d, to_d)
+        except Exception as e:
+            logger.exception("evaluate_all_strategies failed: %s", e)
+            results = []
+
+        # サマリ
+        n_critical = sum(1 for r in results if r["status"] == "critical")
+        n_warning = sum(1 for r in results if r["status"] == "warning")
+        n_watch = sum(1 for r in results if r["status"] == "watch")
+        n_healthy = sum(1 for r in results if r["status"] == "healthy")
+
+        return render_template(
+            "member_health.html",
+            results=results,
+            from_date=from_d,
+            to_date=to_d,
+            n_critical=n_critical,
+            n_warning=n_warning,
+            n_watch=n_watch,
+            n_healthy=n_healthy,
+        )
+
     @app.route("/api/member/l4-stats")
     @member_only_api
     @cached(ttl=300, past_ttl=3600)
