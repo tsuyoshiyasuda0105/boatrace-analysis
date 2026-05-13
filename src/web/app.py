@@ -844,8 +844,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 response.headers["Pragma"] = "no-cache"
                 response.headers["Expires"] = "0"
         elif path.startswith("/static/"):
-            # 静的ファイル: 1日キャッシュ + immutable
-            response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+            # 静的ファイル: バージョン query (?v=xxx) 付きならキャッシュ可、無ければ再検証
+            # immutable は外して、HTML 側で ?v= 付与によるキャッシュ破壊を有効化
+            if request.args.get("v"):
+                response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=300, must-revalidate"
         elif path == "/races" or path.startswith("/race/"):
             # HTML ページ: 過去日は長く、今日は短く
             try:
@@ -856,9 +860,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if len(rid) >= 8 and rid[:8].isdigit():
                         req_date = f"{rid[:4]}-{rid[4:6]}-{rid[6:8]}"
                 if req_date and req_date < date.today().isoformat():
-                    response.headers["Cache-Control"] = "public, max-age=3600"
+                    # 過去日 HTML: 5 分キャッシュ (L4 マーク更新を反映するため)
+                    response.headers["Cache-Control"] = "public, max-age=300, must-revalidate"
                 else:
-                    response.headers["Cache-Control"] = "public, max-age=60"
+                    # 今日 HTML: 30 秒のみ
+                    response.headers["Cache-Control"] = "public, max-age=30, must-revalidate"
             except Exception:
                 response.headers["Cache-Control"] = "public, max-age=60"
         return response
@@ -914,6 +920,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # テンプレートから is_member() / is_pro() を呼べるように
     app.jinja_env.globals["is_member"] = is_member
     app.jinja_env.globals["is_pro"] = is_pro
+
+    # 静的ファイル cache busting 用バージョン
+    # CSS/JS が変更されたら自動的に新規取得されるよう、
+    # ファイル更新時刻ベースのハッシュを付ける
+    import hashlib
+    from pathlib import Path
+    static_files = [
+        Path(__file__).parent / "static" / "style.css",
+    ]
+    h = hashlib.md5()
+    for f in static_files:
+        try:
+            h.update(str(int(f.stat().st_mtime)).encode())
+        except Exception:
+            h.update(b"0")
+    app.jinja_env.globals["static_version"] = h.hexdigest()[:8]
 
     # Jinja2 カスタムフィルタ: カンマ区切り符号付き整数 (Python %-format は ',' 非対応)
     def _signed_comma(value):
