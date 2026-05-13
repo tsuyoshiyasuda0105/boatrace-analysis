@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}L4 戦略 日別 ROI{% endblock %}
+
+{% block content %}
+<div class="strategy-dashboard">
+  <h2>📊 L4 戦略 日別 ROI ダッシュボード</h2>
+  <p class="dashboard-hint">
+    条件: 三連単本命 500-1000円 + B除外会場 + 1号艇A1選手<br>
+    買い目: 単勝 / 2連単1-2 / 3連単1-2-3 (1点100円基準)
+  </p>
+
+  <form method="get" class="date-range-form">
+    <label>期間:
+      <input type="date" name="from" value="{{ from_date }}">
+      〜
+      <input type="date" name="to" value="{{ to_date }}">
+    </label>
+    <button type="submit">更新</button>
+  </form>
+
+  <!-- 通算サマリ -->
+  <section class="totals-summary">
+    <h3>📈 通算サマリ ({{ from_date }} 〜 {{ to_date }})</h3>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <span class="card-label">対象レース</span>
+        <span class="card-value">{{ totals.n_l4 }} / {{ totals.n_total }}</span>
+        <span class="card-sub">L4 適合率 {% if totals.n_total %}{{ '%.1f' | format(totals.n_l4 / totals.n_total * 100) }}{% else %}-{% endif %}%</span>
+      </div>
+      <div class="summary-card {% if totals.win_roi and totals.win_roi > 0 %}positive{% elif totals.win_roi is not none %}negative{% endif %}">
+        <span class="card-label">単勝</span>
+        <span class="card-value">
+          {% if totals.win_roi is not none %}{{ '%+.1f' | format(totals.win_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.win_bets }} HIT={{ totals.win_hits }}
+          / 損益 {{ '%+,d' | format(totals.win_profit) }}円
+        </span>
+      </div>
+      <div class="summary-card {% if totals.exa_roi and totals.exa_roi > 0 %}positive{% elif totals.exa_roi is not none %}negative{% endif %}">
+        <span class="card-label">2連単 1-2</span>
+        <span class="card-value">
+          {% if totals.exa_roi is not none %}{{ '%+.1f' | format(totals.exa_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.exa_bets }} HIT={{ totals.exa_hits }}
+          / 損益 {{ '%+,d' | format(totals.exa_profit) }}円
+        </span>
+      </div>
+      <div class="summary-card {% if totals.tri_roi and totals.tri_roi > 0 %}positive{% elif totals.tri_roi is not none %}negative{% endif %}">
+        <span class="card-label">3連単 1-2-3</span>
+        <span class="card-value">
+          {% if totals.tri_roi is not none %}{{ '%+.1f' | format(totals.tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.tri_bets }} HIT={{ totals.tri_hits }}
+          / 損益 {{ '%+,d' | format(totals.tri_profit) }}円
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ROI 推移グラフ -->
+  <section class="chart-section">
+    <h3>📉 日別 累積損益 (1点100円ベース)</h3>
+    <canvas id="cumChart" width="800" height="280"></canvas>
+  </section>
+
+  <!-- 日別テーブル -->
+  <section class="daily-table-section">
+    <h3>📅 日別詳細 ({{ rows | length }} 日分)</h3>
+    <div class="table-wrap">
+      <table class="daily-table">
+        <thead>
+          <tr>
+            <th rowspan="2">日付</th>
+            <th rowspan="2">総R</th>
+            <th rowspan="2">L4該当</th>
+            <th colspan="3">単勝 (1号艇)</th>
+            <th colspan="3">2連単 1-2</th>
+            <th colspan="3">3連単 1-2-3</th>
+          </tr>
+          <tr>
+            <th>HIT</th><th>回収</th><th>損益</th>
+            <th>HIT</th><th>回収</th><th>損益</th>
+            <th>HIT</th><th>回収</th><th>損益</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td><a href="{{ url_for('races', date=r.date) }}">{{ r.date }}</a></td>
+            <td class="num">{{ r.n_total }}</td>
+            <td class="num">{{ r.n_l4 }}</td>
+
+            {% if r.n_l4 %}
+              <td class="num">{{ r.win_hits }}/{{ r.win_bets }}</td>
+              <td class="num {% if r.win_recovery and r.win_recovery >= 100 %}pos{% else %}neg{% endif %}">
+                {{ '%.0f' | format(r.win_recovery) }}%
+              </td>
+              <td class="num {% if r.win_profit > 0 %}pos{% elif r.win_profit < 0 %}neg{% endif %}">
+                {{ '%+,d' | format(r.win_profit) }}
+              </td>
+
+              <td class="num">{{ r.exa_hits }}/{{ r.exa_bets }}</td>
+              <td class="num {% if r.exa_recovery and r.exa_recovery >= 100 %}pos{% else %}neg{% endif %}">
+                {{ '%.0f' | format(r.exa_recovery) }}%
+              </td>
+              <td class="num {% if r.exa_profit > 0 %}pos{% elif r.exa_profit < 0 %}neg{% endif %}">
+                {{ '%+,d' | format(r.exa_profit) }}
+              </td>
+
+              <td class="num">{{ r.tri_hits }}/{{ r.tri_bets }}</td>
+              <td class="num {% if r.tri_recovery and r.tri_recovery >= 100 %}pos{% else %}neg{% endif %}">
+                {{ '%.0f' | format(r.tri_recovery) }}%
+              </td>
+              <td class="num {% if r.tri_profit > 0 %}pos{% elif r.tri_profit < 0 %}neg{% endif %}">
+                {{ '%+,d' | format(r.tri_profit) }}
+              </td>
+            {% else %}
+              <td colspan="9" class="num muted">L4該当なし</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="legend-section">
+    <details>
+      <summary>📖 戦略条件の詳細</summary>
+      <ul>
+        <li><strong>L4 条件</strong>: 三連単本命 500-1000円 + B除外会場 + 1号艇A1</li>
+        <li><strong>B除外会場</strong>: 戸田/蒲郡/三国/芦屋/平和島/常滑/下関/大村</li>
+        <li><strong>検証期待値</strong>: 回収率 通算 160.8% (10ヶ月実績)</li>
+        <li><strong>グレード別</strong>: SG=258.2% / G1=242.8% / G2=242.7% / 一般戦=147.7%</li>
+        <li><strong>注意</strong>: 本サービスは投資助言ではありません。最終判断はご自身で。</li>
+      </ul>
+    </details>
+  </section>
+</div>
+
+<script>
+(function() {
+  // データを Jinja から JS 変数に
+  const rows = [
+    {% for r in rows | sort(attribute='date') %}
+    {
+      date: "{{ r.date }}",
+      win_profit: {{ r.win_profit | default(0) }},
+      exa_profit: {{ r.exa_profit | default(0) }},
+      tri_profit: {{ r.tri_profit | default(0) }},
+    },
+    {% endfor %}
+  ];
+
+  // 累積計算
+  let winCum = 0, exaCum = 0, triCum = 0;
+  const labels = [];
+  const winSeries = [];
+  const exaSeries = [];
+  const triSeries = [];
+  for (const r of rows) {
+    winCum += r.win_profit;
+    exaCum += r.exa_profit;
+    triCum += r.tri_profit;
+    labels.push(r.date.slice(5));  // MM-DD
+    winSeries.push(winCum);
+    exaSeries.push(exaCum);
+    triSeries.push(triCum);
+  }
+
+  // シンプル Canvas グラフ (Chart.js なしの自前実装、外部依存ゼロ)
+  const canvas = document.getElementById('cumChart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const padL = 60, padR = 20, padT = 20, padB = 40;
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    if (labels.length === 0) {
+      ctx.fillStyle = '#888';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('データなし', W/2, H/2);
+      return;
+    }
+    const all = [...winSeries, ...exaSeries, ...triSeries];
+    let yMax = Math.max(...all, 100);
+    let yMin = Math.min(...all, -100);
+    const pad = (yMax - yMin) * 0.1;
+    yMax += pad; yMin -= pad;
+    const xs = (i) => padL + (W - padL - padR) * (i / Math.max(1, labels.length - 1));
+    const ys = (v) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin));
+
+    // 軸
+    ctx.strokeStyle = '#444';
+    ctx.beginPath();
+    ctx.moveTo(padL, padT);
+    ctx.lineTo(padL, H - padB);
+    ctx.lineTo(W - padR, H - padB);
+    ctx.stroke();
+
+    // ゼロ線
+    if (yMin < 0 && yMax > 0) {
+      ctx.strokeStyle = '#666';
+      ctx.setLineDash([4, 4]);
+      const zy = ys(0);
+      ctx.beginPath(); ctx.moveTo(padL, zy); ctx.lineTo(W - padR, zy); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Y 軸ラベル
+    ctx.fillStyle = '#999';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 4; i++) {
+      const v = yMin + (yMax - yMin) * i / 4;
+      const y = ys(v);
+      ctx.fillText(Math.round(v) + '円', padL - 6, y + 3);
+    }
+
+    // X 軸ラベル (間引き)
+    ctx.fillStyle = '#999';
+    ctx.textAlign = 'center';
+    const step = Math.max(1, Math.floor(labels.length / 10));
+    for (let i = 0; i < labels.length; i += step) {
+      ctx.fillText(labels[i], xs(i), H - padB + 16);
+    }
+
+    // 系列描画
+    function drawLine(series, color, name, idx) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < series.length; i++) {
+        const x = xs(i), y = ys(series[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      // 凡例
+      ctx.fillStyle = color;
+      ctx.fillRect(W - padR - 110, padT + idx * 18, 12, 3);
+      ctx.fillStyle = '#ccc';
+      ctx.textAlign = 'left';
+      ctx.fillText(name, W - padR - 92, padT + idx * 18 + 6);
+    }
+    drawLine(winSeries, '#34e890', '単勝',    0);
+    drawLine(exaSeries, '#00d4ff', '2連単',  1);
+    drawLine(triSeries, '#ff006e', '3連単',  2);
+  }
+  draw();
+})();
+</script>
+{% endblock %}

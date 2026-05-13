@@ -23,7 +23,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, ses
 import config
 from src.db.connection import connect as db_connect
 from src.web.auth import (
-    is_member, is_pro, member_only_api, pro_only_api, pro_required,
+    is_member, is_pro, login_required, member_only_api, pro_only_api, pro_required,
     register_auth_routes,
 )
 from src.web.predictor import Predictor
@@ -1425,6 +1425,162 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
             "signals": {s["race_id"]: s for s in signals},
         })
+
+    # =====================================================
+    # 会員プラン: L4 戦略 日別 ROI ダッシュボード
+    # =====================================================
+
+    EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
+
+    def _l4_daily_stats(from_date: str, to_date: str) -> list[dict]:
+        """日別の L4 戦略統計を集計。
+        L4 条件: 三連単本命 500-1000 + B除外 + 1号艇A1
+        集計対象: 単勝 / 2連単1-2 / 3連単1-2-3
+        """
+        with db_connect() as conn:
+            cur = conn.execute("""
+                SELECT
+                    r.race_date,
+                    r.stadium_number,
+                    r.race_grade_number,
+                    e.class_number,
+                    pp.min_pay AS fav,
+                    res1.boat_number AS w1,
+                    res2.boat_number AS w2,
+                    res3.boat_number AS w3,
+                    pw.payout AS win_pay,
+                    pe.payout AS exacta_pay,
+                    pt.payout AS tri_pay
+                FROM races r
+                LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
+                      WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
+                LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position=1
+                LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
+                LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
+                LEFT JOIN race_payouts pw ON pw.race_id = r.race_id AND pw.bet_type='win' AND pw.combination='1'
+                LEFT JOIN race_payouts pe ON pe.race_id = r.race_id AND pe.bet_type='exacta' AND pe.combination='1-2'
+                LEFT JOIN race_payouts pt ON pt.race_id = r.race_id AND pt.bet_type='trifecta' AND pt.combination='1-2-3'
+                WHERE r.race_date BETWEEN ? AND ?
+                ORDER BY r.race_date
+            """, (from_date, to_date)).fetchall()
+
+        # 日別に集計
+        by_date: dict[str, dict] = {}
+        for row in cur:
+            (rdate, stadium, grade, cls, fav, w1, w2, w3,
+             win_pay, ex_pay, tri_pay) = row
+            d = by_date.setdefault(rdate, {
+                "date": rdate,
+                "n_total": 0,
+                "n_l4": 0,
+                "win_bets": 0, "win_hits": 0, "win_pay": 0,
+                "exa_bets": 0, "exa_hits": 0, "exa_pay": 0,
+                "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
+                "grade_breakdown": {},  # grade -> {n, hits, pay}
+            })
+            d["n_total"] += 1
+            # L4 条件
+            if (fav and 500 <= fav < 1000
+                and stadium not in EXCLUDE_B_VENUES
+                and cls == 1):
+                d["n_l4"] += 1
+                # 単勝
+                d["win_bets"] += 1
+                if w1 == 1:
+                    d["win_hits"] += 1
+                    d["win_pay"] += (win_pay or 0)
+                # 2連単 1-2
+                d["exa_bets"] += 1
+                if w1 == 1 and w2 == 2:
+                    d["exa_hits"] += 1
+                    d["exa_pay"] += (ex_pay or 0)
+                # 3連単 1-2-3
+                d["tri_bets"] += 1
+                if w1 == 1 and w2 == 2 and w3 == 3:
+                    d["tri_hits"] += 1
+                    d["tri_pay"] += (tri_pay or 0)
+                # グレード別集計
+                g_key = grade or 5
+                gb = d["grade_breakdown"].setdefault(g_key, {
+                    "n": 0, "tri_hits": 0, "tri_pay": 0
+                })
+                gb["n"] += 1
+                if w1 == 1 and w2 == 2 and w3 == 3:
+                    gb["tri_hits"] += 1
+                    gb["tri_pay"] += (tri_pay or 0)
+
+        # ROI 計算
+        for d in by_date.values():
+            for bet in ("win", "exa", "tri"):
+                n = d[f"{bet}_bets"]
+                pay = d[f"{bet}_pay"]
+                d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None
+                d[f"{bet}_recovery"] = pay / (100 * n) * 100 if n else None
+                d[f"{bet}_profit"] = pay - 100 * n if n else 0
+
+        return sorted(by_date.values(), key=lambda x: x["date"], reverse=True)
+
+    @app.route("/member/strategy")
+    @login_required
+    def member_strategy():
+        """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
+        from datetime import timedelta
+        today = date.today()
+        to_d = request.args.get("to") or today.isoformat()
+        from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
+        try:
+            date.fromisoformat(to_d); date.fromisoformat(from_d)
+        except ValueError:
+            return "Invalid date format", 400
+
+        rows = _l4_daily_stats(from_d, to_d)
+
+        # 通算集計
+        totals = {
+            "n_total": sum(r["n_total"] for r in rows),
+            "n_l4": sum(r["n_l4"] for r in rows),
+            "win_bets": sum(r["win_bets"] for r in rows),
+            "win_hits": sum(r["win_hits"] for r in rows),
+            "win_pay": sum(r["win_pay"] for r in rows),
+            "exa_bets": sum(r["exa_bets"] for r in rows),
+            "exa_hits": sum(r["exa_hits"] for r in rows),
+            "exa_pay": sum(r["exa_pay"] for r in rows),
+            "tri_bets": sum(r["tri_bets"] for r in rows),
+            "tri_hits": sum(r["tri_hits"] for r in rows),
+            "tri_pay": sum(r["tri_pay"] for r in rows),
+        }
+        for bet in ("win", "exa", "tri"):
+            n = totals[f"{bet}_bets"]
+            pay = totals[f"{bet}_pay"]
+            totals[f"{bet}_roi"] = (pay - 100*n)/(100*n)*100 if n else None
+            totals[f"{bet}_recovery"] = pay/(100*n)*100 if n else None
+            totals[f"{bet}_profit"] = pay - 100*n if n else 0
+
+        return render_template(
+            "member_strategy.html",
+            rows=rows,
+            totals=totals,
+            from_date=from_d,
+            to_date=to_d,
+        )
+
+    @app.route("/api/member/l4-stats")
+    @member_only_api
+    @cached(ttl=300, past_ttl=3600)
+    def api_l4_stats():
+        """JSON 版 (グラフ用)"""
+        from datetime import timedelta
+        today = date.today()
+        to_d = request.args.get("to") or today.isoformat()
+        from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
+        rows = _l4_daily_stats(from_d, to_d)
+        # 日付昇順 (グラフ用)
+        rows = sorted(rows, key=lambda x: x["date"])
+        # JSON 化用に整形 (grade_breakdown はキー文字列化)
+        for r in rows:
+            r["grade_breakdown"] = {str(k): v for k, v in r.get("grade_breakdown", {}).items()}
+        return jsonify({"from": from_d, "to": to_d, "rows": rows})
 
     # =====================================================
     # Pro プラン: T-15min 期待値モニター
