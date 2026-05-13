@@ -239,7 +239,14 @@ def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
         if isinstance(boat_results, dict):
             boat_results = list(boat_results.values())
 
+        # 決まり手は race レベルで 1 つだけ持つ (1着艇の決まり手)。
+        # boat ループ内で個別に取ろうとすると None になるので、race から取り出して
+        # 1 着の行にのみ記録する。
+        race_kimarite = race.get("race_kimarite") or race.get("kimarite")
+
         for r in boat_results:
+            is_winner = (r.get("racer_place_number") == 1
+                         or r.get("racer_place_number") == "1")
             conn.execute("""
                 INSERT OR REPLACE INTO race_results (
                     race_id, boat_number, finishing_position,
@@ -254,7 +261,7 @@ def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
                 r.get("racer_start_timing"),
                 r.get("racer_race_time"),
                 r.get("racer_remarks"),
-                r.get("race_kimarite"),
+                race_kimarite if is_winner else None,
             ))
             n_results += 1
 
