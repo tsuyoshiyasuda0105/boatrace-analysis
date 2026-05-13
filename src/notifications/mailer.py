@@ -21,10 +21,14 @@ SMTP メール送信
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import smtplib
 import ssl
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 
@@ -42,6 +46,9 @@ def _get_config() -> dict:
         "password": os.environ.get("BOATRACE_SMTP_PASSWORD", ""),
         "from_addr": os.environ.get("BOATRACE_SMTP_FROM", DEFAULT_FROM),
         "site_url": os.environ.get("BOATRACE_SITE_URL", DEFAULT_SITE_URL).rstrip("/"),
+        # HTTP API バックエンド (Render Free は SMTP outbound 不可なので必須)
+        "brevo_api_key": os.environ.get("BOATRACE_BREVO_API_KEY", "").strip(),
+        "resend_api_key": os.environ.get("BOATRACE_RESEND_API_KEY", "").strip(),
     }
 
 
@@ -50,9 +57,119 @@ def _smtp_configured() -> bool:
     return bool(c["host"] and c["user"] and c["password"])
 
 
-def _send(to: str, subject: str, body_text: str, body_html: str = None):
-    """SMTP 送信本体。未設定時はコンソール出力。"""
+def _parse_from(from_addr: str) -> tuple[str, str]:
+    """'Name <addr@example.com>' or 'addr@example.com' → (name, addr)"""
+    m = re.match(r"^\s*(.*?)\s*<([^>]+)>\s*$", from_addr)
+    if m:
+        return m.group(1) or "", m.group(2)
+    return "", from_addr.strip()
+
+
+def _send_via_brevo_http(to: str, subject: str, body_text: str, body_html: str = None) -> bool:
+    """Brevo (旧Sendinblue) Transactional Email API 経由で送信。
+    Render Free Tier の SMTP outbound ブロックを回避するため HTTPS API を使う。
+    https://developers.brevo.com/reference/sendtransacemail
+    """
     cfg = _get_config()
+    name, addr = _parse_from(cfg["from_addr"])
+    payload = {
+        "sender": {"email": addr, **({"name": name} if name else {})},
+        "to": [{"email": to}],
+        "subject": subject,
+        "textContent": body_text,
+    }
+    if body_html:
+        payload["htmlContent"] = body_html
+
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+            "api-key": cfg["brevo_api_key"],
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            status = r.status
+            body = r.read().decode("utf-8", errors="replace")
+        if 200 <= status < 300:
+            logger.info("mail sent via Brevo to %s*** (subject=%s)", to[:5], subject[:40])
+            return True
+        logger.error("Brevo API non-2xx: %s %s", status, body[:300])
+        return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        logger.error("Brevo HTTPError: %s %s body=%s", e.code, e.reason, body[:300])
+        return False
+    except Exception as e:
+        logger.exception("Brevo send failed: %s", e)
+        return False
+
+
+def _send_via_resend_http(to: str, subject: str, body_text: str, body_html: str = None) -> bool:
+    """Resend HTTP API 経由で送信。
+    https://resend.com/docs/api-reference/emails/send-email
+    """
+    cfg = _get_config()
+    payload = {
+        "from": cfg["from_addr"],
+        "to": [to],
+        "subject": subject,
+        "text": body_text,
+    }
+    if body_html:
+        payload["html"] = body_html
+
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {cfg['resend_api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            status = r.status
+            body = r.read().decode("utf-8", errors="replace")
+        if 200 <= status < 300:
+            logger.info("mail sent via Resend to %s*** (subject=%s)", to[:5], subject[:40])
+            return True
+        logger.error("Resend API non-2xx: %s %s", status, body[:300])
+        return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        logger.error("Resend HTTPError: %s %s body=%s", e.code, e.reason, body[:300])
+        return False
+    except Exception as e:
+        logger.exception("Resend send failed: %s", e)
+        return False
+
+
+def _send(to: str, subject: str, body_text: str, body_html: str = None):
+    """メール送信本体。
+    優先順位:
+      1. BOATRACE_BREVO_API_KEY が設定されていれば Brevo HTTP API
+      2. BOATRACE_RESEND_API_KEY が設定されていれば Resend HTTP API
+      3. SMTP (ローカルや有料 PaaS 用)
+      4. 未設定時はコンソール出力 (開発)
+    Render Free Tier では SMTP outbound が遮断されているため HTTP API バックエンドが必須。
+    """
+    cfg = _get_config()
+
+    # 1. Brevo HTTP API (Render Free 対応)
+    if cfg["brevo_api_key"]:
+        return _send_via_brevo_http(to, subject, body_text, body_html)
+
+    # 2. Resend HTTP API (Render Free 対応)
+    if cfg["resend_api_key"]:
+        return _send_via_resend_http(to, subject, body_text, body_html)
+
+    # 3. SMTP (ローカル / 有料 PaaS)
     msg = EmailMessage()
     msg["From"] = cfg["from_addr"]
     msg["To"] = to
@@ -65,7 +182,7 @@ def _send(to: str, subject: str, body_text: str, body_html: str = None):
     if not _smtp_configured():
         # 開発用: コンソールに出力
         logger.warning("=" * 60)
-        logger.warning("SMTP 未設定: メール送信スキップ (内容をログ出力)")
+        logger.warning("メール送信バックエンド未設定: スキップ (内容をログ出力)")
         logger.warning("To: %s", to)
         logger.warning("Subject: %s", subject)
         logger.warning("---")
