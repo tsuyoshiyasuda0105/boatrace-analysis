@@ -56,11 +56,21 @@ def _is_big_race(race: dict) -> bool:
     return (g in (1, 2)) or bool(race.get("is_yusho")) or bool(race.get("is_jun_yusho"))
 
 
-def _parse_close_jst(closed_at: str, race_date: str) -> datetime:
+def _parse_close_jst(closed_at, race_date) -> datetime:
     """
-    race_closed_at は 'HH:MM:SS' or 'YYYY-MM-DD HH:MM:SS' or 同 JST 形式と推定。
+    race_closed_at は 'HH:MM:SS' or 'YYYY-MM-DD HH:MM:SS' or
+    datetime オブジェクト (psycopg3 from Supabase) のいずれかを許容。
     JST のローカルタイム値として扱い、TZ 付きで返す。
     """
+    # psycopg3 が Postgres TIMESTAMP を datetime オブジェクトで返すケースに対応
+    if isinstance(closed_at, datetime):
+        t = closed_at
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=JST)
+        return t
+    # 文字列ケース
+    if not isinstance(closed_at, str):
+        return None
     s = closed_at.strip()
     try:
         if " " in s and len(s) >= 16:
@@ -69,8 +79,10 @@ def _parse_close_jst(closed_at: str, race_date: str) -> datetime:
         else:
             # 'HH:MM:SS' のみ → race_date と合成
             time_part = s if len(s) >= 5 else f"{s}:00"
-            t = datetime.fromisoformat(f"{race_date} {time_part}")
-    except ValueError:
+            # race_date も datetime/date 対応
+            rd_str = race_date.isoformat() if hasattr(race_date, "isoformat") else str(race_date)
+            t = datetime.fromisoformat(f"{rd_str} {time_part}")
+    except (ValueError, TypeError):
         return None
     return t.replace(tzinfo=JST)
 
