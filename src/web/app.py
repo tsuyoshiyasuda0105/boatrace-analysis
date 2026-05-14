@@ -1437,45 +1437,66 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["local_1"] = local_1
             return base
 
-        def _evaluate_morning_l4(stadium, grade, cls, prob_first):
-            """朝判定用 L4 候補マーク (prob_first ベース)"""
+        def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None):
+            """朝判定用 L4 候補マーク (prob_first ベース)。
+            メール送信側 (send_l4_alerts.py の detect_morning_l4_candidates) と
+            同じく、 1号艇A1 の場合は 国1%/局1% でランク判定して
+            base 辞書に rank / rank_label / rank_emoji / 補正後 recovery を入れる。
+            """
             if prob_first is None:
                 return None
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
             if not b_excluded:
                 return None
             # 1号艇 A1 + prob_first 0.65-0.85 → 500-1000帯候補
+            base = None
             if cls == 1 and 0.65 <= prob_first < 0.85:
                 if grade == 1:
-                    return {"level": "morning_SG", "label": "🌅👑朝L4 SG候補",
-                            "recovery": 258.2, "bet": "3連単 1-2-3 (確定後)", "n": 40,
-                            "is_morning": True, "prob_first": prob_first}
+                    base = {"level": "morning_SG", "label": "🌅👑朝L4 SG候補",
+                            "recovery": 258.2, "n": 40}
                 elif grade == 2:
-                    return {"level": "morning_G1", "label": "🌅👑朝L4 G1候補",
-                            "recovery": 242.8, "bet": "3連単 1-2-3 (確定後)", "n": 227,
-                            "is_morning": True, "prob_first": prob_first}
+                    base = {"level": "morning_G1", "label": "🌅👑朝L4 G1候補",
+                            "recovery": 242.8, "n": 227}
                 elif grade == 3:
-                    return {"level": "morning_G2", "label": "🌅👑朝L4 G2候補",
-                            "recovery": 242.7, "bet": "3連単 1-2-3 (確定後)", "n": 30,
-                            "is_morning": True, "prob_first": prob_first}
+                    base = {"level": "morning_G2", "label": "🌅👑朝L4 G2候補",
+                            "recovery": 242.7, "n": 30}
                 elif grade == 4:
-                    return {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
-                            "recovery": 149.2, "bet": "3連単 1-2-3 (確定後)", "n": 195,
-                            "is_morning": True, "prob_first": prob_first}
+                    base = {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
+                            "recovery": 149.2, "n": 195}
                 elif grade == 5:
-                    return {"level": "morning_general", "label": "🌅🎯朝L4 一般戦候補",
-                            "recovery": 147.7, "bet": "3連単 1-2-3 (確定後)", "n": 1776,
-                            "is_morning": True, "prob_first": prob_first}
+                    base = {"level": "morning_general", "label": "🌅🎯朝L4 一般戦候補",
+                            "recovery": 147.7, "n": 1776}
                 else:
-                    return {"level": "morning_default", "label": "🌅🎯朝L4 候補",
-                            "recovery": 160.8, "bet": "3連単 1-2-3 (確定後)", "n": 2210,
-                            "is_morning": True, "prob_first": prob_first}
-            # 1号艇 A2 + prob_first 0.55-0.75 → A2 派生候補
+                    base = {"level": "morning_default", "label": "🌅🎯朝L4 候補",
+                            "recovery": 160.8, "n": 2210}
             elif cls == 2 and 0.55 <= prob_first < 0.75:
-                return {"level": "morning_a2", "label": "🌅📈朝L4 A2候補",
-                        "recovery": 134.0, "bet": "3連単 1-2-3 (確定後)", "n": 1645,
-                        "is_morning": True, "prob_first": prob_first}
-            return None
+                base = {"level": "morning_a2", "label": "🌅📈朝L4 A2候補",
+                        "recovery": 134.0, "n": 1645}
+            if not base:
+                return None
+
+            base["bet"] = "3連単 1-2-3 (確定後)"
+            base["is_morning"] = True
+            base["prob_first"] = prob_first
+
+            # ▼ L4 サブランク (1号艇A1のみ、 _evaluate_l4 と同じロジック)
+            if cls == 1:
+                rank_code, rank_label, rank_emoji, rec_override = _l4_rank(natl_1, local_1)
+                base["rank"] = rank_code             # "base" / "plus" / "plus_plus"
+                base["rank_label"] = rank_label
+                base["rank_emoji"] = rank_emoji
+                base["natl_1"] = natl_1
+                base["local_1"] = local_1
+                if rec_override is not None:
+                    base["recovery"] = rec_override
+                    base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
+            else:
+                base["rank"] = "a2"
+                base["rank_label"] = "L4派生"
+                base["rank_emoji"] = "📈"
+                base["natl_1"] = natl_1
+                base["local_1"] = local_1
+            return base
 
         signals = []
         # 当日全レースを走査 (確定済 → L4、未確定 → 朝L4候補)
@@ -1521,7 +1542,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             else:
                 # === 未確定 (朝判定) → 予測ベース L4 候補 ===
                 prob_first = morning_pred.get(rid)
-                morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first)
+                morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first,
+                                                   natl_1, local_1)
                 if morning_l4:
                     signals.append({
                         "race_id": rid,
