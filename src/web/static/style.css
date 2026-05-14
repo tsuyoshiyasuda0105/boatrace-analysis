@@ -2156,6 +2156,57 @@ main h2 {
   text-decoration: none;
 }
 .pick-link a:hover { text-decoration: underline; }
+
+/* 1-2-3 オッズ推移セル (T-5 → T-1) */
+.pick-odds-head { font-size: 11px; color: rgba(255,255,255,0.7); }
+.pick-odds {
+  font-family: monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  letter-spacing: -0.3px;
+}
+.pick-odds-empty { color: rgba(255,255,255,0.3); }
+.pick-odds-cell {
+  display: inline-block;
+  padding: 1px 4px;
+  margin: 0 1px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.85);
+}
+.pick-odds-cell.is-low {
+  /* 1-2-3 が 20倍未満 = 鉄板度高い → 青 */
+  background: rgba(0, 212, 255, 0.18);
+  color: #7be4ff;
+  font-weight: bold;
+}
+.pick-odds-cell.is-up {
+  /* 直前から +20% 以上上昇 = 不人気化 → 赤 */
+  color: #ff8080;
+}
+.pick-odds-cell.is-down {
+  /* 直前から -20% 以上下降 = 人気化 → 黄 */
+  color: #ffd24c;
+}
+.pick-odds-cell.pick-odds-missing {
+  color: rgba(255,255,255,0.25);
+  background: transparent;
+}
+.pick-odds-trend {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.08);
+  font-size: 10px;
+  color: rgba(255,255,255,0.8);
+}
+.pick-odds-trend.is-up { background: rgba(255,128,128,0.2); color: #ff9d9d; }
+.pick-odds-trend.is-down { background: rgba(255,210,76,0.2); color: #ffd24c; }
+.todays-picks-table tbody tr.is-closed .pick-odds-cell {
+  opacity: 0.5;
+}
+
 .todays-picks-footer { margin-top: 8px; color: rgba(255,255,255,0.4); }
 
 /* race-item の状態別ハイライト */

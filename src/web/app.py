@@ -1271,6 +1271,51 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return jsonify({"error": str(e)}), 500
         return jsonify({"info": info, "predictions": preds})
 
+    @app.route("/api/odds-123-timeline")
+    def odds_123_timeline():
+        """指定日の各レースの '1-2-3' 三連単オッズ推移を返す。
+        odds_scheduler が T-5min..T-1min で毎分スナップショットを残す前提。
+        本日お金を入れる候補レース欄で締切までのオッズ変動を可視化するため、
+        ブラウザ側で 30 秒ごとに再取得して描画する。
+        cache はかけない (リアルタイム更新のため)。
+        """
+        target_date = request.args.get("date") or date.today().isoformat()
+        result: dict[str, dict] = {}
+        try:
+            with db_connect() as conn:
+                cur = conn.execute(
+                    """
+                    SELECT r.race_id, o.snapshot_label, o.odds, o.recorded_at
+                      FROM races r
+                      JOIN odds_trifecta o ON r.race_id = o.race_id
+                     WHERE r.race_date = ?
+                       AND o.combination = '1-2-3'
+                       AND o.snapshot_label IS NOT NULL
+                    """,
+                    (target_date,),
+                )
+                for rid, label, odds, recorded_at in cur.fetchall():
+                    try:
+                        odds_val = float(odds)
+                    except (TypeError, ValueError):
+                        continue
+                    bucket = result.setdefault(rid, {})
+                    # 同じ snapshot_label が複数行ある場合は recorded_at 新しい方を採用
+                    rec_str = str(recorded_at) if recorded_at is not None else ""
+                    prev = bucket.get(label)
+                    if prev is None or rec_str >= prev.get("recorded_at", ""):
+                        bucket[label] = {"odds": odds_val, "recorded_at": rec_str}
+        except Exception as e:
+            # Supabase 側で snapshot_label 列未マイグレなど → 空で返す
+            logger.warning("odds-123-timeline failed: %s", e)
+            try:
+                # Postgres は失敗トランザクションを ABORT 状態にするので rollback
+                with db_connect() as conn:
+                    conn.rollback()
+            except Exception:
+                pass
+        return jsonify({"date": target_date, "odds": result})
+
     @app.route("/api/market-signals")
     @cached(ttl=300)  # 5分キャッシュ
     def market_signals_for_date():

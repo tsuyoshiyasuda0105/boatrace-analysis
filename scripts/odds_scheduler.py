@@ -40,10 +40,15 @@ JST = timezone(timedelta(hours=9))
 
 # 各 snapshot label のターゲット時間と許容ウィンドウ
 # (label, minutes_before_close, tolerance_minutes)
+# T-5min から T-1min まで毎分スナップショット (本日お金を入れる候補レースで推移表示)
+# tolerance ±0.5 にして隣接ルールの二重発火を防止 (timing drift は scheduler が毎分起動するので 30 秒以内)
 SNAPSHOT_RULES = [
-    ("T-15min", 15, 2),  # 締切15分前 ±2分 (Pro 期待値表示用)
-    ("T-5min", 5, 1),    # 締切5分前 ±1分
-    ("T-1min", 1, 1),    # 締切1分前 ±1分
+    ("T-15min", 15, 2),    # 締切15分前 ±2分 (Pro 期待値表示用)
+    ("T-5min", 5, 0.5),    # 締切5分前 ±30秒
+    ("T-4min", 4, 0.5),    # 締切4分前 ±30秒
+    ("T-3min", 3, 0.5),    # 締切3分前 ±30秒
+    ("T-2min", 2, 0.5),    # 締切2分前 ±30秒
+    ("T-1min", 1, 0.5),    # 締切1分前 ±30秒
 ]
 # 大きいレース用
 BIG_SNAPSHOT_RULES = [

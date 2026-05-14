@@ -122,7 +122,8 @@
     <section class="todays-picks-panel" id="todays-picks-panel" hidden>
       <h3>💰 本日お金を入れる候補レース (時系列)</h3>
       <p class="todays-picks-hint">
-        ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 📈L4派生A2 を時刻順に表示
+        ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 📈L4派生A2 を時刻順に表示<br>
+        <small>右側「1-2-3 推移」: T-5min〜T-1min まで毎分更新する三連単 1-2-3 のオッズ (青=2倍未満の好配当, 赤=変動>20%)</small>
       </p>
       <table class="todays-picks-table">
         <thead>
@@ -135,6 +136,7 @@
             <th>L4 タイプ</th>
             <th>1号艇</th>
             <th>回収</th>
+            <th class="pick-odds-head">1-2-3 推移 (T-5 → T-1)</th>
             <th></th>
           </tr>
         </thead>
@@ -430,6 +432,70 @@
           });
         }
 
+        // 1-2-3 オッズ推移キャッシュ (loadOdds123Timeline が更新)
+        let odds123Cache = {};
+        const ODDS123_LABELS = ['T-5min', 'T-4min', 'T-3min', 'T-2min', 'T-1min'];
+
+        async function loadOdds123Timeline() {
+          try {
+            const r = await fetch(`/api/odds-123-timeline?date=${targetDate}`);
+            if (!r.ok) return;
+            const data = await r.json();
+            odds123Cache = data.odds || {};
+            // 取得後に再描画
+            renderTodaysPicks();
+          } catch (e) {
+            console.warn('odds-123-timeline failed:', e);
+          }
+        }
+
+        // 「1-2-3 推移」セルの HTML を生成
+        function renderOdds123Cell(raceId) {
+          const snap = odds123Cache[raceId];
+          if (!snap) {
+            return '<span class="pick-odds-empty">—</span>';
+          }
+          // T-5 → T-1 を並べる、欠損は ・
+          // 直前との差分を計算して色付け
+          const cells = [];
+          let prev = null;
+          let firstVal = null;
+          let lastVal = null;
+          ODDS123_LABELS.forEach(label => {
+            const entry = snap[label];
+            const shortLabel = label.replace('T-', '').replace('min', '');
+            if (!entry) {
+              cells.push(`<span class="pick-odds-cell pick-odds-missing" title="${label} 未取得">${shortLabel}:·</span>`);
+              return;
+            }
+            const o = entry.odds;
+            if (firstVal === null) firstVal = o;
+            lastVal = o;
+            let cls = 'pick-odds-cell';
+            // 好配当ゾーン (1-2-3 が 20倍未満) は青、上昇/下降幅 >20% は色付け
+            if (o < 20) cls += ' is-low';
+            if (prev !== null) {
+              const diffPct = (o - prev) / prev;
+              if (diffPct >= 0.20) cls += ' is-up';
+              else if (diffPct <= -0.20) cls += ' is-down';
+            }
+            const txt = o < 100 ? o.toFixed(1) : Math.round(o).toString();
+            cells.push(`<span class="${cls}" title="${label}: ${o.toFixed(1)}倍">${shortLabel}:${txt}</span>`);
+            prev = o;
+          });
+          // 全体変動率を末尾に表示 (T-5 → T-1 の最終)
+          let trendHtml = '';
+          if (firstVal !== null && lastVal !== null && firstVal !== lastVal) {
+            const pct = ((lastVal - firstVal) / firstVal) * 100;
+            const sign = pct >= 0 ? '+' : '';
+            const trendCls = pct >= 5 ? 'pick-odds-trend is-up'
+                           : pct <= -5 ? 'pick-odds-trend is-down'
+                           : 'pick-odds-trend';
+            trendHtml = `<span class="${trendCls}" title="T-5 から T-1 までの変動">${sign}${pct.toFixed(0)}%</span>`;
+          }
+          return cells.join(' ') + trendHtml;
+        }
+
         // 本日 L4 候補レース 時系列リスト (締切済も含む全件を表示)
         function renderTodaysPicks() {
           const panel = document.getElementById('todays-picks-panel');
@@ -487,6 +553,7 @@
             else if (idx === firstUpcomingIdx) rowClass += ' is-next';
             const tr = document.createElement('tr');
             tr.className = rowClass;
+            const oddsCellHtml = renderOdds123Cell(rid);
             tr.innerHTML = `
               <td class="pick-idx">${idx + 1}</td>
               <td class="pick-time">${hh}:${mm}</td>
@@ -496,6 +563,7 @@
               <td class="pick-type">${l4Type}</td>
               <td class="pick-racer">${racerInfo}</td>
               <td class="pick-rec"><strong>${recovery}</strong></td>
+              <td class="pick-odds">${oddsCellHtml}</td>
               <td class="pick-link"><a href="/race/${rid}">詳細→</a></td>
             `;
             tbody.appendChild(tr);
@@ -506,6 +574,13 @@
         setInterval(updateNextRaces, 30000);  // 30秒毎に再評価
         // market-signals 描画完了後に再度実行 (L4 バッジを取り込むため)
         setTimeout(updateNextRaces, 1500);
+
+        // 1-2-3 オッズ推移を初回 + 60秒毎に取得
+        // (odds_scheduler が T-5..T-1 まで毎分書き込む。同じ周期で UI 側も追従)
+        loadOdds123Timeline();
+        setInterval(loadOdds123Timeline, 60000);
+        // market-signals 描画後にも一度走らせて、L4 バッジが付いたレース全てを補完
+        setTimeout(loadOdds123Timeline, 2000);
       })();
     </script>
   {% endif %}
