@@ -1895,6 +1895,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # Pro プラン: T-15min 期待値モニター
     # =====================================================
 
+    @app.route("/admin/cache-clear", methods=["GET", "POST"])
+    @pro_required
+    def admin_cache_clear():
+        """全インメモリキャッシュをクリア (Pro 限定)。
+        データ投入直後など即時反映したい時に使う。"""
+        n = len(_CACHE)
+        invalidate_cache()
+        return jsonify({"cleared": True, "entries_removed": n}), 200
+
     @app.route("/pro/ev")
     @pro_required
     def pro_ev():
