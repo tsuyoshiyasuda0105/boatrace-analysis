@@ -103,28 +103,42 @@ def _format_race_id(race_id: str) -> tuple[str, int, int]:
     return parts[0], int(parts[1]), int(parts[2])
 
 
+# stadiums テーブルは静的データ (24 競艇場、変動なし) なのでプロセス
+# メモリに 1 回だけロード。これで race_detail / index 等の毎回の
+# JOIN stadiums を排除できる (Supabase 往復 1 回分の節約)。
+_STADIUMS_CACHE: Optional[dict[int, str]] = None
+
+
 def _stadium_name_map() -> dict[int, str]:
+    global _STADIUMS_CACHE
+    if _STADIUMS_CACHE is not None:
+        return _STADIUMS_CACHE
     with db_connect() as conn:
         rows = conn.execute("SELECT stadium_number, name FROM stadiums").fetchall()
-    return {n: name for n, name in rows}
+    _STADIUMS_CACHE = {n: name for n, name in rows}
+    return _STADIUMS_CACHE
 
 
 def _race_basic_info(race_id: str) -> Optional[dict]:
+    # races テーブルのみ問い合わせ、stadium_name はメモリキャッシュから付加
+    # (旧コードは毎回 JOIN stadiums していたが、stadiums は静的なので不要)
     with db_connect() as conn:
         row = conn.execute("""
-            SELECT r.race_id, r.race_date, r.stadium_number, r.race_number,
-                   r.race_grade_number, r.race_title, r.race_subtitle,
-                   r.race_closed_at, s.name AS stadium_name
-              FROM races r
-              JOIN stadiums s ON r.stadium_number = s.stadium_number
-             WHERE r.race_id = ?
+            SELECT race_id, race_date, stadium_number, race_number,
+                   race_grade_number, race_title, race_subtitle,
+                   race_closed_at
+              FROM races
+             WHERE race_id = ?
         """, (race_id,)).fetchone()
     if not row:
         return None
+    stadium_names = _stadium_name_map()
     keys = ["race_id", "race_date", "stadium_number", "race_number",
             "race_grade_number", "race_title", "race_subtitle",
-            "race_closed_at", "stadium_name"]
-    return dict(zip(keys, row))
+            "race_closed_at"]
+    info = dict(zip(keys, row))
+    info["stadium_name"] = stadium_names.get(info["stadium_number"], "")
+    return info
 
 
 def _races_for_date(target_date: str) -> list[dict]:
