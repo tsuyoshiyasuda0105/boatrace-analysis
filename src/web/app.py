@@ -120,12 +120,18 @@ def _race_basic_info(race_id: str) -> Optional[dict]:
 
 def _races_for_date(target_date: str) -> list[dict]:
     """N+1 クエリ問題を排除: サブクエリを LEFT JOIN + GROUP BY に置換。
-    168 サブクエリ -> 1 集約クエリで 5-10 倍高速化。"""
+    168 サブクエリ -> 1 集約クエリで 5-10 倍高速化。
+
+    results_count は finishing_position IS NOT NULL の行のみを数える。
+    upsert_results はレース前でも出走表に基づき空シェル行 (place=None) を
+    6 行書き込むため、単純な COUNT だと未終了レースも「確定」と誤判定する。
+    """
     with db_connect() as conn:
         rows = conn.execute("""
             SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
                    s.name AS stadium_name,
-                   COALESCE(COUNT(res.boat_number), 0) AS results_count
+                   COALESCE(SUM(CASE WHEN res.finishing_position IS NOT NULL
+                                     THEN 1 ELSE 0 END), 0) AS results_count
               FROM races r
               JOIN stadiums s ON r.stadium_number = s.stadium_number
               LEFT JOIN race_results res ON r.race_id = res.race_id
@@ -1750,7 +1756,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             rows = conn.execute("""
                 SELECT DISTINCT r.race_id, r.stadium_number, r.race_number,
                        r.race_closed_at, s.name AS stadium_name,
-                       (SELECT COUNT(*) FROM race_results WHERE race_id = r.race_id) AS results_count
+                       (SELECT COUNT(*) FROM race_results
+                         WHERE race_id = r.race_id
+                           AND finishing_position IS NOT NULL) AS results_count
                   FROM races r
                   JOIN stadiums s ON r.stadium_number = s.stadium_number
                   JOIN odds_trifecta o ON o.race_id = r.race_id
