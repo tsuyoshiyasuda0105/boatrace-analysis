@@ -1761,6 +1761,129 @@ main h2 {
 }
 
 /* ============================================================
+   「次のレース」 ハイライト + パネル
+   ============================================================ */
+.next-race-panel {
+  margin: 14px 0 18px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: linear-gradient(135deg,
+    rgba(0, 212, 255, 0.08),
+    rgba(255, 100, 200, 0.04));
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.06);
+}
+.next-race-panel h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: rgba(0, 212, 255, 0.95);
+  letter-spacing: 0.05em;
+}
+.next-race-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.next-race-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  text-decoration: none;
+  color: rgba(255,255,255,0.9);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.next-race-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 212, 255, 0.2);
+  border-color: rgba(0, 212, 255, 0.5);
+}
+.next-race-card.is-top {
+  background: linear-gradient(135deg,
+    rgba(255, 100, 200, 0.18),
+    rgba(0, 212, 255, 0.12));
+  border-color: rgba(255, 100, 200, 0.6);
+  box-shadow: 0 0 16px rgba(255, 100, 200, 0.25);
+}
+.next-card-time {
+  font-size: 22px;
+  font-weight: bold;
+  color: #fff;
+  line-height: 1.1;
+}
+.next-card-til {
+  font-size: 12px;
+  color: rgba(0, 212, 255, 0.95);
+  margin-top: 2px;
+  font-weight: 600;
+}
+.next-race-card.is-top .next-card-til {
+  color: #ff64c8;
+}
+.next-card-stadium {
+  font-size: 13px;
+  margin-top: 8px;
+  color: rgba(255,255,255,0.85);
+}
+.next-card-l4 {
+  margin-top: 6px;
+  /* L4 バッジを縮小して表示 */
+  font-size: 11px;
+}
+.next-card-l4 .l4-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+/* race-item の状態別ハイライト */
+.race-item.next-race {
+  /* 一番近いレース = 強調 */
+  outline: 2px solid #ff64c8;
+  outline-offset: 1px;
+  box-shadow: 0 0 14px rgba(255, 100, 200, 0.5);
+  animation: next-race-pulse 2s ease-in-out infinite;
+}
+.race-item.imminent {
+  /* 5分以内 */
+  outline: 2px solid #facc15;
+  outline-offset: 1px;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+}
+.race-item.soon {
+  /* 15分以内 */
+  outline: 1px solid rgba(0, 212, 255, 0.6);
+  outline-offset: 1px;
+}
+@keyframes next-race-pulse {
+  0%, 100% { box-shadow: 0 0 14px rgba(255, 100, 200, 0.5); }
+  50% { box-shadow: 0 0 22px rgba(255, 100, 200, 0.85); }
+}
+
+/* "あと X 分" バッジ */
+.race-item .time-til {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-left: 4px;
+  border-radius: 8px;
+  background: rgba(0, 212, 255, 0.18);
+  color: rgba(0, 212, 255, 0.95);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.race-item.imminent .time-til {
+  background: rgba(250, 204, 21, 0.2);
+  color: #facc15;
+}
+.race-item.next-race .time-til {
+  background: rgba(255, 100, 200, 0.25);
+  color: #ff64c8;
+}
+
+/* ============================================================
    戦略 健全度ダッシュボード (/member/health)
    ============================================================ */
 .health-dashboard h2 { margin-bottom: 8px; }

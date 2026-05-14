@@ -106,13 +106,24 @@
       {% endif %}
     </div>
 
+    <!-- 次のレース ハイライト (JS で動的更新) -->
+    <section class="next-race-panel" id="next-race-panel" hidden>
+      <h3>⏱ 直近の次のレース</h3>
+      <div class="next-race-cards" id="next-race-cards"></div>
+    </section>
+
     <div class="stadium-grid">
       {% for g in stadium_groups %}
         <section class="stadium-card">
           <h3>{{ g.stadium_number }}: {{ g.stadium_name }}</h3>
           <ul class="race-list">
             {% for r in g.races %}
-              <li class="race-item {% if r.results_count > 0 %}done{% endif %}" data-race-id="{{ r.race_id }}">
+              <li class="race-item {% if r.results_count > 0 %}done{% endif %}"
+                  data-race-id="{{ r.race_id }}"
+                  data-stadium-name="{{ g.stadium_name }}"
+                  data-race-number="{{ r.race_number }}"
+                  {% if r.race_closed_at %}data-closed-at="{{ r.race_closed_at }}"{% endif %}
+                  data-results-count="{{ r.results_count }}">
                 <a href="{{ url_for('race_detail', race_id=r.race_id) }}">
                   <span class="rno">{{ r.race_number }}R</span>
                   {% if r.race_closed_at %}
@@ -124,6 +135,7 @@
                     {% endif %}
                   {% endif %}
                   {% if r.results_count > 0 %}<span class="badge">確定</span>{% endif %}
+                  <span class="time-til" hidden></span>
                   <span class="ev-mark" hidden></span>
                   <span class="ev-value" hidden></span>
                 </a>
@@ -256,6 +268,102 @@
           }
         }
         loadMarketSignals();
+
+        // ============================================================
+        // 「次のレース」 ハイライト機能 (1分毎に再評価)
+        // ============================================================
+        function parseClosedAt(s) {
+          if (!s) return null;
+          // "2026-05-14 09:24:00" 形式を Date に
+          // ブラウザはローカル TZ で解釈するので、半角空白を 'T' に置換
+          try {
+            const dt = new Date(s.replace(' ', 'T'));
+            return isNaN(dt.getTime()) ? null : dt;
+          } catch (e) { return null; }
+        }
+
+        function fmtTimeTil(min) {
+          if (min < 0) return '締切済';
+          if (min < 1) return 'まもなく';
+          if (min < 60) return `あと${Math.floor(min)}分`;
+          const h = Math.floor(min / 60), m = Math.floor(min % 60);
+          return `あと${h}h${m}m`;
+        }
+
+        function updateNextRaces() {
+          const now = new Date();
+          const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
+          // 各 race-item を分類
+          const upcoming = [];
+          items.forEach(el => {
+            // 既存ハイライトクラスをリセット
+            el.classList.remove('next-race', 'imminent', 'soon');
+            const tilEl = el.querySelector('.time-til');
+            if (tilEl) { tilEl.hidden = true; tilEl.textContent = ''; }
+
+            const closedAt = parseClosedAt(el.dataset.closedAt);
+            if (!closedAt) return;
+            const isDone = parseInt(el.dataset.resultsCount || '0') > 0;
+            const minutesUntil = (closedAt - now) / 60000;
+
+            if (isDone || minutesUntil < -1) {
+              return;  // 終了レース
+            }
+            if (minutesUntil >= -1 && minutesUntil <= 180) {
+              upcoming.push({ el, minutesUntil, closedAt });
+              // "あと X 分" を表示
+              if (tilEl) {
+                tilEl.textContent = fmtTimeTil(minutesUntil);
+                tilEl.hidden = false;
+              }
+              if (minutesUntil <= 5) el.classList.add('imminent');
+              else if (minutesUntil <= 15) el.classList.add('soon');
+            }
+          });
+
+          // 次のレース TOP 3 をパネルに表示 + class 付与
+          upcoming.sort((a, b) => a.minutesUntil - b.minutesUntil);
+          const top = upcoming.slice(0, 3);
+          top.forEach((u, idx) => {
+            if (idx === 0) u.el.classList.add('next-race');
+          });
+
+          const panel = document.getElementById('next-race-panel');
+          const cards = document.getElementById('next-race-cards');
+          if (!panel || !cards) return;
+          if (top.length === 0) {
+            panel.hidden = true;
+            return;
+          }
+          panel.hidden = false;
+          cards.innerHTML = '';
+          top.forEach((u, idx) => {
+            const stadium = u.el.dataset.stadiumName || '';
+            const rno = u.el.dataset.raceNumber || '';
+            const rid = u.el.dataset.raceId || '';
+            const hh = String(u.closedAt.getHours()).padStart(2, '0');
+            const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
+            // 該当 race-item に付与された L4 バッジをミラー
+            const l4Badge = u.el.querySelector('.l4-badge');
+            const l4Html = l4Badge ? `<span class="next-card-l4">${l4Badge.outerHTML}</span>` : '';
+
+            const card = document.createElement('a');
+            card.href = `/race/${rid}`;
+            card.className = `next-race-card ${idx === 0 ? 'is-top' : ''}`;
+            card.innerHTML = `
+              <div class="next-card-time">${hh}:${mm}</div>
+              <div class="next-card-til">${fmtTimeTil(u.minutesUntil)}</div>
+              <div class="next-card-stadium">${stadium} ${rno}R</div>
+              ${l4Html}
+            `;
+            cards.appendChild(card);
+          });
+        }
+
+        updateNextRaces();
+        setInterval(updateNextRaces, 30000);  // 30秒毎に再評価
+        // market-signals 描画完了後に再度実行 (L4 バッジを取り込むため)
+        setTimeout(updateNextRaces, 1500);
       })();
     </script>
   {% endif %}
