@@ -40,11 +40,11 @@
       </div>
 
       <div class="legend-section">
-        <h4>💎 ダイヤモンド (本命オッズ帯シグナル)</h4>
+        <h4>💎 ダイヤモンド (本命オッズ帯で判別)</h4>
         <ul class="legend-list">
-          <li><b>💎💎 完全+EV</b> 本命 500-1000円 — 期待ROI +27.4%</li>
-          <li><b>💎 超本命</b> 本命 &lt; 500円 — 期待ROI +18.5%</li>
-          <li><b>💎 やや本命</b> 本命 1000-2000円 — 期待ROI +17.9%</li>
+          <li><b>💎 +27%</b> = 三連単本命 <b>500-999円</b> 帯 ← <b>L4 対象範囲</b></li>
+          <li><b>💎 +18%</b> = 三連単本命 <b>&lt;500円</b> (超本命) または <b>1,000-1,999円</b> (やや本命)</li>
+          <li>各バッジに「本命 ¥780」 のように **実際の本命金額** が併記されます</li>
           <li class="legend-note">
             ※ ダイヤモンドは本命オッズだけで判定する <b>古い世代の簡易シグナル</b>。
             L4 が付いているレースなら L4 のラベルを優先して見てください。
@@ -256,7 +256,12 @@
                 const evRoi = (sig.expected_roi != null) ? (sig.expected_roi*100).toFixed(1) : '?';
                 badge.title = `${sig.title || ''} (¥${minPayoutStr}本命, 想定ROI ${evRoi}%, ${sig.source || ''})`;
                 const roiStr = (sig.expected_roi != null) ? (sig.expected_roi*100).toFixed(0) : '?';
-                badge.textContent = `💎 +${roiStr}%`;
+                // 本命金額もテキストに併記 (UI からすぐ判別できるように)
+                if (sig.min_payout != null) {
+                  badge.innerHTML = `💎 +${roiStr}%<br><span class="market-fav-payout">本命 ¥${minPayoutStr}</span>`;
+                } else {
+                  badge.textContent = `💎 +${roiStr}%`;
+                }
                 item.appendChild(badge);
               } catch (perRaceErr) {
                 console.warn('market-signal render skipped for', raceId, perRaceErr);

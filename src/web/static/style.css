@@ -1484,6 +1484,17 @@ main h2 {
   font-size: 11px;
   font-weight: 700;
   font-family: var(--font-mono, monospace);
+  text-align: center;
+  line-height: 1.3;
+}
+/* バッジ内の本命金額 (¥780 など) を小さく表示 */
+.market-badge .market-fav-payout {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  opacity: 0.85;
+  margin-top: 1px;
+  letter-spacing: 0;
 }
 .market-badge.market-confident {
   background: linear-gradient(135deg, rgba(255, 215, 0, 0.35), rgba(255, 100, 200, 0.20));
