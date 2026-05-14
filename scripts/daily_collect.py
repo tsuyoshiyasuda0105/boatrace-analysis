@@ -13,6 +13,13 @@ Layer 1 (公式DL) と Layer 3 (スクレイピング) は別スクリプトで�
 """
 import sys
 import argparse
+
+# Windows cp932 環境でも絵文字を含む print が落ちないよう stdout を UTF-8 化
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except AttributeError:
+    pass
 import logging
 from datetime import date, timedelta
 from pathlib import Path

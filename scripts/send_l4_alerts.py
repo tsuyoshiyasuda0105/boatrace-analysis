@@ -27,6 +27,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Windows cp932 でも絵文字を出力できるよう stdout を UTF-8 化 (Python 3.7+)
+# これを忘れると UnicodeEncodeError でメール送信処理が止まる致命的バグになる
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except AttributeError:
+    pass  # Python 3.6 以下や TextIOWrapper でないストリームは無視
+
 from src.db.connection import connect as db_connect
 from src.notifications.subscribers import (
     list_active_subscribers,
