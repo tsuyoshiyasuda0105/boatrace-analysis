@@ -1837,6 +1837,30 @@ main h2 {
   font-size: 11px;
   padding: 2px 6px;
 }
+/* カード内バッジコンテナ (L4 / 💎 / EV+) */
+.next-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+  width: 100%;
+}
+.next-card-badges .l4-badge,
+.next-card-badges .market-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.next-card-ev-mark {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: bold;
+  background: rgba(74, 222, 128, 0.18);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.4);
+}
 
 /* race-item の状態別ハイライト */
 .race-item.next-race {

@@ -266,6 +266,9 @@
           } catch (e) {
             console.warn('market-signals failed:', e);
           }
+          // market-signals 描画が終わったら、次のレースカードを再描画して
+          // 取り込まれた L4 / 💎 バッジをミラー表示する
+          try { updateNextRaces(); } catch (e) { /* updateNextRaces 未定義時は無視 */ }
         }
         loadMarketSignals();
 
@@ -343,9 +346,27 @@
             const rid = u.el.dataset.raceId || '';
             const hh = String(u.closedAt.getHours()).padStart(2, '0');
             const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
-            // 該当 race-item に付与された L4 バッジをミラー
-            const l4Badge = u.el.querySelector('.l4-badge');
-            const l4Html = l4Badge ? `<span class="next-card-l4">${l4Badge.outerHTML}</span>` : '';
+
+            // 該当 race-item に付与された各種バッジを集める
+            const badges = [];
+            // L4 バッジ (最優先)
+            u.el.querySelectorAll('.l4-badge').forEach(b => {
+              badges.push(b.outerHTML);
+            });
+            // 💎 市場バッジ
+            u.el.querySelectorAll('.market-badge').forEach(b => {
+              badges.push(b.outerHTML);
+            });
+            // EV+ マーク (loadEvMarks が付与する独自バッジ)
+            const evMark = u.el.querySelector('.ev-mark');
+            const evValue = u.el.querySelector('.ev-value');
+            if (evMark && !evMark.hidden && evMark.textContent) {
+              const evText = (evValue && !evValue.hidden) ? evValue.textContent : '';
+              badges.push(`<span class="next-card-ev-mark">${evMark.textContent}${evText}</span>`);
+            }
+            const badgesHtml = badges.length
+              ? `<div class="next-card-badges">${badges.join('')}</div>`
+              : '';
 
             const card = document.createElement('a');
             card.href = `/race/${rid}`;
@@ -354,7 +375,7 @@
               <div class="next-card-time">${hh}:${mm}</div>
               <div class="next-card-til">${fmtTimeTil(u.minutesUntil)}</div>
               <div class="next-card-stadium">${stadium} ${rno}R</div>
-              ${l4Html}
+              ${badgesHtml}
             `;
             cards.appendChild(card);
           });
