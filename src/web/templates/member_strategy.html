@@ -111,9 +111,11 @@
           {% for r in rows %}
           <tr>
             <td>
-              <a href="{{ url_for('races', date=r.date) }}">{{ r.date }}</a>
               {% if r.n_l4 > 0 or r.n_l4_a2 > 0 %}
-                <a href="{{ url_for('member_strategy_races', date=r.date) }}" class="races-link" title="該当レース一覧">📋</a>
+                <a href="{{ url_for('member_strategy_races', date=r.date) }}"
+                   title="L4 該当レース一覧">{{ r.date }} 📋</a>
+              {% else %}
+                <a href="{{ url_for('races', date=r.date) }}">{{ r.date }}</a>
               {% endif %}
             </td>
             <td class="num">{{ r.n_total }}</td>

@@ -1821,6 +1821,39 @@ main h2 {
   border-collapse: collapse;
   font-size: 13px;
 }
+.races-table.simple {
+  /* シンプル 7 列版 */
+  font-size: 14px;
+}
+.races-table.simple td.idx {
+  color: rgba(255,255,255,0.4);
+  font-size: 11px;
+  width: 32px;
+}
+.races-table.simple .racer-meta {
+  display: block;
+  font-size: 10px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 2px;
+}
+.races-table.simple .hit-col {
+  text-align: center;
+  font-size: 18px;
+  width: 80px;
+}
+.races-table .hit-star {
+  color: #facc15;
+  font-weight: bold;
+  text-shadow: 0 0 6px rgba(250, 204, 21, 0.5);
+}
+.races-table .hit-ok { color: #4ade80; }
+.races-table .hit-miss { color: rgba(255,255,255,0.3); }
+.races-table .hit-pending { color: rgba(255,255,255,0.3); }
+.footer-note {
+  margin-top: 10px;
+  color: rgba(255,255,255,0.5);
+  font-size: 11px;
+}
 .races-table thead th {
   text-align: left;
   padding: 8px 10px;

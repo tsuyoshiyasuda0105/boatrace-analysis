@@ -32,75 +32,49 @@
   </div>
 
   <div class="table-wrap">
-    <table class="races-table">
+    <table class="races-table simple">
       <thead>
         <tr>
-          <th>締切</th>
+          <th>#</th>
           <th>会場</th>
           <th>R</th>
-          <th>ランク</th>
-          <th>1号艇 選手</th>
-          <th class="num">国1%</th>
-          <th class="num">局1%</th>
-          <th class="num">本命円</th>
+          <th>1号艇</th>
+          <th class="num">本命</th>
           <th>結果</th>
-          <th class="num">単勝</th>
-          <th class="num">2連単</th>
-          <th class="num">3連単</th>
-          <th></th>
+          <th class="hit-col">単勝 HIT</th>
         </tr>
       </thead>
       <tbody>
         {% for r in races %}
         <tr class="{% if r.tri_hit %}row-tri-hit{% elif not r.is_done %}row-pending{% endif %}">
-          <td class="time">
-            {% if r.race_closed_at and r.race_closed_at | length >= 8 %}
-              {{ r.race_closed_at[-8:-3] }}
-            {% endif %}
-          </td>
-          <td>{{ r.stadium_name }}</td>
-          <td class="num">{{ r.race_number }}R</td>
+          <td class="num idx">{{ loop.index }}</td>
           <td>
-            <span class="rank-pill rank-{{ r.rank | replace('+', 'plus') | replace('-', '_') }}">
-              {{ r.rank }}
-            </span>
+            <span class="rank-pill rank-{{ r.rank | replace('+', 'plus') | replace('-', '_') }}">{{ r.rank }}</span>
+            {{ r.stadium_name }}
           </td>
-          <td>{{ r.racer_name }}</td>
-          <td class="num small">{{ '%.2f' | format(r.natl_1) }}</td>
-          <td class="num small">{{ '%.2f' | format(r.local_1) }}</td>
-          <td class="num small">{{ r.fav_payout }}</td>
+          <td class="num">{{ r.race_number }}</td>
+          <td>
+            {{ r.racer_name }}
+            <span class="racer-meta">国{{ '%.2f' | format(r.natl_1) }} 局{{ '%.2f' | format(r.local_1) }}</span>
+          </td>
+          <td class="num">{{ r.fav_payout }}</td>
           <td>
             {% if r.is_done %}
-              <span class="result-combo {% if r.tri_hit %}hit{% endif %}">
-                {{ r.trifecta_combo }}
-              </span>
+              <span class="result-combo {% if r.tri_hit %}hit{% endif %}">{{ r.trifecta_combo }}</span>
             {% else %}
               <span class="result-pending">未定</span>
             {% endif %}
           </td>
-          <td class="num">
-            {% if r.win_hit %}
-              <span class="pay-hit">{{ r.win_profit | signed_comma }}</span>
-            {% elif r.is_done %}
-              <span class="pay-miss">-100</span>
-            {% else %}—{% endif %}
-          </td>
-          <td class="num">
-            {% if r.exa_hit %}
-              <span class="pay-hit">{{ r.exa_profit | signed_comma }}</span>
-            {% elif r.is_done %}
-              <span class="pay-miss">-100</span>
-            {% else %}—{% endif %}
-          </td>
-          <td class="num">
-            {% if r.tri_hit %}
-              <span class="pay-hit">{{ r.tri_profit | signed_comma }}</span>
-            {% elif r.is_done %}
-              <span class="pay-miss">-100</span>
-            {% else %}—{% endif %}
-          </td>
-          <td>
-            <a href="{{ url_for('race_detail', race_id=r.race_id) }}" class="detail-btn">詳細→</a>
+          <td class="hit-col">
+            {% if not r.is_done %}
+              <span class="hit-pending">—</span>
+            {% elif r.tri_hit %}
+              <span class="hit-star" title="3連単 1-2-3 的中 / 単勝も的中">✅★</span>
+            {% elif r.win_hit %}
+              <span class="hit-ok" title="1号艇 単勝的中">✅</span>
+            {% else %}
+              <span class="hit-miss" title="1号艇1着外">—</span>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -108,7 +82,15 @@
     </table>
   </div>
 
-  {% if not races %}
+  {% if races %}
+    <p class="footer-note">
+      <small>
+        ✅ = 1号艇1着 (単勝的中) /
+        ✅★ = 3連単 1-2-3 的中 (単勝・2連単・3連単すべて的中) /
+        — = 未定 or 外し
+      </small>
+    </p>
+  {% else %}
     <p class="empty-note">この日は L4 該当レースがありません。</p>
   {% endif %}
 </div>
