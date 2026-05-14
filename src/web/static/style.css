@@ -1761,6 +1761,116 @@ main h2 {
 }
 
 /* ============================================================
+   L4 該当レース一覧ページ (/member/strategy/races)
+   ============================================================ */
+.strategy-races h2 { margin-bottom: 8px; }
+.strategy-races .meta-line { margin: 6px 0 16px; font-size: 13px; }
+.strategy-races .back-link {
+  color: rgba(0, 212, 255, 0.9);
+  text-decoration: none;
+}
+.strategy-races .back-link:hover { text-decoration: underline; }
+
+.races-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+.rsum-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+}
+.rsum-card.positive { border-left: 3px solid #16a34a; }
+.rsum-card.negative { border-left: 3px solid #dc2626; }
+.rsum-card .rs-label { font-size: 11px; color: rgba(255,255,255,0.55); text-transform: uppercase; }
+.rsum-card .rs-value { font-size: 22px; font-weight: bold; color: #fff; line-height: 1.2; }
+.rsum-card.positive .rs-value { color: #4ade80; }
+.rsum-card.negative .rs-value { color: #f87171; }
+.rsum-card .rs-sub { font-size: 11px; color: rgba(255,255,255,0.55); margin-top: 2px; }
+
+.races-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.races-table thead th {
+  text-align: left;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.7);
+}
+.races-table tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.races-table tbody tr.row-tri-hit {
+  background: rgba(22, 163, 74, 0.08);
+}
+.races-table tbody tr.row-pending {
+  opacity: 0.65;
+}
+.races-table .time { font-family: monospace; color: rgba(255,255,255,0.85); }
+.races-table .num { text-align: right; }
+.races-table .num.small { font-size: 12px; color: rgba(255,255,255,0.7); }
+
+.rank-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: bold;
+  background: #374151;
+  color: #fff;
+  white-space: nowrap;
+}
+.rank-pill.rank-L4plusplus { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #111; }
+.rank-pill.rank-L4plus     { background: linear-gradient(135deg, #d1d5db, #9ca3af); color: #111; }
+.rank-pill.rank-L4_A2      { background: #6b7280; }
+
+.result-combo {
+  font-family: monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+}
+.result-combo.hit { background: rgba(22, 163, 74, 0.25); color: #4ade80; font-weight: bold; }
+.result-pending { color: rgba(255,255,255,0.5); font-size: 11px; }
+
+.pay-hit { color: #4ade80; font-weight: bold; }
+.pay-miss { color: #f87171; font-size: 11px; }
+
+.detail-btn {
+  font-size: 11px;
+  color: rgba(0, 212, 255, 0.9);
+  text-decoration: none;
+}
+.detail-btn:hover { text-decoration: underline; }
+.races-link {
+  margin-left: 4px;
+  text-decoration: none;
+  opacity: 0.7;
+}
+.races-link:hover { opacity: 1; }
+
+.empty-note {
+  margin-top: 30px;
+  padding: 20px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+  text-align: center;
+  color: rgba(255,255,255,0.6);
+}
+
+/* ============================================================
    レース詳細ページ 折りたたみセクション (高速化)
    What-if / 6艇詳細を遅延展開して初期表示の負荷を下げる
    ============================================================ */

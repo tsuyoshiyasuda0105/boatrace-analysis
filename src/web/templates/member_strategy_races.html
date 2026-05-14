@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ target_date }} の L4 該当レース一覧{% endblock %}
+
+{% block content %}
+<div class="strategy-races">
+  <h2>📋 {{ target_date }} の L4 該当レース一覧</h2>
+
+  <p class="meta-line">
+    <a href="{{ url_for('member_strategy') }}" class="back-link">← ROI ダッシュボードへ戻る</a>
+  </p>
+
+  <div class="races-summary">
+    <div class="rsum-card">
+      <span class="rs-label">該当レース</span>
+      <span class="rs-value">{{ n_total }}</span>
+      <span class="rs-sub">A1: {{ n_a1 }} / A2派生: {{ n_a2 }}</span>
+    </div>
+    <div class="rsum-card">
+      <span class="rs-label">ランク内訳</span>
+      <span class="rs-value">🥇{{ n_pp }} 🥈{{ n_p }}</span>
+      <span class="rs-sub">L4++ {{ n_pp }} / L4+ {{ n_p }}</span>
+    </div>
+    <div class="rsum-card {% if tri_roi and tri_roi >= 100 %}positive{% elif tri_roi is not none %}negative{% endif %}">
+      <span class="rs-label">3連単 1-2-3 通算</span>
+      <span class="rs-value">
+        {% if tri_roi is not none %}{{ '%.1f' | format(tri_roi) }}%{% else %}-{% endif %}
+      </span>
+      <span class="rs-sub">
+        HIT {{ n_tri_hit }}/{{ n_tri_done }} | 損益 {{ tri_profit | signed_comma }} 円
+      </span>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="races-table">
+      <thead>
+        <tr>
+          <th>締切</th>
+          <th>会場</th>
+          <th>R</th>
+          <th>ランク</th>
+          <th>1号艇 選手</th>
+          <th class="num">国1%</th>
+          <th class="num">局1%</th>
+          <th class="num">本命円</th>
+          <th>結果</th>
+          <th class="num">単勝</th>
+          <th class="num">2連単</th>
+          <th class="num">3連単</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in races %}
+        <tr class="{% if r.tri_hit %}row-tri-hit{% elif not r.is_done %}row-pending{% endif %}">
+          <td class="time">
+            {% if r.race_closed_at and r.race_closed_at | length >= 8 %}
+              {{ r.race_closed_at[-8:-3] }}
+            {% endif %}
+          </td>
+          <td>{{ r.stadium_name }}</td>
+          <td class="num">{{ r.race_number }}R</td>
+          <td>
+            <span class="rank-pill rank-{{ r.rank | replace('+', 'plus') | replace('-', '_') }}">
+              {{ r.rank }}
+            </span>
+          </td>
+          <td>{{ r.racer_name }}</td>
+          <td class="num small">{{ '%.2f' | format(r.natl_1) }}</td>
+          <td class="num small">{{ '%.2f' | format(r.local_1) }}</td>
+          <td class="num small">{{ r.fav_payout }}</td>
+          <td>
+            {% if r.is_done %}
+              <span class="result-combo {% if r.tri_hit %}hit{% endif %}">
+                {{ r.trifecta_combo }}
+              </span>
+            {% else %}
+              <span class="result-pending">未定</span>
+            {% endif %}
+          </td>
+          <td class="num">
+            {% if r.win_hit %}
+              <span class="pay-hit">{{ r.win_profit | signed_comma }}</span>
+            {% elif r.is_done %}
+              <span class="pay-miss">-100</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="num">
+            {% if r.exa_hit %}
+              <span class="pay-hit">{{ r.exa_profit | signed_comma }}</span>
+            {% elif r.is_done %}
+              <span class="pay-miss">-100</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="num">
+            {% if r.tri_hit %}
+              <span class="pay-hit">{{ r.tri_profit | signed_comma }}</span>
+            {% elif r.is_done %}
+              <span class="pay-miss">-100</span>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            <a href="{{ url_for('race_detail', race_id=r.race_id) }}" class="detail-btn">詳細→</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if not races %}
+    <p class="empty-note">この日は L4 該当レースがありません。</p>
+  {% endif %}
+</div>
+{% endblock %}

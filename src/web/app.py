@@ -1664,6 +1664,138 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         return sorted(by_date.values(), key=lambda x: x["date"], reverse=True)
 
+    def _l4_races_for_date(target_date: str) -> list[dict]:
+        """指定日の L4 該当レース全件を取得 (1号艇A1 + A2派生)。
+        買い目ごとの的中/損益も含む。
+        """
+        with db_connect() as conn:
+            cur = conn.execute("""
+                SELECT
+                    r.race_id,
+                    r.race_number,
+                    r.race_closed_at,
+                    r.stadium_number,
+                    r.race_grade_number,
+                    e.class_number,
+                    e.racer_name,
+                    e.national_top_1_percent,
+                    e.local_top_1_percent,
+                    pp.min_pay AS fav,
+                    res1.boat_number AS w1,
+                    res2.boat_number AS w2,
+                    res3.boat_number AS w3,
+                    pw.payout AS win_pay,
+                    pe.payout AS exa_pay,
+                    pt.payout AS tri_pay
+                FROM races r
+                LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
+                      WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
+                LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position=1
+                LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
+                LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
+                LEFT JOIN race_payouts pw ON pw.race_id = r.race_id AND pw.bet_type='win' AND pw.combination='1'
+                LEFT JOIN race_payouts pe ON pe.race_id = r.race_id AND pe.bet_type='exacta' AND pe.combination='1-2'
+                LEFT JOIN race_payouts pt ON pt.race_id = r.race_id AND pt.bet_type='trifecta' AND pt.combination='1-2-3'
+                WHERE r.race_date = ?
+                ORDER BY r.race_closed_at, r.stadium_number, r.race_number
+            """, (target_date,)).fetchall()
+
+        sn_map = _stadium_name_map()
+        out = []
+        for row in cur:
+            (rid, rno, closed, stadium, grade, cls, racer_name,
+             natl_1, local_1, fav, w1, w2, w3,
+             win_pay, exa_pay, tri_pay) = row
+            # L4 条件判定
+            in_500_1000 = fav is not None and 500 <= fav < 1000
+            b_excl = stadium in EXCLUDE_B_VENUES
+            if not in_500_1000 or b_excl:
+                continue
+            if cls not in (1, 2):
+                continue
+            # L4 ランク (1号艇A1のみ)
+            try:
+                n1 = float(natl_1) if natl_1 is not None else 0.0
+                l1 = float(local_1) if local_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = l1 = 0.0
+            if cls == 1:
+                if n1 >= 7.0 and l1 >= 7.0:
+                    rank = "L4++"
+                elif n1 >= 7.0:
+                    rank = "L4+"
+                else:
+                    rank = "L4"
+            else:
+                rank = "L4-A2"
+            # 的中/損益計算
+            win_hit = (w1 == 1)
+            exa_hit = (w1 == 1 and w2 == 2)
+            tri_hit = (w1 == 1 and w2 == 2 and w3 == 3)
+            win_p = (win_pay or 0) if win_hit else 0
+            exa_p = (exa_pay or 0) if exa_hit else 0
+            tri_p = (tri_pay or 0) if tri_hit else 0
+
+            out.append({
+                "race_id": rid,
+                "race_number": rno,
+                "race_closed_at": closed,
+                "stadium_number": stadium,
+                "stadium_name": sn_map.get(stadium, ""),
+                "grade": grade,
+                "class": cls,
+                "rank": rank,
+                "racer_name": racer_name or "",
+                "natl_1": n1,
+                "local_1": l1,
+                "fav_payout": int(fav) if fav else 0,
+                "w1": w1, "w2": w2, "w3": w3,
+                "trifecta_combo": (
+                    f"{w1}-{w2}-{w3}" if w1 and w2 and w3 else None
+                ),
+                "win_hit": win_hit, "exa_hit": exa_hit, "tri_hit": tri_hit,
+                "win_pay": win_p, "exa_pay": exa_p, "tri_pay": tri_p,
+                "win_profit": win_p - 100,
+                "exa_profit": exa_p - 100,
+                "tri_profit": tri_p - 100,
+                "is_done": w1 is not None and w2 is not None and w3 is not None,
+            })
+        return out
+
+    @app.route("/member/strategy/races")
+    @login_required
+    def member_strategy_races():
+        """指定日の L4 該当レース一覧 (会員限定)"""
+        target_date = request.args.get("date") or date.today().isoformat()
+        try:
+            date.fromisoformat(target_date)
+        except ValueError:
+            return "Invalid date format", 400
+        races = _l4_races_for_date(target_date)
+        # 集計
+        n_total = len(races)
+        n_a1 = sum(1 for r in races if r["class"] == 1)
+        n_a2 = sum(1 for r in races if r["class"] == 2)
+        n_pp = sum(1 for r in races if r["rank"] == "L4++")
+        n_p = sum(1 for r in races if r["rank"] == "L4+")
+        # 3連単 1-2-3 通算
+        n_tri_hit = sum(1 for r in races if r["tri_hit"])
+        n_tri_done = sum(1 for r in races if r["is_done"])
+        tri_pay_sum = sum(r["tri_pay"] for r in races if r["tri_hit"])
+        tri_cost = n_tri_done * 100
+        tri_roi = (tri_pay_sum / tri_cost * 100) if tri_cost else None
+        tri_profit = tri_pay_sum - tri_cost
+        return render_template(
+            "member_strategy_races.html",
+            target_date=target_date,
+            races=races,
+            n_total=n_total, n_a1=n_a1, n_a2=n_a2,
+            n_pp=n_pp, n_p=n_p,
+            n_tri_hit=n_tri_hit, n_tri_done=n_tri_done,
+            tri_roi=tri_roi, tri_profit=tri_profit,
+        )
+
     @app.route("/member/strategy")
     @login_required
     def member_strategy():
