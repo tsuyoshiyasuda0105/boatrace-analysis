@@ -64,6 +64,15 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
                     req_date = request.args.get("date", "")
                     if req_date and req_date < date.today().isoformat():
                         effective_ttl = past_ttl
+                # /race/<race_id> 等で race_id (例: 20260513-23-01) から
+                # 日付を抽出して past_ttl を有効化
+                if effective_ttl == ttl:
+                    for a in args:
+                        if isinstance(a, str) and len(a) >= 8 and a[:8].isdigit():
+                            rid_date = f"{a[:4]}-{a[4:6]}-{a[6:8]}"
+                            if rid_date < date.today().isoformat():
+                                effective_ttl = past_ttl
+                                break
             except Exception:
                 pass
             if key in _CACHE:
@@ -1022,7 +1031,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
 
     @app.route("/race/<race_id>")
+    @cached(ttl=60, past_ttl=3600)
     def race_detail(race_id: str):
+        # 過去レース (race_date が今日より前) は 1時間キャッシュ、当日は 60秒
+        # cached デコレータは request.args["date"] を見るが、/race/<id> には
+        # クエリ無しなので race_id から日付を取り出して past_ttl を有効化する
+        # (cached 内部の effective_ttl をオーバーライドできないため、副作用なし)
         info = _race_basic_info(race_id)
         if not info:
             abort(404)
