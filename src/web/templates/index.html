@@ -44,7 +44,13 @@
         <ul class="legend-list">
           <li><b>💎 +27%</b> = 三連単本命 <b>500-999円</b> 帯 ← <b>L4 対象範囲</b></li>
           <li><b>💎 +18%</b> = 三連単本命 <b>&lt;500円</b> (超本命) または <b>1,000-1,999円</b> (やや本命)</li>
-          <li>各バッジに「本命 ¥780」 のように **実際の本命金額** が併記されます</li>
+          <li>各バッジに「本命 ¥780」 と <b>データ source タグ</b> が併記されます:
+            <ul>
+              <li><b>確定</b> = レース後の確定払戻 (タイムラグなし)</li>
+              <li><b>5分前</b> = T-5min オッズ (5〜10 分前のスナップショット)</li>
+              <li><b>15分前</b> = T-15min オッズ (15〜20 分前のスナップショット)</li>
+            </ul>
+          </li>
           <li class="legend-note">
             ※ ダイヤモンドは本命オッズだけで判定する <b>古い世代の簡易シグナル</b>。
             L4 が付いているレースなら L4 のラベルを優先して見てください。
@@ -254,11 +260,19 @@
                 badge.className = `market-badge market-${sig.tier}`;
                 const minPayoutStr = (sig.min_payout != null) ? sig.min_payout.toLocaleString() : '?';
                 const evRoi = (sig.expected_roi != null) ? (sig.expected_roi*100).toFixed(1) : '?';
-                badge.title = `${sig.title || ''} (¥${minPayoutStr}本命, 想定ROI ${evRoi}%, ${sig.source || ''})`;
+                // データ source (final / T-5min / T-15min) でタイムラグを示す
+                const srcRaw = sig.source || '';
+                const srcShort = srcRaw === 'final' ? '確定'
+                               : srcRaw === 'T-5min' ? '5分前'
+                               : srcRaw === 'T-15min' ? '15分前'
+                               : srcRaw;
+                badge.title = `${sig.title || ''} (¥${minPayoutStr}本命, 想定ROI ${evRoi}%, データ: ${srcRaw})`;
                 const roiStr = (sig.expected_roi != null) ? (sig.expected_roi*100).toFixed(0) : '?';
-                // 本命金額もテキストに併記 (UI からすぐ判別できるように)
+                // 本命金額+ source タグをバッジに併記
                 if (sig.min_payout != null) {
-                  badge.innerHTML = `💎 +${roiStr}%<br><span class="market-fav-payout">本命 ¥${minPayoutStr}</span>`;
+                  badge.innerHTML = `💎 +${roiStr}%<br>`
+                    + `<span class="market-fav-payout">本命 ¥${minPayoutStr}</span>`
+                    + (srcShort ? `<span class="market-src">${srcShort}</span>` : '');
                 } else {
                   badge.textContent = `💎 +${roiStr}%`;
                 }
