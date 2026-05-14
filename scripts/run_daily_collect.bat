@@ -1,21 +1,20 @@
 @echo off
-REM Daily collect: runs daily_collect.py against Supabase + local
-REM Scheduled to run at 06:00 daily
-
+REM Daily collect: runs daily_collect.py for final daily refresh (23:30)
+REM Refreshes both Supabase (Render UI) and local SQLite (backtest)
 cd /d C:\boat_project\boatrace-analysis
 if not exist logs mkdir logs
 
-REM Step 1: Local SQLite (for scheduler/paper_trade)
-.venv\Scripts\python.exe scripts\daily_collect.py >> logs\daily_collect_local.log 2>&1
+set TS=%date:~0,4%%date:~5,2%%date:~8,2%
+set LOG=logs\daily_collect_%TS%.log
 
-REM Step 2: Supabase Postgres (for Render UI)
-REM IMPORTANT: replace YOUR_PASSWORD with your actual Supabase password
-REM Or load from .env file
-if exist .env (
-    for /f "usebackq tokens=1,* delims==" %%a in (`type .env ^| findstr DATABASE_URL`) do (
-        set "%%a=%%b"
-    )
-)
-.venv\Scripts\python.exe scripts\daily_collect.py >> logs\daily_collect_supabase.log 2>&1
+echo. >> "%LOG%"
+echo === Daily collect started %date% %time% === >> "%LOG%"
 
+REM 1. Supabase (default) - .env DATABASE_URL applied automatically
+.venv\Scripts\python.exe scripts\daily_collect.py >> "%LOG%" 2>&1
+
+REM 2. Local SQLite (--local explicitly skips DATABASE_URL)
+.venv\Scripts\python.exe scripts\daily_collect.py --local >> "%LOG%" 2>&1
+
+echo === Daily collect finished %date% %time% === >> "%LOG%"
 exit /b 0

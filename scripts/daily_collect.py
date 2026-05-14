@@ -12,6 +12,7 @@
 Layer 1 (公式DL) と Layer 3 (スクレイピング) は別スクリプトで実行する設計。
 """
 import sys
+import os
 import argparse
 
 # Windows cp932 環境でも絵文字を含む print が落ちないよう stdout を UTF-8 化
@@ -20,6 +21,16 @@ try:
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except AttributeError:
     pass
+
+# --local フラグの場合は config import 前に DATABASE_URL を削除
+# (config.py が load_dotenv で .env から DATABASE_URL を再注入してしまうため、
+#  delete + load_dotenv 前に対処する必要がある)
+if "--local" in sys.argv:
+    os.environ.pop("DATABASE_URL", None)
+    # config.py の load_dotenv(override=False) は既存の環境変数を尊重するため、
+    # 環境変数に空文字をセットしておけば .env の値が読まれない
+    os.environ["DATABASE_URL"] = ""
+
 import logging
 from datetime import date, timedelta
 from pathlib import Path
@@ -37,6 +48,9 @@ def parse_args():
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--log-file", type=str, default=None,
                    help="ログをファイルへ出力 (UTF-8 追記)")
+    p.add_argument("--local", action="store_true",
+                   help="DATABASE_URL を無視してローカル SQLite に投入する "
+                        "(cache_predictions.py 用に明示的にローカルへ書く時)")
     return p.parse_args()
 
 

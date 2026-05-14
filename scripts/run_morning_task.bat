@@ -11,16 +11,14 @@ set LOG=%LOGDIR%\morning_%TS%.log
 echo. >> "%LOG%"
 echo === Morning task started %date% %time% === >> "%LOG%"
 
-REM 1a. Race data → Supabase (.env DATABASE_URL applied automatically)
+REM 1a. Race data -> Supabase (default behavior: .env DATABASE_URL is used)
 .venv\Scripts\python.exe scripts\daily_collect.py >> "%LOG%" 2>&1
 
-REM 1b. Race data → local SQLite (DATABASE_URL cleared) so cache_predictions can use it
-REM Important: cache_predictions.py uses local SQLite (DATABASE_URL.pop), so the
-REM same data must exist there before predictions can be generated.
-set "_SAVED_DB=%DATABASE_URL%"
-set "DATABASE_URL="
-.venv\Scripts\python.exe scripts\daily_collect.py >> "%LOG%" 2>&1
-set "DATABASE_URL=%_SAVED_DB%"
+REM 1b. Race data -> local SQLite (--local explicitly pops DATABASE_URL).
+REM This is required because cache_predictions.py uses local SQLite
+REM (DATABASE_URL.pop), so the same data must exist there before
+REM predictions can be generated.
+.venv\Scripts\python.exe scripts\daily_collect.py --local >> "%LOG%" 2>&1
 
 REM 2. Predict today's races and sync to Supabase
 .venv\Scripts\python.exe scripts\cache_predictions.py --today --sync >> "%LOG%" 2>&1
