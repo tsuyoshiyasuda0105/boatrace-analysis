@@ -118,6 +118,33 @@
       <div class="next-race-cards" id="next-race-cards"></div>
     </section>
 
+    <!-- 本日の L4 投票候補リスト (時系列、 JS で動的更新) -->
+    <section class="todays-picks-panel" id="todays-picks-panel" hidden>
+      <h3>💰 本日お金を入れる候補レース (時系列)</h3>
+      <p class="todays-picks-hint">
+        ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 📈L4派生A2 を時刻順に表示
+      </p>
+      <table class="todays-picks-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>締切</th>
+            <th>残り</th>
+            <th>ランク</th>
+            <th>会場 R</th>
+            <th>L4 タイプ</th>
+            <th>1号艇</th>
+            <th>回収</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="todays-picks-tbody"></tbody>
+      </table>
+      <p class="todays-picks-footer">
+        <small>本サービスは投資助言ではありません。最終判断はご自身で。</small>
+      </p>
+    </section>
+
     <div class="stadium-grid">
       {% for g in stadium_groups %}
         <section class="stadium-card">
@@ -350,6 +377,9 @@
             if (idx === 0) u.el.classList.add('next-race');
           });
 
+          // ▼ 本日 L4 候補レース (時系列リスト) を生成
+          renderTodaysPicks(upcoming);
+
           const panel = document.getElementById('next-race-panel');
           const cards = document.getElementById('next-race-cards');
           if (!panel || !cards) return;
@@ -397,6 +427,65 @@
               ${badgesHtml}
             `;
             cards.appendChild(card);
+          });
+        }
+
+        // 本日 L4 候補レース 時系列リストを生成
+        function renderTodaysPicks(upcoming) {
+          const panel = document.getElementById('todays-picks-panel');
+          const tbody = document.getElementById('todays-picks-tbody');
+          if (!panel || !tbody) return;
+          // L4 バッジが付いている未終了レースだけ抽出
+          const picks = [];
+          upcoming.forEach(u => {
+            const l4 = u.el.querySelector('.l4-badge');
+            if (!l4) return;  // L4 該当なしは候補外
+            picks.push(u);
+          });
+          if (picks.length === 0) {
+            panel.hidden = true;
+            return;
+          }
+          panel.hidden = false;
+          tbody.innerHTML = '';
+          picks.forEach((u, idx) => {
+            const stadium = u.el.dataset.stadiumName || '';
+            const rno = u.el.dataset.raceNumber || '';
+            const rid = u.el.dataset.raceId || '';
+            const hh = String(u.closedAt.getHours()).padStart(2, '0');
+            const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
+            const tilStr = fmtTimeTil(u.minutesUntil);
+            // L4 バッジから情報抽出
+            const l4Badge = u.el.querySelector('.l4-badge');
+            const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
+            const rankLabel = l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
+                            : l4Cls === 'l4-rank-plus' ? '🥈 L4+'
+                            : l4Badge && l4Badge.className.includes('l4-a2') ? '📈 L4-A2'
+                            : '⭐ L4';
+            const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
+            // タイトルから "回収X%" を抜く (例: "L4 一般戦×A1 | 検証回収率 147.7% (n=...)")
+            const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
+            const recovery = recMatch ? recMatch[1] : '-';
+            // 1号艇選手情報: title の "1号艇 国1%=X 局1%=Y" から抽出
+            const racerMatch = l4Title.match(/1号艇\s*([^|]+)/);
+            const racerInfo = racerMatch ? racerMatch[1].trim() : '';
+            // L4 タイプ (badge のテキストから先頭〜100文字)
+            const l4Type = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
+            // 行 (1番目はピンクハイライト)
+            const tr = document.createElement('tr');
+            tr.className = 'todays-pick-row' + (idx === 0 ? ' is-next' : '');
+            tr.innerHTML = `
+              <td class="pick-idx">${idx + 1}</td>
+              <td class="pick-time">${hh}:${mm}</td>
+              <td class="pick-til">${tilStr}</td>
+              <td class="pick-rank">${rankLabel}</td>
+              <td class="pick-place"><strong>${stadium}</strong> ${rno}R</td>
+              <td class="pick-type">${l4Type}</td>
+              <td class="pick-racer">${racerInfo}</td>
+              <td class="pick-rec"><strong>${recovery}</strong></td>
+              <td class="pick-link"><a href="/race/${rid}">詳細→</a></td>
+            `;
+            tbody.appendChild(tr);
           });
         }
 

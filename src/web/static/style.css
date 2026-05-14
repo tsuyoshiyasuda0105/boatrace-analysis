@@ -2075,6 +2075,70 @@ main h2 {
   border: 1px solid rgba(74, 222, 128, 0.4);
 }
 
+/* ============================================================
+   本日 L4 投票候補リスト (時系列)
+   ============================================================ */
+.todays-picks-panel {
+  margin: 14px 0 18px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: linear-gradient(135deg,
+    rgba(255, 215, 0, 0.05),
+    rgba(0, 212, 255, 0.04));
+  border: 1px solid rgba(255, 215, 0, 0.2);
+}
+.todays-picks-panel h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: rgba(255, 215, 0, 0.95);
+  letter-spacing: 0.05em;
+}
+.todays-picks-hint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+  margin: 0 0 10px;
+}
+.todays-picks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.todays-picks-table thead th {
+  text-align: left;
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.65);
+}
+.todays-picks-table tbody td {
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  vertical-align: middle;
+}
+.todays-picks-table tbody tr.is-next {
+  background: rgba(255, 100, 200, 0.08);
+  outline: 1px solid rgba(255, 100, 200, 0.4);
+}
+.pick-idx { color: rgba(255,255,255,0.4); width: 30px; }
+.pick-time { font-family: monospace; font-weight: bold; color: #fff; width: 64px; }
+.pick-til { font-size: 11px; color: rgba(0,212,255,0.9); width: 70px; }
+.todays-picks-table tbody tr.is-next .pick-til { color: #ff64c8; font-weight: bold; }
+.pick-rank { font-size: 12px; font-weight: bold; width: 70px; }
+.pick-place { white-space: nowrap; }
+.pick-type { font-size: 11px; color: rgba(255,255,255,0.75); }
+.pick-racer { font-size: 11px; color: rgba(255,255,255,0.65); }
+.pick-rec { font-family: monospace; font-size: 13px; color: #4ade80; }
+.pick-link a {
+  font-size: 11px;
+  color: rgba(0, 212, 255, 0.9);
+  text-decoration: none;
+}
+.pick-link a:hover { text-decoration: underline; }
+.todays-picks-footer { margin-top: 8px; color: rgba(255,255,255,0.4); }
+
 /* race-item の状態別ハイライト */
 .race-item.next-race {
   /* 一番近いレース = 強調 */
