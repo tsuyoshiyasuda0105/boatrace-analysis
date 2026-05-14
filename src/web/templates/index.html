@@ -377,8 +377,8 @@
             if (idx === 0) u.el.classList.add('next-race');
           });
 
-          // ▼ 本日 L4 候補レース (時系列リスト) を生成
-          renderTodaysPicks(upcoming);
+          // ▼ 本日 L4 候補レース (締切済も含む全件・時系列) を別途生成
+          renderTodaysPicks();
 
           const panel = document.getElementById('next-race-panel');
           const cards = document.getElementById('next-race-cards');
@@ -430,32 +430,45 @@
           });
         }
 
-        // 本日 L4 候補レース 時系列リストを生成
-        function renderTodaysPicks(upcoming) {
+        // 本日 L4 候補レース 時系列リスト (締切済も含む全件を表示)
+        function renderTodaysPicks() {
           const panel = document.getElementById('todays-picks-panel');
           const tbody = document.getElementById('todays-picks-tbody');
           if (!panel || !tbody) return;
-          // L4 バッジが付いている未終了レースだけ抽出
+          const now = new Date();
+          // L4 バッジが付いている全レースを抽出 (締切前後問わず)
+          const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
           const picks = [];
-          upcoming.forEach(u => {
-            const l4 = u.el.querySelector('.l4-badge');
-            if (!l4) return;  // L4 該当なしは候補外
-            picks.push(u);
+          items.forEach(el => {
+            const l4 = el.querySelector('.l4-badge');
+            if (!l4) return;
+            const closedAt = parseClosedAt(el.dataset.closedAt);
+            if (!closedAt) return;
+            const minutesUntil = (closedAt - now) / 60000;
+            const isDone = parseInt(el.dataset.resultsCount || '0') > 0;
+            const isClosed = minutesUntil < 0 || isDone;
+            picks.push({ el, closedAt, minutesUntil, isClosed, isDone });
           });
           if (picks.length === 0) {
             panel.hidden = true;
             return;
           }
+          // 時系列順 (締切時刻昇順)
+          picks.sort((a, b) => a.closedAt - b.closedAt);
           panel.hidden = false;
           tbody.innerHTML = '';
+
+          // 「次のレース」 = まだ締切前の最初のレース
+          const firstUpcomingIdx = picks.findIndex(p => !p.isClosed);
+
           picks.forEach((u, idx) => {
             const stadium = u.el.dataset.stadiumName || '';
             const rno = u.el.dataset.raceNumber || '';
             const rid = u.el.dataset.raceId || '';
             const hh = String(u.closedAt.getHours()).padStart(2, '0');
             const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
-            const tilStr = fmtTimeTil(u.minutesUntil);
-            // L4 バッジから情報抽出
+            const tilStr = u.isClosed ? '締切済' : fmtTimeTil(u.minutesUntil);
+            // L4 バッジ情報
             const l4Badge = u.el.querySelector('.l4-badge');
             const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
             const rankLabel = l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
@@ -463,17 +476,17 @@
                             : l4Badge && l4Badge.className.includes('l4-a2') ? '📈 L4-A2'
                             : '⭐ L4';
             const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
-            // タイトルから "回収X%" を抜く (例: "L4 一般戦×A1 | 検証回収率 147.7% (n=...)")
             const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
             const recovery = recMatch ? recMatch[1] : '-';
-            // 1号艇選手情報: title の "1号艇 国1%=X 局1%=Y" から抽出
             const racerMatch = l4Title.match(/1号艇\s*([^|]+)/);
             const racerInfo = racerMatch ? racerMatch[1].trim() : '';
-            // L4 タイプ (badge のテキストから先頭〜100文字)
             const l4Type = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
-            // 行 (1番目はピンクハイライト)
+            // ステータス: 締切済 / 次 / それ以外
+            let rowClass = 'todays-pick-row';
+            if (u.isClosed) rowClass += ' is-closed';
+            else if (idx === firstUpcomingIdx) rowClass += ' is-next';
             const tr = document.createElement('tr');
-            tr.className = 'todays-pick-row' + (idx === 0 ? ' is-next' : '');
+            tr.className = rowClass;
             tr.innerHTML = `
               <td class="pick-idx">${idx + 1}</td>
               <td class="pick-time">${hh}:${mm}</td>
