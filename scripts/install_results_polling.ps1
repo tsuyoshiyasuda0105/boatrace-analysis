@@ -33,7 +33,11 @@ $taskName = "BoatraceResultsPolling"
 schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
 
 # schtasks.exe で登録 (PowerShell 5.1 互換)
-$cmd = "schtasks /Create /TN `"$taskName`" /TR `"$batPath`" /SC MINUTE /MO 5 /ST 08:30 /DU 14:30 /RL LIMITED /F"
+# 注: /DU は付けない。 /DU を付けると Once トリガになって翌日以降に
+# 自動再起動しない (2026-05-15 障害で確認)。 ここでは期間制限なしで
+# 5分毎に常時動作させ、 poll_results.py 側で「レース時間外スキップ」
+# ロジックで無駄打ちを防止する。
+$cmd = "schtasks /Create /TN `"$taskName`" /TR `"$batPath`" /SC MINUTE /MO 5 /ST 08:30 /RL LIMITED /F"
 Write-Host "Running: $cmd"
 $result = cmd /c $cmd 2>&1
 Write-Host $result
