@@ -14,5 +14,6 @@ If WScript.Arguments.Count < 1 Then
 End If
 
 Set WshShell = CreateObject("WScript.Shell")
+' cmd.exe /c で .bat を明示的に起動する (Windows のファイル関連付けに依存しない)
 ' "0" は SW_HIDE (完全に非表示), "False" は非同期実行
-WshShell.Run """" & WScript.Arguments(0) & """", 0, False
+WshShell.Run "cmd.exe /c """ & WScript.Arguments(0) & """", 0, False
