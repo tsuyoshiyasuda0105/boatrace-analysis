@@ -10,7 +10,7 @@
       </h2>
     </div>
     <div class="pro-header-right">
-      <span class="pro-stat sub">締切 {{ info.race_closed_at[-5:] if info.race_closed_at else '—' }}</span>
+      <span class="pro-stat sub">締切 {{ info.race_closed_at[-8:-3] if info.race_closed_at and info.race_closed_at | length >= 8 else (info.race_closed_at or '—') }}</span>
       <a href="{{ url_for('pro_ev', date=info.race_date) }}" class="back-link">← 一覧へ</a>
     </div>
   </div>

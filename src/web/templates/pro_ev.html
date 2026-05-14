@@ -50,7 +50,7 @@
     <tbody>
     {% for r in races %}
       <tr class="{% if r.results_count %}done{% endif %}">
-        <td class="cell-time">{{ r.race_closed_at[-5:] if r.race_closed_at else '—' }}</td>
+        <td class="cell-time">{{ r.race_closed_at[-8:-3] if r.race_closed_at and r.race_closed_at | length >= 8 else (r.race_closed_at or '—') }}</td>
         <td class="cell-stadium">
           {{ r.stadium_name }}
           {% if r.venue_warning == 'danger' %}<span class="venue-tag danger" title="マイナス会場">×</span>

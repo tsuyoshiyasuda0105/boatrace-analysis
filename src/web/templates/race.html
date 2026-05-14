@@ -20,7 +20,7 @@
     {% if info.race_closed_at %}
       <div class="closed">
         <span class="label">締切時刻</span>
-        <span class="value">{{ info.race_closed_at[-5:] if info.race_closed_at | length >= 5 else info.race_closed_at }}</span>
+        <span class="value">{{ info.race_closed_at[-8:-3] if info.race_closed_at | length >= 8 else info.race_closed_at }}</span>
       </div>
     {% endif %}
   </div>
