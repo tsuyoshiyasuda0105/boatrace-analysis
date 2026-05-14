@@ -232,7 +232,11 @@
     </div>
     {% endif %}
 
-    <h3 class="section-heading">What-if シミュレーター</h3>
+    <details class="collapsible-section">
+      <summary class="section-heading-collapsible">
+        <span>🔮 What-if シミュレーター</span>
+        <span class="section-hint">(クリックで展開)</span>
+      </summary>
     <div class="whatif-panel" id="whatif-panel" data-race-id="{{ info.race_id }}">
       <div class="whatif-current">
         <span class="wc-label">現状</span>
@@ -327,10 +331,12 @@
         </div>
       </div>
     </div>
+    </details>
 
     <script>
       (function() {
         const panel = document.getElementById('whatif-panel');
+        if (!panel) return;  // details が閉じている時もパネルは存在するので OK
         const raceId = panel.dataset.raceId;
         const sliders = panel.querySelectorAll('.wi-slider');
         sliders.forEach(s => {
@@ -414,7 +420,10 @@
       })();
     </script>
 
-    <h3 class="section-heading">6艇詳細</h3>
+    <details class="collapsible-section" open>
+      <summary class="section-heading-collapsible">
+        <span>🚤 6艇詳細</span>
+      </summary>
     <div class="preds">
       <table class="preds-table">
         <thead>
@@ -485,5 +494,6 @@
         </tbody>
       </table>
     </div>
+    </details>
   {% endif %}
 {% endblock %}
