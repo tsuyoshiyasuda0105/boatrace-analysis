@@ -1,26 +1,31 @@
 # Switch all Boatrace scheduled tasks to run completely hidden via VBS wrapper.
 #
+# 2026-05-16 rewrite: replaced `cmd /c schtasks` (which had broken quote
+# escaping — argument paths starting with letters like "M" were re-parsed
+# as commands and produced "M は内部コマンドまたは外部コマンドとして認識
+# されていません" errors) with native PowerShell Set-ScheduledTask. No
+# more cmd-level quote hell.
+#
 # Why this script exists separately:
 #   Modifying scheduled tasks is a persistence operation — AI agents
 #   should not perform autonomously. Run this ONCE after reviewing.
 #
 # Prereq:
-#   scripts\run_hidden.vbs must be ASCII-only (fixed 2026-05-16, see
-#   commit history). The original UTF-8 version silently failed under
-#   wscript.exe on Japanese Windows (CP932 codepage).
+#   scripts\run_hidden.vbs must be ASCII-only (fixed 2026-05-16). The
+#   original UTF-8 version silently failed under wscript.exe on
+#   Japanese Windows (CP932 codepage).
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\update_tasks_hidden.ps1
 #
 # To revert one task back to direct bat call:
-#   schtasks /Change /TN "<TaskName>" /TR "C:\path\to\<bat>"
+#   $t = Get-ScheduledTask -TaskName "<TaskName>"
+#   $t.Actions = New-ScheduledTaskAction -Execute "<path-to-bat>"
+#   Set-ScheduledTask -InputObject $t
 
 $ErrorActionPreference = 'Continue'
 $vbsPath = 'C:\boat_project\boatrace-analysis\scripts\run_hidden.vbs'
 
-# Map task name -> launcher bat. Matches commits on 2026-05-16:
-#   - run_odds_scheduler.bat / run_l4_alert.bat reverted to direct python call
-#     (no `start /min` wrapper) so VBS truly hides everything.
 $tasks = [ordered]@{
     'BoatraceMorningTask'    = 'C:\boat_project\boatrace-analysis\scripts\run_morning_task.bat'
     'BoatraceHourlyResults'  = 'C:\boat_project\boatrace-analysis\scripts\run_hourly_task.bat'
@@ -50,8 +55,8 @@ foreach ($taskName in $tasks.Keys) {
     Write-Host "--- $taskName ---"
 
     # Sanity: task must exist
-    $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if (-not $existing) {
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if (-not $task) {
         Write-Host '  (task not found, skipping)' -ForegroundColor Yellow
         $failed += "$taskName (not found)"
         continue
@@ -65,18 +70,25 @@ foreach ($taskName in $tasks.Keys) {
     }
 
     # Show current action for visibility
-    $current = $existing.Actions[0].Execute
+    $current = $task.Actions[0].Execute
     Write-Host "  current Execute: $current"
 
-    # /TR is task-run. Quoted paths with embedded quotes for schtasks.
-    $newTR = "wscript.exe `"$vbsPath`" `"$batPath`""
-    $result = & cmd /c "schtasks /Change /TN `"$taskName`" /TR `"$newTR`" 2>&1"
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  -> $newTR" -ForegroundColor Green
+    # Build new action: wscript.exe "<vbs>" "<bat>"
+    # Argument value MUST itself contain the embedded quotes around each path,
+    # otherwise wscript treats the whole string as one argument with spaces.
+    $argValue = "`"$vbsPath`" `"$batPath`""
+    $newAction = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument $argValue
+
+    try {
+        # Replace Actions in-place and persist via Set-ScheduledTask. This
+        # avoids cmd-level quoting (which caused the prior 'M' parsing error).
+        $task.Actions = @($newAction)
+        Set-ScheduledTask -InputObject $task -ErrorAction Stop | Out-Null
+        Write-Host "  -> wscript.exe $argValue" -ForegroundColor Green
         $success++
-    } else {
-        Write-Host "  FAILED: $result" -ForegroundColor Red
-        $failed += "$taskName ($result)"
+    } catch {
+        Write-Host "  FAILED: $_" -ForegroundColor Red
+        $failed += "$taskName ($_)"
     }
 }
 
@@ -84,7 +96,8 @@ Write-Host ''
 Write-Host '============================================================'
 Write-Host "  Done. $success/$($tasks.Count) tasks switched to hidden."
 if ($failed.Count -gt 0) {
-    Write-Host "  Failures: $($failed -join ', ')" -ForegroundColor Red
+    Write-Host '  Failures:' -ForegroundColor Red
+    foreach ($f in $failed) { Write-Host "    - $f" -ForegroundColor Red }
 }
 Write-Host '============================================================'
 Write-Host ''
