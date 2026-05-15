@@ -79,7 +79,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
         WHERE r.race_date BETWEEN ? AND ?
           AND e.class_number = 1
           AND r.stadium_number NOT IN ({placeholders})
-          AND r.race_grade_number IN (1,2,3,4)
+          AND (r.race_grade_number IN (1,2,3,4) OR r.race_grade_number IS NULL)
           AND (
               (oo.min_odds IS NOT NULL AND oo.min_odds >= 5 AND oo.min_odds < 10)
               OR
