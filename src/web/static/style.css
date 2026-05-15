@@ -1784,6 +1784,22 @@ main h2 {
 }
 /* A2 派生は L4 戦略対象外のため badge スタイル削除 (2026-05) */
 
+/* L4 一般戦 (参考、ROI 対象外): 控えめなグレー */
+.l4-badge.l4-reference {
+  background: rgba(120, 120, 130, 0.25) !important;
+  color: rgba(220, 220, 220, 0.8) !important;
+  border: 1px dashed rgba(180, 180, 180, 0.5) !important;
+  box-shadow: none !important;
+  animation: none !important;
+  font-weight: normal !important;
+}
+/* 参考バッジには tooltip で「ROI集計対象外」を強調 */
+.l4-badge.l4-reference::after {
+  content: ' (参考)';
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
 /* L4+1c80: 1コース1着率 80%+ の選手が 1号艇 (検証 ROI 215%) */
 .l4-badge.l4-1c80 {
   background: linear-gradient(135deg, #f97316, #fb923c, #fcd34d) !important;

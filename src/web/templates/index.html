@@ -275,6 +275,8 @@
                   // rank クラスで色分け (plus_plus=金、plus=銀、base=従来)
                   l4Badge.className = `l4-badge l4-${sig.l4.level} l4-rank-${rank}`;
                   if (sig.l4.is_1c80) l4Badge.className += ' l4-1c80';
+                  // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
+                  if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
                   const l4Rec = (sig.l4.recovery != null) ? sig.l4.recovery : '-';
                   const l4N = (sig.l4.n != null) ? sig.l4.n : '-';
                   const natl = (sig.l4.natl_1 != null) ? sig.l4.natl_1.toFixed(2) : '-';
@@ -513,11 +515,14 @@
           if (!panel || !tbody) return;
           const now = new Date();
           // L4 バッジが付いている全レースを抽出 (締切前後問わず)
+          // ただし is_reference=true (一般戦) は ROI 対象外なので除外する
           const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
           const picks = [];
           items.forEach(el => {
             const l4 = el.querySelector('.l4-badge');
             if (!l4) return;
+            // 参考バッジ (一般戦) はお金を入れる候補リストには出さない
+            if (l4.classList.contains('l4-reference')) return;
             const closedAt = parseClosedAt(el.dataset.closedAt);
             if (!closedAt) return;
             const minutesUntil = (closedAt - now) / 60000;

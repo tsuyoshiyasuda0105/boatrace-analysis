@@ -1397,11 +1397,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # === L4+1c80 用: 当日 race の 1号艇選手の過去 6 ヶ月 1コース成績 ===
         # 一度に取得して dict に。各 _evaluate_l4 呼び出しで使う。
+        # SQLite/Postgres 両対応: date 計算は Python 側で済ませる
+        from datetime import datetime, timedelta as _td
+        try:
+            _td_dt = datetime.fromisoformat(target_date).date()
+            cutoff_date_iso = (_td_dt - _td(days=COURSE1_WINDOW_DAYS)).isoformat()
+        except Exception:
+            cutoff_date_iso = "1900-01-01"
+
         course1_stats: dict[str, tuple[float, int]] = {}
         try:
             with db_connect() as _conn:
                 _cur = _conn.execute(
-                    f"""
+                    """
                     WITH target_races AS (
                         SELECT r.race_id, r.race_date, e.racer_number
                         FROM races r
@@ -1416,11 +1424,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                       LEFT JOIN races r2 ON r2.race_id = e2.race_id
                       LEFT JOIN race_results res ON res.race_id = e2.race_id AND res.boat_number = 1
                       WHERE r2.race_date < t.race_date
-                        AND r2.race_date >= date(t.race_date, '-{COURSE1_WINDOW_DAYS} days')
+                        AND r2.race_date >= ?
                         AND res.finishing_position IS NOT NULL
                       GROUP BY t.race_id
                     """,
-                    (target_date,),
+                    (target_date, cutoff_date_iso),
                 )
                 for rid, starts, wins in _cur.fetchall():
                     if starts and starts >= COURSE1_MIN_STARTS:
@@ -1440,8 +1448,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if not (in_500_1000 and b_excluded):
                 return None
 
-            # L4 戦略の対象: 1号艇A1 + SG/G1/G2/G3 のみ。
-            # 一般戦 (grade=5) は回収率 147.7% で他より低いため除外。
+            # L4 戦略の対象: 1号艇A1 + SG/G1/G2/G3 + 本命500-1000 + B除外
+            # 一般戦 (grade=5) は ROI 計算には含めない (回収率 147.7% で低め)
+            # が、参考情報としてバッジ表示は行う (is_reference=True)。
             base = None
             if cls == 1:
                 if grade == 1:
@@ -1456,7 +1465,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 4:
                     base = {"level": "G3", "label": "🎯L4 G3×A1",
                             "recovery": 149.2, "bet": "3連単 1-2-3", "n": 195}
-                # grade == 5 (一般戦) と grade unknown は対象外
+                elif grade == 5:
+                    # 一般戦: バッジは出すが is_reference=True で
+                    # 本日候補リスト / ROI から除外する
+                    base = {"level": "general", "label": "📌L4 一般戦×A1 (参考)",
+                            "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776,
+                            "is_reference": True}
+                # grade unknown は対象外 (バッジも出さない)
             # A2 派生は L4 戦略対象外なので表示しない
             if not base:
                 return None
@@ -1499,7 +1514,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if not b_excluded:
                 return None
             # 1号艇 A1 + prob_first 0.65-0.85 → 500-1000帯候補
-            # 一般戦 (grade=5) は回収率が低い (147.7%) ので対象外。SG/G1/G2/G3 のみ。
+            # 一般戦は ROI から除外、ただしバッジは出す (is_reference=True)
             base = None
             if cls == 1 and 0.65 <= prob_first < 0.85:
                 if grade == 1:
@@ -1514,8 +1529,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 4:
                     base = {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
                             "recovery": 149.2, "n": 195}
-                # grade == 5 (一般戦) と grade unknown は対象外
-            # A2 派生・一般戦は L4 戦略対象外
+                elif grade == 5:
+                    base = {"level": "morning_general",
+                            "label": "🌅📌朝L4 一般戦×A1 (参考)",
+                            "recovery": 147.7, "n": 1776,
+                            "is_reference": True}
+            # grade unknown は対象外
             if not base:
                 return None
 
