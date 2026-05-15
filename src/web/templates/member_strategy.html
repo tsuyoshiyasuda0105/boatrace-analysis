@@ -1,12 +1,25 @@
 {% extends "base.html" %}
 {% block title %}L4 戦略 日別 ROI{% endblock %}
 
+{% block head_extra %}
+  {# 当日表示時のみ 3 分毎に自動リロード (キャッシュTTL=180秒に合わせる) #}
+  {% if to_date == today_iso %}
+  <meta http-equiv="refresh" content="180">
+  {% endif %}
+{% endblock %}
+
 {% block content %}
 <div class="strategy-dashboard">
-  <h2>📊 L4 戦略 日別 ROI ダッシュボード</h2>
+  <h2>📊 L4 戦略 日別 ROI ダッシュボード
+    {% if to_date == today_iso %}
+      <span class="live-indicator" title="3 分毎に自動更新">🔴 LIVE</span>
+    {% endif %}
+  </h2>
   <p class="dashboard-hint">
     条件: 三連単本命 500-1000円 + B除外会場 + 1号艇A1選手<br>
-    買い目: 単勝 / 2連単1-2 / 3連単1-2-3 (1点100円基準)
+    買い目: 単勝 / 2連単1-2 / 3連単1-2-3 (1点100円基準)<br>
+    <small>結果は <strong>5 分毎</strong>に boatrace.jp / Open API から自動取得し DB に反映 (poll_results.py)。
+    ページキャッシュは 3 分のため、レース終了から最大 8 分で表示されます。</small>
   </p>
 
   <form method="get" class="date-range-form">

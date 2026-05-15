@@ -1964,6 +1964,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return render_template(
             "member_strategy_races.html",
             target_date=target_date,
+            today_iso=date.today().isoformat(),
             races=races,
             n_total=n_total, n_a1=n_a1, n_a2=n_a2,
             n_pp=n_pp, n_p=n_p,
@@ -2012,6 +2013,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             totals=totals,
             from_date=from_d,
             to_date=to_d,
+            today_iso=date.today().isoformat(),
         )
 
     @app.route("/member/health")

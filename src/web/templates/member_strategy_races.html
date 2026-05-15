@@ -1,12 +1,28 @@
 {% extends "base.html" %}
 {% block title %}{{ target_date }} の L4 該当レース一覧{% endblock %}
 
+{% block head_extra %}
+  {# 当日のみ 3 分毎に自動リロード #}
+  {% if target_date == today_iso %}
+  <meta http-equiv="refresh" content="180">
+  {% endif %}
+{% endblock %}
+
 {% block content %}
 <div class="strategy-races">
-  <h2>📋 {{ target_date }} の L4 該当レース一覧</h2>
+  <h2>📋 {{ target_date }} の L4 該当レース一覧
+    {% if target_date == today_iso %}
+      <span class="live-indicator" title="3 分毎に自動更新">🔴 LIVE</span>
+    {% endif %}
+  </h2>
 
   <p class="meta-line">
     <a href="{{ url_for('member_strategy') }}" class="back-link">← ROI ダッシュボードへ戻る</a>
+    {% if target_date == today_iso %}
+      <small style="margin-left:16px; color:rgba(255,255,255,0.5)">
+        結果は 5 分毎に自動取得 (poll_results.py)、画面は 3 分毎に自動再読込
+      </small>
+    {% endif %}
   </p>
 
   <div class="races-summary">

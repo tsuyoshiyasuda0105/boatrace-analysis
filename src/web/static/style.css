@@ -1699,6 +1699,24 @@ main h2 {
   box-shadow: none;
 }
 
+/* LIVE インジケータ (当日表示時のみ) */
+.live-indicator {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: rgba(220, 38, 38, 0.18);
+  color: #fca5a5;
+  font-size: 12px;
+  font-weight: bold;
+  vertical-align: middle;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .legend-section {
   margin-top: 20px;
   padding: 16px;
