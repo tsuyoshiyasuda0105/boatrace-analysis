@@ -1,0 +1,117 @@
+"""Layer 3: boatrace.jp からレース結果を直接スクレイプ。
+
+Open API (boatraceopenapi.github.io) はバッチ更新で数時間遅延するため、
+レース終了直後のリアルタイム結果取得用フォールバック。
+
+使い方:
+    from src.collectors.result_scraper import scrape_race_result
+    payload = scrape_race_result("20260515-18-02")
+    # payload は upsert_results が期待する dict
+"""
+from __future__ import annotations
+
+import logging
+from datetime import date
+from typing import Optional
+
+import config
+from src.collectors._http import fetch_html
+from src.parsers.result_html import parse_result_html
+
+logger = logging.getLogger(__name__)
+
+
+# boatrace.jp 結果ページ URL
+RESULT_URL = "https://www.boatrace.jp/owpc/pc/race/raceresult?rno={rno}&jcd={jcd:02d}&hd={date}"
+
+
+def scrape_race_result(race_id: str) -> Optional[dict]:
+    """単一レースの結果を boatrace.jp からスクレイプ。
+    Returns:
+        Open API 互換の race-1件分 dict (race_date / race_stadium_number / race_number /
+        boats / payouts / race_kimarite を含む)、または None (未確定)
+    """
+    date_str, jcd_str, rno_str = race_id.split("-")
+    jcd = int(jcd_str)
+    rno = int(rno_str)
+    race_date_iso = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+
+    url = RESULT_URL.format(rno=rno, jcd=jcd, date=date_str)
+    html = fetch_html(url)
+    if not html:
+        logger.info("no html for %s", race_id)
+        return None
+
+    parsed = parse_result_html(html)
+    if parsed is None:
+        return None
+
+    # Open API 互換の race ペイロードに変換
+    return {
+        "race_date": race_date_iso,
+        "race_stadium_number": jcd,
+        "race_number": rno,
+        "race_kimarite": parsed.get("race_kimarite"),
+        "boats": parsed["boats"],
+        "payouts": parsed["payouts"],
+    }
+
+
+def scrape_results_for_pending_races(target_date: date, conn) -> dict:
+    """指定日の「締切後だが race_payouts が無い」レースを抽出し、
+    boatrace.jp から結果をスクレイプして upsert_results 互換ペイロードに梱包。
+
+    Args:
+        target_date: 対象日
+        conn: DB connection (psycopg or sqlite)
+    Returns:
+        {"results": [race_dict, ...]} の dict (upsert_results に渡せる形)。
+        該当無しなら {"results": []}.
+    """
+    from datetime import datetime, timedelta
+
+    # 締切から 5 分以上経過し、まだ race_payouts (trifecta) が無いレース
+    cur = conn.execute(
+        """
+        SELECT r.race_id, r.race_closed_at
+          FROM races r
+         WHERE r.race_date = ?
+           AND r.race_closed_at IS NOT NULL
+           AND r.race_id NOT IN (
+               SELECT DISTINCT race_id FROM race_payouts WHERE bet_type = 'trifecta'
+           )
+         ORDER BY r.race_closed_at
+        """,
+        (target_date.isoformat(),),
+    )
+    pending: list[str] = []
+    now = datetime.now()
+    for race_id, closed_at in cur.fetchall():
+        # closed_at は datetime (psycopg) or 文字列 (SQLite)
+        if isinstance(closed_at, datetime):
+            close_dt = closed_at
+        else:
+            try:
+                close_dt = datetime.fromisoformat(str(closed_at))
+            except (ValueError, TypeError):
+                continue
+        # 締切から 5 分以内はスキップ (まだレース直後で結果ページに反映されてない)
+        if now < close_dt + timedelta(minutes=5):
+            continue
+        # 現時刻より 24h 以上前のものは別途バッチ処理で扱うのでスキップ
+        if now > close_dt + timedelta(hours=24):
+            continue
+        pending.append(race_id)
+
+    results = []
+    for race_id in pending:
+        try:
+            payload = scrape_race_result(race_id)
+            if payload:
+                results.append(payload)
+                logger.info("scraped %s (trifecta=%d items)",
+                            race_id, len(payload["payouts"].get("trifecta", [])))
+        except Exception as e:
+            logger.warning("scrape failed for %s: %s", race_id, e)
+
+    return {"results": results}

@@ -37,6 +37,7 @@ except ImportError:
 
 import config
 from src.collectors.openapi import fetch_results, upsert_results
+from src.collectors.result_scraper import scrape_results_for_pending_races
 from src.db.connection import connect as db_connect
 
 
@@ -87,24 +88,39 @@ def main():
             return
         print(f"[{target_date}] {n_done}/{n_races} レース確定済、結果取得開始")
 
-    # API から結果を取得
+    # API から結果を取得 (Open API = boatraceopenapi.github.io)
+    # 注: GitHub Pages 経由でバッチ更新されるため数時間遅延がある。
     payload = fetch_results(target_date)
-    if not payload:
-        print(f"[{target_date}] API レスポンスなし (まだ結果が出ていない可能性)")
-        return
-
-    n_races_in_payload = len(payload.get("results", []))
-    print(f"[{target_date}] API から {n_races_in_payload} レース分の結果を取得")
+    n_openapi = 0
+    if payload:
+        n_openapi = len(payload.get("results", []))
+        print(f"[{target_date}] Open API: {n_openapi} レース分の結果")
 
     # DB に書き込み (DATABASE_URL あれば Supabase に直書き)
     with db_connect() as conn:
         try:
-            n_results = upsert_results(conn, payload)
-            conn.commit()
-            print(f"  upsert_results: {n_results} 行更新")
+            if payload:
+                n_results = upsert_results(conn, payload)
+                conn.commit()
+                print(f"  upsert_results (Open API): {n_results} 行更新")
         except Exception as e:
-            print(f"  ERROR: {e}")
-            raise
+            print(f"  Open API ERROR: {e}")
+
+        # === Layer 3 フォールバック: boatrace.jp から直接スクレイプ ===
+        # Open API の更新は数時間遅延するため、締切から 5 分以上経過しても
+        # race_payouts に乗っていないレースを補完する。
+        try:
+            scraped = scrape_results_for_pending_races(target_date, conn)
+            n_scraped = len(scraped["results"])
+            if n_scraped > 0:
+                print(f"  Layer3 scrape: {n_scraped} レースを boatrace.jp から取得")
+                n_added = upsert_results(conn, scraped)
+                conn.commit()
+                print(f"  upsert_results (Layer3): {n_added} 行更新")
+            else:
+                print(f"  Layer3 scrape: 補完対象なし (Open API で全て埋まっているか、まだレース直後)")
+        except Exception as e:
+            print(f"  Layer3 ERROR: {e}")
 
     print(f"[{target_date}] 完了")
 

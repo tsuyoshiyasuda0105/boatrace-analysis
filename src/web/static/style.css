@@ -1923,17 +1923,27 @@ main h2 {
   font-style: italic;
 }
 
-/* オッズベース判定マーク (本命¥列に小タグ) */
+/* L4 判定ソースタグ (本命¥列に小タグ) */
 .fav-source-tag {
   display: inline-block;
   margin-left: 4px;
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(255, 196, 0, 0.18);
-  color: #ffc400;
   font-size: 9px;
   font-weight: bold;
   vertical-align: middle;
+}
+.fav-source-tag.fst-odds {
+  background: rgba(255, 196, 0, 0.18);
+  color: #ffc400;
+}
+.fav-source-tag.fst-morning {
+  background: rgba(14, 165, 233, 0.20);
+  color: #38bdf8;
+}
+.fav-source-tag.fst-miss {
+  background: rgba(244, 114, 182, 0.20);
+  color: #f472b6;
 }
 .footer-note {
   margin-top: 10px;

@@ -1767,8 +1767,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def _l4_races_for_date(target_date: str) -> list[dict]:
         """指定日の L4 該当レース全件を取得 (1号艇A1 + A2派生)。
         買い目ごとの的中/損益も含む。
-        確定済 (race_payouts あり) と未確定 (T-5/T-15 オッズあり) の
-        両方を対象とする。未確定レースは「結果待ち」として表示。
+        判定ソース優先順位:
+          1. confirmed - race_payouts MIN (確定後の実際の本命配当)
+          2. odds - odds_trifecta の 1-2-3 オッズ × 100 (T-5/T-15 がある場合)
+          3. morning - predictions テーブルの prob_first (朝予測のみ、オッズ未取得時)
         """
         with db_connect() as conn:
             cur = conn.execute("""
@@ -1784,6 +1786,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e.local_top_1_percent,
                     pp.min_pay AS fav_pay,
                     oo.min_odds AS fav_odds,
+                    pr.prob_first AS prob_first,
                     res1.boat_number AS w1,
                     res2.boat_number AS w2,
                     res3.boat_number AS w3,
@@ -1798,6 +1801,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                            WHERE combination='1-2-3'
                              AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
                            GROUP BY race_id) oo ON oo.race_id = r.race_id
+                LEFT JOIN (SELECT race_id, prob_first FROM predictions
+                           WHERE boat_number=1) pr ON pr.race_id = r.race_id
                 LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position=1
                 LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
                 LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
@@ -1812,23 +1817,56 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         out = []
         for row in cur:
             (rid, rno, closed, stadium, grade, cls, racer_name,
-             natl_1, local_1, fav_pay, fav_odds, w1, w2, w3,
+             natl_1, local_1, fav_pay, fav_odds, prob_first, w1, w2, w3,
              win_pay, exa_pay, tri_pay) = row
-            # 本命金額: 確定後 = race_payouts MIN、未確定 = T-5/T-15 オッズ × 100
-            if fav_pay is not None:
-                fav = int(fav_pay)
-                fav_source = "confirmed"  # 結果確定後
-            elif fav_odds is not None:
-                fav = int(float(fav_odds) * 100)
-                fav_source = "odds"        # 結果未確定 (オッズ判定)
-            else:
-                continue  # 判定材料なし → スキップ
-            # L4 条件判定
-            if not (500 <= fav < 1000):
+            if cls not in (1, 2):
                 continue
             if stadium in EXCLUDE_B_VENUES:
                 continue
-            if cls not in (1, 2):
+            # === L4 候補判定 ===
+            # 優先順位: 確定 (race_payouts) → オッズ (T-X) → 朝予測 (predictions)
+            fav = None
+            fav_source = None
+            if fav_pay is not None:
+                # 確定後: 実際の本命配当 (= 1-2-3 が hit なら 1-2-3 配当、外れていれば
+                # 別 combo の的中配当)。
+                pay_int = int(fav_pay)
+                # 1-2-3 が hit していれば実本命金額そのもの。hit してない場合は
+                # 「朝の段階では L4 候補だった可能性」を見るため予測ベース判定にも回す。
+                if 500 <= pay_int < 1000:
+                    fav = pay_int
+                    fav_source = "confirmed"
+                elif prob_first is not None:
+                    # 1-2-3 外れだが本命予測が強かったか
+                    pf = float(prob_first)
+                    if cls == 1 and 0.65 <= pf < 0.85:
+                        fav = pay_int  # 表示用に実際の hit 配当を載せる
+                        fav_source = "morning_miss"
+                    elif cls == 2 and 0.55 <= pf < 0.75:
+                        fav = pay_int
+                        fav_source = "morning_miss"
+                    else:
+                        continue
+                else:
+                    continue
+            elif fav_odds is not None:
+                # オッズベース (まだ確定してないがオッズ取れている)
+                fav = int(float(fav_odds) * 100)
+                if not (500 <= fav < 1000):
+                    continue
+                fav_source = "odds"
+            elif prob_first is not None:
+                # 朝予測のみ (オッズ未取得・未確定)
+                pf = float(prob_first)
+                if cls == 1 and 0.65 <= pf < 0.85:
+                    fav = int(round(100 / pf))  # 概算本命配当
+                    fav_source = "morning"
+                elif cls == 2 and 0.55 <= pf < 0.75:
+                    fav = int(round(100 / pf))
+                    fav_source = "morning"
+                else:
+                    continue
+            else:
                 continue
             # L4 ランク (1号艇A1のみ)
             try:
