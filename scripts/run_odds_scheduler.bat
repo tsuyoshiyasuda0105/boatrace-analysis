@@ -1,12 +1,10 @@
 @echo off
 REM Odds scheduler launcher (every minute via Task Scheduler).
-REM Launch as a MINIMIZED titled cmd window so the user can see it
-REM in the taskbar and confirm the 1-min job is running.
-REM Inner batch (run_odds_scheduler_inner.bat) runs the actual python.
-
+REM Task Scheduler calls this through wscript.exe + run_hidden.vbs
+REM so cmd is completely hidden — no visible window in the taskbar.
+REM Use Get-ScheduledTaskInfo BoatraceOddsScheduler to confirm activity,
+REM or tail logs\odds_scheduler.log.
 cd /d C:\boat_project\boatrace-analysis
 if not exist logs mkdir logs
-
-REM /min = minimized window, titled "OddsScheduler" for taskbar visibility
-start "OddsScheduler" /min cmd /c "scripts\run_odds_scheduler_inner.bat"
-exit /b 0
+.venv\Scripts\python.exe scripts\odds_scheduler.py >> logs\odds_scheduler.log 2>&1
+exit /b %errorlevel%

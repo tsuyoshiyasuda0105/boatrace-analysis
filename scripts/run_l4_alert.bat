@@ -1,8 +1,9 @@
 @echo off
 REM L4 alert sender (every minute via Task Scheduler BoatraceL4Alert).
-REM Launch as a MINIMIZED titled cmd window so the user can verify
-REM the 1-min job is running via the Windows taskbar.
+REM Task Scheduler calls this through wscript.exe + run_hidden.vbs
+REM so cmd is completely hidden — no visible window in the taskbar.
+REM Tail logs\alert.log to confirm activity.
 cd /d C:\boat_project\boatrace-analysis
 if not exist logs mkdir logs
-start "L4Alert" /min cmd /c "scripts\run_l4_alert_inner.bat"
-exit /b 0
+.venv\Scripts\python.exe scripts\send_l4_alerts.py >> logs\alert.log 2>&1
+exit /b %errorlevel%
