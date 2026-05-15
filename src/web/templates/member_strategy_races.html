@@ -102,10 +102,6 @@
             {{ r.fav_payout }}
             {% if r.fav_source == 'odds' %}
               <span class="fav-source-tag fst-odds" title="T-5/T-15 オッズベース (結果未確定)">オッズ</span>
-            {% elif r.fav_source == 'morning' %}
-              <span class="fav-source-tag fst-morning" title="朝予測ベース (オッズ未取得)">朝予測</span>
-            {% elif r.fav_source == 'morning_miss' %}
-              <span class="fav-source-tag fst-miss" title="朝予測L4候補。実際の1-2-3は外れ、別 combo が的中">朝予測外</span>
             {% endif %}
           </td>
           <td>

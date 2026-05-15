@@ -1716,36 +1716,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if is_done:
                 d["n_done"] += 1
 
-            # === L4 候補判定 (_l4_races_for_date と同じ 4 ソース) ===
-            # B 除外 / クラス制限は共通
+            # === L4 候補判定 (厳密: 本命金額 500-1000 のみ) ===
+            # 朝予測 (prob_first) はあくまで参考。ROI に算入するのは
+            # 「本命が実際に 500-1000円帯だったレース」のみ。
+            # 判定ソース:
+            #   confirmed - race_payouts MIN が 500-1000 (1-2-3 が hit したケース)
+            #   odds - T-X 1-2-3 オッズ × 100 が 500-1000 (確定前 or 1-2-3 ハズレ)
             if stadium in EXCLUDE_B_VENUES:
                 continue
             if cls not in (1, 2):
                 continue
             is_l4_base = False
-            pf = float(prob_first) if prob_first is not None else None
             if fav_pay is not None:
+                # confirmed: 実本命金額が L4 範囲
                 pay_int = int(fav_pay)
                 if 500 <= pay_int < 1000:
-                    # confirmed: 実本命金額が L4 範囲
                     is_l4_base = True
-                elif pf is not None:
-                    # morning_miss: 1-2-3 外したが朝予測 prob_first が L4 範囲
-                    if cls == 1 and 0.65 <= pf < 0.85:
-                        is_l4_base = True
-                    elif cls == 2 and 0.55 <= pf < 0.75:
-                        is_l4_base = True
             elif fav_odds is not None:
-                # odds: T-X オッズベース (まだ確定してない)
+                # odds: T-X オッズベース
                 fav_int = int(float(fav_odds) * 100)
                 if 500 <= fav_int < 1000:
                     is_l4_base = True
-            elif pf is not None:
-                # morning: 朝予測のみ (オッズ未取得)
-                if cls == 1 and 0.65 <= pf < 0.85:
-                    is_l4_base = True
-                elif cls == 2 and 0.55 <= pf < 0.75:
-                    is_l4_base = True
+            # 朝予測のみ (オッズ・確定なし) は ROI 算入対象外
 
             tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
             tri_pay_v = (tri_pay or 0) if tri_hit else 0
@@ -1865,50 +1857,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 continue
             if stadium in EXCLUDE_B_VENUES:
                 continue
-            # === L4 候補判定 ===
-            # 優先順位: 確定 (race_payouts) → オッズ (T-X) → 朝予測 (predictions)
+            # === L4 候補判定 (厳密: 本命金額 500-1000 のみ) ===
+            # L4 戦略の定義: 本命オッズ 5-10倍 (= 500-1000円帯)
+            # 朝予測 prob_first は参考情報。ROI 集計に算入するのは
+            # 「本命金額が実際に 500-1000円帯のレース」のみ。
             fav = None
             fav_source = None
             if fav_pay is not None:
-                # 確定後: 実際の本命配当 (= 1-2-3 が hit なら 1-2-3 配当、外れていれば
-                # 別 combo の的中配当)。
+                # confirmed: race_payouts MIN (1-2-3 が hit してれば 1-2-3 配当)
                 pay_int = int(fav_pay)
-                # 1-2-3 が hit していれば実本命金額そのもの。hit してない場合は
-                # 「朝の段階では L4 候補だった可能性」を見るため予測ベース判定にも回す。
                 if 500 <= pay_int < 1000:
                     fav = pay_int
                     fav_source = "confirmed"
-                elif prob_first is not None:
-                    # 1-2-3 外れだが本命予測が強かったか
-                    pf = float(prob_first)
-                    if cls == 1 and 0.65 <= pf < 0.85:
-                        fav = pay_int  # 表示用に実際の hit 配当を載せる
-                        fav_source = "morning_miss"
-                    elif cls == 2 and 0.55 <= pf < 0.75:
-                        fav = pay_int
-                        fav_source = "morning_miss"
-                    else:
-                        continue
                 else:
-                    continue
+                    continue   # 500-1000 帯外 → L4 対象外
             elif fav_odds is not None:
-                # オッズベース (まだ確定してないがオッズ取れている)
+                # odds: T-X 1-2-3 オッズ × 100 が 500-1000
                 fav = int(float(fav_odds) * 100)
-                if not (500 <= fav < 1000):
-                    continue
-                fav_source = "odds"
-            elif prob_first is not None:
-                # 朝予測のみ (オッズ未取得・未確定)
-                pf = float(prob_first)
-                if cls == 1 and 0.65 <= pf < 0.85:
-                    fav = int(round(100 / pf))  # 概算本命配当
-                    fav_source = "morning"
-                elif cls == 2 and 0.55 <= pf < 0.75:
-                    fav = int(round(100 / pf))
-                    fav_source = "morning"
+                if 500 <= fav < 1000:
+                    fav_source = "odds"
                 else:
                     continue
             else:
+                # 朝予測のみ (オッズも payout もない) → ROI 不算入
                 continue
             # L4 ランク (1号艇A1のみ)
             try:
