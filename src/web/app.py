@@ -1388,13 +1388,52 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             l4_rank as _l4_rank_shared,
             RANK_PLUS_PLUS_RECOVERY,
             RANK_PLUS_RECOVERY,
+            COURSE1_WINDOW_DAYS,
+            COURSE1_MIN_STARTS,
+            COURSE1_THRESHOLD,
+            L4_1C80_RECOVERY,
+            is_1c80,
         )
+
+        # === L4+1c80 用: 当日 race の 1号艇選手の過去 6 ヶ月 1コース成績 ===
+        # 一度に取得して dict に。各 _evaluate_l4 呼び出しで使う。
+        course1_stats: dict[str, tuple[float, int]] = {}
+        try:
+            with db_connect() as _conn:
+                _cur = _conn.execute(
+                    f"""
+                    WITH target_races AS (
+                        SELECT r.race_id, r.race_date, e.racer_number
+                        FROM races r
+                        JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                        WHERE r.race_date = ?
+                    )
+                    SELECT t.race_id,
+                           COUNT(res.race_id) AS starts,
+                           SUM(CASE WHEN res.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                      FROM target_races t
+                      LEFT JOIN race_entries e2 ON e2.racer_number = t.racer_number AND e2.boat_number = 1
+                      LEFT JOIN races r2 ON r2.race_id = e2.race_id
+                      LEFT JOIN race_results res ON res.race_id = e2.race_id AND res.boat_number = 1
+                      WHERE r2.race_date < t.race_date
+                        AND r2.race_date >= date(t.race_date, '-{COURSE1_WINDOW_DAYS} days')
+                        AND res.finishing_position IS NOT NULL
+                      GROUP BY t.race_id
+                    """,
+                    (target_date,),
+                )
+                for rid, starts, wins in _cur.fetchall():
+                    if starts and starts >= COURSE1_MIN_STARTS:
+                        course1_stats[rid] = (wins / starts, starts)
+        except Exception as e:
+            logger.warning("course1 stats fetch failed: %s", e)
 
         def _l4_rank(natl_1, local_1):
             """1号艇選手の成績から L4 のサブランク判定 (単一情報源を委譲)"""
             return _l4_rank_shared(natl_1, local_1)
 
-        def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None):
+        def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
+                         race_id=None):
             """確定オッズベース L4 マーク判定 (L4+ / L4++ ランク付き)"""
             in_500_1000 = mp_int is not None and 500 <= mp_int < 1000
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
@@ -1433,9 +1472,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if rec_override is not None:
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
+
+            # ▼ L4+1c80 (1コース 1着率 80%+ オーバーレイ)
+            #   過去 180 日 ×20戦以上 で 1着率 ≥80% → +1c80 ランク付与
+            #   検証: 3連単 1-2-3 ROI 215% (= L4 平均 190% + 25pt)
+            if race_id:
+                c1 = course1_stats.get(race_id)
+                if c1 and is_1c80(c1[0], c1[1]):
+                    base["course1_winrate"] = c1[0]
+                    base["course1_starts"] = c1[1]
+                    base["is_1c80"] = True
+                    base["recovery_1c80"] = L4_1C80_RECOVERY
+                    base["label_1c80"] = f"🚀1c80 ({c1[0]*100:.0f}%)"
             return base
 
-        def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None):
+        def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None,
+                                 race_id=None):
             """朝判定用 L4 候補マーク (prob_first ベース)。
             メール送信側 (send_l4_alerts.py の detect_morning_l4_candidates) と
             同じく、 1号艇A1 の場合は 国1%/局1% でランク判定して
@@ -1478,6 +1530,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["rank_emoji"] = rank_emoji
             base["natl_1"] = natl_1
             base["local_1"] = local_1
+            # ▼ L4+1c80 オーバーレイ
+            if race_id:
+                c1 = course1_stats.get(race_id)
+                if c1 and is_1c80(c1[0], c1[1]):
+                    base["course1_winrate"] = c1[0]
+                    base["course1_starts"] = c1[1]
+                    base["is_1c80"] = True
+                    base["recovery_1c80"] = L4_1C80_RECOVERY
+                    base["label_1c80"] = f"🚀1c80 ({c1[0]*100:.0f}%)"
             if rec_override is not None:
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
@@ -1512,7 +1573,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 else:
                     tier, expected_roi, title = "chaos", -0.7354, "波乱"
 
-                l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1)
+                l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid)
 
                 signals.append({
                     "race_id": rid,
@@ -1528,7 +1589,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # === 未確定 (朝判定) → 予測ベース L4 候補 ===
                 prob_first = morning_pred.get(rid)
                 morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first,
-                                                   natl_1, local_1)
+                                                   natl_1, local_1, race_id=rid)
                 if morning_l4:
                     signals.append({
                         "race_id": rid,

@@ -87,6 +87,29 @@ def l4_rank(natl_1: Optional[float], local_1: Optional[float]) -> tuple[str, str
     return ("base", "L4", "⭐", None)
 
 
+# ============================================================
+# L4+1c80 (1コース1着率 80%以上 = 逃げ強い選手)
+# 集計期間: 過去 6 ヶ月 (180 日)
+# 最低サンプル: 20 戦以上
+# 閾値: 0.80 (= 80%)
+# 検証 ROI: 3連単 1-2-3 で 209-227% (n=218, 通常 L4 平均 190% より +20-30pt)
+#   → 「オッズが範囲内かつ 1c80 該当」なら通常 L4 より資金多め推奨
+# ============================================================
+COURSE1_WINDOW_DAYS = 180
+COURSE1_MIN_STARTS = 20
+COURSE1_THRESHOLD = 0.80
+L4_1C80_RECOVERY = 215.0  # 80%+ ゾーンの実測値 (209-227 の中央)
+
+
+def is_1c80(course1_winrate: Optional[float], course1_starts: Optional[int]) -> bool:
+    """1コース1着率が L4+1c80 ランクを満たすか"""
+    if course1_winrate is None or course1_starts is None:
+        return False
+    if course1_starts < COURSE1_MIN_STARTS:
+        return False
+    return course1_winrate >= COURSE1_THRESHOLD
+
+
 def is_l4_payout_range(payout: Optional[float]) -> bool:
     """三連単本命の払戻が L4 のターゲット範囲 (500-1000円) 内か"""
     return payout is not None and 500 <= payout < 1000
