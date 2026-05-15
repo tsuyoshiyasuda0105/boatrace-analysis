@@ -1628,6 +1628,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         集計対象: 単勝 / 2連単1-2 / 3連単1-2-3
         """
         with db_connect() as conn:
+            # 別途、日別の総レース数を取得 (確定有無に関わらず)
+            # _l4_daily_stats の n_total が「確定済のみ」だと
+            # 当日朝のように 1 件しか確定してない時 156→1 と見えてしまう
+            cur_n = conn.execute("""
+                SELECT race_date, COUNT(*) FROM races
+                 WHERE race_date BETWEEN ? AND ? GROUP BY race_date
+            """, (from_date, to_date)).fetchall()
+            n_total_by_date = {row[0]: row[1] for row in cur_n}
+
             cur = conn.execute("""
                 SELECT
                     r.race_date,
@@ -1657,12 +1666,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # 日別に集計
         by_date: dict[str, dict] = {}
+        # まず全日付について「枠」を用意 (確定済 0 件の日も表示するため)
+        for rdate, n_tot in n_total_by_date.items():
+            by_date[rdate] = {
+                "date": rdate,
+                "n_total": n_tot,
+                "n_done": 0,        # 確定済レース数
+                "n_l4": 0, "n_l4_a2": 0, "n_l4_all": 0,
+                "win_bets": 0, "win_hits": 0, "win_pay": 0,
+                "exa_bets": 0, "exa_hits": 0, "exa_pay": 0,
+                "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
+                "a2_tri_bets": 0, "a2_tri_hits": 0, "a2_tri_pay": 0,
+                "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
+                "grade_breakdown": {},
+            }
+
         for row in cur:
             (rdate, stadium, grade, cls, fav, w1, w2, w3,
              win_pay, ex_pay, tri_pay) = row
             d = by_date.setdefault(rdate, {
                 "date": rdate,
-                "n_total": 0,
+                "n_total": n_total_by_date.get(rdate, 0),
+                "n_done": 0,
                 "n_l4": 0,         # L4 A1 のみ
                 "n_l4_a2": 0,      # L4 派生 A2
                 "n_l4_all": 0,     # L4 全体 (A1+A2)
@@ -1676,7 +1701,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
                 "grade_breakdown": {},
             })
-            d["n_total"] += 1
+            # n_total は races テーブル単独カウント (上で初期化済) → ここで触らない
+            # 代わりに「確定済」レース数を加算する
+            d["n_done"] += 1
 
             # L4 共通条件: 500-1000帯 + B除外
             is_l4_base = (fav and 500 <= fav < 1000
@@ -1740,6 +1767,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def _l4_races_for_date(target_date: str) -> list[dict]:
         """指定日の L4 該当レース全件を取得 (1号艇A1 + A2派生)。
         買い目ごとの的中/損益も含む。
+        確定済 (race_payouts あり) と未確定 (T-5/T-15 オッズあり) の
+        両方を対象とする。未確定レースは「結果待ち」として表示。
         """
         with db_connect() as conn:
             cur = conn.execute("""
@@ -1753,7 +1782,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e.racer_name,
                     e.national_top_1_percent,
                     e.local_top_1_percent,
-                    pp.min_pay AS fav,
+                    pp.min_pay AS fav_pay,
+                    oo.min_odds AS fav_odds,
                     res1.boat_number AS w1,
                     res2.boat_number AS w2,
                     res3.boat_number AS w3,
@@ -1762,8 +1792,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pt.payout AS tri_pay
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-                JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
-                      WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
+                LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
+                           WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
+                LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
+                           WHERE combination='1-2-3'
+                             AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
+                           GROUP BY race_id) oo ON oo.race_id = r.race_id
                 LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position=1
                 LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
                 LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
@@ -1778,12 +1812,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         out = []
         for row in cur:
             (rid, rno, closed, stadium, grade, cls, racer_name,
-             natl_1, local_1, fav, w1, w2, w3,
+             natl_1, local_1, fav_pay, fav_odds, w1, w2, w3,
              win_pay, exa_pay, tri_pay) = row
+            # 本命金額: 確定後 = race_payouts MIN、未確定 = T-5/T-15 オッズ × 100
+            if fav_pay is not None:
+                fav = int(fav_pay)
+                fav_source = "confirmed"  # 結果確定後
+            elif fav_odds is not None:
+                fav = int(float(fav_odds) * 100)
+                fav_source = "odds"        # 結果未確定 (オッズ判定)
+            else:
+                continue  # 判定材料なし → スキップ
             # L4 条件判定
-            in_500_1000 = fav is not None and 500 <= fav < 1000
-            b_excl = stadium in EXCLUDE_B_VENUES
-            if not in_500_1000 or b_excl:
+            if not (500 <= fav < 1000):
+                continue
+            if stadium in EXCLUDE_B_VENUES:
                 continue
             if cls not in (1, 2):
                 continue
@@ -1802,13 +1845,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     rank = "L4"
             else:
                 rank = "L4-A2"
-            # 的中/損益計算
-            win_hit = (w1 == 1)
-            exa_hit = (w1 == 1 and w2 == 2)
-            tri_hit = (w1 == 1 and w2 == 2 and w3 == 3)
+            # 確定判定: 全 3 着が揃っているか
+            is_done = w1 is not None and w2 is not None and w3 is not None
+            # 的中/損益計算 (未確定は 0、is_done のときのみ確定)
+            win_hit = is_done and (w1 == 1)
+            exa_hit = is_done and (w1 == 1 and w2 == 2)
+            tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
             win_p = (win_pay or 0) if win_hit else 0
             exa_p = (exa_pay or 0) if exa_hit else 0
             tri_p = (tri_pay or 0) if tri_hit else 0
+            # 損益: 未確定レースは None (まだ確定していない)
+            win_profit = (win_p - 100) if is_done else None
+            exa_profit = (exa_p - 100) if is_done else None
+            tri_profit = (tri_p - 100) if is_done else None
 
             out.append({
                 "race_id": rid,
@@ -1822,17 +1871,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "racer_name": racer_name or "",
                 "natl_1": n1,
                 "local_1": l1,
-                "fav_payout": int(fav) if fav else 0,
+                "fav_payout": fav,
+                "fav_source": fav_source,
                 "w1": w1, "w2": w2, "w3": w3,
                 "trifecta_combo": (
                     f"{w1}-{w2}-{w3}" if w1 and w2 and w3 else None
                 ),
                 "win_hit": win_hit, "exa_hit": exa_hit, "tri_hit": tri_hit,
                 "win_pay": win_p, "exa_pay": exa_p, "tri_pay": tri_p,
-                "win_profit": win_p - 100,
-                "exa_profit": exa_p - 100,
-                "tri_profit": tri_p - 100,
-                "is_done": w1 is not None and w2 is not None and w3 is not None,
+                "win_profit": win_profit,
+                "exa_profit": exa_profit,
+                "tri_profit": tri_profit,
+                "is_done": is_done,
             })
         return out
 
@@ -1840,34 +1890,50 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     @cached(ttl=180, past_ttl=3600)  # 当日3分/過去日1時間
     def member_strategy_races():
-        """指定日の L4 該当レース一覧 (会員限定)"""
+        """指定日の L4 該当レース一覧 (会員限定)
+        単勝 / 2連単1-2 / 3連単1-2-3 の通算 ROI を併記。
+        """
         target_date = request.args.get("date") or date.today().isoformat()
         try:
             date.fromisoformat(target_date)
         except ValueError:
             return "Invalid date format", 400
         races = _l4_races_for_date(target_date)
-        # 集計
+        # 内訳カウント
         n_total = len(races)
         n_a1 = sum(1 for r in races if r["class"] == 1)
         n_a2 = sum(1 for r in races if r["class"] == 2)
         n_pp = sum(1 for r in races if r["rank"] == "L4++")
         n_p = sum(1 for r in races if r["rank"] == "L4+")
-        # 3連単 1-2-3 通算
-        n_tri_hit = sum(1 for r in races if r["tri_hit"])
-        n_tri_done = sum(1 for r in races if r["is_done"])
-        tri_pay_sum = sum(r["tri_pay"] for r in races if r["tri_hit"])
-        tri_cost = n_tri_done * 100
-        tri_roi = (tri_pay_sum / tri_cost * 100) if tri_cost else None
-        tri_profit = tri_pay_sum - tri_cost
+        n_pending = sum(1 for r in races if not r["is_done"])
+        # 確定済み数 (損益計算の母数)
+        n_done = sum(1 for r in races if r["is_done"])
+
+        # 単勝 / 2連単 / 3連単 の通算
+        def _summarize(key_hit, key_pay):
+            n_hit = sum(1 for r in races if r["is_done"] and r[key_hit])
+            pay_sum = sum(r[key_pay] for r in races if r["is_done"] and r[key_hit])
+            cost = n_done * 100
+            roi = (pay_sum / cost * 100) if cost else None
+            profit = pay_sum - cost if n_done else 0
+            return {"hit": n_hit, "done": n_done, "pay": pay_sum,
+                    "cost": cost, "roi": roi, "profit": profit}
+
+        win_sum = _summarize("win_hit", "win_pay")
+        exa_sum = _summarize("exa_hit", "exa_pay")
+        tri_sum = _summarize("tri_hit", "tri_pay")
+
         return render_template(
             "member_strategy_races.html",
             target_date=target_date,
             races=races,
             n_total=n_total, n_a1=n_a1, n_a2=n_a2,
             n_pp=n_pp, n_p=n_p,
-            n_tri_hit=n_tri_hit, n_tri_done=n_tri_done,
-            tri_roi=tri_roi, tri_profit=tri_profit,
+            n_pending=n_pending, n_done=n_done,
+            win_sum=win_sum, exa_sum=exa_sum, tri_sum=tri_sum,
+            # 後方互換: 旧テンプレが参照するフィールドも残す
+            n_tri_hit=tri_sum["hit"], n_tri_done=n_done,
+            tri_roi=tri_sum["roi"], tri_profit=tri_sum["profit"],
         )
 
     @app.route("/member/strategy")

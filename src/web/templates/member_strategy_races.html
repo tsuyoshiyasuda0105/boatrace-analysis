@@ -20,13 +20,36 @@
       <span class="rs-value">🥇{{ n_pp }} 🥈{{ n_p }}</span>
       <span class="rs-sub">L4++ {{ n_pp }} / L4+ {{ n_p }}</span>
     </div>
-    <div class="rsum-card {% if tri_roi and tri_roi >= 100 %}positive{% elif tri_roi is not none %}negative{% endif %}">
-      <span class="rs-label">3連単 1-2-3 通算</span>
+    <div class="rsum-card">
+      <span class="rs-label">確定状況</span>
+      <span class="rs-value">{{ n_done }} / {{ n_total }}</span>
+      <span class="rs-sub">未確定 {{ n_pending }} 件</span>
+    </div>
+    <div class="rsum-card {% if win_sum.roi and win_sum.roi >= 100 %}positive{% elif win_sum.roi is not none %}negative{% endif %}">
+      <span class="rs-label">単勝 通算</span>
       <span class="rs-value">
-        {% if tri_roi is not none %}{{ '%.1f' | format(tri_roi) }}%{% else %}-{% endif %}
+        {% if win_sum.roi is not none %}{{ '%.1f' | format(win_sum.roi) }}%{% else %}-{% endif %}
       </span>
       <span class="rs-sub">
-        HIT {{ n_tri_hit }}/{{ n_tri_done }} | 損益 {{ tri_profit | signed_comma }} 円
+        HIT {{ win_sum.hit }}/{{ win_sum.done }} | 損益 {{ win_sum.profit | signed_comma }} 円
+      </span>
+    </div>
+    <div class="rsum-card {% if exa_sum.roi and exa_sum.roi >= 100 %}positive{% elif exa_sum.roi is not none %}negative{% endif %}">
+      <span class="rs-label">2連単 1-2 通算</span>
+      <span class="rs-value">
+        {% if exa_sum.roi is not none %}{{ '%.1f' | format(exa_sum.roi) }}%{% else %}-{% endif %}
+      </span>
+      <span class="rs-sub">
+        HIT {{ exa_sum.hit }}/{{ exa_sum.done }} | 損益 {{ exa_sum.profit | signed_comma }} 円
+      </span>
+    </div>
+    <div class="rsum-card {% if tri_sum.roi and tri_sum.roi >= 100 %}positive{% elif tri_sum.roi is not none %}negative{% endif %}">
+      <span class="rs-label">3連単 1-2-3 通算</span>
+      <span class="rs-value">
+        {% if tri_sum.roi is not none %}{{ '%.1f' | format(tri_sum.roi) }}%{% else %}-{% endif %}
+      </span>
+      <span class="rs-sub">
+        HIT {{ tri_sum.hit }}/{{ tri_sum.done }} | 損益 {{ tri_sum.profit | signed_comma }} 円
       </span>
     </div>
   </div>
@@ -39,9 +62,11 @@
           <th>会場</th>
           <th>R</th>
           <th>1号艇</th>
-          <th class="num">本命</th>
+          <th class="num">本命¥</th>
           <th>結果</th>
-          <th class="hit-col">単勝 HIT</th>
+          <th class="num">単勝</th>
+          <th class="num">2連単 1-2</th>
+          <th class="num">3連単 1-2-3</th>
         </tr>
       </thead>
       <tbody>
@@ -57,23 +82,59 @@
             {{ r.racer_name }}
             <span class="racer-meta">国{{ '%.2f' | format(r.natl_1) }} 局{{ '%.2f' | format(r.local_1) }}</span>
           </td>
-          <td class="num">{{ r.fav_payout }}</td>
+          <td class="num">
+            {{ r.fav_payout }}
+            {% if r.fav_source == 'odds' %}
+              <span class="fav-source-tag" title="T-5/T-15 オッズベース (結果未確定)">オッズ</span>
+            {% endif %}
+          </td>
           <td>
             {% if r.is_done %}
               <span class="result-combo {% if r.tri_hit %}hit{% endif %}">{{ r.trifecta_combo }}</span>
             {% else %}
-              <span class="result-pending">未定</span>
+              <span class="result-pending">未確定</span>
             {% endif %}
           </td>
-          <td class="hit-col">
+          {# 単勝 #}
+          <td class="num bet-cell">
             {% if not r.is_done %}
-              <span class="hit-pending">—</span>
-            {% elif r.tri_hit %}
-              <span class="hit-star" title="3連単 1-2-3 的中 / 単勝も的中">✅★</span>
+              <span class="bet-pending">—</span>
             {% elif r.win_hit %}
-              <span class="hit-ok" title="1号艇 単勝的中">✅</span>
+              <span class="bet-win" title="単勝的中 ¥{{ r.win_pay }}">
+                ✅ <span class="bet-amt">+{{ r.win_profit | signed_comma }}</span>
+              </span>
             {% else %}
-              <span class="hit-miss" title="1号艇1着外">—</span>
+              <span class="bet-lose">
+                ✗ <span class="bet-amt">-100</span>
+              </span>
+            {% endif %}
+          </td>
+          {# 2連単 1-2 #}
+          <td class="num bet-cell">
+            {% if not r.is_done %}
+              <span class="bet-pending">—</span>
+            {% elif r.exa_hit %}
+              <span class="bet-win" title="2連単 1-2 的中 ¥{{ r.exa_pay }}">
+                ✅ <span class="bet-amt">+{{ r.exa_profit | signed_comma }}</span>
+              </span>
+            {% else %}
+              <span class="bet-lose">
+                ✗ <span class="bet-amt">-100</span>
+              </span>
+            {% endif %}
+          </td>
+          {# 3連単 1-2-3 #}
+          <td class="num bet-cell">
+            {% if not r.is_done %}
+              <span class="bet-pending">—</span>
+            {% elif r.tri_hit %}
+              <span class="bet-win" title="3連単 1-2-3 的中 ¥{{ r.tri_pay }}">
+                ✅★ <span class="bet-amt">+{{ r.tri_profit | signed_comma }}</span>
+              </span>
+            {% else %}
+              <span class="bet-lose">
+                ✗ <span class="bet-amt">-100</span>
+              </span>
             {% endif %}
           </td>
         </tr>
@@ -85,9 +146,9 @@
   {% if races %}
     <p class="footer-note">
       <small>
-        ✅ = 1号艇1着 (単勝的中) /
-        ✅★ = 3連単 1-2-3 的中 (単勝・2連単・3連単すべて的中) /
-        — = 未定 or 外し
+        買い目: 単勝1号艇 / 2連単 1-2 / 3連単 1-2-3、各 1点 ¥100 で運用した想定。<br>
+        ✅ = 的中 (緑) / ✗ = 外し (-¥100) / — = 結果未確定 (オッズベース判定中) /
+        「本命¥」の <span class="fav-source-tag">オッズ</span> タグはまだ結果が出ていないレース。
       </small>
     </p>
   {% else %}
