@@ -1,12 +1,10 @@
 @echo off
-REM Launcher that immediately spawns the inner worker via VBS (hidden)
-REM and exits. The cmd.exe window flashes only briefly (~0.2 sec)
-REM and disappears since the parent process exits immediately.
-REM
-REM Background: BoatraceOddsScheduler scheduled task requires admin
-REM privileges to modify (Set-ScheduledTask returns Access denied),
-REM so we cannot rewrite its action via PowerShell. Instead, we
-REM hide the console at the .bat level via self-launching VBS.
+REM Odds scheduler launcher (every minute via Task Scheduler).
+REM Uses pythonw.exe (console-less) so no cmd window flashes.
+REM Previous VBS chain failed silently on this host - direct pythonw avoids it.
 
-start "" /b wscript.exe "%~dp0run_hidden.vbs" "%~dp0run_odds_scheduler_inner.bat"
+cd /d C:\boat_project\boatrace-analysis
+if not exist logs mkdir logs
+
+start "" /b .venv\Scripts\pythonw.exe scripts\odds_scheduler.py >> logs\odds_scheduler.log 2>&1
 exit /b 0
