@@ -51,12 +51,13 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
     n_total_by_date = {row[0]: row[1] for row in cur.fetchall()}
 
     # L4 該当 + 各 bet_type の hit
-    # 判定優先順位: T-X 1-2-3 オッズ × 100 が 500-1000 (朝賭けた時点の本命)
-    #              フォールバック: race_payouts MIN 500-1000 (過去日、1-2-3 hit ケースのみ正確)
-    # 雨除外: race_previews.weather_number=3 (雨) のレースは ROI 100% で break-even のため除外
+    # サブカテゴリ集計: 1c80 / L4 PRO / SG/G1/G2 を 1 クエリで取得
     sql = f"""
         SELECT r.race_date,
                r.race_id,
+               r.race_grade_number,
+               e.racer_number, e.avg_start_timing, e.age,
+               pv.start_timing_exhibition,
                pp.min_pay AS fav_pay,
                oo.min_odds AS fav_odds,
                res1.boat_number AS w1,
@@ -91,9 +92,50 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
     """
     cur = src.execute(sql, (start, end, *EXCLUDE_B))
 
+    # 選手の過去 180 日 1コース 1着率を一括計算 (1c80 判定用)
+    # racer × race_date → past 180 days winrate
+    import datetime as _dt
+    course1_hist = {}  # racer_number -> [(date, is_1st)]
+    try:
+        hist_cur = src.execute("""
+            SELECT e.racer_number, r.race_date, res.finishing_position
+            FROM race_entries e
+            JOIN races r ON e.race_id=r.race_id
+            JOIN race_results res ON res.race_id=e.race_id AND res.boat_number=1
+            WHERE e.boat_number=1 AND res.finishing_position IS NOT NULL
+            ORDER BY e.racer_number, r.race_date
+        """)
+        for racer, rd, pos in hist_cur.fetchall():
+            course1_hist.setdefault(racer, []).append((str(rd), 1 if pos == 1 else 0))
+    except Exception as e:
+        print(f"  course1 history skip: {e}")
+
+    def _is_1c80(racer, race_date):
+        rh = course1_hist.get(racer, [])
+        if not rh: return False
+        try:
+            rd = _dt.date.fromisoformat(str(race_date))
+            cutoff = (rd - _dt.timedelta(days=180)).isoformat()
+            past = [w for d, w in rh if cutoff <= d < str(race_date)]
+        except Exception:
+            return False
+        if len(past) < 20: return False
+        return (sum(past) / len(past)) >= 0.80
+
+    def _is_l4_pro(avg_st, age, ex_st):
+        try:
+            if avg_st is None or age is None: return False
+            ast, a = float(avg_st), int(age)
+            if ast >= 0.16 or not (30 <= a <= 49): return False
+            if ex_st is None: return True
+            return float(ex_st) < 0.18
+        except Exception:
+            return False
+
     by_date: dict[str, dict] = {}
     for row in cur.fetchall():
-        rdate, rid, fav_pay, fav_odds, w1, w2, w3, wp, ep, tp = row
+        (rdate, rid, grade, racer, avg_st, age, ex_st,
+         fav_pay, fav_odds, w1, w2, w3, wp, ep, tp) = row
         d = by_date.setdefault(rdate, {
             "date": rdate,
             "n_total": n_total_by_date.get(rdate, 0),
@@ -101,6 +143,10 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "win_bets": 0, "win_hits": 0, "win_pay": 0,
             "exa_bets": 0, "exa_hits": 0, "exa_pay": 0,
             "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
+            # サブカテゴリ集計 (3 連単 1-2-3 のみ)
+            "c80_bets": 0, "c80_hits": 0, "c80_pay": 0,
+            "pro_bets": 0, "pro_hits": 0, "pro_pay": 0,
+            "sgg12_bets": 0, "sgg12_hits": 0, "sgg12_pay": 0,
         })
         d["n_l4"] += 1
         # 確定済 (w1/w2/w3 揃ってる) のみ bets/hits/pay を加算
@@ -114,9 +160,29 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             if w1 == 1 and w2 == 2:
                 d["exa_hits"] += 1
                 d["exa_pay"] += (ep or 0)
-            if w1 == 1 and w2 == 2 and w3 == 3:
+            tri_hit = (w1 == 1 and w2 == 2 and w3 == 3)
+            if tri_hit:
                 d["tri_hits"] += 1
                 d["tri_pay"] += (tp or 0)
+            # ▼ サブカテゴリ判定 (確定済のみ集計)
+            # 1c80 (1コース 1着率 80%+)
+            if _is_1c80(racer, rdate):
+                d["c80_bets"] += 1
+                if tri_hit:
+                    d["c80_hits"] += 1
+                    d["c80_pay"] += (tp or 0)
+            # L4 PRO
+            if _is_l4_pro(avg_st, age, ex_st):
+                d["pro_bets"] += 1
+                if tri_hit:
+                    d["pro_hits"] += 1
+                    d["pro_pay"] += (tp or 0)
+            # SG/G1/G2 (高グレード)
+            if grade in (1, 2, 3):
+                d["sgg12_bets"] += 1
+                if tri_hit:
+                    d["sgg12_hits"] += 1
+                    d["sgg12_pay"] += (tp or 0)
     return list(by_date.values())
 
 
@@ -162,38 +228,37 @@ def main():
     n_upsert = 0
     BATCH = 500
     batch = []
+    UPSERT_SQL = """
+        INSERT OR REPLACE INTO l4_daily_summary
+          (date, n_total, n_l4,
+           win_bets, win_hits, win_pay,
+           exa_bets, exa_hits, exa_pay,
+           tri_bets, tri_hits, tri_pay,
+           c80_bets, c80_hits, c80_pay,
+           pro_bets, pro_hits, pro_pay,
+           sgg12_bets, sgg12_hits, sgg12_pay,
+           updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
     for s in summaries:
         batch.append((
             s["date"], s["n_total"], s["n_l4"],
             s["win_bets"], s["win_hits"], s["win_pay"],
             s["exa_bets"], s["exa_hits"], s["exa_pay"],
             s["tri_bets"], s["tri_hits"], s["tri_pay"],
+            s.get("c80_bets",0), s.get("c80_hits",0), s.get("c80_pay",0),
+            s.get("pro_bets",0), s.get("pro_hits",0), s.get("pro_pay",0),
+            s.get("sgg12_bets",0), s.get("sgg12_hits",0), s.get("sgg12_pay",0),
             now_iso,
         ))
         if len(batch) >= BATCH:
-            dst.executemany("""
-                INSERT OR REPLACE INTO l4_daily_summary
-                  (date, n_total, n_l4,
-                   win_bets, win_hits, win_pay,
-                   exa_bets, exa_hits, exa_pay,
-                   tri_bets, tri_hits, tri_pay,
-                   updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, batch)
+            dst.executemany(UPSERT_SQL, batch)
             n_upsert += len(batch)
             batch.clear()
             if args.verbose:
                 print(f"  upserted {n_upsert} rows")
     if batch:
-        dst.executemany("""
-            INSERT OR REPLACE INTO l4_daily_summary
-              (date, n_total, n_l4,
-               win_bets, win_hits, win_pay,
-               exa_bets, exa_hits, exa_pay,
-               tri_bets, tri_hits, tri_pay,
-               updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, batch)
+        dst.executemany(UPSERT_SQL, batch)
         n_upsert += len(batch)
     dst.commit()
     dst.close()

@@ -1784,6 +1784,15 @@ main h2 {
 }
 /* A2 派生は L4 戦略対象外のため badge スタイル削除 (2026-05) */
 
+/* ROI ダッシュのサブ戦略セクション ヘッダ */
+.sub-strategy-header {
+  margin: 24px 0 6px;
+  font-size: 15px;
+  color: #fcd34d;
+  padding: 6px 0;
+  border-bottom: 2px solid rgba(252, 211, 77, 0.3);
+}
+
 /* L4 一般戦 (参考、ROI 対象外): 控えめなグレー */
 .l4-badge.l4-reference {
   background: rgba(120, 120, 130, 0.25) !important;
