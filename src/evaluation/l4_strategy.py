@@ -110,6 +110,49 @@ def is_1c80(course1_winrate: Optional[float], course1_starts: Optional[int]) -> 
     return course1_winrate >= COURSE1_THRESHOLD
 
 
+# ============================================================
+# L4 PRO: ベテラン × スタート上手 × 展示好調 (検証 ROI 241.5%)
+#   - 平均 ST < 0.16 (キャリアでスタート上手)
+#   - 年齢 30-49 (ベテラン、衰え前)
+#   - 展示 ST < 0.18 (当日も好調)
+# 4年検証: n=247、ROI 241.5% (= 通常 L4 平均 193% から +49pt)
+# = レースあたり +¥141 利益、通常 L4 +¥92 と比べて +53% アップ
+# ============================================================
+L4_PRO_AVG_ST_MAX = 0.16
+L4_PRO_AGE_MIN = 30
+L4_PRO_AGE_MAX = 49
+L4_PRO_EX_ST_MAX = 0.18
+L4_PRO_RECOVERY = 241.5
+
+
+def is_l4_pro(avg_start_timing: Optional[float],
+              age: Optional[int],
+              start_timing_exhibition: Optional[float]) -> bool:
+    """L4 PRO ランクを満たすか。
+    確定判定: 平均ST + 年齢 + 展示ST 全部揃って閾値内ならフル PRO。
+    展示 ST が NULL の場合は「朝予測 PRO 候補」とみなして展示ST 条件は緩和。
+    """
+    if avg_start_timing is None or age is None:
+        return False
+    try:
+        ast = float(avg_start_timing)
+        a = int(age)
+    except (TypeError, ValueError):
+        return False
+    if ast >= L4_PRO_AVG_ST_MAX:
+        return False
+    if not (L4_PRO_AGE_MIN <= a <= L4_PRO_AGE_MAX):
+        return False
+    # 展示 ST が NULL なら 2 条件のみで「候補」、ある場合は閾値チェック
+    if start_timing_exhibition is None:
+        return True  # 朝予測候補 (展示前)
+    try:
+        ex = float(start_timing_exhibition)
+    except (TypeError, ValueError):
+        return True
+    return ex < L4_PRO_EX_ST_MAX
+
+
 def is_l4_payout_range(payout: Optional[float]) -> bool:
     """三連単本命の払戻が L4 のターゲット範囲 (500-1000円) 内か"""
     return payout is not None and 500 <= payout < 1000

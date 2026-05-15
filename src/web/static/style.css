@@ -1800,6 +1800,29 @@ main h2 {
   opacity: 0.7;
 }
 
+/* L4 PRO: ベテラン (30-49) × 平均ST<0.16 × 展示ST<0.18 (検証 ROI 241%) */
+.l4-badge.l4-pro {
+  background: linear-gradient(135deg, #8b5cf6, #a855f7, #c084fc) !important;
+  color: #fff !important;
+  border: 2px solid #7c3aed !important;
+  box-shadow: 0 0 14px rgba(139, 92, 246, 0.7) !important;
+  font-weight: bold !important;
+  animation: pulse-pro 2.5s ease-in-out infinite;
+}
+@keyframes pulse-pro {
+  0%, 100% { box-shadow: 0 0 14px rgba(139, 92, 246, 0.7); }
+  50% { box-shadow: 0 0 22px rgba(139, 92, 246, 0.95); }
+}
+/* L4 PRO + 1c80 同時 → 最強候補、紫+オレンジハイブリッド */
+.l4-badge.l4-pro.l4-1c80 {
+  background: linear-gradient(135deg, #f97316, #a855f7, #facc15) !important;
+  animation: pulse-strongest 2s ease-in-out infinite;
+}
+@keyframes pulse-strongest {
+  0%, 100% { box-shadow: 0 0 16px rgba(168, 85, 247, 0.8); }
+  50% { box-shadow: 0 0 28px rgba(249, 115, 22, 0.95); }
+}
+
 /* L4+1c80: 1コース1着率 80%+ の選手が 1号艇 (検証 ROI 215%) */
 .l4-badge.l4-1c80 {
   background: linear-gradient(135deg, #f97316, #fb923c, #fcd34d) !important;

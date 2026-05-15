@@ -275,6 +275,7 @@
                   // rank クラスで色分け (plus_plus=金、plus=銀、base=従来)
                   l4Badge.className = `l4-badge l4-${sig.l4.level} l4-rank-${rank}`;
                   if (sig.l4.is_1c80) l4Badge.className += ' l4-1c80';
+                  if (sig.l4.is_l4_pro) l4Badge.className += ' l4-pro';
                   // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
                   if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
                   const l4Rec = (sig.l4.recovery != null) ? sig.l4.recovery : '-';
@@ -290,9 +291,13 @@
                     const cst = sig.l4.course1_starts;
                     title += ` | 🚀1c80: 過去6ヶ月 1コース1着率 ${cwr}% (${cst}戦), 検証ROI ${sig.l4.recovery_1c80}% → 資金多め推奨`;
                   }
+                  if (sig.l4.is_l4_pro) {
+                    title += ` | 🔥L4 PRO: ${sig.l4.label_l4_pro}、検証ROI ${sig.l4.recovery_l4_pro}% → ベテラン×スタート好調`;
+                  }
                   l4Badge.title = title;
                   const onec80 = sig.l4.is_1c80 ? ' 🚀' : '';
-                  l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}`;
+                  const pro = sig.l4.is_l4_pro ? ' 🔥' : '';
+                  l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}`;
                   item.appendChild(l4Badge);
                 }
 
@@ -558,10 +563,12 @@
             const l4Badge = u.el.querySelector('.l4-badge');
             const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
             const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
+            const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
             let rankLabel = l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
                           : l4Cls === 'l4-rank-plus' ? '🥈 L4+'
                           : '⭐ L4';
             if (is1c80) rankLabel = '🚀 ' + rankLabel + ' 1c80';
+            if (isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';
             const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
             const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
             const recovery = recMatch ? recMatch[1] : '-';

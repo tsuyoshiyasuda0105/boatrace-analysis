@@ -1345,17 +1345,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
                                e.class_number,
                                e.national_top_1_percent, e.local_top_1_percent,
-                               pv.weather_number
+                               e.avg_start_timing, e.age,
+                               pv.weather_number, pv.start_timing_exhibition
                         FROM races r
                         LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                         LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
                         WHERE r.race_date = ?
                     """, (target_date,))
-                    for rid, stadium, grade, cls, natl1, loc1, weather in cur.fetchall():
+                    for (rid, stadium, grade, cls, natl1, loc1,
+                         avg_st, age, weather, ex_st) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade, "class": cls,
                             "natl_1": natl1, "local_1": loc1,
-                            "weather": weather,
+                            "avg_st": avg_st, "age": age,
+                            "weather": weather, "ex_st": ex_st,
                         }
                 except Exception as e:
                     logger.warning("all_race_info query failed: %s", e)
@@ -1396,6 +1399,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             COURSE1_THRESHOLD,
             L4_1C80_RECOVERY,
             is_1c80,
+            L4_PRO_RECOVERY,
+            is_l4_pro,
         )
 
         # === L4+1c80 用: 当日 race の 1号艇選手の過去 6 ヶ月 1コース成績 ===
@@ -1444,7 +1449,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return _l4_rank_shared(natl_1, local_1)
 
         def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
-                         race_id=None):
+                         race_id=None, avg_st=None, age=None, ex_st=None):
             """確定オッズベース L4 マーク判定 (L4+ / L4++ ランク付き)"""
             in_500_1000 = mp_int is not None and 500 <= mp_int < 1000
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
@@ -1502,10 +1507,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     base["is_1c80"] = True
                     base["recovery_1c80"] = L4_1C80_RECOVERY
                     base["label_1c80"] = f"🚀1c80 ({c1[0]*100:.0f}%)"
+
+            # ▼ L4 PRO (ベテラン × スタート上手 × 展示好調)
+            #   平均ST<0.16 + 30-49歳 + 展示ST<0.18 (展示無ければ 2 条件で候補)
+            #   検証: 4年 n=247、ROI 241.5%
+            if is_l4_pro(avg_st, age, ex_st):
+                base["is_l4_pro"] = True
+                base["recovery_l4_pro"] = L4_PRO_RECOVERY
+                _ex_part = f", 展示ST={float(ex_st):.2f}" if ex_st is not None else " (展示前)"
+                base["label_l4_pro"] = (
+                    f"🔥L4 PRO (ST={float(avg_st):.2f}, "
+                    f"{int(age)}歳{_ex_part})"
+                )
             return base
 
         def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None,
-                                 race_id=None):
+                                 race_id=None, avg_st=None, age=None, ex_st=None):
             """朝判定用 L4 候補マーク (prob_first ベース)。
             メール送信側 (send_l4_alerts.py の detect_morning_l4_candidates) と
             同じく、 1号艇A1 の場合は 国1%/局1% でランク判定して
@@ -1561,6 +1578,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     base["is_1c80"] = True
                     base["recovery_1c80"] = L4_1C80_RECOVERY
                     base["label_1c80"] = f"🚀1c80 ({c1[0]*100:.0f}%)"
+            # ▼ L4 PRO オーバーレイ (展示 ST 無い朝予測でも 2 条件で候補判定)
+            if is_l4_pro(avg_st, age, ex_st):
+                base["is_l4_pro"] = True
+                base["recovery_l4_pro"] = L4_PRO_RECOVERY
+                _ex_part = f", 展示ST={float(ex_st):.2f}" if ex_st is not None else " (展示前)"
+                base["label_l4_pro"] = (
+                    f"🔥L4 PRO (ST={float(avg_st):.2f}, "
+                    f"{int(age)}歳{_ex_part})"
+                )
             if rec_override is not None:
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
@@ -1577,6 +1603,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             cls = info.get("class")
             natl_1 = info.get("natl_1")
             local_1 = info.get("local_1")
+            avg_st = info.get("avg_st")
+            age = info.get("age")
+            ex_st = info.get("ex_st")
             weather = info.get("weather")
             is_rain = (weather == 3)
             data = results.get(rid)
@@ -1598,7 +1627,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 else:
                     tier, expected_roi, title = "chaos", -0.7354, "波乱"
 
-                l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid)
+                l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid,
+                                  avg_st=avg_st, age=age, ex_st=ex_st)
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
                 # バッジは出すが is_rain=True で本日候補リストから除外
@@ -1624,7 +1654,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # === 未確定 (朝判定) → 予測ベース L4 候補 ===
                 prob_first = morning_pred.get(rid)
                 morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first,
-                                                   natl_1, local_1, race_id=rid)
+                                                   natl_1, local_1, race_id=rid,
+                                                   avg_st=avg_st, age=age, ex_st=ex_st)
                 if morning_l4:
                     if is_rain:
                         morning_l4["is_rain"] = True
