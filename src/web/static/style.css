@@ -1656,6 +1656,13 @@ main h2 {
 .daily-table td.pos { color: #34e890; font-weight: 600; }
 .daily-table td.neg { color: #f87171; }
 .daily-table td.muted { color: var(--text-dim); text-align: center; font-style: italic; }
+.daily-table td.a2-only-row {
+  color: rgba(255, 196, 0, 0.85);
+  font-style: normal;
+  font-size: 12px;
+  text-align: left;
+  padding-left: 16px;
+}
 .daily-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
 .daily-table tbody tr.has-l4:hover { background: rgba(0, 212, 255, 0.08); }
 .daily-table .date-cell .date-text { font-family: monospace; color: rgba(255,255,255,0.95); }
