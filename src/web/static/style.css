@@ -1492,56 +1492,8 @@ main h2 {
   gap: 6px;
 }
 
-/* Market signal badge (index page, レース一覧の各カード) */
-.market-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  margin-left: 6px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 700;
-  font-family: var(--font-mono, monospace);
-  text-align: center;
-  line-height: 1.3;
-}
-/* バッジ内の本命金額 (¥780 など) を小さく表示 */
-.market-badge .market-fav-payout {
-  display: block;
-  font-size: 9px;
-  font-weight: 400;
-  opacity: 0.85;
-  margin-top: 1px;
-  letter-spacing: 0;
-}
-/* スナップショット source を超小フォントで併記 (タイムラグ判別用) */
-.market-badge .market-src {
-  display: inline-block;
-  margin-left: 4px;
-  padding: 0 4px;
-  font-size: 8px;
-  font-weight: 400;
-  opacity: 0.7;
-  background: rgba(255,255,255,0.1);
-  border-radius: 6px;
-  letter-spacing: 0;
-}
-.market-badge.market-confident {
-  background: linear-gradient(135deg, rgba(255, 215, 0, 0.35), rgba(255, 100, 200, 0.20));
-  border: 1px solid rgba(255, 215, 0, 0.7);
-  color: #ffd700;
-  text-shadow: 0 0 6px rgba(255, 215, 0, 0.6);
-  box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
-}
-.market-badge.market-ultra_confident {
-  background: linear-gradient(135deg, rgba(52, 232, 144, 0.3), rgba(0, 212, 255, 0.18));
-  border: 1px solid rgba(52, 232, 144, 0.7);
-  color: #34e890;
-}
-.market-badge.market-moderate {
-  background: rgba(0, 212, 255, 0.20);
-  border: 1px solid rgba(0, 212, 255, 0.55);
-  color: #00d4ff;
-}
+/* ダイヤモンドマーク (.market-badge) は backlog item 9 で完全削除済。
+   関連 CSS も撤去。代わりに L4 バッジ + ゴールド候補リストで情報を提示する。 */
 .ms-extra-item {
   font-size: 12px;
   line-height: 1.5;
@@ -2280,24 +2232,29 @@ main h2 {
 /* ============================================================
    本日 L4 投票候補リスト (時系列)
    ============================================================ */
+/* 「本日お金を入れる候補レース」: ゴール基調で「賭ける価値あり」を視覚的に
+   訴える (backlog item 8)。背景・ボーダー・見出し・行ハイライトを全て金系。 */
 .todays-picks-panel {
   margin: 14px 0 18px;
   padding: 14px 16px;
   border-radius: 10px;
   background: linear-gradient(135deg,
-    rgba(255, 215, 0, 0.05),
-    rgba(0, 212, 255, 0.04));
-  border: 1px solid rgba(255, 215, 0, 0.2);
+    rgba(255, 215, 0, 0.10),
+    rgba(255, 165, 0, 0.07) 60%,
+    rgba(255, 215, 0, 0.04));
+  border: 1px solid rgba(255, 215, 0, 0.45);
+  box-shadow: 0 0 20px rgba(255, 200, 0, 0.10), inset 0 0 30px rgba(255, 215, 0, 0.03);
 }
 .todays-picks-panel h3 {
   margin: 0 0 4px;
   font-size: 14px;
-  color: rgba(255, 215, 0, 0.95);
+  color: #ffd700;
   letter-spacing: 0.05em;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.45);
 }
 .todays-picks-hint {
   font-size: 11px;
-  color: rgba(255,255,255,0.55);
+  color: rgba(255, 230, 160, 0.65);
   margin: 0 0 10px;
 }
 .todays-picks-table {
@@ -2308,21 +2265,25 @@ main h2 {
 .todays-picks-table thead th {
   text-align: left;
   padding: 6px 8px;
-  background: rgba(255,255,255,0.05);
-  border-bottom: 1px solid rgba(255,255,255,0.15);
+  background: linear-gradient(180deg, rgba(255, 215, 0, 0.12), rgba(255, 165, 0, 0.06));
+  border-bottom: 1px solid rgba(255, 215, 0, 0.45);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: rgba(255,255,255,0.65);
+  color: rgba(255, 215, 0, 0.85);
 }
 .todays-picks-table tbody td {
   padding: 7px 8px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255, 215, 0, 0.12);
   vertical-align: middle;
 }
+/* 次に賭けるレース: 金色の光彩で強調 (旧ピンクから変更) */
 .todays-picks-table tbody tr.is-next {
-  background: rgba(255, 100, 200, 0.08);
-  outline: 1px solid rgba(255, 100, 200, 0.4);
+  background: linear-gradient(90deg,
+    rgba(255, 215, 0, 0.18),
+    rgba(255, 165, 0, 0.10));
+  outline: 1px solid rgba(255, 215, 0, 0.60);
+  box-shadow: 0 0 14px rgba(255, 215, 0, 0.25);
 }
 /* 締切済の行: 全体を半透明グレーに */
 .todays-picks-table tbody tr.is-closed {
@@ -2368,18 +2329,19 @@ main h2 {
   font-weight: normal;
   letter-spacing: 0;
 }
-.pick-idx { color: rgba(255,255,255,0.4); width: 30px; }
-.pick-time { font-family: monospace; font-weight: bold; color: #fff; width: 64px; }
-.pick-til { font-size: 11px; color: rgba(0,212,255,0.9); width: 70px; }
-.todays-picks-table tbody tr.is-next .pick-til { color: #ff64c8; font-weight: bold; }
-.pick-rank { font-size: 12px; font-weight: bold; width: 70px; }
-.pick-place { white-space: nowrap; }
-.pick-type { font-size: 11px; color: rgba(255,255,255,0.75); }
-.pick-racer { font-size: 11px; color: rgba(255,255,255,0.65); }
-.pick-rec { font-family: monospace; font-size: 13px; color: #4ade80; }
+/* ゴール基調 (backlog item 8): 候補リスト内の各セルを金系で統一 */
+.pick-idx { color: rgba(255, 215, 0, 0.50); width: 30px; }
+.pick-time { font-family: monospace; font-weight: bold; color: #ffe680; width: 64px; }
+.pick-til { font-size: 11px; color: rgba(255, 200, 0, 0.85); width: 70px; }
+.todays-picks-table tbody tr.is-next .pick-til { color: #fff7a1; font-weight: bold; text-shadow: 0 0 6px rgba(255,215,0,0.7); }
+.pick-rank { font-size: 12px; font-weight: bold; width: 70px; color: #ffd700; }
+.pick-place { white-space: nowrap; color: #ffe680; }
+.pick-type { font-size: 11px; color: rgba(255, 230, 160, 0.80); }
+.pick-racer { font-size: 11px; color: rgba(255, 230, 160, 0.70); }
+.pick-rec { font-family: monospace; font-size: 13px; color: #ffd700; font-weight: bold; text-shadow: 0 0 5px rgba(255, 215, 0, 0.45); }
 .pick-link a {
   font-size: 11px;
-  color: rgba(0, 212, 255, 0.9);
+  color: rgba(255, 215, 0, 0.85);
   text-decoration: none;
 }
 .pick-link a:hover { text-decoration: underline; }
