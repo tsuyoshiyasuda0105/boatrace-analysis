@@ -1282,54 +1282,57 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @cached(ttl=300)  # 5分キャッシュ
     def market_signals_for_date():
         """指定日のレース一覧で「市場非効率ベース +EV」シグナルを返す。
-        判定優先度:
-          1. final オッズ (確定後)
-          2. T-5min オッズ (締切5分前)
-          3. T-15min オッズ (締切15分前)
+        判定優先度 (L4 戦略の定義に合わせ T-X 1-2-3 オッズを最優先):
+          1. T-1min / T-2min / T-3min / T-4min / T-5min / T-15min 1-2-3 オッズ × 100
+             (= 朝賭けた時点の本命金額。1-2-3 ハズレ後の race_payouts より優先)
+          2. final 払戻 MIN (上記オッズが無い過去日のフォールバック)
         各レースのトリフェクタ1番人気の払戻を見て +EV/-EV ゾーンを判定
         """
         target_date = request.args.get("date") or date.today().isoformat()
 
         results: dict[str, dict] = {}
         with db_connect() as conn:
-            # final 払戻 (確定済レース)
-            cur = conn.execute("""
-                SELECT r.race_id, MIN(pp.payout) as min_payout, 'final' as src
-                FROM races r
-                JOIN race_payouts pp ON r.race_id = pp.race_id AND pp.bet_type = 'trifecta'
-                WHERE r.race_date = ?
-                GROUP BY r.race_id
-            """, (target_date,))
-            for rid, mp, src in cur.fetchall():
-                if mp:
-                    results[rid] = {"min_payout": mp, "source": src}
-
-            # T-5min / T-15min オッズ (未確定レース)
-            # snapshot_label 列が未マイグレーションの環境 (Supabase など) では skip
+            # === 優先 1: T-X 1-2-3 オッズ (朝/直前の本命) ===
+            # snapshot_label 列が未マイグレーションの環境では skip
             try:
-                for snap_label in ["T-5min", "T-15min"]:
+                # 1-2-3 オッズの最も新しい snapshot を優先 (T-1min > T-5min > T-15min)
+                # ここで MIN(odds) ではなく最新 snapshot の値を使う
+                for snap_label in ["T-1min", "T-2min", "T-3min", "T-4min", "T-5min", "T-15min"]:
                     cur = conn.execute("""
-                        SELECT r.race_id, MIN(o.odds) * 100 as min_payout
-                        FROM races r
-                        JOIN odds_trifecta o ON r.race_id = o.race_id
-                        WHERE r.race_date = ? AND o.snapshot_label = ?
-                        GROUP BY r.race_id
+                        SELECT r.race_id, o.odds * 100 as min_payout
+                          FROM races r
+                          JOIN odds_trifecta o ON r.race_id = o.race_id
+                         WHERE r.race_date = ?
+                           AND o.snapshot_label = ?
+                           AND o.combination = '1-2-3'
                     """, (target_date, snap_label))
                     for rid, mp in cur.fetchall():
                         if mp and rid not in results:
                             results[rid] = {"min_payout": int(mp), "source": snap_label}
             except Exception as e:
-                # UndefinedColumn 等 (Supabase 側スキーマ未更新)。
-                # final 払戻のみで縮退判定する。
                 err = str(e).lower()
                 if "snapshot_label" in err or "undefinedcolumn" in err or "column" in err:
-                    # Postgres は失敗したトランザクションを ABORT 状態にするので rollback
                     try:
                         conn.rollback()
                     except Exception:
                         pass
                 else:
                     raise
+
+            # === 優先 2: final 払戻 MIN (T-X オッズが無いレースのフォールバック) ===
+            # 1-2-3 が hit したケースでは正しい本命金額。
+            # 1-2-3 ハズレのケースでは別 combo の payout なので判定不正確
+            # (= 過去日で T-X オッズが無いレースはやむを得ず使う)。
+            cur = conn.execute("""
+                SELECT r.race_id, MIN(pp.payout) as min_payout
+                  FROM races r
+                  JOIN race_payouts pp ON r.race_id = pp.race_id AND pp.bet_type = 'trifecta'
+                 WHERE r.race_date = ?
+                 GROUP BY r.race_id
+            """, (target_date,))
+            for rid, mp in cur.fetchall():
+                if mp and rid not in results:
+                    results[rid] = {"min_payout": mp, "source": "final"}
 
         # === 朝判定用: 当日全レースの基本情報 + predictions を取得 ===
         # 例外は全て吸収し、本機能が使えなくても /api/market-signals は 200 を返す
