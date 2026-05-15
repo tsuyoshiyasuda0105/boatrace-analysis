@@ -1396,6 +1396,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if not (in_500_1000 and b_excluded):
                 return None
 
+            # L4 戦略の対象: 1号艇A1 + SG/G1/G2/G3 のみ。
+            # 一般戦 (grade=5) は回収率 147.7% で他より低いため除外。
             base = None
             if cls == 1:
                 if grade == 1:
@@ -1410,12 +1412,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 4:
                     base = {"level": "G3", "label": "🎯L4 G3×A1",
                             "recovery": 149.2, "bet": "3連単 1-2-3", "n": 195}
-                elif grade == 5:
-                    base = {"level": "general", "label": "🎯L4 一般戦×A1",
-                            "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776}
-                else:
-                    base = {"level": "default", "label": "🎯L4 A1",
-                            "recovery": 160.8, "bet": "3連単 1-2-3", "n": 2210}
+                # grade == 5 (一般戦) と grade unknown は対象外
             # A2 派生は L4 戦略対象外なので表示しない
             if not base:
                 return None
@@ -1445,6 +1442,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if not b_excluded:
                 return None
             # 1号艇 A1 + prob_first 0.65-0.85 → 500-1000帯候補
+            # 一般戦 (grade=5) は回収率が低い (147.7%) ので対象外。SG/G1/G2/G3 のみ。
             base = None
             if cls == 1 and 0.65 <= prob_first < 0.85:
                 if grade == 1:
@@ -1459,13 +1457,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 4:
                     base = {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
                             "recovery": 149.2, "n": 195}
-                elif grade == 5:
-                    base = {"level": "morning_general", "label": "🌅🎯朝L4 一般戦候補",
-                            "recovery": 147.7, "n": 1776}
-                else:
-                    base = {"level": "morning_default", "label": "🌅🎯朝L4 候補",
-                            "recovery": 160.8, "n": 2210}
-            # A2 派生は L4 戦略対象外
+                # grade == 5 (一般戦) と grade unknown は対象外
+            # A2 派生・一般戦は L4 戦略対象外
             if not base:
                 return None
 
@@ -1660,8 +1653,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             #   odds - T-X 1-2-3 オッズ × 100 が 500-1000 (確定前 or 1-2-3 ハズレ)
             if stadium in EXCLUDE_B_VENUES:
                 continue
-            if cls not in (1, 2):
-                continue
+            if cls != 1:
+                continue  # A1 のみ
+            if grade == 5:
+                continue  # 一般戦は対象外
             is_l4_base = False
             if fav_pay is not None:
                 # confirmed: 実本命金額が L4 範囲
@@ -1770,14 +1765,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             (rid, rno, closed, stadium, grade, cls, racer_name,
              natl_1, local_1, fav_pay, fav_odds, prob_first, w1, w2, w3,
              win_pay, exa_pay, tri_pay) = row
-            if cls not in (1, 2):
-                continue
+            if cls != 1:
+                continue  # A1 のみ (A2 派生は対象外)
             if stadium in EXCLUDE_B_VENUES:
                 continue
+            if grade == 5:
+                continue  # 一般戦は回収率が低いため対象外 (147.7%)
             # === L4 候補判定 (厳密: 本命金額 500-1000 のみ) ===
             # L4 戦略の定義: 本命オッズ 5-10倍 (= 500-1000円帯)
-            # 朝予測 prob_first は参考情報。ROI 集計に算入するのは
-            # 「本命金額が実際に 500-1000円帯のレース」のみ。
             fav = None
             fav_source = None
             if fav_pay is not None:
