@@ -25,63 +25,49 @@
     {% endif %}
   </p>
 
+  <p class="strat-hint">
+    本ページは <strong>L4 [A1] 戦略</strong> のレースのみ表示しています
+    (1号艇 A1 + 本命500-1000円 + B除外会場)。<br>
+    買い方: 単勝1 / 2連単 1-2 / 3連単 1-2-3 を各 ¥100 (1レース合計 ¥300 投資)
+    {% if n_a2_total > 0 %}<br><small>(参考: A2派生は別 {{ n_a2_total }} 件あり、ROI ダッシュボードで通算 ROI 確認可能)</small>{% endif %}
+  </p>
+
   <div class="races-summary">
     <div class="rsum-card">
-      <span class="rs-label">L4 候補レース</span>
+      <span class="rs-label">L4 [A1] 候補</span>
       <span class="rs-value">{{ n_total }}</span>
-      <span class="rs-sub">A1: <strong>{{ n_a1 }}</strong> / A2派生: <strong>{{ n_a2 }}</strong></span>
+      <span class="rs-sub">🥇 L4++ {{ n_pp }} / 🥈 L4+ {{ n_p }}</span>
     </div>
     <div class="rsum-card">
       <span class="rs-label">確定状況</span>
       <span class="rs-value">{{ n_done }} / {{ n_total }}</span>
       <span class="rs-sub">未確定 {{ n_pending }} 件</span>
     </div>
-  </div>
-
-  {# === L4 [A1] 戦略 (1号艇 A1, 単勝 + 12 + 123) === #}
-  <h3 class="strat-heading">⭐ L4 [A1] 戦略 — 1号艇A1, {{ n_done_a1 }} 確定済</h3>
-  <p class="strat-hint">買い方: 単勝1 / 2連単 1-2 / 3連単 1-2-3 を各 ¥100 (1レース合計 ¥300 投資)</p>
-  <div class="races-summary">
-    <div class="rsum-card {% if a1_win.roi and a1_win.roi >= 100 %}positive{% elif a1_win.roi is not none %}negative{% endif %}">
+    <div class="rsum-card {% if win_sum.roi and win_sum.roi >= 100 %}positive{% elif win_sum.roi is not none %}negative{% endif %}">
       <span class="rs-label">単勝 1号艇</span>
       <span class="rs-value">
-        {% if a1_win.roi is not none %}{{ '%.1f' | format(a1_win.roi) }}%{% else %}-{% endif %}
+        {% if win_sum.roi is not none %}{{ '%.1f' | format(win_sum.roi) }}%{% else %}-{% endif %}
       </span>
       <span class="rs-sub">
-        HIT <strong>{{ a1_win.hit }}/{{ a1_win.done }}</strong> | 損益 {{ a1_win.profit | signed_comma }} 円
+        HIT <strong>{{ win_sum.hit }}/{{ win_sum.done }}</strong> | 損益 {{ win_sum.profit | signed_comma }} 円
       </span>
     </div>
-    <div class="rsum-card {% if a1_exa.roi and a1_exa.roi >= 100 %}positive{% elif a1_exa.roi is not none %}negative{% endif %}">
+    <div class="rsum-card {% if exa_sum.roi and exa_sum.roi >= 100 %}positive{% elif exa_sum.roi is not none %}negative{% endif %}">
       <span class="rs-label">2連単 1-2</span>
       <span class="rs-value">
-        {% if a1_exa.roi is not none %}{{ '%.1f' | format(a1_exa.roi) }}%{% else %}-{% endif %}
+        {% if exa_sum.roi is not none %}{{ '%.1f' | format(exa_sum.roi) }}%{% else %}-{% endif %}
       </span>
       <span class="rs-sub">
-        HIT <strong>{{ a1_exa.hit }}/{{ a1_exa.done }}</strong> | 損益 {{ a1_exa.profit | signed_comma }} 円
+        HIT <strong>{{ exa_sum.hit }}/{{ exa_sum.done }}</strong> | 損益 {{ exa_sum.profit | signed_comma }} 円
       </span>
     </div>
-    <div class="rsum-card {% if a1_tri.roi and a1_tri.roi >= 100 %}positive{% elif a1_tri.roi is not none %}negative{% endif %}">
+    <div class="rsum-card {% if tri_sum.roi and tri_sum.roi >= 100 %}positive{% elif tri_sum.roi is not none %}negative{% endif %}">
       <span class="rs-label">3連単 1-2-3</span>
       <span class="rs-value">
-        {% if a1_tri.roi is not none %}{{ '%.1f' | format(a1_tri.roi) }}%{% else %}-{% endif %}
+        {% if tri_sum.roi is not none %}{{ '%.1f' | format(tri_sum.roi) }}%{% else %}-{% endif %}
       </span>
       <span class="rs-sub">
-        HIT <strong>{{ a1_tri.hit }}/{{ a1_tri.done }}</strong> | 損益 {{ a1_tri.profit | signed_comma }} 円
-      </span>
-    </div>
-  </div>
-
-  {# === L4-A2 派生戦略 (1号艇 A2, 3連単 1-2-3 のみ) === #}
-  <h3 class="strat-heading">📈 L4-A2 派生戦略 — 1号艇A2, {{ n_done_a2 }} 確定済</h3>
-  <p class="strat-hint">買い方: 3連単 1-2-3 のみ ¥100 (検証回収率 134%)</p>
-  <div class="races-summary">
-    <div class="rsum-card {% if a2_tri.roi and a2_tri.roi >= 100 %}positive{% elif a2_tri.roi is not none %}negative{% endif %}">
-      <span class="rs-label">3連単 1-2-3</span>
-      <span class="rs-value">
-        {% if a2_tri.roi is not none %}{{ '%.1f' | format(a2_tri.roi) }}%{% else %}-{% endif %}
-      </span>
-      <span class="rs-sub">
-        HIT <strong>{{ a2_tri.hit }}/{{ a2_tri.done }}</strong> | 損益 {{ a2_tri.profit | signed_comma }} 円
+        HIT <strong>{{ tri_sum.hit }}/{{ tri_sum.done }}</strong> | 損益 {{ tri_sum.profit | signed_comma }} 円
       </span>
     </div>
   </div>

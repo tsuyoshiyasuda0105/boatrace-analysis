@@ -1943,32 +1943,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def member_strategy_races():
         """指定日の L4 該当レース一覧 (会員限定)
         単勝 / 2連単1-2 / 3連単1-2-3 の通算 ROI を併記。
+        A2 派生 は別戦略のため明細には表示せず、L4 [A1] のみ。
         """
         target_date = request.args.get("date") or date.today().isoformat()
         try:
             date.fromisoformat(target_date)
         except ValueError:
             return "Invalid date format", 400
-        races = _l4_races_for_date(target_date)
-        # 内訳カウント
+        all_races = _l4_races_for_date(target_date)
+        # 明細では A1 (1号艇A1) のみ表示
+        races = [r for r in all_races if r["class"] == 1]
+        # 内訳カウント (A1 のみに絞り済)
         n_total = len(races)
-        n_a1 = sum(1 for r in races if r["class"] == 1)
-        n_a2 = sum(1 for r in races if r["class"] == 2)
         n_pp = sum(1 for r in races if r["rank"] == "L4++")
         n_p = sum(1 for r in races if r["rank"] == "L4+")
         n_pending = sum(1 for r in races if not r["is_done"])
-        # 確定済み数 (損益計算の母数)
         n_done = sum(1 for r in races if r["is_done"])
-        # A1 のみ / A2 のみの確定済数
-        n_done_a1 = sum(1 for r in races if r["is_done"] and r["class"] == 1)
-        n_done_a2 = sum(1 for r in races if r["is_done"] and r["class"] == 2)
+        # 参考: A2 派生は別戦略 (明細表示はしないが、件数のみ参考表示)
+        n_a2_total = sum(1 for r in all_races if r["class"] == 2)
 
-        # 集計関数: クラス別フィルタ可能
-        def _summarize(key_hit, key_pay, cls_filter=None):
-            if cls_filter is None:
-                rs = [r for r in races if r["is_done"]]
-            else:
-                rs = [r for r in races if r["is_done"] and r["class"] == cls_filter]
+        def _summarize(key_hit, key_pay):
+            rs = [r for r in races if r["is_done"]]
             n_bets = len(rs)
             n_hit = sum(1 for r in rs if r[key_hit])
             pay_sum = sum(r[key_pay] for r in rs if r[key_hit])
@@ -1978,14 +1973,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return {"hit": n_hit, "done": n_bets, "pay": pay_sum,
                     "cost": cost, "roi": roi, "profit": profit}
 
-        # 戦略別 (L4 戦略は A1 単勝/12/123 + A2 派生 123 で買う想定)
-        # A1 戦略 (3 種類の買い目)
-        a1_win = _summarize("win_hit", "win_pay", cls_filter=1)
-        a1_exa = _summarize("exa_hit", "exa_pay", cls_filter=1)
-        a1_tri = _summarize("tri_hit", "tri_pay", cls_filter=1)
-        # A2 派生戦略 (3連単 1-2-3 のみ)
-        a2_tri = _summarize("tri_hit", "tri_pay", cls_filter=2)
-        # 旧テンプレ互換 (A1+A2 合算)
         win_sum = _summarize("win_hit", "win_pay")
         exa_sum = _summarize("exa_hit", "exa_pay")
         tri_sum = _summarize("tri_hit", "tri_pay")
@@ -1995,15 +1982,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             target_date=target_date,
             today_iso=date.today().isoformat(),
             races=races,
-            n_total=n_total, n_a1=n_a1, n_a2=n_a2,
+            n_total=n_total,
             n_pp=n_pp, n_p=n_p,
             n_pending=n_pending, n_done=n_done,
-            n_done_a1=n_done_a1, n_done_a2=n_done_a2,
-            # クラス別サマリ (主軸)
-            a1_win=a1_win, a1_exa=a1_exa, a1_tri=a1_tri, a2_tri=a2_tri,
-            # A1+A2 合算 (参考)
+            n_a2_total=n_a2_total,
             win_sum=win_sum, exa_sum=exa_sum, tri_sum=tri_sum,
-            # 後方互換: 旧テンプレが参照するフィールドも残す
+            # 後方互換
             n_tri_hit=tri_sum["hit"], n_tri_done=n_done,
             tri_roi=tri_sum["roi"], tri_profit=tri_sum["profit"],
         )
