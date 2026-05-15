@@ -27,15 +27,71 @@
       </div>
 
       <div class="legend-section">
-        <h4>🎯 L4 グレード別ラベル (1号艇 A1 のみ、SG/G1/G2/G3 のみ)</h4>
+        <h4>🔧 実装済み L4 フィルタ一覧 (検証 ROI 付き)</h4>
+        <p class="legend-intro">
+          L4 戦略は複数の判定条件を重ね合わせた絞り込み戦略です。
+          数字はすべて過去 4 年分の backtest 実測値。
+        </p>
+
+        <h5>📋 基本フィルタ (全 L4 候補に適用)</h5>
         <ul class="legend-list">
-          <li><b>👑 L4 SG×A1</b> 258.2%</li>
-          <li><b>👑 L4 G1×A1</b> 242.8%</li>
-          <li><b>👑 L4 G2×A1</b> 242.7%</li>
-          <li><b>🎯 L4 G3×A1</b> 149.2%</li>
-          <li><b>🌅 朝L4候補</b> 予測ベース、オッズ確定前 (T-15min より早い)</li>
-          <li><small>※ 一般戦 (147.7%) は対象外</small></li>
+          <li>✅ <b>1号艇 = A1 選手</b> (class_number = 1)</li>
+          <li>✅ <b>本命金額 500-1000円</b> (= 3連単 1-2-3 オッズ 5-10倍)
+            <ul>
+              <li>判定優先: T-X 1-2-3 オッズ → race_payouts MIN フォールバック</li>
+            </ul>
+          </li>
+          <li>✅ <b>B 除外会場</b> (戸田/蒲郡/三国/芦屋/常滑/下関/平和島/大村)</li>
+          <li>✅ <b>SG/G1/G2/G3 のみ</b> (一般戦は ROI 計算除外、参考バッジで表示)</li>
+          <li>✅ <b>☔ 雨予報レース除外</b> (race_previews.weather_number=3、ROI ~100% で break-even)</li>
         </ul>
+
+        <h5>🎯 グレード別 ROI (L4 基本のサブ分類)</h5>
+        <ul class="legend-list">
+          <li>👑 <b>L4 SG×A1</b> ROI <b>258.2%</b> (n=40)</li>
+          <li>👑 <b>L4 G1×A1</b> ROI <b>242.8%</b> (n=227)</li>
+          <li>👑 <b>L4 G2×A1</b> ROI <b>242.7%</b> (n=30)</li>
+          <li>🎯 <b>L4 G3×A1</b> ROI <b>149.2%</b> (n=195)</li>
+        </ul>
+
+        <h5>🏅 選手ランクオーバーレイ (国1%/局1% で +EV 強化)</h5>
+        <ul class="legend-list">
+          <li>🥈 <b>L4+ (plus)</b>: 1号艇 国1着率 ≥7.0% → ROI 188.2%</li>
+          <li>🥇 <b>L4++ (plus_plus)</b>: 国1着率 ≥7.0% かつ 局1着率 ≥7.0% → ROI 190.3%</li>
+        </ul>
+
+        <h5>⚡ 強力オーバーレイ (資金多め推奨)</h5>
+        <ul class="legend-list">
+          <li>🚀 <b>L4+1c80</b>: 1号艇選手の過去 6ヶ月 1コース 1着率 ≥80% (最低 20 戦)
+              → ROI <b>215%</b> (通常 L4 から +25pt) ★1.5-2x 資金推奨</li>
+          <li>🔥 <b>L4 PRO</b>: 平均ST &lt;0.16 + 30-49歳 + 展示ST &lt;0.18
+              → ROI <b>241.5%</b> (通常 L4 から +49pt) ★2-2.5x 資金推奨
+              <br><small>※ 展示前 (朝予測) は 2 条件のみで PRO 候補扱い</small></li>
+          <li>🔥🚀 <b>最強 (PRO + 1c80)</b>: 紫+オレンジ+黄グラデ → ROI 推定 260%+ ★2.5-3x 資金推奨</li>
+        </ul>
+
+        <h5>🌤️ 天候フィルタ (情報、ROI 集計には反映済)</h5>
+        <ul class="legend-list">
+          <li>🌤️ <b>曇</b>: ROI 241% (最強) / ☀️ <b>晴</b>: ROI 218%</li>
+          <li>☔ <b>雨</b>: ROI 100.8% → 自動除外 (バッジには ☔プレフィックス、ROI 計算外)</li>
+        </ul>
+
+        <h5>🌅 朝予測モード</h5>
+        <ul class="legend-list">
+          <li>🌅 <b>朝L4候補</b>: オッズ確定前 (T-15min 前)、モデル予測ベース
+              <br>判定: prob_first 0.65-0.85 (= 本命500-1000円帯相当)</li>
+        </ul>
+
+        <h5>📌 参考バッジ (ROI 計算外、本日候補リスト除外)</h5>
+        <ul class="legend-list">
+          <li>📌 <b>L4 一般戦×A1</b>: 一般戦は ROI 147.7% で低めのため除外 (バッジは表示)</li>
+          <li>☔ <b>L4 (雨除外)</b>: 雨予報のレース (ROI 100% で break-even のため除外)</li>
+        </ul>
+
+        <p class="legend-note">
+          ※ <b>非実装</b>のフィルタ: モーター 2連率、選手×会場 1着率、1号艇切り穴狙い
+          (検証で効果薄 or 赤字のため非採用)
+        </p>
       </div>
 
       <div class="legend-section">
