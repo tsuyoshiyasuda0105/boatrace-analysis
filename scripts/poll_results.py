@@ -101,39 +101,43 @@ def main():
             return
         print(f"[{target_date}] {n_done}/{n_races} レース確定済、結果取得開始")
 
-    # API から結果を取得 (Open API = boatraceopenapi.github.io)
-    # 注: GitHub Pages 経由でバッチ更新されるため数時間遅延がある。
-    payload = fetch_results(target_date)
-    n_openapi = 0
-    if payload:
-        n_openapi = len(payload.get("results", []))
-        print(f"[{target_date}] Open API: {n_openapi} レース分の結果")
-
     # DB に書き込み (DATABASE_URL あれば Supabase に直書き)
+    #
+    # 順序: Layer 3 (速報) → Open API (上書き=正)
+    # 1. Layer 3 boatrace.jp スクレイプ
+    #    レース終了 ~5 分後にすぐ反映。L4 [A1] 候補のみ (BAN リスク低減)。
+    # 2. Open API (公式バッチ、数時間遅延)
+    #    全レース対象。Layer 3 が書いた値も同 race_id で上書きする
+    #    (Open API の数値が「正」)。
+    # → ROI 速報性を保ちつつ、最終的に Open API データに収束する。
     with db_connect() as conn:
-        try:
-            if payload:
-                n_results = upsert_results(conn, payload)
-                conn.commit()
-                print(f"  upsert_results (Open API): {n_results} 行更新")
-        except Exception as e:
-            print(f"  Open API ERROR: {e}")
-
-        # === Layer 3 フォールバック: boatrace.jp から直接スクレイプ ===
-        # Open API の更新は数時間遅延するため、締切から 5 分以上経過しても
-        # race_payouts に乗っていないレースを補完する。
+        # === Layer 3 (速報): L4 [A1] 候補のみ ===
         try:
             scraped = scrape_results_for_pending_races(target_date, conn)
             n_scraped = len(scraped["results"])
             if n_scraped > 0:
-                print(f"  Layer3 scrape: {n_scraped} レースを boatrace.jp から取得")
+                print(f"[{target_date}] Layer3 scrape: {n_scraped} レースを boatrace.jp から取得 (速報)")
                 n_added = upsert_results(conn, scraped)
                 conn.commit()
-                print(f"  upsert_results (Layer3): {n_added} 行更新")
+                print(f"  upsert_results (Layer3 速報): {n_added} 行")
             else:
-                print(f"  Layer3 scrape: 補完対象なし (Open API で全て埋まっているか、まだレース直後)")
+                print(f"[{target_date}] Layer3 scrape: 補完対象なし")
         except Exception as e:
             print(f"  Layer3 ERROR: {e}")
+
+        # === Open API (公式バッチ): 全レース対象、上書き正 ===
+        payload = fetch_results(target_date)
+        if payload:
+            n_openapi = len(payload.get("results", []))
+            print(f"[{target_date}] Open API: {n_openapi} レース分の結果")
+            try:
+                n_results = upsert_results(conn, payload)
+                conn.commit()
+                print(f"  upsert_results (Open API 上書き): {n_results} 行")
+            except Exception as e:
+                print(f"  Open API ERROR: {e}")
+        else:
+            print(f"[{target_date}] Open API: レスポンスなし")
 
     print(f"[{target_date}] 完了")
 

@@ -62,21 +62,27 @@ def scrape_results_for_pending_races(target_date: date, conn,
     """指定日の「締切後だが race_payouts が無い」レースを抽出し、
     boatrace.jp から結果をスクレイプして upsert_results 互換ペイロードに梱包。
 
-    BAN リスク低減のため、デフォルトでは L4 候補レースのみを対象とする
-    (~18件/日)。非候補は Open API のバッチ更新を待つ。
-    l4_only=False で従来通り全レース対象 (~150件/日)。
+    BAN リスク低減のため、デフォルトでは L4 [A1] 候補レースのみを対象とする
+    (~5-10件/日)。条件:
+      - 1号艇 A1 (class_number = 1)
+      - SG/G1/G2/G3 のみ (grade_number IN 1,2,3,4、一般戦 5 は除外)
+      - B 除外会場でない
+      - 朝予測 prob_first 0.65-0.85 (≈ 本命500-1000円帯)
+    後で Open API のバッチ更新 (~2-3h 遅延) が来ると upsert_results の
+    INSERT OR REPLACE で自動的に上書きされる (Open API の数値が「正」)。
+    l4_only=False で従来通り全レース対象 (~150件/日).
 
     Args:
         target_date: 対象日
         conn: DB connection (psycopg or sqlite)
-        l4_only: True=L4 候補のみ (default), False=全レース
+        l4_only: True=L4 [A1] 候補のみ (default), False=全レース
     Returns:
         {"results": [race_dict, ...]} の dict (upsert_results に渡せる形)。
         該当無しなら {"results": []}.
     """
     from datetime import datetime, timedelta
 
-    # === L4 候補レース ID 集合 (predictions ベース) ===
+    # === L4 [A1] 候補レース ID 集合 (predictions ベース) ===
     l4_candidate_ids: set[str] = set()
     if l4_only:
         EXCLUDE_B = (2, 4, 7, 8, 10, 19, 21, 24)
@@ -90,15 +96,14 @@ def scrape_results_for_pending_races(target_date: date, conn,
                   JOIN predictions p  ON p.race_id = r.race_id AND p.boat_number = 1
                  WHERE r.race_date = ?
                    AND r.stadium_number NOT IN ({placeholders})
-                   AND (
-                        (e.class_number = 1 AND p.prob_first BETWEEN ? AND ?)
-                     OR (e.class_number = 2 AND p.prob_first BETWEEN ? AND ?)
-                   )
+                   AND e.class_number = 1
+                   AND r.race_grade_number IN (1, 2, 3, 4)
+                   AND p.prob_first BETWEEN ? AND ?
                 """,
-                (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85, 0.55, 0.75),
+                (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85),
             )
             l4_candidate_ids = {row[0] for row in cur.fetchall()}
-            logger.info("L4 candidates for %s: %d races", target_date, len(l4_candidate_ids))
+            logger.info("L4 [A1] candidates for %s: %d races", target_date, len(l4_candidate_ids))
         except Exception as e:
             logger.warning("L4 candidate lookup failed (%s) → falling back to all races", e)
             l4_only = False  # safety net
