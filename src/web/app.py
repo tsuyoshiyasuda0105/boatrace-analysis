@@ -962,6 +962,25 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except FileNotFoundError as e:
             logger.warning("model not loaded: %s. UI will show error until model is trained.", e)
 
+        # ===== 起動後バックグラウンドで今日の三連単キャッシュを温める =====
+        # /api/ev-races の初回コールド ~40 秒のレイテンシ (predict_date + per_winner)
+        # を完全に隠す。ユーザの初回アクセスは即キャッシュヒット。
+        # 失敗してもアプリは動く (例: モデル未ロード時)。
+        if predictor.artifact is not None:
+            import threading as _th
+            def _bg_warm_today():
+                try:
+                    today = date.today().isoformat()
+                    logger.info("[bg-warm] starting trifecta cache warm for %s", today)
+                    t0 = time.time()
+                    predictor.predict_date(today)
+                    n = predictor.warm_trifecta_cache(today)
+                    logger.info("[bg-warm] completed %s: %d races in %.1fs",
+                                today, n, time.time()-t0)
+                except Exception as e:
+                    logger.warning("[bg-warm] failed: %s", e)
+            _th.Thread(target=_bg_warm_today, daemon=True, name="bg-warm-today").start()
+
     @app.route("/healthz")
     def healthz():
         return {"status": "ok", "model_loaded": predictor.artifact is not None}
@@ -1157,14 +1176,36 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if snapshot == "auto":
                 snapshot = "final"
 
+        # オッズと race_id を **1 クエリで** 取得 (旧実装は race_id 取得→各レースで再クエリ)
         with db_connect() as conn:
             rows = conn.execute("""
-                SELECT DISTINCT o.race_id
+                SELECT o.race_id, o.combination, o.odds
                   FROM odds_trifecta o
                   JOIN races r ON o.race_id = r.race_id
                  WHERE r.race_date = ? AND o.snapshot_label = ?
             """, (target_date, snapshot)).fetchall()
-        race_ids = [r[0] for r in rows]
+        odds_by_race: dict[str, dict[str, float]] = {}
+        for rid, comb, o in rows:
+            try:
+                odds_by_race.setdefault(rid, {})[comb] = float(o)
+            except (TypeError, ValueError):
+                continue
+        race_ids = list(odds_by_race.keys())
+
+        # 三連単 joint 確率を **1 回の batch** で全レース計算 → 個別 cache に格納
+        # (個別 find_value_bets_for_race は cache を hit するだけになる)
+        try:
+            predictor.warm_trifecta_cache(target_date)
+        except Exception as e:
+            logger.warning("warm_trifecta_cache failed: %s", e)
+
+        # decay_table も 1 回だけロード (各レース計算で使い回し)
+        try:
+            from src.analysis.decay_factor import load_decay_table
+            decay_table_shared = load_decay_table()
+        except Exception:
+            decay_table_shared = None
+
         ev_marks: dict[str, dict] = {}
         n_positive = 0
         for rid in race_ids:
@@ -1177,6 +1218,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ev_threshold=-1.0,
                     min_prob=0.05,
                     max_odds=100.0,
+                    odds_lookup=odds_by_race.get(rid),
+                    decay_table=decay_table_shared,
                 )
                 if r and r.get("value_bets"):
                     best = r["value_bets"][0]
@@ -1234,12 +1277,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify({"info": info, "predictions": preds})
 
     @app.route("/api/odds-123-timeline")
+    @cached(ttl=20)  # 20秒キャッシュ (JS 側 60秒ポーリング、複数タブ/ユーザ間で再利用)
     def odds_123_timeline():
         """指定日の各レースの '1-2-3' 三連単オッズ推移を返す。
         odds_scheduler が T-5min..T-1min で毎分スナップショットを残す前提。
         本日お金を入れる候補レース欄で締切までのオッズ変動を可視化するため、
         ブラウザ側で 30 秒ごとに再取得して描画する。
-        cache はかけない (リアルタイム更新のため)。
+        20 秒キャッシュ: 同時アクセスで Supabase に同じクエリが集中するのを防ぐ。
         """
         target_date = request.args.get("date") or date.today().isoformat()
         result: dict[str, dict] = {}

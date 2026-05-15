@@ -264,16 +264,72 @@ class Predictor:
             "top_combos": top_combos,
         }
 
+    def warm_trifecta_cache(self, target_date: str, mode: str = "per_winner") -> int:
+        """指定日全レースの三連単 joint 確率を **1回の per_winner 呼び出しで** 計算し、
+        個別 race_id 用キャッシュにバラして格納する。
+
+        旧実装は ``find_value_bets_for_race`` を 156 回ループする際、
+        毎回 ``predict_trifecta_per_winner(df[df.race_id==rid])`` を呼んでいて
+        DataFrame 生成 / groupby / model.predict_proba の Python オーバヘッドが重複していた。
+        ここで全レースを 1 度の groupby で処理すれば numpy/pandas のベクトル化が効きやすい。
+
+        Returns: ウォームしたレース数。
+        """
+        df = self.predict_date(target_date)
+        if df.empty:
+            return 0
+        race_ids = df["race_id"].drop_duplicates().tolist()
+        # 既に全レースキャッシュ済みならスキップ
+        missing = [rid for rid in race_ids
+                   if f"{target_date}::{rid}::{mode}" not in self._tri_cache]
+        if not missing:
+            return 0
+        df_missing = df[df["race_id"].isin(missing)].copy()
+        if mode == "per_winner" and self.per_winner is not None:
+            result = predict_trifecta_per_winner(
+                df_missing, self.per_winner["s2"], self.per_winner["s3"],
+                fallback_s2_model=self.cascade["stage2_model"] if self.cascade else None,
+                fallback_s2_features=self.cascade["stage2_features"] if self.cascade else None,
+                fallback_s3_model=self.cascade["stage3_model"] if self.cascade else None,
+                fallback_s3_features=self.cascade["stage3_features"] if self.cascade else None,
+            )
+        elif mode == "unified" and self.cascade is not None:
+            result = predict_trifecta_joint(
+                df_missing,
+                self.cascade["stage2_model"], self.cascade["stage2_features"],
+                self.cascade["stage3_model"], self.cascade["stage3_features"],
+                pattern_2nd=self.cascade.get("pattern_2nd"),
+                pattern_3rd=self.cascade.get("pattern_3rd"),
+            )
+        else:
+            return 0
+        n = 0
+        with self._lock:
+            for rid, combos in result.items():
+                sorted_combos = sorted(combos.items(), key=lambda x: -x[1])
+                self._tri_cache[f"{target_date}::{rid}::{mode}"] = sorted_combos
+                n += 1
+            self._evict_cache(self._tri_cache, self._MAX_TRI_CACHE)
+        return n
+
     def find_value_bets_for_race(
         self, target_date: str, race_id: str,
         snapshot_label: str = "T-5min",
         ev_threshold: float = 0.0,
         min_prob: float = 0.005,
         max_odds: float = 500.0,
+        odds_lookup: Optional[dict] = None,
+        decay_table=None,
     ) -> Optional[dict]:
         """
         指定レース・スナップショットラベルのオッズを使って EV+ 組合せを検出。
         decay_factor (DB) を適用して adjusted_odds で EV を計算。
+
+        Args:
+          odds_lookup: ``{combination: odds}`` の事前取得 dict (バッチ呼出側で再利用)。
+                       None なら本関数内で DB から取得する。
+          decay_table: 事前ロード済の decay_table。None なら load_decay_table() を呼ぶ
+                       (内部で 30分キャッシュあり、ホットパスで実害なし)。
 
         Returns:
           {
@@ -286,24 +342,27 @@ class Predictor:
         from src.analysis.decay_factor import (
             load_decay_table, adjust_odds_with_decay,
         )
+        from src.db.connection import connect as db_connect
 
         # 三連単 joint 確率を取得
         combos = self.predict_trifecta(target_date, race_id, mode="per_winner")
         if not combos:
             return None
 
-        # スナップショット時点のオッズを取得
-        with __import__("sqlite3").connect(config.DB_PATH, timeout=30) as conn:
-            cur = conn.execute(
-                "SELECT combination, odds FROM odds_trifecta "
-                "WHERE race_id = ? AND snapshot_label = ?",
-                (race_id, snapshot_label),
-            )
-            odds_lookup = {r[0]: float(r[1]) for r in cur.fetchall()}
+        # スナップショット時点のオッズを取得 (事前取得済なら再利用)
+        if odds_lookup is None:
+            with db_connect() as conn:
+                cur = conn.execute(
+                    "SELECT combination, odds FROM odds_trifecta "
+                    "WHERE race_id = ? AND snapshot_label = ?",
+                    (race_id, snapshot_label),
+                )
+                odds_lookup = {r[0]: float(r[1]) for r in cur.fetchall()}
         if not odds_lookup:
             return None
 
-        decay_table = load_decay_table()
+        if decay_table is None:
+            decay_table = load_decay_table()
 
         # combos は list[(combination, prob)] 形式
         combo_dict = dict(combos)

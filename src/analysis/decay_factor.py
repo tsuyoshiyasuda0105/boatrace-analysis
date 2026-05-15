@@ -17,6 +17,8 @@ EV 計算時:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -25,6 +27,12 @@ import pandas as pd
 from src.db.connection import connect as db_connect
 
 logger = logging.getLogger(__name__)
+
+# プロセス内キャッシュ (decay_factor は静的データ、起動後に変化しない)
+# 156レース × 1日 で 156 回 DB往復していたのを 1 回に減らす
+_DECAY_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+_DECAY_CACHE_LOCK = threading.Lock()
+_DECAY_CACHE_TTL = 1800  # 30 分
 
 
 # odds 帯域の定義 (bucket label, lower, upper)
@@ -163,9 +171,30 @@ def save_decay_table(decay_table: pd.DataFrame, db_path: Optional[str] = None) -
 
 
 def load_decay_table(db_path: Optional[str] = None) -> pd.DataFrame:
+    """decay_factor テーブルをロード。プロセス内 30 分キャッシュ付き。
+
+    EV 計算で 1 リクエストあたり 100+ レース分呼び出されるため、
+    毎回 DB を叩くと Supabase 往復で大きなロスになる。
+    decay_factor は build_decay_table バッチで更新する静的データなので、
+    プロセス内で 30 分キャッシュしても安全。
+    """
+    cache_key = db_path or "__default__"
+    now = time.time()
+    with _DECAY_CACHE_LOCK:
+        cached = _DECAY_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _DECAY_CACHE_TTL:
+            return cached[1]
     with db_connect(db_path) as conn:
         try:
             df = pd.read_sql_query("SELECT * FROM decay_factor", conn)
         except Exception:
             df = pd.DataFrame(columns=["bucket", "n", "mean_decay", "median_decay", "std_decay"])
+    with _DECAY_CACHE_LOCK:
+        _DECAY_CACHE[cache_key] = (now, df)
     return df
+
+
+def invalidate_decay_cache() -> None:
+    """decay_factor を build_decay_table で再生成した直後に呼ぶ。"""
+    with _DECAY_CACHE_LOCK:
+        _DECAY_CACHE.clear()

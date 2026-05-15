@@ -117,8 +117,6 @@
         <h4>その他のマーク</h4>
         <ul class="legend-list">
           <li><span class="badge">確定</span> レース結果が出ているレース</li>
-          <li><span class="legend-chip" style="background:#16a34a;color:#fff">+EV</span>
-              EV+ 自動判定 (上部の閾値設定で変動)</li>
           <li>📬 通知登録 (上部ヘッダ) からメール通知の購読が可能。
               <b>L4++</b> / <b>L4+</b> / <b>L4 SG/G1/G2</b> / <b>朝候補</b> など細かく選べる。</li>
         </ul>
@@ -145,27 +143,11 @@
       {{ total.value }} レース
     </p>
 
+    {% if not is_pro() %}
     <div class="ev-controls">
-      <span class="ev-status-prefix">★ EV+ 自動判定</span>
-      <select id="ev-snapshot" class="ev-select">
-        <option value="auto" selected>自動 (T-15→T-5→final)</option>
-        <option value="T-15min">T-15min</option>
-        <option value="T-5min">T-5min</option>
-        <option value="T-1min">T-1min</option>
-        <option value="final">確定オッズ</option>
-      </select>
-      <select id="ev-threshold" class="ev-select">
-        <option value="0.0" selected>EV ≥ 0%</option>
-        <option value="0.05">EV ≥ +5%</option>
-        <option value="0.10">EV ≥ +10%</option>
-        <option value="0.20">EV ≥ +20%</option>
-      </select>
-      <button type="button" id="ev-reload-btn" class="ev-btn ev-btn-mini">再計算</button>
-      <span class="ev-status" id="ev-status">読み込み中…</span>
-      {% if not is_pro() %}
       <a href="{{ url_for('pro_login') }}" class="ev-btn ev-btn-mini" style="margin-left:auto;background:linear-gradient(135deg,#ffd700,#ff8c00);">⬢ Pro へ</a>
-      {% endif %}
     </div>
+    {% endif %}
 
     <!-- 次のレース ハイライト (JS で動的更新) -->
     <section class="next-race-panel" id="next-race-panel" hidden>
@@ -229,8 +211,6 @@
                   {% endif %}
                   {% if r.results_count > 0 %}<span class="badge">確定</span>{% endif %}
                   <span class="time-til" hidden></span>
-                  <span class="ev-mark" hidden></span>
-                  <span class="ev-value" hidden></span>
                 </a>
               </li>
             {% endfor %}
@@ -241,74 +221,9 @@
 
     <script>
       (function() {
-        const reloadBtn = document.getElementById('ev-reload-btn');
-        const snap = document.getElementById('ev-snapshot');
-        const thrSel = document.getElementById('ev-threshold');
-        const status = document.getElementById('ev-status');
         const targetDate = "{{ target_date }}";
-        if (!status) return;  // 非会員
-
-        async function loadEvMarks() {
-          status.textContent = '計算中…';
-          if (reloadBtn) reloadBtn.disabled = true;
-          try {
-            const r = await fetch(`/api/ev-races?date=${targetDate}&snapshot=${snap.value}&ev=${thrSel.value}`);
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            const data = await r.json();
-            const marks = data.marks || {};
-            // 既存マーククリア
-            document.querySelectorAll('.race-item .ev-mark, .race-item .ev-value').forEach(el => {
-              el.hidden = true; el.textContent = ''; el.className = el.classList[0];
-            });
-            document.querySelectorAll('.race-item').forEach(el => {
-              el.classList.remove('has-ev', 'has-ev-strong', 'has-ev-mid', 'has-ev-neg');
-            });
-            const thr = parseFloat(thrSel.value);
-            for (const [raceId, info] of Object.entries(marks)) {
-              const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
-              if (!item) continue;
-              const evPct = info.best_ev * 100;
-              const evValue = item.querySelector('.ev-value');
-              const mark = item.querySelector('.ev-mark');
-              // 全レースに best EV 値をインライン表示
-              evValue.hidden = false;
-              const sign = evPct >= 0 ? '+' : '';
-              evValue.textContent = sign + evPct.toFixed(0) + '%';
-              evValue.title = `${info.best_combo} (model ${(info.best_prob*100).toFixed(1)}% × odds ${info.best_odds.toFixed(1)}倍)`;
-              if (info.best_ev >= 0.20) {
-                evValue.classList.add('strong');
-                item.classList.add('has-ev', 'has-ev-strong');
-                mark.hidden = false;
-                mark.textContent = '★';
-              } else if (info.best_ev >= 0.05) {
-                evValue.classList.add('mid');
-                item.classList.add('has-ev', 'has-ev-mid');
-                mark.hidden = false;
-                mark.textContent = '★';
-              } else if (info.best_ev >= thr) {
-                evValue.classList.add('fair');
-                item.classList.add('has-ev');
-              } else {
-                evValue.classList.add('neg');
-                item.classList.add('has-ev-neg');
-              }
-            }
-            const used = data.snapshot;
-            const total = data.n_total || 0;
-            status.textContent = `${data.n_marked} レース が EV ≥ ${(thr*100).toFixed(0)}% (${total}レース中, ${used})`;
-          } catch (e) {
-            status.textContent = 'エラー: ' + e.message;
-          } finally {
-            if (reloadBtn) reloadBtn.disabled = false;
-          }
-        }
-
-        // ページ読み込み時に自動実行
-        loadEvMarks();
-        // 操作で再計算
-        if (reloadBtn) reloadBtn.addEventListener('click', loadEvMarks);
-        if (snap) snap.addEventListener('change', loadEvMarks);
-        if (thrSel) thrSel.addEventListener('change', loadEvMarks);
+        // 注: EV+ 自動判定 UI はユーザ指示 (backlog.md item 3) により削除済。
+        // 関連 API: /api/ev-races (server 側は残しているが本画面からは呼ばない)
 
         // 市場非効率ベース +EV シグナル (誰でも閲覧可)
         async function loadMarketSignals() {
@@ -358,6 +273,9 @@
                 }
 
                 if (!sig.is_positive_ev) continue;  // +EV のみ表示
+                // ユーザ指示 (backlog.md item 2): L4 以外のダイヤモンドマークは不要。
+                // L4 シグナルが付いていないレースには 💎 を出さない。
+                if (!sig.l4) continue;
                 const badge = document.createElement('span');
                 badge.className = `market-badge market-${sig.tier}`;
                 const minPayoutStr = (sig.min_payout != null) ? sig.min_payout.toLocaleString() : '?';
@@ -477,17 +395,10 @@
             u.el.querySelectorAll('.l4-badge').forEach(b => {
               badges.push(b.outerHTML);
             });
-            // 💎 市場バッジ
+            // 💎 市場バッジ (L4 が付いているレースのみ表示される)
             u.el.querySelectorAll('.market-badge').forEach(b => {
               badges.push(b.outerHTML);
             });
-            // EV+ マーク (loadEvMarks が付与する独自バッジ)
-            const evMark = u.el.querySelector('.ev-mark');
-            const evValue = u.el.querySelector('.ev-value');
-            if (evMark && !evMark.hidden && evMark.textContent) {
-              const evText = (evValue && !evValue.hidden) ? evValue.textContent : '';
-              badges.push(`<span class="next-card-ev-mark">${evMark.textContent}${evText}</span>`);
-            }
             const badgesHtml = badges.length
               ? `<div class="next-card-badges">${badges.join('')}</div>`
               : '';
