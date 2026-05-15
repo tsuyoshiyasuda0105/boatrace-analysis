@@ -1344,15 +1344,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
                                e.class_number,
-                               e.national_top_1_percent, e.local_top_1_percent
+                               e.national_top_1_percent, e.local_top_1_percent,
+                               pv.weather_number
                         FROM races r
                         LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                        LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
                         WHERE r.race_date = ?
                     """, (target_date,))
-                    for rid, stadium, grade, cls, natl1, loc1 in cur.fetchall():
+                    for rid, stadium, grade, cls, natl1, loc1, weather in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade, "class": cls,
                             "natl_1": natl1, "local_1": loc1,
+                            "weather": weather,
                         }
                 except Exception as e:
                     logger.warning("all_race_info query failed: %s", e)
@@ -1567,12 +1570,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 当日全レースを走査 (確定済 → L4、未確定 → 朝L4候補)
         # all_race_info が空 (DB エラー等) なら results のレースだけ処理
         race_iterable = all_race_info if all_race_info else {rid: {} for rid in results}
+        WEATHER_LABEL = {1:"☀️ 晴", 2:"🌤️ 曇", 3:"☔ 雨", 4:"❄️ 雪"}
         for rid, info in race_iterable.items():
             stadium = info.get("stadium")
             grade = info.get("grade")
             cls = info.get("class")
             natl_1 = info.get("natl_1")
             local_1 = info.get("local_1")
+            weather = info.get("weather")
+            is_rain = (weather == 3)
             data = results.get(rid)
 
             if data:
@@ -1593,6 +1599,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tier, expected_roi, title = "chaos", -0.7354, "波乱"
 
                 l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid)
+                # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
+                # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
+                # バッジは出すが is_rain=True で本日候補リストから除外
+                if l4 and is_rain:
+                    l4["is_rain"] = True
+                    l4["is_reference"] = True  # 候補リスト除外フラグ
+                    l4["label"] = f"☔{l4['label']} (雨除外)"
 
                 signals.append({
                     "race_id": rid,
@@ -1602,6 +1615,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "expected_roi": expected_roi,
                     "title": title,
                     "is_positive_ev": expected_roi > 0,
+                    "weather": weather,
+                    "weather_label": WEATHER_LABEL.get(weather),
+                    "is_rain": is_rain,
                     "l4": l4,
                 })
             else:
@@ -1610,6 +1626,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first,
                                                    natl_1, local_1, race_id=rid)
                 if morning_l4:
+                    if is_rain:
+                        morning_l4["is_rain"] = True
+                        morning_l4["is_reference"] = True
+                        morning_l4["label"] = f"☔{morning_l4['label']} (雨除外)"
                     signals.append({
                         "race_id": rid,
                         "tier": "morning_l4",
@@ -1618,6 +1638,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "expected_roi": (morning_l4["recovery"] - 100) / 100,
                         "title": morning_l4["label"],
                         "is_positive_ev": morning_l4["recovery"] >= 130,
+                        "weather": weather,
+                        "weather_label": WEATHER_LABEL.get(weather),
+                        "is_rain": is_rain,
                         "l4": morning_l4,
                     })
 
@@ -1667,7 +1690,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     res3.boat_number AS w3,
                     pw.payout AS win_pay,
                     pe.payout AS exacta_pay,
-                    pt.payout AS tri_pay
+                    pt.payout AS tri_pay,
+                    pv.weather_number AS weather
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                 LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
@@ -1678,6 +1702,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                            GROUP BY race_id) oo ON oo.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, prob_first FROM predictions
                            WHERE boat_number=1) pr ON pr.race_id = r.race_id
+                LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
                 LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position=1
                 LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
                 LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
@@ -1707,7 +1732,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         for row in cur:
             (rdate, stadium, grade, cls, fav_pay, fav_odds, prob_first,
-             w1, w2, w3, win_pay, ex_pay, tri_pay) = row
+             w1, w2, w3, win_pay, ex_pay, tri_pay, weather) = row
+            # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
+            # backtest で ROI 100.8% (break-even) のためベット候補から除外。
+            # weather NULL (= 直前情報未取得 or 古いデータ) は通常通り集計。
+            if weather == 3:
+                continue
             d = by_date.setdefault(rdate, {
                 "date": rdate,
                 "n_total": n_total_by_date.get(rdate, 0),
@@ -1853,9 +1883,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     res3.boat_number AS w3,
                     pw.payout AS win_pay,
                     pe.payout AS exa_pay,
-                    pt.payout AS tri_pay
+                    pt.payout AS tri_pay,
+                    pv.weather_number AS weather
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
                 LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
                            WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
@@ -1879,13 +1911,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         for row in cur:
             (rid, rno, closed, stadium, grade, cls, racer_name,
              natl_1, local_1, fav_pay, fav_odds, prob_first, w1, w2, w3,
-             win_pay, exa_pay, tri_pay) = row
+             win_pay, exa_pay, tri_pay, weather) = row
             if cls != 1:
                 continue  # A1 のみ (A2 派生は対象外)
             if stadium in EXCLUDE_B_VENUES:
                 continue
             if grade == 5:
                 continue  # 一般戦は回収率が低いため対象外 (147.7%)
+            if weather == 3:
+                continue  # ☔ 雨は ROI ~ 100% で break-even、ベット対象外
             # === L4 候補判定 (厳密: 本命オッズ 500-1000) ===
             # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
             # 判定優先順位:

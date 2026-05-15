@@ -53,6 +53,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
     # L4 該当 + 各 bet_type の hit
     # 判定優先順位: T-X 1-2-3 オッズ × 100 が 500-1000 (朝賭けた時点の本命)
     #              フォールバック: race_payouts MIN 500-1000 (過去日、1-2-3 hit ケースのみ正確)
+    # 雨除外: race_previews.weather_number=3 (雨) のレースは ROI 100% で break-even のため除外
     sql = f"""
         SELECT r.race_date,
                r.race_id,
@@ -66,6 +67,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
                pt.payout AS tri_pay
         FROM races r
         JOIN race_entries e ON r.race_id=e.race_id AND e.boat_number=1
+        LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
         LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
         LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
                    WHERE combination='1-2-3' AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
@@ -80,6 +82,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
           AND e.class_number = 1
           AND r.stadium_number NOT IN ({placeholders})
           AND r.race_grade_number IN (1, 2, 3, 4)
+          AND (pv.weather_number IS NULL OR pv.weather_number != 3)
           AND (
               (oo.min_odds IS NOT NULL AND oo.min_odds >= 5 AND oo.min_odds < 10)
               OR
