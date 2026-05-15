@@ -980,6 +980,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return render_template(
                 "index.html",
                 target_date=target_date,
+                today_iso=date.today().isoformat(),
                 stadium_groups=[],
                 empty=True,
             )
@@ -999,6 +1000,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return render_template(
             "index.html",
             target_date=target_date,
+            today_iso=date.today().isoformat(),
             stadium_groups=sorted(stadium_groups.values(),
                                   key=lambda g: g["stadium_number"]),
             empty=False,

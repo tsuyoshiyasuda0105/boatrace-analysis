@@ -119,7 +119,9 @@
 
     <!-- 本日の L4 投票候補リスト (時系列、 JS で動的更新) -->
     <section class="todays-picks-panel" id="todays-picks-panel" hidden>
-      <h3>💰 本日お金を入れる候補レース (時系列)</h3>
+      <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}お金を入れる候補レース (時系列)
+        {% if target_date != today_iso %}<span class="past-tag">過去日 (全レース締切済)</span>{% endif %}
+      </h3>
       <p class="todays-picks-hint">
         ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ を時刻順に表示<br>
         <small>条件: 1号艇A1 + 本命500-1000円 + B除外会場 + SG/G1/G2/G3 (一般戦・A2派生は対象外)<br>
@@ -515,14 +517,19 @@
             const isClosed = minutesUntil < 0 || isDone;
             picks.push({ el, closedAt, minutesUntil, isClosed, isDone });
           });
-          if (picks.length === 0) {
-            panel.hidden = true;
-            return;
-          }
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
           panel.hidden = false;
           tbody.innerHTML = '';
+
+          // 該当なし表示 (loadMarketSignals 完了前 or 本当に無い日)
+          if (picks.length === 0) {
+            const tr = document.createElement('tr');
+            tr.className = 'todays-pick-row is-empty';
+            tr.innerHTML = '<td colspan="10" class="pick-empty">該当 L4 候補なし (この日は条件を満たすレースがありません or バッジ読込中)</td>';
+            tbody.appendChild(tr);
+            return;
+          }
 
           // 「次のレース」 = まだ締切前の最初のレース
           const firstUpcomingIdx = picks.findIndex(p => !p.isClosed);
@@ -533,7 +540,7 @@
             const rid = u.el.dataset.raceId || '';
             const hh = String(u.closedAt.getHours()).padStart(2, '0');
             const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
-            const tilStr = u.isClosed ? '締切済' : fmtTimeTil(u.minutesUntil);
+            const tilStr = u.isClosed ? '🔒 締切済' : fmtTimeTil(u.minutesUntil);
             // L4 バッジ情報 (A1 のみ。A2 派生は API 側で既に除外済)
             const l4Badge = u.el.querySelector('.l4-badge');
             const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';

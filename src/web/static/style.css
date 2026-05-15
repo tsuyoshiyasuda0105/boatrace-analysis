@@ -2238,22 +2238,47 @@ main h2 {
 }
 /* 締切済の行: 全体を半透明グレーに */
 .todays-picks-table tbody tr.is-closed {
-  opacity: 0.45;
-  color: rgba(255,255,255,0.4);
+  opacity: 0.55;
+  background: rgba(0, 0, 0, 0.18);
 }
 .todays-picks-table tbody tr.is-closed td,
 .todays-picks-table tbody tr.is-closed strong,
 .todays-picks-table tbody tr.is-closed .pick-rec,
-.todays-picks-table tbody tr.is-closed .pick-time {
-  color: rgba(255,255,255,0.45) !important;
+.todays-picks-table tbody tr.is-closed .pick-time,
+.todays-picks-table tbody tr.is-closed .pick-place,
+.todays-picks-table tbody tr.is-closed .pick-type,
+.todays-picks-table tbody tr.is-closed .pick-racer,
+.todays-picks-table tbody tr.is-closed .pick-rank {
+  color: rgba(180,180,180,0.55) !important;
   text-decoration: none;
+  font-weight: normal !important;
 }
 .todays-picks-table tbody tr.is-closed .pick-til {
-  color: rgba(255,255,255,0.35) !important;
+  color: rgba(150,150,150,0.5) !important;
   font-weight: normal;
+  font-style: italic;
 }
 .todays-picks-table tbody tr.is-closed .pick-link a {
-  color: rgba(120,180,200,0.6);
+  color: rgba(120,180,200,0.5);
+  text-decoration: none;
+}
+.todays-picks-table tbody tr.is-empty .pick-empty {
+  text-align: center;
+  color: rgba(255,255,255,0.4);
+  font-style: italic;
+  padding: 16px;
+}
+
+.past-tag {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.55);
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0;
 }
 .pick-idx { color: rgba(255,255,255,0.4); width: 30px; }
 .pick-time { font-family: monospace; font-weight: bold; color: #fff; width: 64px; }
