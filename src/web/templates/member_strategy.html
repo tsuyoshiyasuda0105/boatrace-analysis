@@ -16,9 +16,10 @@
     {% endif %}
   </h2>
   <p class="dashboard-hint">
-    条件: 三連単本命 500-1000円 + B除外会場 + 1号艇A1選手<br>
-    買い目: 単勝 / 2連単1-2 / 3連単1-2-3 (1点100円基準)<br>
-    <small>結果は <strong>5 分毎</strong>に boatrace.jp / Open API から自動取得し DB に反映 (poll_results.py)。
+    <strong>L4 戦略条件: 三連単本命 500-1000円 + B除外会場 + 1号艇A1選手</strong><br>
+    買い目: 単勝1 / 2連単1-2 / 3連単1-2-3 (各 1点 ¥100、1レース ¥300 投資)<br>
+    <small>※ A2 選手 (1号艇A2) は L4 対象外。<br>
+    結果は <strong>5 分毎</strong>に boatrace.jp / Open API から自動取得し DB に反映 (poll_results.py)。
     ページキャッシュは 3 分のため、レース終了から最大 8 分で表示されます。</small>
   </p>
 
@@ -31,17 +32,17 @@
     <button type="submit">更新</button>
   </form>
 
-  <!-- 通算サマリ -->
+  <!-- 通算サマリ (L4 A1 のみ) -->
   <section class="totals-summary">
     <h3>📈 通算サマリ ({{ from_date }} 〜 {{ to_date }})</h3>
     <div class="summary-grid">
       <div class="summary-card">
-        <span class="card-label">対象レース (L4 A1 / A2派生)</span>
-        <span class="card-value">{{ totals.n_l4 }} + {{ totals.n_l4_a2 }}</span>
-        <span class="card-sub">全レース中 {{ totals.n_l4_all }} / {{ totals.n_total }}</span>
+        <span class="card-label">L4 対象レース</span>
+        <span class="card-value">{{ totals.n_l4 }}</span>
+        <span class="card-sub">全レース中 {{ totals.n_l4 }} / {{ totals.n_total }}</span>
       </div>
       <div class="summary-card {% if totals.win_roi and totals.win_roi > 0 %}positive{% elif totals.win_roi is not none %}negative{% endif %}">
-        <span class="card-label">単勝</span>
+        <span class="card-label">単勝 1号艇</span>
         <span class="card-value">
           {% if totals.win_roi is not none %}{{ '%+.1f' | format(totals.win_roi) }}%{% else %}-{% endif %}
         </span>
@@ -61,33 +62,13 @@
         </span>
       </div>
       <div class="summary-card {% if totals.tri_roi and totals.tri_roi > 0 %}positive{% elif totals.tri_roi is not none %}negative{% endif %}">
-        <span class="card-label">3連単1-2-3 (A1のみ)</span>
+        <span class="card-label">3連単 1-2-3</span>
         <span class="card-value">
           {% if totals.tri_roi is not none %}{{ '%+.1f' | format(totals.tri_roi) }}%{% else %}-{% endif %}
         </span>
         <span class="card-sub">
           n={{ totals.tri_bets }} HIT={{ totals.tri_hits }}
           / 損益 {{ totals.tri_profit | signed_comma }}円
-        </span>
-      </div>
-      <div class="summary-card {% if totals.a2_tri_roi and totals.a2_tri_roi > 0 %}positive{% elif totals.a2_tri_roi is not none %}negative{% endif %}">
-        <span class="card-label">3連単1-2-3 (A2派生)</span>
-        <span class="card-value">
-          {% if totals.a2_tri_roi is not none %}{{ '%+.1f' | format(totals.a2_tri_roi) }}%{% else %}-{% endif %}
-        </span>
-        <span class="card-sub">
-          n={{ totals.a2_tri_bets }} HIT={{ totals.a2_tri_hits }}
-          / 損益 {{ totals.a2_tri_profit | signed_comma }}円
-        </span>
-      </div>
-      <div class="summary-card {% if totals.all_tri_roi and totals.all_tri_roi > 0 %}positive{% elif totals.all_tri_roi is not none %}negative{% endif %}">
-        <span class="card-label">3連単1-2-3 (A1+A2合算)</span>
-        <span class="card-value">
-          {% if totals.all_tri_roi is not none %}{{ '%+.1f' | format(totals.all_tri_roi) }}%{% else %}-{% endif %}
-        </span>
-        <span class="card-sub">
-          n={{ totals.all_tri_bets }} HIT={{ totals.all_tri_hits }}
-          / 損益 {{ totals.all_tri_profit | signed_comma }}円
         </span>
       </div>
     </div>
@@ -103,7 +84,6 @@
   <section class="daily-table-section">
     <h3>📅 日別詳細 (A1 のみ集計、{{ rows | length }} 日分)</h3>
     <p class="dashboard-hint">
-      ※ L4 該当 = A1 のみ。A2 派生 は上のサマリーで確認可能。<br>
       💡 <strong>日付の「明細→」ボタンをクリックするとその日の L4 該当レース全件 (会場・選手・結果) が見られます。</strong>
     </p>
     <div class="table-wrap">
@@ -126,50 +106,37 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          <tr class="{% if r.n_l4 > 0 or r.n_l4_a2 > 0 %}has-l4{% endif %}">
+          <tr class="{% if r.n_l4 > 0 %}has-l4{% endif %}">
             <td class="date-cell">
               <span class="date-text">{{ r.date }}</span>
             </td>
             <td class="num">{{ r.n_total }}</td>
-            <td class="num">{{ r.n_l4 }}{% if r.n_l4_a2 %}<span class="a2-tag">+{{ r.n_l4_a2 }}A2</span>{% endif %}</td>
+            <td class="num">{{ r.n_l4 }}</td>
 
-            {% if r.n_l4 > 0 or r.n_l4_a2 > 0 %}
-              {# 単勝・2連単・3連単 1-2-3 は A1 用 (A2 派生は単勝/2連単はベットしない) #}
-              {% if r.n_l4 > 0 %}
-                <td class="num">{{ r.win_hits }}/{{ r.win_bets }}</td>
-                <td class="num {% if r.win_recovery and r.win_recovery >= 100 %}pos{% else %}neg{% endif %}">
-                  {{ '%.0f' | format(r.win_recovery) }}%
-                </td>
-                <td class="num {% if r.win_profit > 0 %}pos{% elif r.win_profit < 0 %}neg{% endif %}">
-                  {{ r.win_profit | signed_comma }}
-                </td>
+            {% if r.n_l4 > 0 %}
+              <td class="num">{{ r.win_hits }}/{{ r.win_bets }}</td>
+              <td class="num {% if r.win_recovery and r.win_recovery >= 100 %}pos{% else %}neg{% endif %}">
+                {{ '%.0f' | format(r.win_recovery) }}%
+              </td>
+              <td class="num {% if r.win_profit > 0 %}pos{% elif r.win_profit < 0 %}neg{% endif %}">
+                {{ r.win_profit | signed_comma }}
+              </td>
 
-                <td class="num">{{ r.exa_hits }}/{{ r.exa_bets }}</td>
-                <td class="num {% if r.exa_recovery and r.exa_recovery >= 100 %}pos{% else %}neg{% endif %}">
-                  {{ '%.0f' | format(r.exa_recovery) }}%
-                </td>
-                <td class="num {% if r.exa_profit > 0 %}pos{% elif r.exa_profit < 0 %}neg{% endif %}">
-                  {{ r.exa_profit | signed_comma }}
-                </td>
+              <td class="num">{{ r.exa_hits }}/{{ r.exa_bets }}</td>
+              <td class="num {% if r.exa_recovery and r.exa_recovery >= 100 %}pos{% else %}neg{% endif %}">
+                {{ '%.0f' | format(r.exa_recovery) }}%
+              </td>
+              <td class="num {% if r.exa_profit > 0 %}pos{% elif r.exa_profit < 0 %}neg{% endif %}">
+                {{ r.exa_profit | signed_comma }}
+              </td>
 
-                <td class="num">{{ r.tri_hits }}/{{ r.tri_bets }}</td>
-                <td class="num {% if r.tri_recovery and r.tri_recovery >= 100 %}pos{% else %}neg{% endif %}">
-                  {{ '%.0f' | format(r.tri_recovery) }}%
-                </td>
-                <td class="num {% if r.tri_profit > 0 %}pos{% elif r.tri_profit < 0 %}neg{% endif %}">
-                  {{ r.tri_profit | signed_comma }}
-                </td>
-              {% else %}
-                {# A1 が 0、A2 派生のみの日 #}
-                <td colspan="9" class="num muted a2-only-row">
-                  L4 [A1] 該当なし — A2 派生 {{ r.n_l4_a2 }} 件のみ
-                  {% if r.a2_tri_bets %}
-                    (3連単 {{ r.a2_tri_hits }}/{{ r.a2_tri_bets }}
-                    回収 {{ '%.0f' | format(r.a2_tri_recovery) }}%
-                    損益 {{ r.a2_tri_profit | signed_comma }} 円)
-                  {% endif %}
-                </td>
-              {% endif %}
+              <td class="num">{{ r.tri_hits }}/{{ r.tri_bets }}</td>
+              <td class="num {% if r.tri_recovery and r.tri_recovery >= 100 %}pos{% else %}neg{% endif %}">
+                {{ '%.0f' | format(r.tri_recovery) }}%
+              </td>
+              <td class="num {% if r.tri_profit > 0 %}pos{% elif r.tri_profit < 0 %}neg{% endif %}">
+                {{ r.tri_profit | signed_comma }}
+              </td>
             {% else %}
               <td colspan="9" class="num muted">L4該当なし</td>
             {% endif %}
