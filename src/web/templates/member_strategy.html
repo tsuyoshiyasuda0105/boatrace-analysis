@@ -114,28 +114,31 @@
             <td class="num">{{ r.n_l4 }}</td>
 
             {% if r.n_l4 > 0 %}
+              {# 単勝列 #}
               <td class="num">{{ r.win_hits }}/{{ r.win_bets }}</td>
-              <td class="num {% if r.win_recovery and r.win_recovery >= 100 %}pos{% else %}neg{% endif %}">
-                {{ '%.0f' | format(r.win_recovery) }}%
+              <td class="num {% if r.win_recovery and r.win_recovery >= 100 %}pos{% elif r.win_recovery %}neg{% endif %}">
+                {% if r.win_recovery is not none %}{{ '%.0f' | format(r.win_recovery) }}%{% else %}-{% endif %}
               </td>
-              <td class="num {% if r.win_profit > 0 %}pos{% elif r.win_profit < 0 %}neg{% endif %}">
-                {{ r.win_profit | signed_comma }}
+              <td class="num {% if r.win_profit and r.win_profit > 0 %}pos{% elif r.win_profit and r.win_profit < 0 %}neg{% endif %}">
+                {% if r.win_bets > 0 %}{{ r.win_profit | signed_comma }}{% else %}-{% endif %}
               </td>
 
+              {# 2連単 1-2 列 #}
               <td class="num">{{ r.exa_hits }}/{{ r.exa_bets }}</td>
-              <td class="num {% if r.exa_recovery and r.exa_recovery >= 100 %}pos{% else %}neg{% endif %}">
-                {{ '%.0f' | format(r.exa_recovery) }}%
+              <td class="num {% if r.exa_recovery and r.exa_recovery >= 100 %}pos{% elif r.exa_recovery %}neg{% endif %}">
+                {% if r.exa_recovery is not none %}{{ '%.0f' | format(r.exa_recovery) }}%{% else %}-{% endif %}
               </td>
-              <td class="num {% if r.exa_profit > 0 %}pos{% elif r.exa_profit < 0 %}neg{% endif %}">
-                {{ r.exa_profit | signed_comma }}
+              <td class="num {% if r.exa_profit and r.exa_profit > 0 %}pos{% elif r.exa_profit and r.exa_profit < 0 %}neg{% endif %}">
+                {% if r.exa_bets > 0 %}{{ r.exa_profit | signed_comma }}{% else %}-{% endif %}
               </td>
 
+              {# 3連単 1-2-3 列 #}
               <td class="num">{{ r.tri_hits }}/{{ r.tri_bets }}</td>
-              <td class="num {% if r.tri_recovery and r.tri_recovery >= 100 %}pos{% else %}neg{% endif %}">
-                {{ '%.0f' | format(r.tri_recovery) }}%
+              <td class="num {% if r.tri_recovery and r.tri_recovery >= 100 %}pos{% elif r.tri_recovery %}neg{% endif %}">
+                {% if r.tri_recovery is not none %}{{ '%.0f' | format(r.tri_recovery) }}%{% else %}-{% endif %}
               </td>
-              <td class="num {% if r.tri_profit > 0 %}pos{% elif r.tri_profit < 0 %}neg{% endif %}">
-                {{ r.tri_profit | signed_comma }}
+              <td class="num {% if r.tri_profit and r.tri_profit > 0 %}pos{% elif r.tri_profit and r.tri_profit < 0 %}neg{% endif %}">
+                {% if r.tri_bets > 0 %}{{ r.tri_profit | signed_comma }}{% else %}-{% endif %}
               </td>
             {% else %}
               <td colspan="9" class="num muted">L4該当なし</td>
