@@ -156,13 +156,15 @@ def _extract_stadium(line: str, stadium_map: dict[str, int]) -> Optional[int]:
 # ============================================================
 # 払戻行: '        単勝     1          110' / '        ３連単   1-4-5     7970'
 # ============================================================
+# _to_half() を通した後の正規化済テキストに対するパターン
+# (「３」→「3」変換されているため regex も半角で書く必要がある)
 PAYOUT_PATTERNS = [
     ("win",            re.compile(r"単勝\s+(\d)\s+(\d+)")),
     ("place",          re.compile(r"複勝\s+(\d)\s+(\d+)")),
-    ("exacta",         re.compile(r"２連単\s+(\d-\d)\s+(\d+)")),
-    ("quinella",       re.compile(r"２連複\s+(\d-\d)\s+(\d+)")),
-    ("trifecta",       re.compile(r"３連単\s+(\d-\d-\d)\s+(\d+)")),
-    ("trio",           re.compile(r"３連複\s+(\d=\d=\d|\d-\d-\d)\s+(\d+)")),
+    ("exacta",         re.compile(r"2連単\s+(\d-\d)\s+(\d+)")),
+    ("quinella",       re.compile(r"2連複\s+(\d-\d)\s+(\d+)")),
+    ("trifecta",       re.compile(r"3連単\s+(\d-\d-\d)\s+(\d+)")),
+    ("trio",           re.compile(r"3連複\s+(\d=\d=\d|\d-\d-\d)\s+(\d+)")),
     ("quinella_place", re.compile(r"拡連複\s+(\d-\d)\s+(\d+)")),
 ]
 
