@@ -238,10 +238,13 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
     """朝判定モード: predictions テーブルの 1号艇 prob_first を使って
     オッズ確定前に L4 候補レースを抽出する。
 
-    抽出条件 (app.py の _evaluate_morning_l4 と同じ):
+    抽出条件 (backlog item 6 - UI 候補リスト「本日お金を入れる候補レース」
+    と完全一致させる):
       - 1号艇 A1 ∧ prob_first ∈ [0.65, 0.85)  ← 本命 500-1000円帯候補
-      - 1号艇 A2 ∧ prob_first ∈ [0.55, 0.75)  ← A2 派生候補
       - B 除外会場でない
+      - 一般戦 (grade=5) を除外 ← UI 側で l4-reference として除外
+      - 雨レース (weather_number=3) を除外 ← UI 側で l4-reference として除外
+      - A2 派生 (cls=2) は対象外 ← UI 側でも対象外
 
     alert_type は "L4_morning_*" で確定版と区別 (重複送信防止):
       確定 L4_SG ↔ 朝 L4_morning_SG  (alert_sent では別レコードで管理されるが、
@@ -255,11 +258,13 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
                    e.class_number,
                    e.national_top_1_percent, e.local_top_1_percent,
                    e.racer_name,
-                   p.prob_first
+                   p.prob_first,
+                   pv.weather_number
             FROM races r
             JOIN stadiums s ON r.stadium_number = s.stadium_number
             LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
             JOIN predictions p ON r.race_id = p.race_id AND p.boat_number = 1
+            LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
             WHERE r.race_date = ?
               AND p.prob_first IS NOT NULL
         """, (target_date,))
@@ -268,18 +273,22 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
     alerts = []
     for row in rows:
         (rid, stadium, rno, closed_at, grade, sname, cls,
-         natl_1, local_1, racer_name, prob_first) = row
+         natl_1, local_1, racer_name, prob_first, weather) = row
         if is_b_excluded(stadium):
             continue
         if prob_first is None:
             continue
 
-        # クラス別の prob_first 閾値
-        if cls == 1 and 0.65 <= prob_first < 0.85:
-            pass  # A1 候補
-        elif cls == 2 and 0.55 <= prob_first < 0.75:
-            pass  # A2 派生候補
-        else:
+        # UI 候補リストと一致 (backlog item 6): A1 のみ、0.65-0.85 帯
+        if not (cls == 1 and 0.65 <= prob_first < 0.85):
+            continue
+
+        # 一般戦は UI でも参考扱いで候補リストから外れているのでメールも除外
+        if grade == 5:
+            continue
+
+        # 雨レース (weather_number=3) は UI で l4-reference 扱い → メールも除外
+        if weather == 3:
             continue
 
         # ルール取得 (確定版と同じ recovery を使うが、判定が予測ベースであること
@@ -289,16 +298,13 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
             continue
 
         # ランク判定 (A1 のみサブランク適用)
-        if cls == 1:
-            rank_code, rank_label, rank_emoji, rec_override = l4_rank(natl_1, local_1)
-        else:
-            rank_code, rank_label, rank_emoji, rec_override = "a2", "L4派生", "📈", None
+        rank_code, rank_label, rank_emoji, rec_override = l4_rank(natl_1, local_1)
 
         effective_recovery = rec_override if rec_override is not None else rule["recovery"]
 
         # 朝モード用ラベル (🌅 を先頭に)
         morning_label = f"🌅{rank_emoji}朝{rule['label']}"
-        if rank_code not in ("base", "a2"):
+        if rank_code != "base":
             morning_label += f" ({rank_label})"
         morning_label += f" 候補"
 

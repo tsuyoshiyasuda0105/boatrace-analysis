@@ -1520,7 +1520,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 5:
                     # 一般戦: バッジは出すが is_reference=True で
                     # 本日候補リスト / ROI から除外する
-                    base = {"level": "general", "label": "📌L4 一般戦×A1 (参考)",
+                    # ラベルは短く (backlog item 5): 「L4参考 147.7%」相当の表示
+                    base = {"level": "general", "label": "L4参考",
                             "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776,
                             "is_reference": True}
                 # grade unknown は対象外 (バッジも出さない)
@@ -1536,7 +1537,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["natl_1"] = natl_1
             base["local_1"] = local_1
             # ランクに応じて recovery 値を補正 (検証実測値ベース)
-            if rec_override is not None:
+            # 参考レース (一般戦) は ROI 集計対象外なので rank 補正もスキップし、
+            # 基本回収率 147.7% のままシンプルに表示する (backlog item 5)。
+            if rec_override is not None and not base.get("is_reference"):
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
 
@@ -1594,8 +1597,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     base = {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
                             "recovery": 149.2, "n": 195}
                 elif grade == 5:
+                    # 朝の参考レース: 短ラベル (backlog item 5)
                     base = {"level": "morning_general",
-                            "label": "🌅📌朝L4 一般戦×A1 (参考)",
+                            "label": "🌅L4参考",
                             "recovery": 147.7, "n": 1776,
                             "is_reference": True}
             # grade unknown は対象外
@@ -1631,7 +1635,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     f"🔥L4 PRO (ST={float(avg_st):.2f}, "
                     f"{int(age)}歳{_ex_part})"
                 )
-            if rec_override is not None:
+            # 参考レース (一般戦) は rank 補正をスキップ、基本 147.7% のまま (backlog item 5)
+            if rec_override is not None and not base.get("is_reference"):
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
             return base

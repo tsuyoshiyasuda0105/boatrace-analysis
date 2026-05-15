@@ -330,8 +330,25 @@ main h2 {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* minmax(0, 1fr) NOT 1fr: 1fr alone resolves to minmax(auto, 1fr) and
+     lets a wide L4 badge (e.g. "👑L4 G2×A1 242.7%") expand its column,
+     which squeezes the rightmost column (4R/8R/12R) to ~0 width and
+     makes them invisible (reported 2026-05-16 for stadium 14 Naruto).
+     minmax(0,1fr) keeps all 4 cells equal width regardless of badge. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+}
+/* min-width: 0 lets the grid cell shrink below min-content. Without this,
+   a wide L4 badge expands its column even with minmax(0, 1fr). Pair with
+   word-wrap on badges so the text breaks instead of leaking sideways. */
+.race-item {
+  min-width: 0;
+}
+.race-item .l4-badge,
+.race-item .market-badge {
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-word;
 }
 .race-item a {
   display: flex;
@@ -1793,20 +1810,29 @@ main h2 {
   border-bottom: 2px solid rgba(252, 211, 77, 0.3);
 }
 
-/* L4 一般戦 (参考、ROI 対象外): 控えめなグレー */
+/* L4 一般戦 (参考、ROI 対象外): 薄い青 (backlog item 5)
+   ユーザフィードバック「紫色はセンスが悪い」→ 一般戦に L4 PRO 条件が
+   重なると `.l4-pro` (紫) のスタイルが勝って紫になっていた問題を解消。
+   参考バッジは常に淡青で統一する。 */
 .l4-badge.l4-reference {
-  background: rgba(120, 120, 130, 0.25) !important;
-  color: rgba(220, 220, 220, 0.8) !important;
-  border: 1px dashed rgba(180, 180, 180, 0.5) !important;
+  background: rgba(125, 211, 252, 0.20) !important;
+  color: #bae6fd !important;
+  border: 1px solid rgba(125, 211, 252, 0.55) !important;
   box-shadow: none !important;
   animation: none !important;
-  font-weight: normal !important;
+  font-weight: 600 !important;
 }
-/* 参考バッジには tooltip で「ROI集計対象外」を強調 */
-.l4-badge.l4-reference::after {
-  content: ' (参考)';
-  font-size: 0.85em;
-  opacity: 0.7;
+/* 参考バッジ × PRO/1c80 オーバーレイの組合せでも色を強制統一。
+   .l4-badge.l4-pro / .l4-1c80 は !important + 後置 セレクタで勝つので、
+   ここで明示的に上書きする (CSS 末尾近くに置く必要あり)。 */
+.l4-badge.l4-reference.l4-pro,
+.l4-badge.l4-reference.l4-1c80,
+.l4-badge.l4-reference.l4-pro.l4-1c80 {
+  background: rgba(125, 211, 252, 0.20) !important;
+  color: #bae6fd !important;
+  border: 1px solid rgba(125, 211, 252, 0.55) !important;
+  box-shadow: none !important;
+  animation: none !important;
 }
 
 /* L4 PRO: ベテラン (30-49) × 平均ST<0.16 × 展示ST<0.18 (検証 ROI 241%) */
