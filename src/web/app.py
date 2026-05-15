@@ -1637,13 +1637,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """, (from_date, to_date)).fetchall()
             n_total_by_date = {row[0]: row[1] for row in cur_n}
 
+            # 集計 SQL: race_payouts/odds_trifecta/predictions 全部 LEFT JOIN し、
+            # confirmed / odds / morning_miss / morning の 4 ソースで L4 判定する
             cur = conn.execute("""
                 SELECT
                     r.race_date,
                     r.stadium_number,
                     r.race_grade_number,
                     e.class_number,
-                    pp.min_pay AS fav,
+                    pp.min_pay AS fav_pay,
+                    oo.min_odds AS fav_odds,
+                    pr.prob_first AS prob_first,
                     res1.boat_number AS w1,
                     res2.boat_number AS w2,
                     res3.boat_number AS w3,
@@ -1652,8 +1656,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pt.payout AS tri_pay
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-                JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
-                      WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
+                LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
+                           WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
+                LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
+                           WHERE combination='1-2-3'
+                             AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
+                           GROUP BY race_id) oo ON oo.race_id = r.race_id
+                LEFT JOIN (SELECT race_id, prob_first FROM predictions
+                           WHERE boat_number=1) pr ON pr.race_id = r.race_id
                 LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position=1
                 LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
                 LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
@@ -1682,8 +1692,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
 
         for row in cur:
-            (rdate, stadium, grade, cls, fav, w1, w2, w3,
-             win_pay, ex_pay, tri_pay) = row
+            (rdate, stadium, grade, cls, fav_pay, fav_odds, prob_first,
+             w1, w2, w3, win_pay, ex_pay, tri_pay) = row
             d = by_date.setdefault(rdate, {
                 "date": rdate,
                 "n_total": n_total_by_date.get(rdate, 0),
@@ -1701,57 +1711,89 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
                 "grade_breakdown": {},
             })
-            # n_total は races テーブル単独カウント (上で初期化済) → ここで触らない
-            # 代わりに「確定済」レース数を加算する
-            d["n_done"] += 1
+            # 確定済 (race_payouts trifecta あり) ならカウント
+            is_done = w1 is not None and w2 is not None and w3 is not None
+            if is_done:
+                d["n_done"] += 1
 
-            # L4 共通条件: 500-1000帯 + B除外
-            is_l4_base = (fav and 500 <= fav < 1000
-                          and stadium not in EXCLUDE_B_VENUES)
-            tri_hit = (w1 == 1 and w2 == 2 and w3 == 3)
+            # === L4 候補判定 (_l4_races_for_date と同じ 4 ソース) ===
+            # B 除外 / クラス制限は共通
+            if stadium in EXCLUDE_B_VENUES:
+                continue
+            if cls not in (1, 2):
+                continue
+            is_l4_base = False
+            pf = float(prob_first) if prob_first is not None else None
+            if fav_pay is not None:
+                pay_int = int(fav_pay)
+                if 500 <= pay_int < 1000:
+                    # confirmed: 実本命金額が L4 範囲
+                    is_l4_base = True
+                elif pf is not None:
+                    # morning_miss: 1-2-3 外したが朝予測 prob_first が L4 範囲
+                    if cls == 1 and 0.65 <= pf < 0.85:
+                        is_l4_base = True
+                    elif cls == 2 and 0.55 <= pf < 0.75:
+                        is_l4_base = True
+            elif fav_odds is not None:
+                # odds: T-X オッズベース (まだ確定してない)
+                fav_int = int(float(fav_odds) * 100)
+                if 500 <= fav_int < 1000:
+                    is_l4_base = True
+            elif pf is not None:
+                # morning: 朝予測のみ (オッズ未取得)
+                if cls == 1 and 0.65 <= pf < 0.85:
+                    is_l4_base = True
+                elif cls == 2 and 0.55 <= pf < 0.75:
+                    is_l4_base = True
+
+            tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
             tri_pay_v = (tri_pay or 0) if tri_hit else 0
 
             if is_l4_base and cls == 1:
                 # L4 [A1]
                 d["n_l4"] += 1
                 d["n_l4_all"] += 1
-                d["win_bets"] += 1
-                if w1 == 1:
-                    d["win_hits"] += 1
-                    d["win_pay"] += (win_pay or 0)
-                d["exa_bets"] += 1
-                if w1 == 1 and w2 == 2:
-                    d["exa_hits"] += 1
-                    d["exa_pay"] += (ex_pay or 0)
-                d["tri_bets"] += 1
-                if tri_hit:
-                    d["tri_hits"] += 1
-                    d["tri_pay"] += tri_pay_v
-                # A1+A2 合算にも
-                d["all_tri_bets"] += 1
-                if tri_hit:
-                    d["all_tri_hits"] += 1
-                    d["all_tri_pay"] += tri_pay_v
-                # グレード別
-                g_key = grade or 5
-                gb = d["grade_breakdown"].setdefault(g_key, {"n": 0, "tri_hits": 0, "tri_pay": 0})
-                gb["n"] += 1
-                if tri_hit:
-                    gb["tri_hits"] += 1
-                    gb["tri_pay"] += tri_pay_v
+                # bets は「確定済」のみカウント (未確定は ROI 母数に入れない)
+                if is_done:
+                    d["win_bets"] += 1
+                    if w1 == 1:
+                        d["win_hits"] += 1
+                        d["win_pay"] += (win_pay or 0)
+                    d["exa_bets"] += 1
+                    if w1 == 1 and w2 == 2:
+                        d["exa_hits"] += 1
+                        d["exa_pay"] += (ex_pay or 0)
+                    d["tri_bets"] += 1
+                    if tri_hit:
+                        d["tri_hits"] += 1
+                        d["tri_pay"] += tri_pay_v
+                    # A1+A2 合算にも
+                    d["all_tri_bets"] += 1
+                    if tri_hit:
+                        d["all_tri_hits"] += 1
+                        d["all_tri_pay"] += tri_pay_v
+                    # グレード別
+                    g_key = grade or 5
+                    gb = d["grade_breakdown"].setdefault(g_key, {"n": 0, "tri_hits": 0, "tri_pay": 0})
+                    gb["n"] += 1
+                    if tri_hit:
+                        gb["tri_hits"] += 1
+                        gb["tri_pay"] += tri_pay_v
             elif is_l4_base and cls == 2:
                 # L4 [A2 派生]
                 d["n_l4_a2"] += 1
                 d["n_l4_all"] += 1
-                d["a2_tri_bets"] += 1
-                if tri_hit:
-                    d["a2_tri_hits"] += 1
-                    d["a2_tri_pay"] += tri_pay_v
-                # A1+A2 合算にも
-                d["all_tri_bets"] += 1
-                if tri_hit:
-                    d["all_tri_hits"] += 1
-                    d["all_tri_pay"] += tri_pay_v
+                if is_done:
+                    d["a2_tri_bets"] += 1
+                    if tri_hit:
+                        d["a2_tri_hits"] += 1
+                        d["a2_tri_pay"] += tri_pay_v
+                    # A1+A2 合算にも
+                    d["all_tri_bets"] += 1
+                    if tri_hit:
+                        d["all_tri_hits"] += 1
+                        d["all_tri_pay"] += tri_pay_v
 
         # ROI 計算
         for d in by_date.values():
