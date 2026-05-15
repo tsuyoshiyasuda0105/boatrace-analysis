@@ -46,10 +46,13 @@ def compute_summary(src: sqlite3.Connection, start: str, end: str) -> list[dict]
     n_total_by_date = {row[0]: row[1] for row in cur.fetchall()}
 
     # L4 該当 + 各 bet_type の hit
+    # 判定優先順位: T-X 1-2-3 オッズ × 100 が 500-1000 (朝賭けた時点の本命)
+    #              フォールバック: race_payouts MIN 500-1000 (過去日、1-2-3 hit ケースのみ正確)
     sql = f"""
         SELECT r.race_date,
                r.race_id,
-               pp.min_pay AS fav,
+               pp.min_pay AS fav_pay,
+               oo.min_odds AS fav_odds,
                res1.boat_number AS w1,
                res2.boat_number AS w2,
                res3.boat_number AS w3,
@@ -58,7 +61,10 @@ def compute_summary(src: sqlite3.Connection, start: str, end: str) -> list[dict]
                pt.payout AS tri_pay
         FROM races r
         JOIN race_entries e ON r.race_id=e.race_id AND e.boat_number=1
-        JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
+        LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
+        LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
+                   WHERE combination='1-2-3' AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
+                   GROUP BY race_id) oo ON oo.race_id=r.race_id
         LEFT JOIN race_results res1 ON res1.race_id=r.race_id AND res1.finishing_position=1
         LEFT JOIN race_results res2 ON res2.race_id=r.race_id AND res2.finishing_position=2
         LEFT JOIN race_results res3 ON res3.race_id=r.race_id AND res3.finishing_position=3
@@ -69,13 +75,17 @@ def compute_summary(src: sqlite3.Connection, start: str, end: str) -> list[dict]
           AND e.class_number = 1
           AND r.stadium_number NOT IN ({placeholders})
           AND r.race_grade_number IN (1,2,3,4)
-          AND pp.min_pay BETWEEN 500 AND 999
+          AND (
+              (oo.min_odds IS NOT NULL AND oo.min_odds >= 5 AND oo.min_odds < 10)
+              OR
+              (oo.min_odds IS NULL AND pp.min_pay BETWEEN 500 AND 999)
+          )
     """
     cur = src.execute(sql, (start, end, *EXCLUDE_B))
 
     by_date: dict[str, dict] = {}
     for row in cur.fetchall():
-        rdate, rid, fav, w1, w2, w3, wp, ep, tp = row
+        rdate, rid, fav_pay, fav_odds, w1, w2, w3, wp, ep, tp = row
         d = by_date.setdefault(rdate, {
             "date": rdate,
             "n_total": n_total_by_date.get(rdate, 0),

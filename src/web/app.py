@@ -1647,30 +1647,26 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if is_done:
                 d["n_done"] += 1
 
-            # === L4 候補判定 (厳密: 本命金額 500-1000 のみ) ===
-            # 朝予測 (prob_first) はあくまで参考。ROI に算入するのは
-            # 「本命が実際に 500-1000円帯だったレース」のみ。
-            # 判定ソース:
-            #   confirmed - race_payouts MIN が 500-1000 (1-2-3 が hit したケース)
-            #   odds - T-X 1-2-3 オッズ × 100 が 500-1000 (確定前 or 1-2-3 ハズレ)
+            # === L4 候補判定 (T-X オッズ優先、race_payouts MIN フォールバック) ===
+            # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
+            # 結果 (1-2-3 hit/miss) は L4 候補性に影響しない。
             if stadium in EXCLUDE_B_VENUES:
                 continue
             if cls != 1:
-                continue  # A1 のみ
+                continue
             if grade == 5:
-                continue  # 一般戦は対象外
+                continue
             is_l4_base = False
-            if fav_pay is not None:
-                # confirmed: 実本命金額が L4 範囲
-                pay_int = int(fav_pay)
-                if 500 <= pay_int < 1000:
-                    is_l4_base = True
-            elif fav_odds is not None:
-                # odds: T-X オッズベース
+            if fav_odds is not None:
+                # T-X 1-2-3 オッズ ベース (朝賭けた時点の本命金額)
                 fav_int = int(float(fav_odds) * 100)
                 if 500 <= fav_int < 1000:
                     is_l4_base = True
-            # 朝予測のみ (オッズ・確定なし) は ROI 算入対象外
+            elif fav_pay is not None:
+                # T-X オッズ無し → race_payouts MIN ベース (過去日フォールバック)
+                pay_int = int(fav_pay)
+                if 500 <= pay_int < 1000:
+                    is_l4_base = True
 
             tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
             tri_pay_v = (tri_pay or 0) if tri_hit else 0
@@ -1807,27 +1803,36 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 continue
             if grade == 5:
                 continue  # 一般戦は回収率が低いため対象外 (147.7%)
-            # === L4 候補判定 (厳密: 本命金額 500-1000 のみ) ===
-            # L4 戦略の定義: 本命オッズ 5-10倍 (= 500-1000円帯)
+            # === L4 候補判定 (厳密: 本命オッズ 500-1000) ===
+            # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
+            # 判定優先順位:
+            #   1. T-X オッズ (=朝賭けた時点のオッズ) ← 本来の判定軸
+            #   2. race_payouts MIN (T-X オッズが無い過去日の代替)
+            #       → 1-2-3 hit したレースでは「本命 hit 払戻 = L4 払戻」と一致
+            #       → 1-2-3 ハズレのレースは判定不能だが過去日では妥協
+            # 結果 (1-2-3 hit/miss) は L4 候補性に影響しない。
             fav = None
             fav_source = None
-            if fav_pay is not None:
-                # confirmed: race_payouts MIN (1-2-3 が hit してれば 1-2-3 配当)
+            if fav_odds is not None:
+                # T-X 1-2-3 オッズ × 100 が 500-1000 → L4 候補 (結果と無関係)
+                fav_int = int(float(fav_odds) * 100)
+                if 500 <= fav_int < 1000:
+                    fav = fav_int
+                    fav_source = "odds"
+                else:
+                    continue
+            elif fav_pay is not None:
+                # T-X オッズなし → race_payouts MIN ベース判定 (過去日フォールバック)
+                # 1-2-3 hit してれば本命の代理値、ハズレなら別 combo の払戻なので
+                # 厳密には L4 判定できないが現状の生データだけでは最善の近似。
                 pay_int = int(fav_pay)
                 if 500 <= pay_int < 1000:
                     fav = pay_int
                     fav_source = "confirmed"
                 else:
-                    continue   # 500-1000 帯外 → L4 対象外
-            elif fav_odds is not None:
-                # odds: T-X 1-2-3 オッズ × 100 が 500-1000
-                fav = int(float(fav_odds) * 100)
-                if 500 <= fav < 1000:
-                    fav_source = "odds"
-                else:
                     continue
             else:
-                # 朝予測のみ (オッズも payout もない) → ROI 不算入
+                # 判定材料なし
                 continue
             # L4 ランク (1号艇A1のみ)
             try:
