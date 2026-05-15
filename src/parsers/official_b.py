@@ -132,6 +132,58 @@ def _extract_stadium(line: str, stadium_map: dict[str, int]) -> Optional[int]:
 # 公開関数
 # ============================================================
 
+# ============================================================
+# 大会名 → グレード推測 (race_grade_number 推定)
+#  1 = SG, 2 = G1, 3 = G2, 4 = G3, 5 = 一般戦
+# ============================================================
+GRADE_KEYWORDS: list[tuple[int, list[str]]] = [
+    # SG (賞金王・グランプリ・チャレンジカップ・ボートレース大賞・ダービー・
+    #     クラシック・オールスター・総理大臣・全日本選手権)
+    (1, ["グランプリ", "クラシック", "ＳＧ", "賞金王", "総理大臣",
+         "全日本選手権", "鳳凰賞", "オールスター", "ボートレース大賞",
+         "ダービー", "チャレンジカップ"]),
+    # G1 (各場周年・グランドチャンピオン・海の祭典・モーターボート記念)
+    (2, ["Ｇ１", "周年記念", "グランドチャンピオン", "海の祭典",
+         "モーターボート記念", "メモリアル"]),
+    # G2 (クイーンズクライマックス・レディースチャレンジ・ヤングダービー・
+    #     モーターボート大賞 等)
+    (3, ["Ｇ２", "クイーンズクライマックス", "レディースチャレンジ",
+         "ヤングダービー", "マスターズチャンピオン"]),
+    # G3 (企業杯、◯◯記念、レディースカップ、ヤングシリーズ等)
+    (4, ["Ｇ３", "ヤング", "レディース", "マスターズ", "ルーキー",
+         "企業杯", "ヴィーナス"]),
+]
+
+
+def _guess_grade(tournament_title: str) -> Optional[int]:
+    """大会名タイトルからグレードを推定。
+    マッチしなければ 5 (一般戦)。空文字なら None。
+    """
+    if not tournament_title:
+        return None
+    for grade, kws in GRADE_KEYWORDS:
+        for kw in kws:
+            if kw in tournament_title:
+                return grade
+    return 5  # 何も match しない → 一般戦
+
+
+def _extract_tournament_title(line: str) -> Optional[str]:
+    """B ファイルのヘッダ行から大会名を抽出。
+    例: 'ボートレース大村   １月１日  ミッドナイトボートレ  第１日'
+        → 'ミッドナイトボートレ'
+    """
+    # 「ボートレース<会場>」 + 「<日付>」 + 「<大会名>」 + 「第N日」 の構造
+    # 区切りは多数の全角/半角スペース
+    if not ("ボートレース" in line and "第" in line and "日" in line):
+        return None
+    # 「第N日」より前の部分から大会名を取る
+    m = re.search(r"ボートレース.+?[０-９0-9]+月.+?日\s+(.+?)\s+第", line)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def parse_b_text(text: str, target_date: _date) -> list[dict]:
     """
     B ファイル全体をパースして races のリストを返す。
@@ -149,12 +201,20 @@ def parse_b_text(text: str, target_date: _date) -> list[dict]:
     lines = text.splitlines()
     cur_stadium: Optional[int] = None
     cur_race: Optional[dict] = None
+    # 会場ごとの大会名 → grade マップ (同じ B ファイル内で複数会場混在)
+    stadium_grade: dict[int, Optional[int]] = {}
 
     for line in lines:
-        # 会場検出 (新会場ブロック)
+        # 会場検出 + 大会名抽出 (新会場ブロック)
         sn = _extract_stadium(line, stadium_map)
         if sn is not None:
             cur_stadium = sn
+            # 同じ行内の大会名から grade 推定 (まだ grade 未取得時のみ; 重複行で
+            # None で上書きされないように)
+            if stadium_grade.get(sn) is None:
+                title = _extract_tournament_title(line)
+                if title:
+                    stadium_grade[sn] = _guess_grade(title)
             continue
 
         # レース番号検出
@@ -175,7 +235,7 @@ def parse_b_text(text: str, target_date: _date) -> list[dict]:
                 "race_number": rno,
                 "race_title": title,
                 "race_subtitle": None,
-                "race_grade_number": None,
+                "race_grade_number": stadium_grade.get(cur_stadium),
                 "race_distance": distance,
                 "race_closed_at": None,
                 "boats": [],
