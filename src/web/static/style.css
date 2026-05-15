@@ -1941,6 +1941,21 @@ main h2 {
   font-style: italic;
 }
 
+/* 戦略セクションヘッダ */
+.strat-heading {
+  margin-top: 24px;
+  margin-bottom: 4px;
+  font-size: 15px;
+  color: rgba(255,255,255,0.9);
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.strat-hint {
+  margin: 0 0 10px 0;
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+}
+
 /* L4 判定ソースタグ (本命¥列に小タグ) */
 .fav-source-tag {
   display: inline-block;
