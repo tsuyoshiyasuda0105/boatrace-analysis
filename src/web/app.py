@@ -419,23 +419,7 @@ def _detect_market_inefficiency(
                             "expected_roi": 1.608,
                         })
 
-                # L4 派生: A2 でも 134% (副推奨)
-                if in_500_1000 and exclude_b and cls == 2:
-                    extras.append({
-                        "label": "📈 L4 A2 派生 (3連単1-2-3)",
-                        "msg": "A2 1号艇 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 134.0% (CI 120.4%-148.9%, n=1,645)",
-                        "bet": "3連単 1-2-3 を 100円 (税引前トントン)",
-                        "expected_roi": 1.340,
-                    })
-
-                # L2 派生: 全クラス でも 145.7% (フィルタ緩め版)
-                if in_500_1000 and exclude_b and cls not in (1, 2):
-                    extras.append({
-                        "label": "📈 L2 (3連単1-2-3)",
-                        "msg": "B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 145.7% (CI 137.6%-154.1%, n=4,971)",
-                        "bet": "3連単 1-2-3 を 100円",
-                        "expected_roi": 1.457,
-                    })
+                # A2 派生 / L2 派生は L4 戦略対象外なので extras に追加しない
 
         if extras:
             result["extras"] = extras
@@ -484,37 +468,7 @@ def _detect_market_inefficiency(
                 )
             return morning_l4
 
-        # 【朝L4 A2 派生】prob_first 0.55-0.75 + A2 + B除外 (やや弱め)
-        if 0.55 <= p1 < 0.75 and cls == 2 and b_excluded:
-            return {
-                "tier": "morning_l4_a2",
-                "expected_roi": 0.34,
-                "title": "🌅 朝L4 A2 派生候補",
-                "msg": (f"モデル予測 1号艇A2 1着率 {p1*100:.1f}% + B除外。"
-                        f"L4 A2派生 (検証 回収率 134%) の候補"),
-                "is_morning": True,
-                "favorite_trifecta_payout": None,
-            }
-
-        # 旧来の予測ベース判定 (A1/A2 ではないが 1号艇が強い)
-        if p1 >= 0.80:
-            return {
-                "favorite_trifecta_payout": None,
-                "tier": "predicted_confident",
-                "expected_roi": 0.25,
-                "title": "💎 (予測) 完全 +EV ゾーン候補",
-                "msg": f"モデル予測 1号艇1着率 {p1*100:.1f}%。三連単1番人気が500-2000円帯になる可能性大。+EV ゾーン候補。実際の final odds で確定を",
-                "is_morning": True,
-            }
-        if p1 >= 0.70:
-            return {
-                "favorite_trifecta_payout": None,
-                "tier": "predicted_moderate",
-                "expected_roi": 0.15,
-                "title": "🎯 (予測) +EV 候補",
-                "msg": f"モデル予測 1号艇1着率 {p1*100:.1f}%。1k-2k帯+EV ゾーン候補",
-                "is_morning": True,
-            }
+        # A2 派生 / 旧 predicted_* は L4 戦略対象外なので表示しない
     return None
 
 
@@ -1462,30 +1416,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 else:
                     base = {"level": "default", "label": "🎯L4 A1",
                             "recovery": 160.8, "bet": "3連単 1-2-3", "n": 2210}
-            elif cls == 2:
-                base = {"level": "a2", "label": "📈L4派生 A2",
-                        "recovery": 134.0, "bet": "3連単 1-2-3", "n": 1645}
+            # A2 派生は L4 戦略対象外なので表示しない
             if not base:
                 return None
 
-            # ▼ L4 サブランク (1号艇A1のみに適用、A2派生は対象外)
-            if cls == 1:
-                rank_code, rank_label, rank_emoji, rec_override = _l4_rank(natl_1, local_1)
-                base["rank"] = rank_code             # "base" / "plus" / "plus_plus"
-                base["rank_label"] = rank_label
-                base["rank_emoji"] = rank_emoji
-                base["natl_1"] = natl_1
-                base["local_1"] = local_1
-                # ランクに応じて recovery 値を補正 (検証実測値ベース)
-                if rec_override is not None:
-                    base["recovery"] = rec_override
-                    base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
-            else:
-                base["rank"] = "a2"
-                base["rank_label"] = "L4派生"
-                base["rank_emoji"] = "📈"
-                base["natl_1"] = natl_1
-                base["local_1"] = local_1
+            # ▼ L4 サブランク (1号艇A1のみ)
+            rank_code, rank_label, rank_emoji, rec_override = _l4_rank(natl_1, local_1)
+            base["rank"] = rank_code             # "base" / "plus" / "plus_plus"
+            base["rank_label"] = rank_label
+            base["rank_emoji"] = rank_emoji
+            base["natl_1"] = natl_1
+            base["local_1"] = local_1
+            # ランクに応じて recovery 値を補正 (検証実測値ベース)
+            if rec_override is not None:
+                base["recovery"] = rec_override
+                base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
             return base
 
         def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None):
@@ -1520,9 +1465,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 else:
                     base = {"level": "morning_default", "label": "🌅🎯朝L4 候補",
                             "recovery": 160.8, "n": 2210}
-            elif cls == 2 and 0.55 <= prob_first < 0.75:
-                base = {"level": "morning_a2", "label": "🌅📈朝L4 A2候補",
-                        "recovery": 134.0, "n": 1645}
+            # A2 派生は L4 戦略対象外
             if not base:
                 return None
 
@@ -1530,23 +1473,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["is_morning"] = True
             base["prob_first"] = prob_first
 
-            # ▼ L4 サブランク (1号艇A1のみ、 _evaluate_l4 と同じロジック)
-            if cls == 1:
-                rank_code, rank_label, rank_emoji, rec_override = _l4_rank(natl_1, local_1)
-                base["rank"] = rank_code             # "base" / "plus" / "plus_plus"
-                base["rank_label"] = rank_label
-                base["rank_emoji"] = rank_emoji
-                base["natl_1"] = natl_1
-                base["local_1"] = local_1
-                if rec_override is not None:
-                    base["recovery"] = rec_override
-                    base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
-            else:
-                base["rank"] = "a2"
-                base["rank_label"] = "L4派生"
-                base["rank_emoji"] = "📈"
-                base["natl_1"] = natl_1
-                base["local_1"] = local_1
+            # ▼ L4 サブランク (1号艇A1のみ)
+            rank_code, rank_label, rank_emoji, rec_override = _l4_rank(natl_1, local_1)
+            base["rank"] = rank_code             # "base" / "plus" / "plus_plus"
+            base["rank_label"] = rank_label
+            base["rank_emoji"] = rank_emoji
+            base["natl_1"] = natl_1
+            base["local_1"] = local_1
+            if rec_override is not None:
+                base["recovery"] = rec_override
+                base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
             return base
 
         signals = []
