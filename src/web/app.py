@@ -1701,6 +1701,40 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         gb["tri_hits"] += 1
                         gb["tri_pay"] += tri_pay_v
 
+        # === l4_daily_summary テーブルから過去データ集計を補完 ===
+        # Supabase 容量節約のため、過去 (raw データが無い) の集計は
+        # 別途 l4_daily_summary に precompute して入れている。
+        # 既に by_date にある日付 (raw データから集計済) は上書きしない。
+        try:
+            with db_connect() as conn:
+                cur = conn.execute("""
+                    SELECT date, n_total, n_l4,
+                           win_bets, win_hits, win_pay,
+                           exa_bets, exa_hits, exa_pay,
+                           tri_bets, tri_hits, tri_pay
+                      FROM l4_daily_summary
+                     WHERE date BETWEEN ? AND ?
+                """, (from_date, to_date))
+                for row in cur.fetchall():
+                    (sdate, n_tot, n_l4,
+                     wb, wh, wp, eb, eh, ep, tb, th, tp) = row
+                    if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
+                        # 既に raw データから集計済 → スキップ (raw が「正」)
+                        continue
+                    by_date[sdate] = {
+                        "date": sdate,
+                        "n_total": n_tot or 0,
+                        "n_done": 0,  # サマリ由来なので未定義
+                        "n_l4": n_l4 or 0,
+                        "win_bets": wb or 0, "win_hits": wh or 0, "win_pay": wp or 0,
+                        "exa_bets": eb or 0, "exa_hits": eh or 0, "exa_pay": ep or 0,
+                        "tri_bets": tb or 0, "tri_hits": th or 0, "tri_pay": tp or 0,
+                        "grade_breakdown": {},
+                        "_from_summary": True,
+                    }
+        except Exception as e:
+            logger.warning("l4_daily_summary lookup failed: %s", e)
+
         # ROI 計算 (L4 = A1 のみ。A2 派生は対象外)
         for d in by_date.values():
             for bet in ("win", "exa", "tri"):
