@@ -244,26 +244,40 @@ def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
         # 1 着の行にのみ記録する。
         race_kimarite = race.get("race_kimarite") or race.get("kimarite")
 
-        for r in boat_results:
-            is_winner = (r.get("racer_place_number") == 1
-                         or r.get("racer_place_number") == "1")
-            conn.execute("""
-                INSERT OR REPLACE INTO race_results (
-                    race_id, boat_number, finishing_position,
-                    course_number, start_timing, race_time, remarks, kimarite
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                rid,
-                r.get("racer_boat_number"),
-                r.get("racer_place_number"),
-                r.get("racer_course_number"),
-                r.get("racer_start_timing"),
-                r.get("racer_race_time"),
-                r.get("racer_remarks"),
-                race_kimarite if is_winner else None,
-            ))
-            n_results += 1
+        # Open API は payouts は出すが boats 配列が空 or place=null のまま
+        # 残してくるケースがある (バッチ更新の遅延中)。
+        # その場合、INSERT OR REPLACE で既存の Layer 3 スクレイプ結果を
+        # NULL で上書きしてしまうので、boats が完全に NULL の race は skip。
+        all_places_null = all(
+            r.get("racer_place_number") is None for r in boat_results
+        ) if boat_results else True
+        if all_places_null:
+            # boats 情報なし → race_results に触らない (既存値を保持)
+            pass
+        else:
+            for r in boat_results:
+                place = r.get("racer_place_number")
+                # place=null の row は既存を保持するためスキップ
+                if place is None:
+                    continue
+                is_winner = (place == 1 or place == "1")
+                conn.execute("""
+                    INSERT OR REPLACE INTO race_results (
+                        race_id, boat_number, finishing_position,
+                        course_number, start_timing, race_time, remarks, kimarite
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    rid,
+                    r.get("racer_boat_number"),
+                    place,
+                    r.get("racer_course_number"),
+                    r.get("racer_start_timing"),
+                    r.get("racer_race_time"),
+                    r.get("racer_remarks"),
+                    race_kimarite if is_winner else None,
+                ))
+                n_results += 1
 
         # 払戻金 (API構造に合わせてフィールド名を調整する想定)
         payouts = race.get("payouts", {})

@@ -1,4 +1,4 @@
-"""ローカル SQLite → Supabase の l4_daily_summary テーブルに「集計のみ」を同期。
+"""src (生データ) → Supabase l4_daily_summary に L4 [A1] ROI 集計のみを同期。
 
 Supabase Free プランの 500MB 制限内に収まるよう、生データ
 (races / race_entries / race_payouts / race_results) ではなく
@@ -8,11 +8,16 @@ L4 戦略条件 (=2026-05 時点):
   - 1号艇 A1 (class_number = 1)
   - SG/G1/G2/G3 (grade_number IN 1,2,3,4、一般戦5除外)
   - B除外会場 (2,4,7,8,10,19,21,24) 除外
-  - 三連単本命 (race_payouts MIN) が 500-1000円帯
+  - 判定優先: T-X 1-2-3 オッズ × 100 が 500-1000円帯
+            (T-X 無し時のフォールバック: race_payouts MIN が 500-1000円帯)
+
+データソース選択 (--src オプション):
+  - --src supabase (default): Supabase の生データから計算 (odds_trifecta 含む)
+  - --src local: ローカル SQLite から計算 (2022-2024 等、Supabase に無い期間)
 
 使い方:
-    python scripts/sync_l4_summary_to_supabase.py --start 2022-01-01 --end 2026-12-31
-    python scripts/sync_l4_summary_to_supabase.py  # 全期間
+    python scripts/sync_l4_summary_to_supabase.py --start 2025-01-01 --end 2026-12-31
+    python scripts/sync_l4_summary_to_supabase.py --src local --start 2022-01-01 --end 2024-12-31
 """
 from __future__ import annotations
 
@@ -32,8 +37,8 @@ from src.db.connection import connect as db_connect
 EXCLUDE_B = (2, 4, 7, 8, 10, 19, 21, 24)
 
 
-def compute_summary(src: sqlite3.Connection, start: str, end: str) -> list[dict]:
-    """ローカル SQLite から日別 L4 [A1] 集計を計算"""
+def compute_summary(src, start: str, end: str) -> list[dict]:
+    """src (SQLite または psycopg) から日別 L4 [A1] 集計を計算"""
     placeholders = ",".join("?" for _ in EXCLUDE_B)
     sql = f"""
         SELECT r.race_date,
@@ -116,6 +121,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--start", type=str, default="2022-01-01")
     p.add_argument("--end", type=str, default=datetime.now().strftime("%Y-%m-%d"))
+    p.add_argument("--src", choices=["supabase", "local"], default="supabase",
+                   help="集計データ源 (default=supabase)")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
 
@@ -124,13 +131,21 @@ def main():
         print("ERROR: DATABASE_URL が Supabase URL に設定されていません (.env 確認)")
         sys.exit(1)
 
-    print(f"=== L4 [A1] 集計のみ同期: {args.start} ~ {args.end} ===")
+    print(f"=== L4 [A1] 集計のみ同期: {args.start} ~ {args.end} (src={args.src}) ===")
     print()
 
-    # ローカル SQLite から集計計算
-    src = sqlite3.connect(config.DB_PATH)
+    # データ源
+    if args.src == "supabase":
+        # Supabase から計算 (DATABASE_URL を尊重)
+        src = db_connect()
+    else:
+        # ローカル SQLite から計算 (2022-2024 等、Supabase に無い期間)
+        src = sqlite3.connect(config.DB_PATH)
     summaries = compute_summary(src, args.start, args.end)
-    src.close()
+    try:
+        src.close()
+    except Exception:
+        pass
     print(f"  集計対象日数: {len(summaries)}")
     n_l4_total = sum(s["n_l4"] for s in summaries)
     tri_pay_total = sum(s["tri_pay"] for s in summaries)
