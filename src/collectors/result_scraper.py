@@ -57,20 +57,53 @@ def scrape_race_result(race_id: str) -> Optional[dict]:
     }
 
 
-def scrape_results_for_pending_races(target_date: date, conn) -> dict:
+def scrape_results_for_pending_races(target_date: date, conn,
+                                     l4_only: bool = True) -> dict:
     """指定日の「締切後だが race_payouts が無い」レースを抽出し、
     boatrace.jp から結果をスクレイプして upsert_results 互換ペイロードに梱包。
+
+    BAN リスク低減のため、デフォルトでは L4 候補レースのみを対象とする
+    (~18件/日)。非候補は Open API のバッチ更新を待つ。
+    l4_only=False で従来通り全レース対象 (~150件/日)。
 
     Args:
         target_date: 対象日
         conn: DB connection (psycopg or sqlite)
+        l4_only: True=L4 候補のみ (default), False=全レース
     Returns:
         {"results": [race_dict, ...]} の dict (upsert_results に渡せる形)。
         該当無しなら {"results": []}.
     """
     from datetime import datetime, timedelta
 
-    # 締切から 5 分以上経過し、まだ race_payouts (trifecta) が無いレース
+    # === L4 候補レース ID 集合 (predictions ベース) ===
+    l4_candidate_ids: set[str] = set()
+    if l4_only:
+        EXCLUDE_B = (2, 4, 7, 8, 10, 19, 21, 24)
+        try:
+            placeholders = ",".join("?" for _ in EXCLUDE_B)
+            cur = conn.execute(
+                f"""
+                SELECT r.race_id
+                  FROM races r
+                  JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                  JOIN predictions p  ON p.race_id = r.race_id AND p.boat_number = 1
+                 WHERE r.race_date = ?
+                   AND r.stadium_number NOT IN ({placeholders})
+                   AND (
+                        (e.class_number = 1 AND p.prob_first BETWEEN ? AND ?)
+                     OR (e.class_number = 2 AND p.prob_first BETWEEN ? AND ?)
+                   )
+                """,
+                (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85, 0.55, 0.75),
+            )
+            l4_candidate_ids = {row[0] for row in cur.fetchall()}
+            logger.info("L4 candidates for %s: %d races", target_date, len(l4_candidate_ids))
+        except Exception as e:
+            logger.warning("L4 candidate lookup failed (%s) → falling back to all races", e)
+            l4_only = False  # safety net
+
+    # === 締切から 5 分以上経過し、まだ race_payouts (trifecta) が無いレース ===
     cur = conn.execute(
         """
         SELECT r.race_id, r.race_closed_at
@@ -87,6 +120,9 @@ def scrape_results_for_pending_races(target_date: date, conn) -> dict:
     pending: list[str] = []
     now = datetime.now()
     for race_id, closed_at in cur.fetchall():
+        # L4 フィルタ
+        if l4_only and race_id not in l4_candidate_ids:
+            continue
         # closed_at は datetime (psycopg) or 文字列 (SQLite)
         if isinstance(closed_at, datetime):
             close_dt = closed_at

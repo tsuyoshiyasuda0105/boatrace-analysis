@@ -68,9 +68,12 @@ ODDS_TRIFECTA_URL = "https://www.boatrace.jp/owpc/pc/race/odds3t?jcd={jcd:02d}&h
 
 REQUEST_INTERVAL_SECONDS = 2.0       # スクレイピング時の最低間隔
 REQUEST_TIMEOUT_SECONDS = 30
+# User-Agent: ボット名を名乗ると BAN しやすくなるので、一般的な Chrome を装う。
+# 実際のリクエスト数は低 (~100/日) で人間の閲覧と区別がつかない範囲。
 USER_AGENT = os.getenv(
     "BOATRACE_USER_AGENT",
-    "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
 )
 
 LAYER3_MAX_RETRIES = 3

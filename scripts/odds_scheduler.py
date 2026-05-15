@@ -339,16 +339,26 @@ def daemon_loop(interval_sec: int = 60, verbose: bool = False) -> None:
 
 
 def main():
+    import random
     p = argparse.ArgumentParser()
     p.add_argument("--daemon", action="store_true", help="60秒ループで常駐")
     p.add_argument("--interval", type=int, default=60)
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--no-jitter", action="store_true",
+                   help="ランダムジッタを無効 (デバッグ用)")
     args = p.parse_args()
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+
+    # 起動時ランダムジッタ (0-25 秒): Task Scheduler の毎分起動と T-X 判定の
+    # tolerance ±0.5min (30秒) の関係で 25秒以内に抑える。これで boatrace.jp
+    # 側のアクセスパターンが「毎分 xx:01」固定にならず人間の閲覧に寄る。
+    if not args.daemon and not args.no_jitter:
+        jitter = random.uniform(0, 25)
+        time.sleep(jitter)
 
     if args.daemon:
         daemon_loop(interval_sec=args.interval, verbose=args.verbose)

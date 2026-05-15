@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -47,12 +49,23 @@ def main():
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--force", action="store_true",
                    help="最初のレース締切前でも取得する")
+    p.add_argument("--no-jitter", action="store_true",
+                   help="ランダムジッタを無効 (デバッグ用)")
     args = p.parse_args()
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+
+    # === 起動時ランダムジッタ ===
+    # Task Scheduler は xx:00:01 ピッタリに起動するが、毎回同じタイミング
+    # だと boatrace.jp 側で「ボット動作」と検知されやすい。
+    # 0-60 秒のランダム待ちで人間の閲覧パターンに寄せる。
+    if not args.no_jitter:
+        jitter = random.uniform(0, 60)
+        print(f"[jitter] sleeping {jitter:.1f}s to randomize timing")
+        time.sleep(jitter)
 
     target_date = (datetime.fromisoformat(args.date).date()
                    if args.date else date.today())

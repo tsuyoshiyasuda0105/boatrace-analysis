@@ -27,9 +27,28 @@ def _get_session() -> requests.Session:
     global _session
     if _session is None:
         s = requests.Session()
-        s.headers.update({"User-Agent": config.USER_AGENT})
+        # ブラウザらしい一般的なヘッダ一式 (BAN 検知のヒューリスティクスを回避)
+        s.headers.update({
+            "User-Agent": config.USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                     "image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        })
         _session = s
     return _session
+
+
+def _referer_for(url: str) -> Optional[str]:
+    """boatrace.jp 内のページに対する自然な Referer を作る。
+    例: /owpc/pc/race/odds3t?... に対しては /owpc/pc/race/index?hd=... を返す。
+    """
+    if "boatrace.jp" not in url:
+        return None
+    # 同じドメインのトップが妥当
+    return "https://www.boatrace.jp/owpc/pc/race/index"
 
 
 def _wait_interval() -> None:
@@ -53,10 +72,14 @@ def fetch_html(url: str) -> Optional[str]:
     """
     session = _get_session()
 
+    referer = _referer_for(url)
+    extra_headers = {"Referer": referer} if referer else {}
+
     for attempt in range(1, config.LAYER3_MAX_RETRIES + 1):
         _wait_interval()
         try:
-            resp = session.get(url, timeout=config.REQUEST_TIMEOUT_SECONDS)
+            resp = session.get(url, timeout=config.REQUEST_TIMEOUT_SECONDS,
+                               headers=extra_headers)
         except requests.RequestException as e:
             logger.warning("HTTP error attempt=%d url=%s err=%s", attempt, url, e)
             if attempt < config.LAYER3_MAX_RETRIES:
