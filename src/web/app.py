@@ -60,17 +60,23 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
             # 過去日リクエストは長期キャッシュ
             effective_ttl = ttl
             try:
+                today_iso = date.today().isoformat()
                 if request:
                     req_date = request.args.get("date", "")
-                    if req_date and req_date < date.today().isoformat():
+                    if req_date and req_date < today_iso:
                         effective_ttl = past_ttl
+                    # /member/strategy 等の from/to レンジ → to が過去なら past_ttl
+                    if effective_ttl == ttl:
+                        to_date = request.args.get("to", "")
+                        if to_date and to_date < today_iso:
+                            effective_ttl = past_ttl
                 # /race/<race_id> 等で race_id (例: 20260513-23-01) から
                 # 日付を抽出して past_ttl を有効化
                 if effective_ttl == ttl:
                     for a in args:
                         if isinstance(a, str) and len(a) >= 8 and a[:8].isdigit():
                             rid_date = f"{a[:4]}-{a[4:6]}-{a[6:8]}"
-                            if rid_date < date.today().isoformat():
+                            if rid_date < today_iso:
                                 effective_ttl = past_ttl
                                 break
             except Exception:
@@ -1832,6 +1838,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/member/strategy/races")
     @login_required
+    @cached(ttl=180, past_ttl=3600)  # 当日3分/過去日1時間
     def member_strategy_races():
         """指定日の L4 該当レース一覧 (会員限定)"""
         target_date = request.args.get("date") or date.today().isoformat()
@@ -1865,6 +1872,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/member/strategy")
     @login_required
+    @cached(ttl=180, past_ttl=3600)  # 当日3分/期間終端が過去なら1時間
     def member_strategy():
         """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
         from datetime import timedelta

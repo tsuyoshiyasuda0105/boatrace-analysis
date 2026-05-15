@@ -89,7 +89,10 @@
   <!-- 日別テーブル -->
   <section class="daily-table-section">
     <h3>📅 日別詳細 (A1 のみ集計、{{ rows | length }} 日分)</h3>
-    <p class="dashboard-hint">※ L4 該当 = A1 のみ。A2 派生 は上のサマリーで確認可能。</p>
+    <p class="dashboard-hint">
+      ※ L4 該当 = A1 のみ。A2 派生 は上のサマリーで確認可能。<br>
+      💡 <strong>日付の「明細→」ボタンをクリックするとその日の L4 該当レース全件 (会場・選手・結果) が見られます。</strong>
+    </p>
     <div class="table-wrap">
       <table class="daily-table">
         <thead>
@@ -100,6 +103,7 @@
             <th colspan="3">単勝 (1号艇)</th>
             <th colspan="3">2連単 1-2</th>
             <th colspan="3">3連単 1-2-3</th>
+            <th rowspan="2">明細</th>
           </tr>
           <tr>
             <th>HIT</th><th>回収</th><th>損益</th>
@@ -109,17 +113,12 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          <tr>
-            <td>
-              {% if r.n_l4 > 0 or r.n_l4_a2 > 0 %}
-                <a href="{{ url_for('member_strategy_races', date=r.date) }}"
-                   title="L4 該当レース一覧">{{ r.date }} 📋</a>
-              {% else %}
-                <a href="{{ url_for('races', date=r.date) }}">{{ r.date }}</a>
-              {% endif %}
+          <tr class="{% if r.n_l4 > 0 or r.n_l4_a2 > 0 %}has-l4{% endif %}">
+            <td class="date-cell">
+              <span class="date-text">{{ r.date }}</span>
             </td>
             <td class="num">{{ r.n_total }}</td>
-            <td class="num">{{ r.n_l4 }}</td>
+            <td class="num">{{ r.n_l4 }}{% if r.n_l4_a2 %}<span class="a2-tag">+{{ r.n_l4_a2 }}A2</span>{% endif %}</td>
 
             {% if r.n_l4 %}
               <td class="num">{{ r.win_hits }}/{{ r.win_bets }}</td>
@@ -148,6 +147,19 @@
             {% else %}
               <td colspan="9" class="num muted">L4該当なし</td>
             {% endif %}
+            <td class="detail-cell">
+              {% if r.n_l4 > 0 or r.n_l4_a2 > 0 %}
+                <a href="{{ url_for('member_strategy_races', date=r.date) }}"
+                   class="detail-btn" title="この日の L4 該当レース全件を見る">
+                  明細→
+                </a>
+              {% else %}
+                <a href="{{ url_for('races', date=r.date) }}"
+                   class="detail-btn detail-btn-muted" title="この日のレース一覧">
+                  全R→
+                </a>
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
