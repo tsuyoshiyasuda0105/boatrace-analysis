@@ -2296,7 +2296,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
-        from_d = request.args.get("from") or (today - timedelta(days=90)).isoformat()
+        # backlog item 19: デフォルトは「今日から 1 ヶ月前」
+        from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
