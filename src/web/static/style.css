@@ -1753,6 +1753,43 @@ main h2 {
 }
 /* A2 派生は L4 戦略対象外のため badge スタイル削除 (2026-05) */
 
+/* L4 G++ F1 (一般戦 採用): ★緑系 (ユーザ指示)
+   ・確定バッジ: 鮮やかなライム → エメラルドグラデ
+   ・朝候補バッジ: やや薄い緑 (dashed border 風) */
+.l4-badge.l4-general_f1 {
+  background: linear-gradient(135deg, #22c55e, #16a34a, #84cc16) !important;
+  color: #fff !important;
+  border: 2px solid #15803d !important;
+  text-shadow: 0 0 5px rgba(0, 0, 0, 0.5) !important;
+  box-shadow: 0 0 14px rgba(34, 197, 94, 0.65) !important;
+  font-weight: 900 !important;
+  animation: pulse-f1 2.5s ease-in-out infinite;
+}
+.l4-badge.l4-morning_general_f1 {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.7), rgba(22, 163, 74, 0.6), rgba(132, 204, 22, 0.6)) !important;
+  color: #fff !important;
+  border: 2px dashed #16a34a !important;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.5) !important;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.45) !important;
+  font-weight: bold !important;
+  animation: pulse-f1 2.8s ease-in-out infinite;
+}
+@keyframes pulse-f1 {
+  0%, 100% { box-shadow: 0 0 14px rgba(34, 197, 94, 0.55); }
+  50%      { box-shadow: 0 0 22px rgba(34, 197, 94, 0.90); }
+}
+/* F1 × 1c80 / PRO オーバーレイ時も緑を維持 (橙紫の上書き防止) */
+.l4-badge.l4-general_f1.l4-1c80,
+.l4-badge.l4-general_f1.l4-pro,
+.l4-badge.l4-general_f1.l4-pro.l4-1c80,
+.l4-badge.l4-morning_general_f1.l4-1c80,
+.l4-badge.l4-morning_general_f1.l4-pro,
+.l4-badge.l4-morning_general_f1.l4-pro.l4-1c80 {
+  background: linear-gradient(135deg, #22c55e, #16a34a, #84cc16) !important;
+  border-color: #15803d !important;
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.70) !important;
+}
+
 /* ROI ダッシュのサブ戦略セクション ヘッダ */
 .sub-strategy-header {
   margin: 24px 0 6px;
