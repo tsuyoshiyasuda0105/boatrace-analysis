@@ -14,9 +14,9 @@
     集計範囲: 2025-07-01 〜 今日 / 当月は完了レース分のみの暫定値
   </p>
 
-  <!-- グラフ: 月別 ROI 推移 (採用 4 + 観察 3) — 棒グラフ -->
+  <!-- グラフ: 月別 ROI 推移 (3連単 / L4 G++ F1 / 一般戦×12R) — 棒グラフ -->
   <section class="chart-section">
-    <h3>📊 月別 ROI 推移グラフ</h3>
+    <h3>📊 月別 ROI 推移グラフ <small class="section-hint">3連単 1-2-3 / L4 G++ F1 / 一般戦×12R の比較</small></h3>
     <div class="chart-legend" id="monthlyChartLegend"></div>
     <canvas id="monthlyChart" width="980" height="380"></canvas>
     <p class="dashboard-hint" style="margin-top:8px;">
@@ -29,8 +29,8 @@
   <section class="daily-table-section monthly-roi-section">
     <h3>📋 月別 ROI テーブル</h3>
     <p class="dashboard-hint">
-      <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / F1 一般戦 ／
-      観察: L4-prime / L4-12R / 一般戦×12R</small>
+      <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / ⭐ L4 G++ F1 ／
+      観察: L4-prime / L4-12R / 🟢 一般戦×12R</small>
     </p>
     <div class="table-wrap">
       <table class="daily-table monthly-roi-table">
@@ -41,7 +41,7 @@
             <th colspan="2">単勝 (1)</th>
             <th colspan="2">2連単 (1-2)</th>
             <th colspan="2">3連単 (1-2-3)</th>
-            <th colspan="2">F1 一般戦</th>
+            <th colspan="2">⭐ L4 G++ F1</th>
             <th colspan="2" class="obs-col">🟢 L4-prime</th>
             <th colspan="2" class="obs-col">🟢 L4-12R</th>
             <th colspan="2" class="obs-col">🟢 一般戦×12R</th>
@@ -125,13 +125,11 @@
     {% endfor %}
   ];
 
+  // グラフは主要 3 戦略のみ表示 (backlog item 19):
+  //   3連単 1-2-3 (本流採用) / L4 G++ F1 (採用ベース) / 一般戦×12R (観察候補)
   const SERIES = [
-    {key:'win',   label:'単勝 (1)',       color:'#34e890', adopted:true},
-    {key:'exa',   label:'2連単 (1-2)',    color:'#00d4ff', adopted:true},
     {key:'tri',   label:'3連単 (1-2-3)',  color:'#ff006e', adopted:true},
-    {key:'f1',    label:'F1 一般戦',       color:'#ffd700', adopted:true},
-    {key:'prime', label:'🟢 L4-prime',    color:'#10b981', adopted:false},
-    {key:'r12',   label:'🟢 L4-12R',      color:'#059669', adopted:false},
+    {key:'f1',    label:'L4 G++ F1',      color:'#ffd700', adopted:true},
     {key:'gr12',  label:'🟢 一般戦×12R',  color:'#16a34a', adopted:false},
   ];
 
