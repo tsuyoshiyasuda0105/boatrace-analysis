@@ -346,6 +346,90 @@
     </div>
   </section>
 
+  <!-- レース番号別 観察 日別詳細 (L4-prime / L4-12R / 一般戦×12R) -->
+  <section class="daily-table-section observe-only-section">
+    <h3>📋 レース番号別 観察 日別詳細 (3 ヶ月実績で採用判断)</h3>
+    <p class="dashboard-hint">
+      💡 <strong>🟢 L4-prime / L4-12R / 一般戦×12R は観察期間中。</strong><br>
+      <small>
+        🟢 L4-prime (11-12R 限定、検証 ROI 185%) ／
+        🟢 L4-12R (12R のみ、検証 ROI 193%) ／
+        🟢 一般戦×12R (検証 ROI 189%)<br>
+        実運用 (本日候補リスト + メール通知) はまだ無効。3 ヶ月実績で採用判断します。
+      </small>
+    </p>
+    <div class="table-wrap">
+      <table class="daily-table daily-table-observe">
+        <thead>
+          <tr>
+            <th rowspan="2">日付</th>
+            <th rowspan="2">総R</th>
+            <th colspan="3">🟢 L4-prime (11-12R)</th>
+            <th colspan="3">🟢 L4-12R (12R のみ)</th>
+            <th colspan="3">🟢 一般戦×12R</th>
+          </tr>
+          <tr>
+            <th>HIT</th><th>回収</th><th>損益</th>
+            <th>HIT</th><th>回収</th><th>損益</th>
+            <th>HIT</th><th>回収</th><th>損益</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          {% set has_obs2 = (r.prime_tri_bets and r.prime_tri_bets > 0) or (r.r12_tri_bets and r.r12_tri_bets > 0) or (r.gen_r12_tri_bets and r.gen_r12_tri_bets > 0) %}
+          {% if has_obs2 %}
+          <tr class="has-l4-observe">
+            <td class="date-cell">
+              <span class="date-text">{{ r.date }}</span>
+            </td>
+            <td class="num">{{ r.n_total }}</td>
+
+            {# L4-prime 列 #}
+            <td class="num">{{ r.prime_tri_hits or 0 }}/{{ r.prime_tri_bets or 0 }}</td>
+            <td class="num {% if r.prime_tri_recovery and r.prime_tri_recovery >= 100 %}pos{% elif r.prime_tri_recovery %}neg{% endif %}">
+              {% if r.prime_tri_recovery is not none %}{{ '%.0f' | format(r.prime_tri_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.prime_tri_profit and r.prime_tri_profit > 0 %}pos{% elif r.prime_tri_profit and r.prime_tri_profit < 0 %}neg{% endif %}">
+              {% if r.prime_tri_bets and r.prime_tri_bets > 0 %}{{ r.prime_tri_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
+
+            {# L4-12R 列 #}
+            <td class="num">{{ r.r12_tri_hits or 0 }}/{{ r.r12_tri_bets or 0 }}</td>
+            <td class="num {% if r.r12_tri_recovery and r.r12_tri_recovery >= 100 %}pos{% elif r.r12_tri_recovery %}neg{% endif %}">
+              {% if r.r12_tri_recovery is not none %}{{ '%.0f' | format(r.r12_tri_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.r12_tri_profit and r.r12_tri_profit > 0 %}pos{% elif r.r12_tri_profit and r.r12_tri_profit < 0 %}neg{% endif %}">
+              {% if r.r12_tri_bets and r.r12_tri_bets > 0 %}{{ r.r12_tri_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
+
+            {# 一般戦×12R 列 #}
+            <td class="num">{{ r.gen_r12_tri_hits or 0 }}/{{ r.gen_r12_tri_bets or 0 }}</td>
+            <td class="num {% if r.gen_r12_tri_recovery and r.gen_r12_tri_recovery >= 100 %}pos{% elif r.gen_r12_tri_recovery %}neg{% endif %}">
+              {% if r.gen_r12_tri_recovery is not none %}{{ '%.0f' | format(r.gen_r12_tri_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.gen_r12_tri_profit and r.gen_r12_tri_profit > 0 %}pos{% elif r.gen_r12_tri_profit and r.gen_r12_tri_profit < 0 %}neg{% endif %}">
+              {% if r.gen_r12_tri_bets and r.gen_r12_tri_bets > 0 %}{{ r.gen_r12_tri_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+          {# 1行も無い場合 #}
+          {% set obs2_total = namespace(n=0) %}
+          {% for r in rows %}
+            {% if (r.prime_tri_bets and r.prime_tri_bets > 0) or (r.r12_tri_bets and r.r12_tri_bets > 0) or (r.gen_r12_tri_bets and r.gen_r12_tri_bets > 0) %}
+              {% set obs2_total.n = obs2_total.n + 1 %}
+            {% endif %}
+          {% endfor %}
+          {% if obs2_total.n == 0 %}
+          <tr class="is-empty">
+            <td colspan="11" class="num muted">レース番号別 観察データなし (バックフィル未実行 or 該当レース無し)</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="legend-section">
     <details>
       <summary>📖 戦略条件の詳細</summary>
