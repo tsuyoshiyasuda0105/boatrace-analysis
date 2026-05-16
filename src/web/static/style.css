@@ -1762,6 +1762,39 @@ main h2 {
   border-bottom: 2px solid rgba(252, 211, 77, 0.3);
 }
 
+/* 観察専用セクション ヘッダ (本流 L4 ゴールドと区別する薄青系)
+   候補リスト/メールには含めない「観察カラム」用。 */
+.sub-strategy-header.observe-only-header {
+  color: #93c5fd;
+  border-bottom: 2px dashed rgba(147, 197, 253, 0.35);
+}
+
+/* 観察専用カード: 薄い青系 (本流ゴールドと明確に区別)
+   summary-card の .positive/.negative より弱い視覚的存在感を意図 (運用候補)。 */
+.summary-card.observe-only {
+  background: rgba(125, 211, 252, 0.08);
+  border: 1px dashed rgba(125, 211, 252, 0.45);
+}
+.summary-card.observe-only .card-label {
+  color: #bae6fd;
+  font-weight: 600;
+}
+.summary-card.observe-only .card-value {
+  color: #7dd3fc;
+}
+.summary-card.observe-only .card-sub small {
+  color: #93c5fd;
+  opacity: 0.85;
+}
+@media (max-width: 480px) {
+  .sub-strategy-header.observe-only-header {
+    font-size: 13px;
+  }
+  .summary-card.observe-only {
+    padding: 12px;
+  }
+}
+
 /* L4 一般戦 (参考、ROI 対象外): 薄い青 (backlog item 5)
    ユーザフィードバック「紫色はセンスが悪い」→ 一般戦に L4 PRO 条件が
    重なると `.l4-pro` (紫) のスタイルが勝って紫になっていた問題を解消。

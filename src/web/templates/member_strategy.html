@@ -112,6 +112,42 @@
         </span>
       </div>
     </div>
+
+    <h4 class="sub-strategy-header observe-only-header">📋 観察専用 (運用候補、本日候補リスト/メールには含まない)</h4>
+    <p class="dashboard-hint">
+      本流 L4 (ゴールド) とは区別される<strong>観察カラム</strong>。一般戦は引き続き「参考扱い」で、
+      候補リストやメール通知には含めません。Phase 2 (L4 G+ 候補) の運用判断材料として表示します。
+    </p>
+    <div class="summary-grid">
+      <div class="summary-card observe-only"
+           title="本流外、参考扱い。検証 ROI 147.7-151.9%">
+        <span class="card-label">🔍 L4 一般戦 (観察)</span>
+        <span class="card-value">
+          {% if totals.gen_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.gen_tri_bets }} HIT={{ totals.gen_tri_hits }}
+          {% if totals.gen_tri_bets > 0 %}
+          / 損益 {{ totals.gen_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>本流外、参考扱い (検証 147.7-151.9%)</small>
+        </span>
+      </div>
+      <div class="summary-card observe-only"
+           title="Phase 2 候補、検証 ROI 165.9% (n=478, 直近12ヶ月)">
+        <span class="card-label">🌟 L4 G+ 候補 (一般戦 × 国1%≥7)</span>
+        <span class="card-value">
+          {% if totals.gen_plus_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_plus_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.gen_plus_tri_bets }} HIT={{ totals.gen_plus_tri_hits }}
+          {% if totals.gen_plus_tri_bets > 0 %}
+          / 損益 {{ totals.gen_plus_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>Phase 2 候補 (検証 165.9%, n=478)</small>
+        </span>
+      </div>
+    </div>
   </section>
 
   <!-- ROI 推移グラフ -->

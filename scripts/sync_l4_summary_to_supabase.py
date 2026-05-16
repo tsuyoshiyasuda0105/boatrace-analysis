@@ -52,11 +52,14 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
 
     # L4 該当 + 各 bet_type の hit
     # サブカテゴリ集計: 1c80 / L4 PRO / SG/G1/G2 を 1 クエリで取得
+    # 一般戦 (grade=5) 観察集計 (gen_tri_* / gen_plus_tri_*) も同居取得するため
+    # grade 条件は SQL では絞らず、ループ内で分岐する。
     sql = f"""
         SELECT r.race_date,
                r.race_id,
                r.race_grade_number,
                e.racer_number, e.avg_start_timing, e.age,
+               e.national_top_1_percent AS natl_1,
                pv.start_timing_exhibition,
                pp.min_pay AS fav_pay,
                oo.min_odds AS fav_odds,
@@ -82,7 +85,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
         WHERE r.race_date BETWEEN ? AND ?
           AND e.class_number = 1
           AND r.stadium_number NOT IN ({placeholders})
-          AND r.race_grade_number IN (1, 2, 3, 4)
+          AND r.race_grade_number IN (1, 2, 3, 4, 5)
           AND (pv.weather_number IS NULL OR pv.weather_number != 3)
           AND (
               (oo.min_odds IS NOT NULL AND oo.min_odds >= 5 AND oo.min_odds < 10)
@@ -134,7 +137,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
 
     by_date: dict[str, dict] = {}
     for row in cur.fetchall():
-        (rdate, rid, grade, racer, avg_st, age, ex_st,
+        (rdate, rid, grade, racer, avg_st, age, natl_1, ex_st,
          fav_pay, fav_odds, w1, w2, w3, wp, ep, tp) = row
         d = by_date.setdefault(rdate, {
             "date": rdate,
@@ -147,10 +150,38 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "c80_bets": 0, "c80_hits": 0, "c80_pay": 0,
             "pro_bets": 0, "pro_hits": 0, "pro_pay": 0,
             "sgg12_bets": 0, "sgg12_hits": 0, "sgg12_pay": 0,
+            # 一般戦 (grade=5) 観察集計 (Phase 1: 観察のみ)
+            "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
+            # 一般戦 × 国1%≥7 (= L4+ オーバーレイ) 重畳
+            "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
         })
+        is_done = (w1 is not None and w2 is not None and w3 is not None)
+        tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
+        tri_pay_v = (tp or 0) if tri_hit else 0
+
+        # === 一般戦 (grade=5): L4 本流と分離して観察集計 ===
+        if grade == 5:
+            if is_done:
+                d["gen_tri_bets"] += 1
+                if tri_hit:
+                    d["gen_tri_hits"] += 1
+                    d["gen_tri_pay"] += tri_pay_v
+                # 一般戦 × 国1%≥7 (L4+ オーバーレイ) サブセット
+                try:
+                    n1 = float(natl_1) if natl_1 is not None else 0.0
+                except (TypeError, ValueError):
+                    n1 = 0.0
+                if n1 >= 7.0:
+                    d["gen_plus_tri_bets"] += 1
+                    if tri_hit:
+                        d["gen_plus_tri_hits"] += 1
+                        d["gen_plus_tri_pay"] += tri_pay_v
+            continue  # 一般戦は L4 本流集計に含めない
+
+        # === L4 本流 (grade IN 1,2,3,4) ===
         d["n_l4"] += 1
         # 確定済 (w1/w2/w3 揃ってる) のみ bets/hits/pay を加算
-        if w1 is not None and w2 is not None and w3 is not None:
+        if is_done:
             d["win_bets"] += 1
             d["exa_bets"] += 1
             d["tri_bets"] += 1
@@ -160,7 +191,6 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             if w1 == 1 and w2 == 2:
                 d["exa_hits"] += 1
                 d["exa_pay"] += (ep or 0)
-            tri_hit = (w1 == 1 and w2 == 2 and w3 == 3)
             if tri_hit:
                 d["tri_hits"] += 1
                 d["tri_pay"] += (tp or 0)
@@ -228,18 +258,55 @@ def main():
     n_upsert = 0
     BATCH = 500
     batch = []
-    UPSERT_SQL = """
-        INSERT OR REPLACE INTO l4_daily_summary
-          (date, n_total, n_l4,
-           win_bets, win_hits, win_pay,
-           exa_bets, exa_hits, exa_pay,
-           tri_bets, tri_hits, tri_pay,
-           c80_bets, c80_hits, c80_pay,
-           pro_bets, pro_hits, pro_pay,
-           sgg12_bets, sgg12_hits, sgg12_pay,
-           updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
+    # UPSERT: Postgres は ON CONFLICT、SQLite は INSERT OR REPLACE 構文。
+    # db_connect() が返す接続種別で SQL を切替える。
+    is_pg = db_url.startswith(("postgres://", "postgresql://"))
+    if is_pg:
+        UPSERT_SQL = """
+            INSERT INTO l4_daily_summary
+              (date, n_total, n_l4,
+               win_bets, win_hits, win_pay,
+               exa_bets, exa_hits, exa_pay,
+               tri_bets, tri_hits, tri_pay,
+               c80_bets, c80_hits, c80_pay,
+               pro_bets, pro_hits, pro_pay,
+               sgg12_bets, sgg12_hits, sgg12_pay,
+               gen_tri_bets, gen_tri_hits, gen_tri_pay,
+               gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
+               updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (date) DO UPDATE SET
+              n_total = EXCLUDED.n_total,
+              n_l4    = EXCLUDED.n_l4,
+              win_bets = EXCLUDED.win_bets, win_hits = EXCLUDED.win_hits, win_pay = EXCLUDED.win_pay,
+              exa_bets = EXCLUDED.exa_bets, exa_hits = EXCLUDED.exa_hits, exa_pay = EXCLUDED.exa_pay,
+              tri_bets = EXCLUDED.tri_bets, tri_hits = EXCLUDED.tri_hits, tri_pay = EXCLUDED.tri_pay,
+              c80_bets = EXCLUDED.c80_bets, c80_hits = EXCLUDED.c80_hits, c80_pay = EXCLUDED.c80_pay,
+              pro_bets = EXCLUDED.pro_bets, pro_hits = EXCLUDED.pro_hits, pro_pay = EXCLUDED.pro_pay,
+              sgg12_bets = EXCLUDED.sgg12_bets, sgg12_hits = EXCLUDED.sgg12_hits, sgg12_pay = EXCLUDED.sgg12_pay,
+              gen_tri_bets = EXCLUDED.gen_tri_bets,
+              gen_tri_hits = EXCLUDED.gen_tri_hits,
+              gen_tri_pay  = EXCLUDED.gen_tri_pay,
+              gen_plus_tri_bets = EXCLUDED.gen_plus_tri_bets,
+              gen_plus_tri_hits = EXCLUDED.gen_plus_tri_hits,
+              gen_plus_tri_pay  = EXCLUDED.gen_plus_tri_pay,
+              updated_at = EXCLUDED.updated_at
+        """
+    else:
+        UPSERT_SQL = """
+            INSERT OR REPLACE INTO l4_daily_summary
+              (date, n_total, n_l4,
+               win_bets, win_hits, win_pay,
+               exa_bets, exa_hits, exa_pay,
+               tri_bets, tri_hits, tri_pay,
+               c80_bets, c80_hits, c80_pay,
+               pro_bets, pro_hits, pro_pay,
+               sgg12_bets, sgg12_hits, sgg12_pay,
+               gen_tri_bets, gen_tri_hits, gen_tri_pay,
+               gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
+               updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
     for s in summaries:
         batch.append((
             s["date"], s["n_total"], s["n_l4"],
@@ -249,6 +316,8 @@ def main():
             s.get("c80_bets",0), s.get("c80_hits",0), s.get("c80_pay",0),
             s.get("pro_bets",0), s.get("pro_hits",0), s.get("pro_pay",0),
             s.get("sgg12_bets",0), s.get("sgg12_hits",0), s.get("sgg12_pay",0),
+            s.get("gen_tri_bets",0), s.get("gen_tri_hits",0), s.get("gen_tri_pay",0),
+            s.get("gen_plus_tri_bets",0), s.get("gen_plus_tri_hits",0), s.get("gen_plus_tri_pay",0),
             now_iso,
         ))
         if len(batch) >= BATCH:

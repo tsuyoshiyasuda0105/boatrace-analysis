@@ -271,3 +271,48 @@ CREATE TABLE IF NOT EXISTS alert_sent (
   PRIMARY KEY (email_hash, race_id, alert_type)
 );
 CREATE INDEX IF NOT EXISTS idx_alert_sent_at ON alert_sent(sent_at);
+
+-- ============================================================
+-- L4 [A1] ROI 日別集計 (Supabase 容量節約のための precompute テーブル)
+-- ------------------------------------------------------------
+-- 過去日について生データ (races / race_entries / race_payouts / race_results)
+-- を Supabase に置かず、日別 ROI 集計値のみを保持する。
+-- ダッシュボード (`src/web/app.py:_l4_daily_stats`) が by_date 補完に参照。
+-- ------------------------------------------------------------
+-- カラム命名:
+--   tri_*       : L4 [A1] 3連単 1-2-3 集計 (grade IN 1,2,3,4)
+--   c80_*       : 1コース 1着率 80%+ 派生
+--   pro_*       : L4 PRO (avg_st<0.16 & age 30-49 & ex_st<0.18)
+--   sgg12_*     : 高グレード SG/G1/G2 派生
+--   gen_tri_*       : 一般戦 (grade=5) × A1 × B除外 × 本命500-1000 観察集計
+--   gen_plus_tri_*  : 一般戦 × 国1%≥7 サブセット (L4+ オーバーレイ重畳)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS l4_daily_summary (
+  date              TEXT PRIMARY KEY,
+  n_total           INTEGER,        -- 当日全レース数
+  n_l4              INTEGER,        -- L4 [A1] 該当レース数
+  win_bets          INTEGER, win_hits  INTEGER, win_pay  INTEGER,
+  exa_bets          INTEGER, exa_hits  INTEGER, exa_pay  INTEGER,
+  tri_bets          INTEGER, tri_hits  INTEGER, tri_pay  INTEGER,
+  c80_bets          INTEGER, c80_hits  INTEGER, c80_pay  INTEGER,
+  pro_bets          INTEGER, pro_hits  INTEGER, pro_pay  INTEGER,
+  sgg12_bets        INTEGER, sgg12_hits INTEGER, sgg12_pay INTEGER,
+  -- 一般戦 (grade=5) 観察集計 (Phase 1: ROI ダッシュボード観察のみ、本日候補/メールは現状維持)
+  gen_tri_bets      INTEGER,
+  gen_tri_hits      INTEGER,
+  gen_tri_pay       INTEGER,
+  -- 一般戦 × 国1%≥7 (= L4+ オーバーレイ) 重畳サブセット
+  gen_plus_tri_bets INTEGER,
+  gen_plus_tri_hits INTEGER,
+  gen_plus_tri_pay  INTEGER,
+  updated_at        TEXT NOT NULL
+);
+
+-- 既存 DB へ手動適用する場合 (一般戦観察カラム追加):
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_tri_bets      INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_tri_hits      INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_tri_pay       INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_plus_tri_bets INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_plus_tri_hits INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_plus_tri_pay  INTEGER;

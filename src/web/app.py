@@ -1775,6 +1775,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     r.stadium_number,
                     r.race_grade_number,
                     e.class_number,
+                    e.national_top_1_percent AS natl_1,
                     pp.min_pay AS fav_pay,
                     oo.min_odds AS fav_odds,
                     pr.prob_first AS prob_first,
@@ -1820,11 +1821,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
                 "a2_tri_bets": 0, "a2_tri_hits": 0, "a2_tri_pay": 0,
                 "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
+                # 「L4 一般戦」分離追跡 (Phase 1: 観察のみ、ベット候補/メールは現状維持):
+                # gen_*       = 一般戦 (grade=5) × A1 × B除外 × 本命500-1000
+                # gen_plus_*  = 上記 × 国1%≥7 (= L4+ オーバーレイ) ★ 検証 ROI 208.5%
+                "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
+                "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
                 "grade_breakdown": {},
             }
 
         for row in cur:
-            (rdate, stadium, grade, cls, fav_pay, fav_odds, prob_first,
+            (rdate, stadium, grade, cls, natl_1, fav_pay, fav_odds, prob_first,
              w1, w2, w3, win_pay, ex_pay, tri_pay, weather) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
@@ -1846,6 +1852,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "a2_tri_bets": 0, "a2_tri_hits": 0, "a2_tri_pay": 0,
                 # L4 [A1+A2 合算] の集計
                 "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
+                # 一般戦分離追跡 (Phase 1: 観察のみ)
+                "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
+                "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -1860,8 +1869,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 continue
             if cls != 1:
                 continue
-            if grade == 5:
-                continue
+
+            # is_l4_base 判定は grade 関係なく必要 (一般戦の分離追跡用)
             is_l4_base = False
             if fav_odds is not None:
                 # T-X 1-2-3 オッズ ベース (朝賭けた時点の本命金額)
@@ -1876,6 +1885,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
             tri_pay_v = (tri_pay or 0) if tri_hit else 0
+
+            # === 一般戦 (grade=5): 別カウンタで分離追跡 ===
+            # Phase 1: ROI ダッシュボードで観察のみ、本日候補リスト/メールは現状維持。
+            # Phase 2: 実績次第で運用拡大の判断材料。
+            if grade == 5:
+                if is_l4_base and is_done:
+                    d["gen_tri_bets"] += 1
+                    if tri_hit:
+                        d["gen_tri_hits"] += 1
+                        d["gen_tri_pay"] += tri_pay_v
+                    # 一般戦 × L4+ (国1%≥7) 重畳 (= 提案 "L4 G+" の base 条件)
+                    # roi-verifier 検証: n=478, ROI 165.9% (全一般戦 147.5% より +18pt)
+                    # 注: 雨天は冒頭で skip 済なので、ここは「曇/晴/NULL」のみ集計
+                    try:
+                        n1 = float(natl_1) if natl_1 is not None else 0.0
+                    except (TypeError, ValueError):
+                        n1 = 0.0
+                    if n1 >= 7.0:
+                        d["gen_plus_tri_bets"] += 1
+                        if tri_hit:
+                            d["gen_plus_tri_hits"] += 1
+                            d["gen_plus_tri_pay"] += tri_pay_v
+                continue  # 一般戦は L4 本流集計に含めない
 
             # L4 戦略は 1号艇 A1 のみ。A2 は対象外なので集計しない。
             if is_l4_base and cls == 1:
@@ -1916,7 +1948,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                            tri_bets, tri_hits, tri_pay,
                            c80_bets, c80_hits, c80_pay,
                            pro_bets, pro_hits, pro_pay,
-                           sgg12_bets, sgg12_hits, sgg12_pay
+                           sgg12_bets, sgg12_hits, sgg12_pay,
+                           gen_tri_bets, gen_tri_hits, gen_tri_pay,
+                           gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay
                       FROM l4_daily_summary
                      WHERE date BETWEEN ? AND ?
                 """, (from_date, to_date))
@@ -1924,7 +1958,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     (sdate, n_tot, n_l4,
                      wb, wh, wp, eb, eh, ep, tb, th, tp,
                      c80b, c80h, c80p, prob, proh, prop,
-                     sgb, sgh, sgp) = row
+                     sgb, sgh, sgp,
+                     gtb, gth, gtp, gptb, gpth, gptp) = row
                     if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
                         # 既に raw データから集計済 → スキップ (raw が「正」)
                         continue
@@ -1939,6 +1974,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "c80_bets": c80b or 0, "c80_hits": c80h or 0, "c80_pay": c80p or 0,
                         "pro_bets": prob or 0, "pro_hits": proh or 0, "pro_pay": prop or 0,
                         "sgg12_bets": sgb or 0, "sgg12_hits": sgh or 0, "sgg12_pay": sgp or 0,
+                        # 一般戦観察集計 (Phase 1: 過去日もダッシュボードに反映)
+                        "gen_tri_bets": gtb or 0, "gen_tri_hits": gth or 0, "gen_tri_pay": gtp or 0,
+                        "gen_plus_tri_bets": gptb or 0, "gen_plus_tri_hits": gpth or 0, "gen_plus_tri_pay": gptp or 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
@@ -2184,7 +2222,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
         }
-        for k in ("win", "exa", "tri", "c80", "pro", "sgg12"):
+        for k in ("win", "exa", "tri", "c80", "pro", "sgg12", "gen_tri", "gen_plus_tri"):
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
             totals[f"{k}_pay"]  = sum(r.get(f"{k}_pay", 0)  for r in rows)
