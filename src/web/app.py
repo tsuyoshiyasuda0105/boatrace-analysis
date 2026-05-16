@@ -932,6 +932,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app.jinja_env.filters["signed_comma"] = _signed_comma
     app.jinja_env.filters["comma"] = _comma
 
+    # 全テンプレートに today_iso を自動注入 (BOATRACE WEB リンク等で使用)
+    @app.context_processor
+    def _inject_today():
+        return {"today_iso_global": date.today().isoformat()}
+
     # DB 初期化 (空ディスクへの初回デプロイで必要)
     try:
         _ensure_db_initialized()
@@ -981,7 +986,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     def index():
         target = request.args.get("date") or date.today().isoformat()
-        return redirect(url_for("races", date=target))
+        resp = redirect(url_for("races", date=target))
+        # ブラウザがリダイレクト先を日付ごとキャッシュしないように no-store を明示
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
 
     @app.route("/races")
     @login_required

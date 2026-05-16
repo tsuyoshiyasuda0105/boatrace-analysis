@@ -10,7 +10,7 @@
 <body>
   <header class="site-header">
     <div class="container">
-      <h1><a href="{{ url_for('index') }}">BOATRACE WEB</a></h1>
+      <h1><a href="{{ url_for('races', date=today_iso_global) }}" title="本日のレース一覧へ">BOATRACE WEB</a></h1>
       <form method="get" action="{{ url_for('races') }}" class="date-form">
         <label for="date">日付:</label>
         <input type="date" id="date" name="date" value="{{ target_date | default('') }}">
