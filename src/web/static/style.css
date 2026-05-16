@@ -2403,6 +2403,90 @@ main h2 {
 
 .todays-picks-footer { margin-top: 8px; color: rgba(255,255,255,0.4); }
 
+/* ===================================================================
+ * 候補レーステーブルのモバイル対応 (backlog item 12)
+ * iPhone (390px) 等で文字が横に流れて見づらい問題への対応。
+ * - tablet (<= 768px) : 補助列を非表示にして主要情報を残す
+ * - mobile (<= 480px) : table → カード型 (行を縦に積む) で 1 行 = 1 候補
+ * =================================================================== */
+
+/* テーブル全体を横スクロール対応 (デスクトップでもこれで安全) */
+.todays-picks-panel {
+  overflow-x: auto;
+}
+
+/* タブレット: 補助列を畳む (1号艇詳細・締切時刻はやや小さく) */
+@media (max-width: 768px) {
+  .todays-picks-table {
+    font-size: 12px;
+  }
+  .todays-picks-table thead th { font-size: 10px; padding: 4px 6px; }
+  .todays-picks-table tbody td { padding: 5px 6px; }
+  /* インデックス番号 + 1号艇詳細を非表示 (場所節約) */
+  .todays-picks-table .pick-idx,
+  .todays-picks-table .pick-racer {
+    display: none;
+  }
+  /* L4 タイプの長文を折り返し可能に */
+  .pick-type { white-space: normal; word-break: break-word; }
+}
+
+/* モバイル: テーブルをカード型に変換 (1 行 = 1 候補) */
+@media (max-width: 480px) {
+  /* テーブル構造をリセット */
+  .todays-picks-panel { padding: 10px 8px; }
+  .todays-picks-panel h3 { font-size: 13px; }
+  .todays-picks-hint { font-size: 10px; }
+
+  .todays-picks-table thead { display: none; }
+  .todays-picks-table tbody tr {
+    display: grid;
+    grid-template-areas:
+      "rank    rank    place   place   time    time"
+      "til     til     til     til     til     til"
+      "type    type    type    type    rec     rec"
+      "odds    odds    odds    odds    odds    link";
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border: 1px solid rgba(255, 215, 0, 0.30);
+    border-radius: 10px;
+    background: rgba(255, 215, 0, 0.04);
+  }
+  .todays-picks-table tbody tr.is-next {
+    border-color: rgba(255, 215, 0, 0.80);
+    background: linear-gradient(135deg,
+      rgba(255, 215, 0, 0.20),
+      rgba(255, 165, 0, 0.10));
+  }
+  .todays-picks-table tbody td {
+    display: block;
+    padding: 0;
+    border: none;
+    width: auto;     /* 元の固定幅を解除 */
+  }
+  .pick-rank { grid-area: rank; font-size: 13px; }
+  .pick-place { grid-area: place; font-size: 14px; font-weight: 700; }
+  .pick-time { grid-area: time; text-align: right; font-size: 13px; }
+  .pick-til { grid-area: til; font-size: 11px; opacity: 0.85; }
+  .pick-type {
+    grid-area: type;
+    font-size: 11px;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .pick-rec { grid-area: rec; text-align: right; font-size: 14px; }
+  .pick-odds {
+    grid-area: odds;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    font-size: 10px;
+  }
+  .pick-link { grid-area: link; text-align: right; }
+  .pick-link a { font-size: 13px; }
+}
+
 /* race-item の状態別ハイライト */
 .race-item.next-race {
   /* 一番近いレース = 強調 */
