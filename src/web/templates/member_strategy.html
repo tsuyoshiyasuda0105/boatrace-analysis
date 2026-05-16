@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}L4 戦略 日別 ROI{% endblock %}
+{% block title %}ROI ダッシュボード{% endblock %}
 
 {% block head_extra %}
   {# 当日表示時のみ 3 分毎に自動リロード (キャッシュTTL=180秒に合わせる) #}
@@ -10,7 +10,7 @@
 
 {% block content %}
 <div class="strategy-dashboard">
-  <h2>📊 L4 戦略 日別 ROI ダッシュボード
+  <h2>📊 ROI ダッシュボード
     {% if to_date == today_iso %}
       <span class="live-indicator" title="3 分毎に自動更新">🔴 LIVE</span>
     {% endif %}
@@ -74,41 +74,35 @@
     </div>
 
     <h4 class="sub-strategy-header">⚡ 強力サブ戦略 (3連単 1-2-3 のみ集計)</h4>
-    <p class="dashboard-hint">
-      L4 全体の中で「特定条件を満たすレース」だけを集計した ROI。資金多めに入れる候補の判別用。
-    </p>
     <div class="summary-grid">
       <div class="summary-card {% if totals.c80_roi and totals.c80_roi > 0 %}positive{% elif totals.c80_roi is not none %}negative{% endif %}">
-        <span class="card-label">🚀 L4 + 1c80 (1コース 1着率 80%+)</span>
+        <span class="card-label">🚀 L4 + 1c80</span>
         <span class="card-value">
           {% if totals.c80_roi is not none %}{{ '%+.1f' | format(totals.c80_roi) }}%{% else %}-{% endif %}
         </span>
         <span class="card-sub">
           n={{ totals.c80_bets }} HIT={{ totals.c80_hits }}
           / 損益 {{ totals.c80_profit | signed_comma }}円
-          <br><small>1.5-2x 資金推奨</small>
         </span>
       </div>
       <div class="summary-card {% if totals.pro_roi and totals.pro_roi > 0 %}positive{% elif totals.pro_roi is not none %}negative{% endif %}">
-        <span class="card-label">🔥 L4 PRO (ベテラン × スタート × 展示)</span>
+        <span class="card-label">🔥 L4 PRO</span>
         <span class="card-value">
           {% if totals.pro_roi is not none %}{{ '%+.1f' | format(totals.pro_roi) }}%{% else %}-{% endif %}
         </span>
         <span class="card-sub">
           n={{ totals.pro_bets }} HIT={{ totals.pro_hits }}
           / 損益 {{ totals.pro_profit | signed_comma }}円
-          <br><small>2-2.5x 資金推奨</small>
         </span>
       </div>
       <div class="summary-card {% if totals.sgg12_roi and totals.sgg12_roi > 0 %}positive{% elif totals.sgg12_roi is not none %}negative{% endif %}">
-        <span class="card-label">👑 L4 SG/G1/G2 (高グレード)</span>
+        <span class="card-label">👑 L4 SG/G1/G2</span>
         <span class="card-value">
           {% if totals.sgg12_roi is not none %}{{ '%+.1f' | format(totals.sgg12_roi) }}%{% else %}-{% endif %}
         </span>
         <span class="card-sub">
           n={{ totals.sgg12_bets }} HIT={{ totals.sgg12_hits }}
           / 損益 {{ totals.sgg12_profit | signed_comma }}円
-          <br><small>検証 242-258% (高 ROI ゾーン)</small>
         </span>
       </div>
     </div>

@@ -143,12 +143,12 @@
 
     <!-- 本日の L4 投票候補リスト (時系列、 JS で動的更新) -->
     <section class="todays-picks-panel" id="todays-picks-panel" hidden>
-      <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}お金を入れる候補レース (時系列)
+      <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}ROIが高いレース候補
         {% if target_date != today_iso %}<span class="past-tag">過去日 (全レース締切済)</span>{% endif %}
       </h3>
       <p class="todays-picks-hint">
-        ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ を時刻順に表示<br>
-        <small>条件: 1号艇A1 + 本命500-1000円 + B除外会場 + SG/G1/G2/G3 (一般戦・A2派生は対象外)<br>
+        ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 🌟 L4 G++ (一般戦 F1) を時刻順に表示<br>
+        <small>条件: 1号艇A1 + 本命500-1000円 + B除外会場 + SG/G1/G2/G3 または 一般戦 F1 (国1%≥7 ∧ 2号 国2連率≥40)<br>
         右側「1-2-3 推移」: T-5min〜T-1min まで毎分更新する三連単 1-2-3 のオッズ (青=2倍未満の好配当, 赤=変動>20%)</small>
       </p>
       <table class="todays-picks-table">
@@ -171,6 +171,28 @@
       <p class="todays-picks-footer">
         <small>本サービスは投資助言ではありません。最終判断はご自身で。</small>
       </p>
+      <!-- 強力サブ戦略マークの説明 (backlog item 15) -->
+      <div class="picks-marks-legend">
+        <h4>🏅 強化マークの意味</h4>
+        <ul>
+          <li><span class="legend-mark crown">👑</span>
+            <b>王冠 = SG/G1/G2 高グレード</b>
+            <br><small>検証 ROI 242-258%、L4 の中でも最高 ROI ゾーン。資金多めの最有力候補。</small>
+          </li>
+          <li><span class="legend-mark fire">🔥</span>
+            <b>炎 = L4 PRO</b> (ベテラン × スタート × 展示)
+            <br><small>1号艇選手が 平均ST &lt;0.16 + 30-49歳 + 展示ST &lt;0.18。検証 ROI <b>241.5%</b>、★2-2.5x 資金推奨。</small>
+          </li>
+          <li><span class="legend-mark rocket">🚀</span>
+            <b>ロケット = L4+1c80</b> (1コース 1着率 80%+)
+            <br><small>1号艇選手の過去 6ヶ月 1コース 1着率 ≥80% (最低 20 戦)。検証 ROI <b>215%</b>、★1.5-2x 資金推奨。</small>
+          </li>
+          <li><span class="legend-mark green">🌟</span>
+            <b>緑星 = L4 G++ (一般戦 F1)</b>
+            <br><small>一般戦 × 国1%≥7 × 2号 国2連率≥40。検証 ROI <b>204%</b> (4年 n=1189, OOS Tier 1)。Phase 2 採用。</small>
+          </li>
+        </ul>
+      </div>
     </section>
 
     <div class="stadium-grid">
@@ -315,10 +337,11 @@
             if (isDone || minutesUntil < -1) {
               return;  // 終了レース
             }
+            // upcoming への追加は 180 min まで継続 (次のレース TOP3 算出用)
             if (minutesUntil >= -1 && minutesUntil <= 180) {
               upcoming.push({ el, minutesUntil, closedAt });
-              // "あと X 分" を表示
-              if (tilEl) {
+              // "あと X 分" 表示は 60 分以内のみ (backlog item 18)
+              if (tilEl && minutesUntil <= 60) {
                 tilEl.textContent = fmtTimeTil(minutesUntil);
                 tilEl.hidden = false;
               }

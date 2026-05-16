@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block title %}BOATRACE 予測{% endblock %}</title>
+  <title>{% block title %}BOATRACE WEB{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ static_version }}">
   {% block head_extra %}{% endblock %}
 </head>
 <body>
   <header class="site-header">
     <div class="container">
-      <h1><a href="{{ url_for('index') }}">BOATRACE 予測 v{{ '0.8' }}</a></h1>
+      <h1><a href="{{ url_for('index') }}">BOATRACE WEB</a></h1>
       <form method="get" action="{{ url_for('races') }}" class="date-form">
         <label for="date">日付:</label>
         <input type="date" id="date" name="date" value="{{ target_date | default('') }}">
