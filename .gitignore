@@ -52,7 +52,12 @@ logs/
 *.lzh
 *.tmp
 .cache/
-.claude/
+# Claude Code: agent teams 機能関連のファイルだけは共有 (subagent 定義、
+# settings.json チーム共通設定)。個別の settings.local.json は除外する。
+.claude/*
+!.claude/settings.json
+!.claude/agents/
+!.claude/AGENT_TEAMS.md
 
 # ============================================================
 # 環境固有設定 (機密)

@@ -3,6 +3,11 @@
 このファイルは Claude (AI アシスタント) がこのリポジトリで作業する際のコンテキスト。
 人間向けドキュメントは [README.md](./README.md) を参照。
 
+> **💡 エージェントチーム** が有効化されています (Claude Code v2.1.32+ 実験的機能)。
+> 並列調査・コードレビュー・新機能開発の際は `.claude/AGENT_TEAMS.md` を参照し、
+> `data-collector` / `ml-engineer` / `web-developer` / `scheduler-ops` / `db-optimizer`
+> のサブエージェントを召喚してください。
+
 ---
 
 ## プロジェクト概要
