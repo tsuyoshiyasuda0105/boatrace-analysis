@@ -1334,56 +1334,92 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """
         target_date = request.args.get("date") or date.today().isoformat()
 
+        # ★パフォーマンス最適化 (backlog item 11):
+        # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
+        # 重く 9.6 秒かかっていた。下記で単一接続 + クエリ統合化。
+        #   - 6 個の snapshot_label 別ループ → IN 句 1 クエリ
+        #   - all_race_info / morning_pred / final_payout / course1_stats
+        #     を同じ conn で実行
+        from datetime import datetime, timedelta as _td
+        from src.evaluation.l4_strategy import (
+            l4_rank as _l4_rank_shared,
+            RANK_PLUS_PLUS_RECOVERY,
+            RANK_PLUS_RECOVERY,
+            COURSE1_WINDOW_DAYS,
+            COURSE1_MIN_STARTS,
+            COURSE1_THRESHOLD,
+            L4_1C80_RECOVERY,
+            is_1c80,
+            L4_PRO_RECOVERY,
+            is_l4_pro,
+        )
+        try:
+            _td_dt = datetime.fromisoformat(target_date).date()
+            cutoff_date_iso = (_td_dt - _td(days=COURSE1_WINDOW_DAYS)).isoformat()
+        except Exception:
+            cutoff_date_iso = "1900-01-01"
+
         results: dict[str, dict] = {}
-        with db_connect() as conn:
-            # === 優先 1: T-X 1-2-3 オッズ (朝/直前の本命) ===
-            # snapshot_label 列が未マイグレーションの環境では skip
-            try:
-                # 1-2-3 オッズの最も新しい snapshot を優先 (T-1min > T-5min > T-15min)
-                # ここで MIN(odds) ではなく最新 snapshot の値を使う
-                for snap_label in ["T-1min", "T-2min", "T-3min", "T-4min", "T-5min", "T-15min"]:
+        all_race_info: dict[str, dict] = {}
+        morning_pred: dict[str, float] = {}
+        course1_stats: dict[str, tuple[float, int]] = {}
+
+        # T-X snapshot の優先度 (小さいほど優先)
+        _SNAP_PRIORITY = {
+            "T-1min": 1, "T-2min": 2, "T-3min": 3, "T-4min": 4,
+            "T-5min": 5, "T-15min": 6,
+        }
+
+        try:
+            with db_connect() as conn:
+                # === 1. T-X 1-2-3 オッズ (IN 句 1 クエリ統合) ===
+                try:
                     cur = conn.execute("""
-                        SELECT r.race_id, o.odds * 100 as min_payout
+                        SELECT r.race_id, o.snapshot_label, o.odds * 100 AS min_payout
                           FROM races r
                           JOIN odds_trifecta o ON r.race_id = o.race_id
                          WHERE r.race_date = ?
-                           AND o.snapshot_label = ?
                            AND o.combination = '1-2-3'
-                    """, (target_date, snap_label))
+                           AND o.snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min')
+                    """, (target_date,))
+                    # priority が小さい snapshot を優先採用
+                    for rid, label, mp in cur.fetchall():
+                        if not mp:
+                            continue
+                        prio = _SNAP_PRIORITY.get(label, 99)
+                        existing = results.get(rid)
+                        if existing is None or _SNAP_PRIORITY.get(existing["source"], 99) > prio:
+                            results[rid] = {"min_payout": int(mp), "source": label}
+                except Exception as e:
+                    err = str(e).lower()
+                    if "snapshot_label" in err or "undefinedcolumn" in err or "column" in err:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                    else:
+                        raise
+
+                # === 2. final 払戻 (T-X 無い過去日フォールバック) ===
+                try:
+                    cur = conn.execute("""
+                        SELECT r.race_id, MIN(pp.payout) AS min_payout
+                          FROM races r
+                          JOIN race_payouts pp ON r.race_id = pp.race_id AND pp.bet_type = 'trifecta'
+                         WHERE r.race_date = ?
+                         GROUP BY r.race_id
+                    """, (target_date,))
                     for rid, mp in cur.fetchall():
                         if mp and rid not in results:
-                            results[rid] = {"min_payout": int(mp), "source": snap_label}
-            except Exception as e:
-                err = str(e).lower()
-                if "snapshot_label" in err or "undefinedcolumn" in err or "column" in err:
+                            results[rid] = {"min_payout": mp, "source": "final"}
+                except Exception as e:
+                    logger.warning("final payout query failed: %s", e)
                     try:
                         conn.rollback()
                     except Exception:
                         pass
-                else:
-                    raise
 
-            # === 優先 2: final 払戻 MIN (T-X オッズが無いレースのフォールバック) ===
-            # 1-2-3 が hit したケースでは正しい本命金額。
-            # 1-2-3 ハズレのケースでは別 combo の payout なので判定不正確
-            # (= 過去日で T-X オッズが無いレースはやむを得ず使う)。
-            cur = conn.execute("""
-                SELECT r.race_id, MIN(pp.payout) as min_payout
-                  FROM races r
-                  JOIN race_payouts pp ON r.race_id = pp.race_id AND pp.bet_type = 'trifecta'
-                 WHERE r.race_date = ?
-                 GROUP BY r.race_id
-            """, (target_date,))
-            for rid, mp in cur.fetchall():
-                if mp and rid not in results:
-                    results[rid] = {"min_payout": mp, "source": "final"}
-
-        # === 朝判定用: 当日全レースの基本情報 + predictions を取得 ===
-        # 例外は全て吸収し、本機能が使えなくても /api/market-signals は 200 を返す
-        all_race_info: dict[str, dict] = {}
-        morning_pred: dict[str, float] = {}
-        try:
-            with db_connect() as conn:
+                # === 3. all_race_info (races + race_entries + race_previews) ===
                 try:
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
@@ -1411,7 +1447,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     except Exception:
                         pass
 
-                # predictions テーブルから 1号艇の prob_first を取得
+                # === 4. predictions (1号艇 prob_first) ===
                 try:
                     cur = conn.execute("""
                         SELECT p.race_id, p.prob_first
@@ -1428,65 +1464,42 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         conn.rollback()
                     except Exception:
                         pass
+
+                # === 5. course1_stats (L4+1c80 用、過去 180 日 1コース成績) ===
+                # 旧実装は別 connection を開いていた → 同一 conn に統合
+                try:
+                    cur = conn.execute("""
+                        WITH target_races AS (
+                            SELECT r.race_id, r.race_date, e.racer_number
+                            FROM races r
+                            JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                            WHERE r.race_date = ?
+                        )
+                        SELECT t.race_id,
+                               COUNT(res.race_id) AS starts,
+                               SUM(CASE WHEN res.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                          FROM target_races t
+                          LEFT JOIN race_entries e2 ON e2.racer_number = t.racer_number AND e2.boat_number = 1
+                          LEFT JOIN races r2 ON r2.race_id = e2.race_id
+                          LEFT JOIN race_results res ON res.race_id = e2.race_id AND res.boat_number = 1
+                          WHERE r2.race_date < t.race_date
+                            AND r2.race_date >= ?
+                            AND res.finishing_position IS NOT NULL
+                          GROUP BY t.race_id
+                    """, (target_date, cutoff_date_iso))
+                    for rid, starts, wins in cur.fetchall():
+                        if starts and starts >= COURSE1_MIN_STARTS:
+                            course1_stats[rid] = (wins / starts, starts)
+                except Exception as e:
+                    logger.warning("course1 stats fetch failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
         except Exception as e:
-            logger.exception("morning L4 setup failed: %s", e)
+            logger.exception("market-signals setup failed: %s", e)
 
         EXCLUDE_B = set(_LOSING_VENUES.keys()) | set(_QUESTIONABLE_VENUES.keys())
-
-        # 単一情報源 (src/evaluation/l4_strategy.py) からインポート
-        from src.evaluation.l4_strategy import (
-            l4_rank as _l4_rank_shared,
-            RANK_PLUS_PLUS_RECOVERY,
-            RANK_PLUS_RECOVERY,
-            COURSE1_WINDOW_DAYS,
-            COURSE1_MIN_STARTS,
-            COURSE1_THRESHOLD,
-            L4_1C80_RECOVERY,
-            is_1c80,
-            L4_PRO_RECOVERY,
-            is_l4_pro,
-        )
-
-        # === L4+1c80 用: 当日 race の 1号艇選手の過去 6 ヶ月 1コース成績 ===
-        # 一度に取得して dict に。各 _evaluate_l4 呼び出しで使う。
-        # SQLite/Postgres 両対応: date 計算は Python 側で済ませる
-        from datetime import datetime, timedelta as _td
-        try:
-            _td_dt = datetime.fromisoformat(target_date).date()
-            cutoff_date_iso = (_td_dt - _td(days=COURSE1_WINDOW_DAYS)).isoformat()
-        except Exception:
-            cutoff_date_iso = "1900-01-01"
-
-        course1_stats: dict[str, tuple[float, int]] = {}
-        try:
-            with db_connect() as _conn:
-                _cur = _conn.execute(
-                    """
-                    WITH target_races AS (
-                        SELECT r.race_id, r.race_date, e.racer_number
-                        FROM races r
-                        JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-                        WHERE r.race_date = ?
-                    )
-                    SELECT t.race_id,
-                           COUNT(res.race_id) AS starts,
-                           SUM(CASE WHEN res.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
-                      FROM target_races t
-                      LEFT JOIN race_entries e2 ON e2.racer_number = t.racer_number AND e2.boat_number = 1
-                      LEFT JOIN races r2 ON r2.race_id = e2.race_id
-                      LEFT JOIN race_results res ON res.race_id = e2.race_id AND res.boat_number = 1
-                      WHERE r2.race_date < t.race_date
-                        AND r2.race_date >= ?
-                        AND res.finishing_position IS NOT NULL
-                      GROUP BY t.race_id
-                    """,
-                    (target_date, cutoff_date_iso),
-                )
-                for rid, starts, wins in _cur.fetchall():
-                    if starts and starts >= COURSE1_MIN_STARTS:
-                        course1_stats[rid] = (wins / starts, starts)
-        except Exception as e:
-            logger.warning("course1 stats fetch failed: %s", e)
 
         def _l4_rank(natl_1, local_1):
             """1号艇選手の成績から L4 のサブランク判定 (単一情報源を委譲)"""
