@@ -302,10 +302,15 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
   gen_tri_bets      INTEGER,
   gen_tri_hits      INTEGER,
   gen_tri_pay       INTEGER,
-  -- 一般戦 × 国1%≥7 (= L4+ オーバーレイ) 重畳サブセット
+  -- 一般戦 × 国1%≥7 (= L4+ オーバーレイ) 重畳サブセット (観察用)
   gen_plus_tri_bets INTEGER,
   gen_plus_tri_hits INTEGER,
   gen_plus_tri_pay  INTEGER,
+  -- 一般戦 F1 採用ベース: 一般戦 × 国1%≥7 × 2号 国2連率≥40
+  -- OOS Tier 1 (4年 ROI 204% / CI 下限 ≥150%) → 本日候補/メール対象
+  gen_f1_tri_bets   INTEGER,
+  gen_f1_tri_hits   INTEGER,
+  gen_f1_tri_pay    INTEGER,
   updated_at        TEXT NOT NULL
 );
 
@@ -316,3 +321,6 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_plus_tri_bets INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_plus_tri_hits INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_plus_tri_pay  INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_f1_tri_bets   INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_f1_tri_hits   INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_f1_tri_pay    INTEGER;

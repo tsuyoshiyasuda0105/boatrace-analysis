@@ -1420,25 +1420,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         pass
 
                 # === 3. all_race_info (races + race_entries + race_previews) ===
+                # 2号艇の national_top_2_percent も取得 (一般戦 F1 判定用)
                 try:
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
                                e.class_number,
                                e.national_top_1_percent, e.local_top_1_percent,
                                e.avg_start_timing, e.age,
-                               pv.weather_number, pv.start_timing_exhibition
+                               pv.weather_number, pv.start_timing_exhibition,
+                               e2.national_top_2_percent AS boat2_top2
                         FROM races r
                         LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                        LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                         LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
                         WHERE r.race_date = ?
                     """, (target_date,))
                     for (rid, stadium, grade, cls, natl1, loc1,
-                         avg_st, age, weather, ex_st) in cur.fetchall():
+                         avg_st, age, weather, ex_st, boat2_top2) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade, "class": cls,
                             "natl_1": natl1, "local_1": loc1,
                             "avg_st": avg_st, "age": age,
                             "weather": weather, "ex_st": ex_st,
+                            "boat2_top2": boat2_top2,
                         }
                 except Exception as e:
                     logger.warning("all_race_info query failed: %s", e)
@@ -1506,16 +1510,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return _l4_rank_shared(natl_1, local_1)
 
         def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
-                         race_id=None, avg_st=None, age=None, ex_st=None):
-            """確定オッズベース L4 マーク判定 (L4+ / L4++ ランク付き)"""
+                         race_id=None, avg_st=None, age=None, ex_st=None,
+                         boat2_top2=None):
+            """確定オッズベース L4 マーク判定 (L4+ / L4++ ランク付き)
+
+            一般戦 (grade=5) は F1 条件
+              「1号艇 国1%≥7 ∧ 2号艇 国2連率≥40」
+            を満たす場合のみ採用候補 (is_reference=False)。
+            それ以外の一般戦は従来通り参考扱い (is_reference=True)。
+            OOS Tier 1 認定 (4年 ROI 204% / CI 下限 ≥150%)。
+            """
             in_500_1000 = mp_int is not None and 500 <= mp_int < 1000
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
             if not (in_500_1000 and b_excluded):
                 return None
 
             # L4 戦略の対象: 1号艇A1 + SG/G1/G2/G3 + 本命500-1000 + B除外
-            # 一般戦 (grade=5) は ROI 計算には含めない (回収率 147.7% で低め)
-            # が、参考情報としてバッジ表示は行う (is_reference=True)。
             base = None
             if cls == 1:
                 if grade == 1:
@@ -1531,12 +1541,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     base = {"level": "G3", "label": "🎯L4 G3×A1",
                             "recovery": 149.2, "bet": "3連単 1-2-3", "n": 195}
                 elif grade == 5:
-                    # 一般戦: バッジは出すが is_reference=True で
-                    # 本日候補リスト / ROI から除外する
-                    # ラベルは短く (backlog item 5): 「L4参考 147.7%」相当の表示
-                    base = {"level": "general", "label": "L4参考",
-                            "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776,
-                            "is_reference": True}
+                    # 一般戦: F1 条件 (国1%≥7 + 2号 top_2≥40) を満たすかチェック
+                    try:
+                        n1 = float(natl_1) if natl_1 is not None else 0.0
+                    except (TypeError, ValueError):
+                        n1 = 0.0
+                    try:
+                        b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+                    except (TypeError, ValueError):
+                        b2 = 0.0
+                    if n1 >= 7.0 and b2 >= 40.0:
+                        # ★ F1 該当: 採用候補 (本日候補/メール対象)
+                        base = {"level": "general_f1",
+                                "label": "🌟L4 G++ (一般×国1%≥7×2号40)",
+                                "recovery": 204.0,
+                                "bet": "3連単 1-2-3",
+                                "n": 1189,
+                                "is_reference": False,
+                                "is_f1": True}
+                    else:
+                        # F1 非該当: 従来通り参考バッジ
+                        base = {"level": "general", "label": "L4参考",
+                                "recovery": 147.7, "bet": "3連単 1-2-3", "n": 1776,
+                                "is_reference": True}
                 # grade unknown は対象外 (バッジも出さない)
             # A2 派生は L4 戦略対象外なので表示しない
             if not base:
@@ -1550,9 +1577,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["natl_1"] = natl_1
             base["local_1"] = local_1
             # ランクに応じて recovery 値を補正 (検証実測値ベース)
-            # 参考レース (一般戦) は ROI 集計対象外なので rank 補正もスキップし、
-            # 基本回収率 147.7% のままシンプルに表示する (backlog item 5)。
-            if rec_override is not None and not base.get("is_reference"):
+            # 参考レース (一般戦) は ROI 集計対象外なので rank 補正もスキップ。
+            # F1 一般戦は独自の検証 ROI (204%) を保持するため rank 補正もスキップ。
+            if rec_override is not None and not base.get("is_reference") and not base.get("is_f1"):
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
 
@@ -1582,11 +1609,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return base
 
         def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None,
-                                 race_id=None, avg_st=None, age=None, ex_st=None):
+                                 race_id=None, avg_st=None, age=None, ex_st=None,
+                                 boat2_top2=None):
             """朝判定用 L4 候補マーク (prob_first ベース)。
-            メール送信側 (send_l4_alerts.py の detect_morning_l4_candidates) と
-            同じく、 1号艇A1 の場合は 国1%/局1% でランク判定して
-            base 辞書に rank / rank_label / rank_emoji / 補正後 recovery を入れる。
+
+            一般戦 (grade=5) は F1 条件
+              「1号艇 国1%≥7 ∧ 2号艇 国2連率≥40」
+            を満たす場合のみ採用候補 (is_reference=False)。
             """
             if prob_first is None:
                 return None
@@ -1594,7 +1623,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if not b_excluded:
                 return None
             # 1号艇 A1 + prob_first 0.65-0.85 → 500-1000帯候補
-            # 一般戦は ROI から除外、ただしバッジは出す (is_reference=True)
             base = None
             if cls == 1 and 0.65 <= prob_first < 0.85:
                 if grade == 1:
@@ -1610,11 +1638,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     base = {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
                             "recovery": 149.2, "n": 195}
                 elif grade == 5:
-                    # 朝の参考レース: 短ラベル (backlog item 5)
-                    base = {"level": "morning_general",
-                            "label": "🌅L4参考",
-                            "recovery": 147.7, "n": 1776,
-                            "is_reference": True}
+                    # 一般戦: F1 条件 (国1%≥7 + 2号 top_2≥40) チェック
+                    try:
+                        n1 = float(natl_1) if natl_1 is not None else 0.0
+                    except (TypeError, ValueError):
+                        n1 = 0.0
+                    try:
+                        b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+                    except (TypeError, ValueError):
+                        b2 = 0.0
+                    if n1 >= 7.0 and b2 >= 40.0:
+                        # ★ F1 該当: 朝候補として配信対象
+                        base = {"level": "morning_general_f1",
+                                "label": "🌅🌟朝L4 G++ 候補",
+                                "recovery": 204.0,
+                                "n": 1189,
+                                "is_reference": False,
+                                "is_f1": True}
+                    else:
+                        # F1 非該当: 参考バッジ
+                        base = {"level": "morning_general",
+                                "label": "🌅L4参考",
+                                "recovery": 147.7, "n": 1776,
+                                "is_reference": True}
             # grade unknown は対象外
             if not base:
                 return None
@@ -1648,8 +1694,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     f"🔥L4 PRO (ST={float(avg_st):.2f}, "
                     f"{int(age)}歳{_ex_part})"
                 )
-            # 参考レース (一般戦) は rank 補正をスキップ、基本 147.7% のまま (backlog item 5)
-            if rec_override is not None and not base.get("is_reference"):
+            # 参考レース (一般戦) と F1 一般戦は rank 補正をスキップ (固有の検証値を保持)
+            if rec_override is not None and not base.get("is_reference") and not base.get("is_f1"):
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
             return base
@@ -1669,6 +1715,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             age = info.get("age")
             ex_st = info.get("ex_st")
             weather = info.get("weather")
+            boat2_top2 = info.get("boat2_top2")
             is_rain = (weather == 3)
             data = results.get(rid)
 
@@ -1690,7 +1737,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tier, expected_roi, title = "chaos", -0.7354, "波乱"
 
                 l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid,
-                                  avg_st=avg_st, age=age, ex_st=ex_st)
+                                  avg_st=avg_st, age=age, ex_st=ex_st,
+                                  boat2_top2=boat2_top2)
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
                 # バッジは出すが is_rain=True で本日候補リストから除外
@@ -1717,7 +1765,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 prob_first = morning_pred.get(rid)
                 morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first,
                                                    natl_1, local_1, race_id=rid,
-                                                   avg_st=avg_st, age=age, ex_st=ex_st)
+                                                   avg_st=avg_st, age=age, ex_st=ex_st,
+                                                   boat2_top2=boat2_top2)
                 if morning_l4:
                     if is_rain:
                         morning_l4["is_rain"] = True
@@ -1776,6 +1825,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     r.race_grade_number,
                     e.class_number,
                     e.national_top_1_percent AS natl_1,
+                    e2.national_top_2_percent AS boat2_top2,
                     pp.min_pay AS fav_pay,
                     oo.min_odds AS fav_odds,
                     pr.prob_first AS prob_first,
@@ -1788,6 +1838,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pv.weather_number AS weather
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                 LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
                            WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
@@ -1821,16 +1872,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
                 "a2_tri_bets": 0, "a2_tri_hits": 0, "a2_tri_pay": 0,
                 "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
-                # 「L4 一般戦」分離追跡 (Phase 1: 観察のみ、ベット候補/メールは現状維持):
-                # gen_*       = 一般戦 (grade=5) × A1 × B除外 × 本命500-1000
-                # gen_plus_*  = 上記 × 国1%≥7 (= L4+ オーバーレイ) ★ 検証 ROI 208.5%
+                # 「L4 一般戦」分離追跡:
+                # gen_*       = 一般戦 (grade=5) × A1 × B除外 × 本命500-1000 (Base、観察)
+                # gen_plus_*  = 上記 × 国1%≥7 (L4+ オーバーレイ、観察)
+                # gen_f1_*    = 上記 × 国1%≥7 × 2号 top_2≥40 (= F1, 採用ベース)
+                #               ★OOS 検証 ROI 204% / CI [186-222] / Tier 1
                 "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
                 "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
+                "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
                 "grade_breakdown": {},
             }
 
         for row in cur:
-            (rdate, stadium, grade, cls, natl_1, fav_pay, fav_odds, prob_first,
+            (rdate, stadium, grade, cls, natl_1, boat2_top2,
+             fav_pay, fav_odds, prob_first,
              w1, w2, w3, win_pay, ex_pay, tri_pay, weather) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
@@ -1852,9 +1907,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "a2_tri_bets": 0, "a2_tri_hits": 0, "a2_tri_pay": 0,
                 # L4 [A1+A2 合算] の集計
                 "all_tri_bets": 0, "all_tri_hits": 0, "all_tri_pay": 0,
-                # 一般戦分離追跡 (Phase 1: 観察のみ)
+                # 一般戦分離追跡 (F1 採用、Base/L4+ は観察用)
                 "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
                 "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
+                "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -1887,26 +1943,35 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             tri_pay_v = (tri_pay or 0) if tri_hit else 0
 
             # === 一般戦 (grade=5): 別カウンタで分離追跡 ===
-            # Phase 1: ROI ダッシュボードで観察のみ、本日候補リスト/メールは現状維持。
-            # Phase 2: 実績次第で運用拡大の判断材料。
+            # 採用ベース: F1 (国1%≥7 + 2号 top_2≥40) → gen_f1_tri_*
+            # 観察用     : gen_tri_* (Base), gen_plus_tri_* (× 国1%≥7)
             if grade == 5:
                 if is_l4_base and is_done:
                     d["gen_tri_bets"] += 1
                     if tri_hit:
                         d["gen_tri_hits"] += 1
                         d["gen_tri_pay"] += tri_pay_v
-                    # 一般戦 × L4+ (国1%≥7) 重畳 (= 提案 "L4 G+" の base 条件)
-                    # roi-verifier 検証: n=478, ROI 165.9% (全一般戦 147.5% より +18pt)
-                    # 注: 雨天は冒頭で skip 済なので、ここは「曇/晴/NULL」のみ集計
                     try:
                         n1 = float(natl_1) if natl_1 is not None else 0.0
                     except (TypeError, ValueError):
                         n1 = 0.0
+                    try:
+                        b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+                    except (TypeError, ValueError):
+                        b2 = 0.0
+                    # 観察 gen_plus_*  : 一般戦 × 国1%≥7 (L4+ overlay, ROI ~166%)
                     if n1 >= 7.0:
                         d["gen_plus_tri_bets"] += 1
                         if tri_hit:
                             d["gen_plus_tri_hits"] += 1
                             d["gen_plus_tri_pay"] += tri_pay_v
+                    # ★採用 gen_f1_* : F1 = 一般戦 × 国1%≥7 × 2号 top_2≥40
+                    # OOS Tier 1 (4年 ROI 204% / 直近 220% / CI 下限 ≥150%)
+                    if n1 >= 7.0 and b2 >= 40.0:
+                        d["gen_f1_tri_bets"] += 1
+                        if tri_hit:
+                            d["gen_f1_tri_hits"] += 1
+                            d["gen_f1_tri_pay"] += tri_pay_v
                 continue  # 一般戦は L4 本流集計に含めない
 
             # L4 戦略は 1号艇 A1 のみ。A2 は対象外なので集計しない。
@@ -1950,7 +2015,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                            pro_bets, pro_hits, pro_pay,
                            sgg12_bets, sgg12_hits, sgg12_pay,
                            gen_tri_bets, gen_tri_hits, gen_tri_pay,
-                           gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay
+                           gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
+                           gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay
                       FROM l4_daily_summary
                      WHERE date BETWEEN ? AND ?
                 """, (from_date, to_date))
@@ -1959,7 +2025,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      wb, wh, wp, eb, eh, ep, tb, th, tp,
                      c80b, c80h, c80p, prob, proh, prop,
                      sgb, sgh, sgp,
-                     gtb, gth, gtp, gptb, gpth, gptp) = row
+                     gtb, gth, gtp, gptb, gpth, gptp,
+                     gfb, gfh, gfp) = row
                     if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
                         # 既に raw データから集計済 → スキップ (raw が「正」)
                         continue
@@ -1974,9 +2041,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "c80_bets": c80b or 0, "c80_hits": c80h or 0, "c80_pay": c80p or 0,
                         "pro_bets": prob or 0, "pro_hits": proh or 0, "pro_pay": prop or 0,
                         "sgg12_bets": sgb or 0, "sgg12_hits": sgh or 0, "sgg12_pay": sgp or 0,
-                        # 一般戦観察集計 (Phase 1: 過去日もダッシュボードに反映)
+                        # 一般戦集計 (採用ベース = gen_f1, 観察 = gen / gen_plus)
                         "gen_tri_bets": gtb or 0, "gen_tri_hits": gth or 0, "gen_tri_pay": gtp or 0,
                         "gen_plus_tri_bets": gptb or 0, "gen_plus_tri_hits": gpth or 0, "gen_plus_tri_pay": gptp or 0,
+                        "gen_f1_tri_bets": gfb or 0, "gen_f1_tri_hits": gfh or 0, "gen_f1_tri_pay": gfp or 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
@@ -1984,10 +2052,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             logger.warning("l4_daily_summary lookup failed: %s", e)
 
         # ROI 計算 (L4 = A1 のみ。A2 派生は対象外)
-        # 観察専用 (gen_tri / gen_plus_tri) も同じ計算式で recovery/profit を出す。
+        # gen_f1_tri = 一般戦 F1 (採用ベース)
+        # gen_tri / gen_plus_tri は観察用 (運用前比較ベンチ)
         for d in by_date.values():
             for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
-                        "gen_tri", "gen_plus_tri"):
+                        "gen_tri", "gen_plus_tri", "gen_f1_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None
@@ -2224,7 +2293,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
         }
-        for k in ("win", "exa", "tri", "c80", "pro", "sgg12", "gen_tri", "gen_plus_tri"):
+        for k in ("win", "exa", "tri", "c80", "pro", "sgg12",
+                  "gen_tri", "gen_plus_tri", "gen_f1_tri"):
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
             totals[f"{k}_pay"]  = sum(r.get(f"{k}_pay", 0)  for r in rows)

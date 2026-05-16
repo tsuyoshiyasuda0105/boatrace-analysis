@@ -150,6 +150,29 @@
     </div>
   </section>
 
+  <!-- L4 G++ (F1) 採用ベース: 一般戦の正式運用候補 -->
+  <h4 class="sub-strategy-header" style="color:#fcd34d;">⭐ L4 G++ (F1) — 一般戦 採用ベース</h4>
+  <p class="dashboard-hint">
+    <strong>条件</strong>: 一般戦 × 1号艇A1 × 国1%≥7 × <strong>2号艇 国2連率≥40</strong> × B除外 × 本命500-1000 × 雨除外<br>
+    <strong>OOS Tier 1 認定</strong>: 4年通算 ROI <b>204%</b> [CI 186-222] / 直近2年 ROI <b>220%</b> / 月平均 <b>約 25 件</b>
+  </p>
+  <div class="summary-grid">
+    <div class="summary-card"
+         title="採用ベース。本日候補リスト + メール通知の対象。検証 ROI 204% (4年, n=1189)">
+      <span class="card-label">⭐ L4 G++ (一般戦 F1)</span>
+      <span class="card-value">
+        {% if totals.gen_f1_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_f1_tri_roi) }}%{% else %}-{% endif %}
+      </span>
+      <span class="card-sub">
+        n={{ totals.gen_f1_tri_bets }} HIT={{ totals.gen_f1_tri_hits }}
+        {% if totals.gen_f1_tri_bets > 0 %}
+        / 損益 {{ totals.gen_f1_tri_profit | signed_comma }}円
+        {% endif %}
+        <br><small>★採用ベース (検証 204%, n=1189, 4年通算)</small>
+      </span>
+    </div>
+  </div>
+
   <!-- ROI 推移グラフ -->
   <section class="chart-section">
     <h3>📉 日別 累積損益 (1点100円ベース)</h3>
@@ -239,12 +262,15 @@
     </div>
   </section>
 
-  <!-- 観察専用 日別詳細 (一般戦 / L4 G+) -->
+  <!-- 観察専用 日別詳細 (一般戦 / L4 G+ / L4 G++ F1) -->
   <section class="daily-table-section observe-only-section">
-    <h3>📋 観察専用 日別詳細 (一般戦 + L4 G+ 候補)</h3>
+    <h3>📋 一般戦 日別詳細 (L4 G++ F1 採用 + 観察用ベンチ)</h3>
     <p class="dashboard-hint">
-      💡 <strong>本流外 (運用候補)。Phase 2 移行判断のための観察データです。</strong><br>
-      <small>L4 一般戦 = grade=5 × A1 × B除外 × 本命500-1000 / L4 G+ = 上記 × 国1%≥7 (検証 ROI 176%、エッジ実在確認済)</small>
+      💡 <strong>⭐ L4 G++ (F1) が採用ベース。本日候補リスト+メール対象。</strong><br>
+      <small>
+        🔍 L4 一般戦 全体 (Base、ROI 147.7%) / 🌟 L4 G+ (一般戦×国1%≥7、ROI 166%) — 観察用<br>
+        ⭐ L4 G++ F1 (一般戦×国1%≥7×<strong>2号 国2連率≥40</strong>、ROI 204%) — <strong>採用</strong>
+      </small>
     </p>
     <div class="table-wrap">
       <table class="daily-table daily-table-observe">
@@ -252,17 +278,19 @@
           <tr>
             <th rowspan="2">日付</th>
             <th rowspan="2">総R</th>
-            <th colspan="3">🔍 L4 一般戦</th>
-            <th colspan="3">🌟 L4 G+ (一般×国1%≥7)</th>
+            <th colspan="3">🔍 L4 一般戦 (観察)</th>
+            <th colspan="3">🌟 L4 G+ (観察)</th>
+            <th colspan="3">⭐ L4 G++ F1 (採用)</th>
           </tr>
           <tr>
+            <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set has_obs = (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) %}
+          {% set has_obs = (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) or (r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0) %}
           {% if has_obs %}
           <tr class="has-l4-observe">
             <td class="date-cell">
@@ -287,19 +315,28 @@
             <td class="num {% if r.gen_plus_tri_profit and r.gen_plus_tri_profit > 0 %}pos{% elif r.gen_plus_tri_profit and r.gen_plus_tri_profit < 0 %}neg{% endif %}">
               {% if r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0 %}{{ r.gen_plus_tri_profit | signed_comma }}{% else %}-{% endif %}
             </td>
+
+            {# L4 G++ F1 列 (採用ベース) #}
+            <td class="num">{{ r.gen_f1_tri_hits or 0 }}/{{ r.gen_f1_tri_bets or 0 }}</td>
+            <td class="num {% if r.gen_f1_tri_recovery and r.gen_f1_tri_recovery >= 100 %}pos{% elif r.gen_f1_tri_recovery %}neg{% endif %}">
+              {% if r.gen_f1_tri_recovery is not none %}{{ '%.0f' | format(r.gen_f1_tri_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.gen_f1_tri_profit and r.gen_f1_tri_profit > 0 %}pos{% elif r.gen_f1_tri_profit and r.gen_f1_tri_profit < 0 %}neg{% endif %}">
+              {% if r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0 %}{{ r.gen_f1_tri_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
           </tr>
           {% endif %}
           {% endfor %}
           {# 1行も無い場合 #}
           {% set obs_total = namespace(n=0) %}
           {% for r in rows %}
-            {% if (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) %}
+            {% if (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) or (r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0) %}
               {% set obs_total.n = obs_total.n + 1 %}
             {% endif %}
           {% endfor %}
           {% if obs_total.n == 0 %}
           <tr class="is-empty">
-            <td colspan="8" class="num muted">観察データなし (バックフィル未実行 or 該当レース無し)</td>
+            <td colspan="11" class="num muted">一般戦データなし (バックフィル未実行 or 該当レース無し)</td>
           </tr>
           {% endif %}
         </tbody>

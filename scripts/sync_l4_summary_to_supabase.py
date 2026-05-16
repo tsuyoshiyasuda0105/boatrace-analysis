@@ -68,9 +68,11 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
                res3.boat_number AS w3,
                pw.payout AS win_pay,
                pe.payout AS exa_pay,
-               pt.payout AS tri_pay
+               pt.payout AS tri_pay,
+               e2.national_top_2_percent AS boat2_top2
         FROM races r
         JOIN race_entries e ON r.race_id=e.race_id AND e.boat_number=1
+        LEFT JOIN race_entries e2 ON e2.race_id=r.race_id AND e2.boat_number=2
         LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
         LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
         LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
@@ -138,7 +140,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
     by_date: dict[str, dict] = {}
     for row in cur.fetchall():
         (rdate, rid, grade, racer, avg_st, age, natl_1, ex_st,
-         fav_pay, fav_odds, w1, w2, w3, wp, ep, tp) = row
+         fav_pay, fav_odds, w1, w2, w3, wp, ep, tp, boat2_top2) = row
         d = by_date.setdefault(rdate, {
             "date": rdate,
             "n_total": n_total_by_date.get(rdate, 0),
@@ -150,32 +152,42 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "c80_bets": 0, "c80_hits": 0, "c80_pay": 0,
             "pro_bets": 0, "pro_hits": 0, "pro_pay": 0,
             "sgg12_bets": 0, "sgg12_hits": 0, "sgg12_pay": 0,
-            # 一般戦 (grade=5) 観察集計 (Phase 1: 観察のみ)
+            # 一般戦観察集計 + F1 採用集計
             "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
-            # 一般戦 × 国1%≥7 (= L4+ オーバーレイ) 重畳
             "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
+            "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
         })
         is_done = (w1 is not None and w2 is not None and w3 is not None)
         tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
         tri_pay_v = (tp or 0) if tri_hit else 0
 
-        # === 一般戦 (grade=5): L4 本流と分離して観察集計 ===
+        # === 一般戦 (grade=5): L4 本流と分離して観察集計 + F1 採用集計 ===
         if grade == 5:
             if is_done:
                 d["gen_tri_bets"] += 1
                 if tri_hit:
                     d["gen_tri_hits"] += 1
                     d["gen_tri_pay"] += tri_pay_v
-                # 一般戦 × 国1%≥7 (L4+ オーバーレイ) サブセット
                 try:
                     n1 = float(natl_1) if natl_1 is not None else 0.0
                 except (TypeError, ValueError):
                     n1 = 0.0
+                try:
+                    b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+                except (TypeError, ValueError):
+                    b2 = 0.0
+                # 一般戦 × 国1%≥7 (L4+ オーバーレイ) — 観察
                 if n1 >= 7.0:
                     d["gen_plus_tri_bets"] += 1
                     if tri_hit:
                         d["gen_plus_tri_hits"] += 1
                         d["gen_plus_tri_pay"] += tri_pay_v
+                # ★F1 採用: 国1%≥7 + 2号 top_2≥40
+                if n1 >= 7.0 and b2 >= 40.0:
+                    d["gen_f1_tri_bets"] += 1
+                    if tri_hit:
+                        d["gen_f1_tri_hits"] += 1
+                        d["gen_f1_tri_pay"] += tri_pay_v
             continue  # 一般戦は L4 本流集計に含めない
 
         # === L4 本流 (grade IN 1,2,3,4) ===
@@ -273,8 +285,9 @@ def main():
                sgg12_bets, sgg12_hits, sgg12_pay,
                gen_tri_bets, gen_tri_hits, gen_tri_pay,
                gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
+               gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (date) DO UPDATE SET
               n_total = EXCLUDED.n_total,
               n_l4    = EXCLUDED.n_l4,
@@ -290,6 +303,9 @@ def main():
               gen_plus_tri_bets = EXCLUDED.gen_plus_tri_bets,
               gen_plus_tri_hits = EXCLUDED.gen_plus_tri_hits,
               gen_plus_tri_pay  = EXCLUDED.gen_plus_tri_pay,
+              gen_f1_tri_bets = EXCLUDED.gen_f1_tri_bets,
+              gen_f1_tri_hits = EXCLUDED.gen_f1_tri_hits,
+              gen_f1_tri_pay  = EXCLUDED.gen_f1_tri_pay,
               updated_at = EXCLUDED.updated_at
         """
     else:
@@ -304,8 +320,9 @@ def main():
                sgg12_bets, sgg12_hits, sgg12_pay,
                gen_tri_bets, gen_tri_hits, gen_tri_pay,
                gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
+               gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     for s in summaries:
         batch.append((
@@ -318,6 +335,7 @@ def main():
             s.get("sgg12_bets",0), s.get("sgg12_hits",0), s.get("sgg12_pay",0),
             s.get("gen_tri_bets",0), s.get("gen_tri_hits",0), s.get("gen_tri_pay",0),
             s.get("gen_plus_tri_bets",0), s.get("gen_plus_tri_hits",0), s.get("gen_plus_tri_pay",0),
+            s.get("gen_f1_tri_bets",0), s.get("gen_f1_tri_hits",0), s.get("gen_f1_tri_pay",0),
             now_iso,
         ))
         if len(batch) >= BATCH:

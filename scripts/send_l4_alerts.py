@@ -141,6 +141,7 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
         """
         # シンプル版: T-5min > T-15min > final で COALESCE
         # + 1号艇選手の国1%/局1% も取得 (L4+/L4++ ランク判定用)
+        # + 2号艇 国2連率 (一般戦 F1 判定用)
         cur = conn.execute("""
             SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
                    r.race_grade_number,
@@ -153,10 +154,12 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
                      WHEN t5.payout IS NOT NULL THEN 'T-5min'
                      WHEN t15.payout IS NOT NULL THEN 'T-15min'
                      ELSE 'final'
-                   END AS payout_src
+                   END AS payout_src,
+                   e2.national_top_2_percent AS boat2_top2
             FROM races r
             JOIN stadiums s ON r.stadium_number = s.stadium_number
             LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+            LEFT JOIN race_entries e2 ON r.race_id = e2.race_id AND e2.boat_number = 2
             LEFT JOIN (
               SELECT race_id, MIN(odds)*100 AS payout FROM odds_trifecta
               WHERE snapshot_label='T-5min' GROUP BY race_id
@@ -177,7 +180,7 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
     alerts = []
     for row in rows:
         (rid, stadium, rno, closed_at, grade, sname, cls,
-         natl_1, local_1, racer_name, mp, payout_src) = row
+         natl_1, local_1, racer_name, mp, payout_src, boat2_top2) = row
         if not mp or is_b_excluded(stadium):
             continue
         if cls != 1:  # A1 のみ (L4 の基本条件)
@@ -188,7 +191,42 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
         if payout_src == "final":
             continue
 
-        # 単一情報源からルール取得
+        # 一般戦は F1 条件 (国1%≥7 + 2号 top_2≥40) を満たす場合のみ通す
+        if grade == 5:
+            try:
+                n1_check = float(natl_1) if natl_1 is not None else 0.0
+                b2_check = float(boat2_top2) if boat2_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                n1_check = b2_check = 0.0
+            if not (n1_check >= 7.0 and b2_check >= 40.0):
+                continue
+            # F1 該当: 専用 alert_type、推奨 ROI 204%
+            try:
+                n1 = float(natl_1) if natl_1 is not None else 0.0
+                l1 = float(local_1) if local_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = l1 = 0.0
+            alerts.append({
+                "race_id": rid,
+                "stadium_number": stadium,
+                "stadium_name": sname,
+                "race_number": rno,
+                "race_closed_at": closed_at,
+                "alert_type": "L4_general_f1",
+                "label": "🌟L4 G++ (一般×国1%≥7×2号40)",
+                "recovery": 204.0,
+                "bet": "3連単 1-2-3",
+                "payout_src": payout_src,
+                "fav_payout": int(mp),
+                "mode": "confirmed",
+                "rank": "f1", "rank_label": "L4 G++ F1",
+                "rank_emoji": "🌟",
+                "natl_1": n1, "local_1": l1,
+                "racer_name": racer_name or "",
+            })
+            continue
+
+        # 単一情報源からルール取得 (SG/G1/G2/G3 用)
         rule = lookup_rule(grade, cls)
         if rule is None:
             continue
@@ -238,17 +276,18 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
     """朝判定モード: predictions テーブルの 1号艇 prob_first を使って
     オッズ確定前に L4 候補レースを抽出する。
 
-    抽出条件 (backlog item 6 - UI 候補リスト「本日お金を入れる候補レース」
-    と完全一致させる):
+    抽出条件:
       - 1号艇 A1 ∧ prob_first ∈ [0.65, 0.85)  ← 本命 500-1000円帯候補
       - B 除外会場でない
-      - 一般戦 (grade=5) を除外 ← UI 側で l4-reference として除外
-      - 雨レース (weather_number=3) を除外 ← UI 側で l4-reference として除外
-      - A2 派生 (cls=2) は対象外 ← UI 側でも対象外
+      - 雨レース (weather_number=3) を除外
+      - A2 派生 (cls=2) は対象外
+      - 一般戦 (grade=5) は F1 条件
+          「1号艇 国1%≥7 ∧ 2号艇 国2連率≥40」
+        を満たすもののみ通す (OOS Tier 1 検証 ROI 204%)。
+        非該当の 一般戦 はメール対象外。
 
-    alert_type は "L4_morning_*" で確定版と区別 (重複送信防止):
-      確定 L4_SG ↔ 朝 L4_morning_SG  (alert_sent では別レコードで管理されるが、
-      購読者が両方の alert_types を有効化していれば両方届く)
+    alert_type は "L4_morning_*" で確定版と区別。一般戦 F1 は
+    "L4_morning_general_f1" の専用タイプ。
     """
     with db_connect() as conn:
         cur = conn.execute("""
@@ -259,10 +298,12 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
                    e.national_top_1_percent, e.local_top_1_percent,
                    e.racer_name,
                    p.prob_first,
-                   pv.weather_number
+                   pv.weather_number,
+                   e2.national_top_2_percent
             FROM races r
             JOIN stadiums s ON r.stadium_number = s.stadium_number
             LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+            LEFT JOIN race_entries e2 ON r.race_id = e2.race_id AND e2.boat_number = 2
             JOIN predictions p ON r.race_id = p.race_id AND p.boat_number = 1
             LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
             WHERE r.race_date = ?
@@ -273,26 +314,58 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
     alerts = []
     for row in rows:
         (rid, stadium, rno, closed_at, grade, sname, cls,
-         natl_1, local_1, racer_name, prob_first, weather) = row
+         natl_1, local_1, racer_name, prob_first, weather, boat2_top2) = row
         if is_b_excluded(stadium):
             continue
         if prob_first is None:
             continue
 
-        # UI 候補リストと一致 (backlog item 6): A1 のみ、0.65-0.85 帯
+        # A1 のみ、0.65-0.85 帯
         if not (cls == 1 and 0.65 <= prob_first < 0.85):
             continue
 
-        # 一般戦は UI でも参考扱いで候補リストから外れているのでメールも除外
-        if grade == 5:
-            continue
-
-        # 雨レース (weather_number=3) は UI で l4-reference 扱い → メールも除外
+        # 雨レース (weather_number=3) はメール対象外
         if weather == 3:
             continue
 
-        # ルール取得 (確定版と同じ recovery を使うが、判定が予測ベースであること
-        # をラベルで明示する)
+        # 一般戦は F1 条件を満たす場合のみ通す
+        if grade == 5:
+            try:
+                n1 = float(natl_1) if natl_1 is not None else 0.0
+                b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = b2 = 0.0
+            if not (n1 >= 7.0 and b2 >= 40.0):
+                continue
+            # F1 該当: 専用ラベル
+            effective_recovery = 204.0
+            morning_label = "🌅🌟朝L4 G++ 候補 (一般×国1%≥7×2号40)"
+            morning_alert_type = "L4_morning_general_f1"
+            try:
+                n1_f = float(natl_1) if natl_1 is not None else 0.0
+                l1_f = float(local_1) if local_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1_f = l1_f = 0.0
+            alerts.append({
+                "race_id": rid, "stadium_number": stadium,
+                "stadium_name": sname, "race_number": rno,
+                "race_closed_at": closed_at,
+                "alert_type": morning_alert_type,
+                "label": morning_label,
+                "recovery": effective_recovery,
+                "bet": "3連単 1-2-3 (確定後)",
+                "payout_src": "morning_predict",
+                "fav_payout": None,
+                "prob_first": prob_first,
+                "mode": "morning",
+                "rank": "f1", "rank_label": "L4 G++ F1",
+                "rank_emoji": "🌟",
+                "natl_1": n1_f, "local_1": l1_f,
+                "racer_name": racer_name or "",
+            })
+            continue
+
+        # ルール取得 (SG/G1/G2/G3 用、既存ロジック)
         rule = lookup_rule(grade, cls)
         if rule is None:
             continue
