@@ -1984,8 +1984,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             logger.warning("l4_daily_summary lookup failed: %s", e)
 
         # ROI 計算 (L4 = A1 のみ。A2 派生は対象外)
+        # 観察専用 (gen_tri / gen_plus_tri) も同じ計算式で recovery/profit を出す。
         for d in by_date.values():
-            for bet in ("win", "exa", "tri", "c80", "pro", "sgg12"):
+            for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
+                        "gen_tri", "gen_plus_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None

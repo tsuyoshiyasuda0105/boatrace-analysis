@@ -1795,6 +1795,53 @@ main h2 {
   }
 }
 
+/* 観察専用 日別詳細テーブル (一般戦 / L4 G+)
+   本流の .daily-table と区別するため淡青系の枠/見出し色を適用。 */
+.daily-table-section.observe-only-section {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px dashed rgba(125, 211, 252, 0.40);
+  border-radius: 10px;
+  background: rgba(125, 211, 252, 0.03);
+}
+.daily-table-section.observe-only-section h3 {
+  color: #93c5fd;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.daily-table.daily-table-observe thead th {
+  background: rgba(125, 211, 252, 0.10);
+  color: #bae6fd;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.35);
+}
+.daily-table.daily-table-observe tbody tr.has-l4-observe:hover {
+  background: rgba(125, 211, 252, 0.06);
+}
+.daily-table.daily-table-observe tbody tr.is-empty td {
+  padding: 16px;
+  color: rgba(147, 197, 253, 0.55);
+  text-align: center;
+  font-style: italic;
+}
+/* 観察専用テーブルの pos/neg はそのまま .daily-table の緑/赤を継承。
+   ROI 数値の見やすさを優先するため、フォントは変えない。 */
+
+@media (max-width: 480px) {
+  .daily-table-section.observe-only-section {
+    padding: 8px;
+  }
+  .daily-table-section.observe-only-section h3 {
+    font-size: 13px;
+  }
+  .daily-table.daily-table-observe {
+    font-size: 10px;
+  }
+  .daily-table.daily-table-observe th,
+  .daily-table.daily-table-observe td {
+    padding: 4px 3px;
+  }
+}
+
 /* L4 一般戦 (参考、ROI 対象外): 薄い青 (backlog item 5)
    ユーザフィードバック「紫色はセンスが悪い」→ 一般戦に L4 PRO 条件が
    重なると `.l4-pro` (紫) のスタイルが勝って紫になっていた問題を解消。
