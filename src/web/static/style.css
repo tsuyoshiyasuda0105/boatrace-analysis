@@ -1812,6 +1812,35 @@ main h2 {
   background: rgba(125, 211, 252, 0.08);
   border: 1px dashed rgba(125, 211, 252, 0.45);
 }
+
+/* F1 採用カード (緑系): L4 G++ F1 = 一般戦の本採用ベース
+   観察 (薄青) と本流 L4 (ゴールド) のどちらでもない第 3 ゾーン。
+   候補リスト + メール対象であることを緑で訴求。 */
+.summary-card.f1-adopt {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(132, 204, 22, 0.10));
+  border: 2px solid rgba(34, 197, 94, 0.55);
+  box-shadow: 0 0 14px rgba(34, 197, 94, 0.20), inset 0 0 22px rgba(34, 197, 94, 0.04);
+}
+.summary-card.f1-adopt .card-label {
+  color: #86efac;
+  font-weight: 700;
+}
+.summary-card.f1-adopt .card-value {
+  color: #4ade80;
+  text-shadow: 0 0 6px rgba(74, 222, 128, 0.45);
+}
+.summary-card.f1-adopt .card-sub {
+  color: rgba(187, 247, 208, 0.85);
+}
+.summary-card.f1-adopt .card-sub small {
+  color: #86efac;
+  opacity: 0.9;
+}
+@media (max-width: 480px) {
+  .summary-card.f1-adopt {
+    padding: 12px;
+  }
+}
 .summary-card.observe-only .card-label {
   color: #bae6fd;
   font-weight: 600;

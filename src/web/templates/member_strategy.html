@@ -113,10 +113,10 @@
       </div>
     </div>
 
-    <h4 class="sub-strategy-header observe-only-header">📋 観察専用 (運用候補、本日候補リスト/メールには含まない)</h4>
+    <h4 class="sub-strategy-header observe-only-header">📋 一般戦 (観察 2 + ⭐採用 1)</h4>
     <p class="dashboard-hint">
-      本流 L4 (ゴールド) とは区別される<strong>観察カラム</strong>。一般戦は引き続き「参考扱い」で、
-      候補リストやメール通知には含めません。Phase 2 (L4 G+ 候補) の運用判断材料として表示します。
+      左 2 カードは<strong>観察用ベンチ</strong> (運用対象外)、右の <strong>⭐ L4 G++ F1 が採用ベース</strong>
+      (本日候補リスト + メール通知の対象、検証 ROI 204% / OOS Tier 1)。
     </p>
     <div class="summary-grid">
       <div class="summary-card observe-only"
@@ -130,11 +130,11 @@
           {% if totals.gen_tri_bets > 0 %}
           / 損益 {{ totals.gen_tri_profit | signed_comma }}円
           {% endif %}
-          <br><small>本流外、参考扱い (検証 147.7-151.9%)</small>
+          <br><small>Base (検証 147.7-151.9%)</small>
         </span>
       </div>
       <div class="summary-card observe-only"
-           title="Phase 2 候補、検証 ROI 165.9% (n=478, 直近12ヶ月)">
+           title="観察。一般戦 × 国1%≥7、検証 ROI 165.9% (n=478)">
         <span class="card-label">🌟 L4 G+ 候補 (一般戦 × 国1%≥7)</span>
         <span class="card-value">
           {% if totals.gen_plus_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_plus_tri_roi) }}%{% else %}-{% endif %}
@@ -144,34 +144,25 @@
           {% if totals.gen_plus_tri_bets > 0 %}
           / 損益 {{ totals.gen_plus_tri_profit | signed_comma }}円
           {% endif %}
-          <br><small>Phase 2 候補 (検証 165.9%, n=478)</small>
+          <br><small>観察 (検証 165.9%, n=478)</small>
+        </span>
+      </div>
+      <div class="summary-card f1-adopt"
+           title="採用ベース。本日候補リスト + メール通知の対象。検証 ROI 204% (4年, n=1189)、OOS Tier 1">
+        <span class="card-label">⭐ L4 G++ F1 (採用、一般戦×国1%≥7×2号40)</span>
+        <span class="card-value">
+          {% if totals.gen_f1_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_f1_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.gen_f1_tri_bets }} HIT={{ totals.gen_f1_tri_hits }}
+          {% if totals.gen_f1_tri_bets > 0 %}
+          / 損益 {{ totals.gen_f1_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>★採用ベース (検証 204%, n=1189, 4年通算 OOS Tier 1)</small>
         </span>
       </div>
     </div>
   </section>
-
-  <!-- L4 G++ (F1) 採用ベース: 一般戦の正式運用候補 -->
-  <h4 class="sub-strategy-header" style="color:#fcd34d;">⭐ L4 G++ (F1) — 一般戦 採用ベース</h4>
-  <p class="dashboard-hint">
-    <strong>条件</strong>: 一般戦 × 1号艇A1 × 国1%≥7 × <strong>2号艇 国2連率≥40</strong> × B除外 × 本命500-1000 × 雨除外<br>
-    <strong>OOS Tier 1 認定</strong>: 4年通算 ROI <b>204%</b> [CI 186-222] / 直近2年 ROI <b>220%</b> / 月平均 <b>約 25 件</b>
-  </p>
-  <div class="summary-grid">
-    <div class="summary-card"
-         title="採用ベース。本日候補リスト + メール通知の対象。検証 ROI 204% (4年, n=1189)">
-      <span class="card-label">⭐ L4 G++ (一般戦 F1)</span>
-      <span class="card-value">
-        {% if totals.gen_f1_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_f1_tri_roi) }}%{% else %}-{% endif %}
-      </span>
-      <span class="card-sub">
-        n={{ totals.gen_f1_tri_bets }} HIT={{ totals.gen_f1_tri_hits }}
-        {% if totals.gen_f1_tri_bets > 0 %}
-        / 損益 {{ totals.gen_f1_tri_profit | signed_comma }}円
-        {% endif %}
-        <br><small>★採用ベース (検証 204%, n=1189, 4年通算)</small>
-      </span>
-    </div>
-  </div>
 
   <!-- ROI 推移グラフ -->
   <section class="chart-section">
