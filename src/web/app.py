@@ -2393,10 +2393,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             totals[f"{k}_recovery"] = pay/(100*n)*100 if n else None
             totals[f"{k}_profit"] = pay - 100*n if n else 0
 
-        # ===== 月別 ROI (長期推移、固定範囲 2025-07-01 〜 今日) =====
-        # daily 集計の from/to とは独立して、データある全期間を月別集約
+        return render_template(
+            "member_strategy.html",
+            rows=rows,
+            totals=totals,
+            from_date=from_d,
+            to_date=to_d,
+            today_iso=date.today().isoformat(),
+        )
+
+    @app.route("/member/strategy/monthly")
+    @login_required
+    @cached(ttl=180, past_ttl=3600)
+    def member_strategy_monthly():
+        """月別 ROI (長期推移) 専用ページ — テーブル + 推移グラフ。
+        backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
+        """
+        today = date.today()
         monthly_from = "2025-07-01"
         monthly_to   = today.isoformat()
+
+        bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
+                    "gen_tri", "gen_plus_tri", "gen_f1_tri",
+                    "prime_tri", "r12_tri", "gen_r12_tri")
         try:
             monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
         except Exception as e:
@@ -2405,7 +2424,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         monthly_map: dict[str, dict] = {}
         for r in monthly_daily:
-            ym = r["date"][:7]  # YYYY-MM
+            ym = r["date"][:7]
             m = monthly_map.setdefault(ym, {
                 "ym": ym,
                 "n_total": 0, "n_l4": 0,
@@ -2419,7 +2438,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 m[f"{k}_bets"] += r.get(f"{k}_bets", 0) or 0
                 m[f"{k}_hits"] += r.get(f"{k}_hits", 0) or 0
                 m[f"{k}_pay"]  += r.get(f"{k}_pay", 0)  or 0
-        # ROI 計算
+
         current_ym = today.strftime("%Y-%m")
         for m in monthly_map.values():
             m["is_current"] = (m["ym"] == current_ym)
@@ -2428,16 +2447,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 m[f"{k}_roi"] = (pay - 100*n)/(100*n)*100 if n else None
                 m[f"{k}_recovery"] = pay/(100*n)*100 if n else None
                 m[f"{k}_profit"] = pay - 100*n if n else 0
-        monthly_rows = sorted(monthly_map.values(), key=lambda x: x["ym"], reverse=True)
+        # 古い順 (グラフ用に時系列順)
+        monthly_rows_asc = sorted(monthly_map.values(), key=lambda x: x["ym"])
+        # 表示用は新しい順
+        monthly_rows = list(reversed(monthly_rows_asc))
 
         return render_template(
-            "member_strategy.html",
-            rows=rows,
-            totals=totals,
+            "member_monthly.html",
             monthly_rows=monthly_rows,
-            from_date=from_d,
-            to_date=to_d,
-            today_iso=date.today().isoformat(),
+            monthly_rows_asc=monthly_rows_asc,
+            today_iso=today.isoformat(),
         )
 
     @app.route("/member/health")

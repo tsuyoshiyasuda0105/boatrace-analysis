@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}月別 ROI 推移{% endblock %}
+
+{% block head_extra %}
+  {# 当月は完了レース分が増えていくので 3 分毎に自動リロード #}
+  <meta http-equiv="refresh" content="180">
+{% endblock %}
+
+{% block content %}
+<div class="strategy-dashboard">
+  <h2>📈 月別 ROI 推移 <span class="live-indicator" title="3 分毎に自動更新">🔴 LIVE</span></h2>
+  <p class="dashboard-hint">
+    <strong>採用戦略 4 種 + 観察戦略 3 種を月別に長期推移で可視化。</strong><br>
+    集計範囲: 2025-07-01 〜 今日 / 当月は完了レース分のみの暫定値
+  </p>
+
+  <!-- グラフ: 月別 ROI 推移 (採用 4 + 観察 3) -->
+  <section class="chart-section">
+    <h3>📉 月別 ROI 推移グラフ</h3>
+    <div class="chart-legend" id="monthlyChartLegend"></div>
+    <canvas id="monthlyChart" width="900" height="360"></canvas>
+    <p class="dashboard-hint" style="margin-top:8px;">
+      <small>横軸: 年月 / 縦軸: ROI (%). 100% (赤線) が損益分岐点。当月は点線で表示。</small>
+    </p>
+  </section>
+
+  <!-- 月別データテーブル -->
+  <section class="daily-table-section monthly-roi-section">
+    <h3>📋 月別 ROI テーブル</h3>
+    <p class="dashboard-hint">
+      <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / F1 一般戦 ／
+      観察: L4-prime / L4-12R / 一般戦×12R</small>
+    </p>
+    <div class="table-wrap">
+      <table class="daily-table monthly-roi-table">
+        <thead>
+          <tr>
+            <th rowspan="2">年月</th>
+            <th rowspan="2">L4該当</th>
+            <th colspan="2">単勝 (1)</th>
+            <th colspan="2">2連単 (1-2)</th>
+            <th colspan="2">3連単 (1-2-3)</th>
+            <th colspan="2">F1 一般戦</th>
+            <th colspan="2" class="obs-col">🟢 L4-prime</th>
+            <th colspan="2" class="obs-col">🟢 L4-12R</th>
+            <th colspan="2" class="obs-col">🟢 一般戦×12R</th>
+          </tr>
+          <tr>
+            <th>HIT/n</th><th>ROI</th>
+            <th>HIT/n</th><th>ROI</th>
+            <th>HIT/n</th><th>ROI</th>
+            <th>HIT/n</th><th>ROI</th>
+            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
+            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
+            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in monthly_rows %}
+          <tr class="{% if m.is_current %}is-current-month{% endif %}">
+            <td class="date-cell">
+              <span class="date-text">{{ m.ym }}</span>
+              {% if m.is_current %}<span class="in-progress-badge">進行中</span>{% endif %}
+            </td>
+            <td class="num">{{ m.n_l4 + (m.gen_f1_tri_bets or 0) }}</td>
+
+            <td class="num">{{ m.win_hits }}/{{ m.win_bets }}</td>
+            <td class="num {% if m.win_roi is not none and m.win_roi >= 0 %}pos{% elif m.win_roi is not none %}neg{% endif %}">
+              {% if m.win_roi is not none %}{{ '%+.0f' | format(m.win_roi) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num">{{ m.exa_hits }}/{{ m.exa_bets }}</td>
+            <td class="num {% if m.exa_roi is not none and m.exa_roi >= 0 %}pos{% elif m.exa_roi is not none %}neg{% endif %}">
+              {% if m.exa_roi is not none %}{{ '%+.0f' | format(m.exa_roi) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num">{{ m.tri_hits }}/{{ m.tri_bets }}</td>
+            <td class="num {% if m.tri_roi is not none and m.tri_roi >= 0 %}pos{% elif m.tri_roi is not none %}neg{% endif %}">
+              {% if m.tri_roi is not none %}{{ '%+.0f' | format(m.tri_roi) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num">{{ m.gen_f1_tri_hits }}/{{ m.gen_f1_tri_bets }}</td>
+            <td class="num {% if m.gen_f1_tri_roi is not none and m.gen_f1_tri_roi >= 0 %}pos{% elif m.gen_f1_tri_roi is not none %}neg{% endif %}">
+              {% if m.gen_f1_tri_roi is not none %}{{ '%+.0f' | format(m.gen_f1_tri_roi) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num obs-col">{{ m.prime_tri_hits }}/{{ m.prime_tri_bets }}</td>
+            <td class="num obs-col {% if m.prime_tri_roi is not none and m.prime_tri_roi >= 0 %}pos{% elif m.prime_tri_roi is not none %}neg{% endif %}">
+              {% if m.prime_tri_roi is not none %}{{ '%+.0f' | format(m.prime_tri_roi) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num obs-col">{{ m.r12_tri_hits }}/{{ m.r12_tri_bets }}</td>
+            <td class="num obs-col {% if m.r12_tri_roi is not none and m.r12_tri_roi >= 0 %}pos{% elif m.r12_tri_roi is not none %}neg{% endif %}">
+              {% if m.r12_tri_roi is not none %}{{ '%+.0f' | format(m.r12_tri_roi) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num obs-col">{{ m.gen_r12_tri_hits }}/{{ m.gen_r12_tri_bets }}</td>
+            <td class="num obs-col {% if m.gen_r12_tri_roi is not none and m.gen_r12_tri_roi >= 0 %}pos{% elif m.gen_r12_tri_roi is not none %}neg{% endif %}">
+              {% if m.gen_r12_tri_roi is not none %}{{ '%+.0f' | format(m.gen_r12_tri_roi) }}%{% else %}-{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not monthly_rows %}
+          <tr class="is-empty">
+            <td colspan="16" class="num muted">月別 ROI データなし</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+(function() {
+  // データを Jinja → JS (時系列昇順)
+  const data = [
+    {% for m in monthly_rows_asc %}
+    {
+      ym: "{{ m.ym }}",
+      is_current: {{ 'true' if m.is_current else 'false' }},
+      win:    {{ ('null' if m.win_roi is none         else '%.1f' | format(m.win_roi))         }},
+      exa:    {{ ('null' if m.exa_roi is none         else '%.1f' | format(m.exa_roi))         }},
+      tri:    {{ ('null' if m.tri_roi is none         else '%.1f' | format(m.tri_roi))         }},
+      f1:     {{ ('null' if m.gen_f1_tri_roi is none  else '%.1f' | format(m.gen_f1_tri_roi))  }},
+      prime:  {{ ('null' if m.prime_tri_roi is none   else '%.1f' | format(m.prime_tri_roi))   }},
+      r12:    {{ ('null' if m.r12_tri_roi is none     else '%.1f' | format(m.r12_tri_roi))     }},
+      gr12:   {{ ('null' if m.gen_r12_tri_roi is none else '%.1f' | format(m.gen_r12_tri_roi)) }},
+    },
+    {% endfor %}
+  ];
+
+  const SERIES = [
+    {key:'win',   label:'単勝 (1)',       color:'#34e890', adopted:true},
+    {key:'exa',   label:'2連単 (1-2)',    color:'#00d4ff', adopted:true},
+    {key:'tri',   label:'3連単 (1-2-3)',  color:'#ff006e', adopted:true},
+    {key:'f1',    label:'F1 一般戦',       color:'#ffd700', adopted:true},
+    {key:'prime', label:'🟢 L4-prime',    color:'#10b981', adopted:false},
+    {key:'r12',   label:'🟢 L4-12R',      color:'#059669', adopted:false},
+    {key:'gr12',  label:'🟢 一般戦×12R',  color:'#16a34a', adopted:false},
+  ];
+
+  // 凡例
+  const legendEl = document.getElementById('monthlyChartLegend');
+  if (legendEl) {
+    legendEl.innerHTML = SERIES.map(s =>
+      `<span class="legend-item" data-key="${s.key}">
+        <span class="legend-swatch" style="background:${s.color}"></span>
+        <span class="legend-label">${s.label}</span>
+      </span>`).join('');
+  }
+
+  const canvas = document.getElementById('monthlyChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const padL = 50, padR = 20, padT = 18, padB = 40;
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    if (data.length === 0) {
+      ctx.fillStyle = '#888';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('データなし', W/2, H/2);
+      return;
+    }
+    // Y 範囲は全シリーズの実値から決める。100% を含むように
+    let allVals = [];
+    SERIES.forEach(s => {
+      data.forEach(d => { if (d[s.key] !== null) allVals.push(d[s.key]); });
+    });
+    if (allVals.length === 0) return;
+    let yMax = Math.max(...allVals, 100);
+    let yMin = Math.min(...allVals, 0);
+    const pad = (yMax - yMin) * 0.1 || 20;
+    yMax += pad; yMin -= pad;
+
+    const xs = (i) => padL + (W - padL - padR) * (i / Math.max(1, data.length - 1));
+    const ys = (v) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin));
+
+    // 軸
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, padT);
+    ctx.lineTo(padL, H - padB);
+    ctx.lineTo(W - padR, H - padB);
+    ctx.stroke();
+
+    // 100% (損益分岐) ライン
+    if (yMin < 100 && yMax > 100) {
+      ctx.strokeStyle = 'rgba(255, 80, 80, 0.6)';
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      const zy = ys(100);
+      ctx.beginPath();
+      ctx.moveTo(padL, zy);
+      ctx.lineTo(W - padR, zy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 120, 120, 0.7)';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('損益分岐 0%', padL + 4, zy - 4);
+    }
+
+    // Y 軸ラベル
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'right';
+    const ySteps = 5;
+    for (let i = 0; i <= ySteps; i++) {
+      const v = yMin + (yMax - yMin) * i / ySteps;
+      const y = ys(v);
+      ctx.fillText(Math.round(v) + '%', padL - 6, y + 3);
+      // グリッド
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(W - padR, y);
+      ctx.stroke();
+    }
+
+    // X 軸ラベル
+    ctx.fillStyle = '#aaa';
+    ctx.textAlign = 'center';
+    const step = Math.max(1, Math.ceil(data.length / 12));
+    data.forEach((d, i) => {
+      if (i % step === 0 || i === data.length - 1) {
+        ctx.fillText(d.ym.slice(2), xs(i), H - padB + 16);  // YY-MM
+      }
+    });
+
+    // シリーズ描画
+    SERIES.forEach(s => {
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.adopted ? 2.4 : 1.6;
+      ctx.beginPath();
+      let firstDone = false;
+      data.forEach((d, i) => {
+        const v = d[s.key];
+        if (v === null) {
+          firstDone = false;
+          return;
+        }
+        const x = xs(i), y = ys(v);
+        if (!firstDone) {
+          ctx.moveTo(x, y);
+          firstDone = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      // 当月は破線
+      if (data.length > 0 && data[data.length-1].is_current) {
+        // 全描画後に最終セグメントだけ破線にするのは複雑なので、別に重ね描き
+        ctx.stroke();
+        const lastIdx = data.length - 1;
+        if (lastIdx > 0) {
+          const v0 = data[lastIdx - 1][s.key];
+          const v1 = data[lastIdx][s.key];
+          if (v0 !== null && v1 !== null) {
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = s.color;
+            ctx.lineWidth = s.adopted ? 2.4 : 1.6;
+            ctx.beginPath();
+            ctx.moveTo(xs(lastIdx - 1), ys(v0));
+            ctx.lineTo(xs(lastIdx),     ys(v1));
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+      } else {
+        ctx.stroke();
+      }
+
+      // 点
+      ctx.fillStyle = s.color;
+      data.forEach((d, i) => {
+        const v = d[s.key];
+        if (v === null) return;
+        ctx.beginPath();
+        ctx.arc(xs(i), ys(v), s.adopted ? 3 : 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    });
+  }
+  draw();
+})();
+</script>
+{% endblock %}

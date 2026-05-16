@@ -1784,6 +1784,33 @@ main h2 {
 .daily-table tbody tr.has-l4:hover { background: rgba(0, 212, 255, 0.08); }
 .daily-table .date-cell .date-text { font-family: monospace; color: rgba(255,255,255,0.95); }
 
+/* 月別 ROI チャートの凡例 */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+}
+.legend-label {
+  color: var(--text-dim);
+}
+
 /* 月別 ROI テーブル */
 .monthly-roi-section h3 .section-hint {
   font-size: 11px;
