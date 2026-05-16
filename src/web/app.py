@@ -1239,31 +1239,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "n_total": len(ev_marks),
                         "ev_threshold": thr, "marks": ev_marks})
 
-    @app.route("/api/race/<race_id>/whatif", methods=["POST"])
-    def race_whatif(race_id: str):
-        info = _race_basic_info(race_id)
-        if not info:
-            return jsonify({"error": "race not found"}), 404
-        # 本番 Render では heavy compute 不可。ローカル用機能。
-        if os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT"):
-            return jsonify({
-                "error": "what-if simulation is unavailable on hosted env (memory limit). "
-                         "Use local dev environment.",
-            }), 503
-        target_date = info["race_date"]
-        overrides = (request.get_json(silent=True) or {}).get("overrides", {})
-        try:
-            result = predictor.predict_whatif(target_date, race_id, overrides)
-        except Exception as e:
-            logger.exception("whatif failed: %s", race_id)
-            return jsonify({"error": str(e)}), 500
-        if result is None:
-            return jsonify({"error": "no data"}), 404
-        names = _racer_names(race_id)
-        for b in result["boats"]:
-            b["racer_name"] = names.get(b["boat_number"])
-        return jsonify(result)
-
     @app.route("/api/race/<race_id>")
     @cached(ttl=300)  # 5分キャッシュ
     def race_api(race_id: str):
