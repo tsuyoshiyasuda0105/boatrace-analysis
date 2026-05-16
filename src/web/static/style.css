@@ -1852,6 +1852,46 @@ main h2 {
   color: #93c5fd;
   opacity: 0.85;
 }
+/* 観察候補 (L4-prime / L4-12R / 一般戦×12R) — 緑系トーン */
+.summary-card.obs-prime {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(34, 197, 94, 0.06));
+  border: 1px dashed rgba(16, 185, 129, 0.55);
+}
+.summary-card.obs-prime .card-label {
+  color: #86efac;
+  font-weight: 600;
+}
+.summary-card.obs-prime .card-value {
+  color: #6ee7b7;
+}
+.summary-card.obs-prime .card-sub {
+  color: rgba(167, 243, 208, 0.85);
+}
+.summary-card.obs-prime .card-sub small {
+  color: #a7f3d0;
+  opacity: 0.85;
+}
+
+/* レースカード上の観察バッジ (緑色) */
+.obs-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ecfdf5;
+  background: linear-gradient(135deg, #10b981, #059669);
+  border: 1px solid rgba(16, 185, 129, 0.7);
+  border-radius: 4px;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.35);
+  letter-spacing: 0.5px;
+}
+.obs-badge.obs-r12 {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+.obs-badge.obs-gen-r12 {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+}
 @media (max-width: 480px) {
   .sub-strategy-header.observe-only-header {
     font-size: 13px;

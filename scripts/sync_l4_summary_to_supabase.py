@@ -58,6 +58,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
         SELECT r.race_date,
                r.race_id,
                r.race_grade_number,
+               r.race_number,
                e.racer_number, e.avg_start_timing, e.age,
                e.national_top_1_percent AS natl_1,
                pv.start_timing_exhibition,
@@ -139,7 +140,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
 
     by_date: dict[str, dict] = {}
     for row in cur.fetchall():
-        (rdate, rid, grade, racer, avg_st, age, natl_1, ex_st,
+        (rdate, rid, grade, race_no, racer, avg_st, age, natl_1, ex_st,
          fav_pay, fav_odds, w1, w2, w3, wp, ep, tp, boat2_top2) = row
         d = by_date.setdefault(rdate, {
             "date": rdate,
@@ -156,10 +157,35 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
             "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
             "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
+            # L4-prime / L4-12R / 一般戦×12R 観察集計 (3 ヶ月実績で採用判断)
+            "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
+            "r12_tri_bets": 0,   "r12_tri_hits": 0,   "r12_tri_pay": 0,
+            "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
         })
         is_done = (w1 is not None and w2 is not None and w3 is not None)
         tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
         tri_pay_v = (tp or 0) if tri_hit else 0
+        # race_no を int に変換 (None ガード)
+        try:
+            rn = int(race_no) if race_no is not None else 0
+        except (TypeError, ValueError):
+            rn = 0
+        is_prime = rn in (11, 12)  # L4-prime 観察用
+        is_r12   = rn == 12        # L4-12R / 一般戦×12R 観察用
+
+        # === L4-prime / L4-12R 観察集計 (全 grade、確定済のみ) ===
+        # 3 ヶ月実績で採用判断する。L4 universe 全体 (一般戦含む) 11-12R / 12R 限定
+        if is_done:
+            if is_prime:
+                d["prime_tri_bets"] += 1
+                if tri_hit:
+                    d["prime_tri_hits"] += 1
+                    d["prime_tri_pay"] += tri_pay_v
+            if is_r12:
+                d["r12_tri_bets"] += 1
+                if tri_hit:
+                    d["r12_tri_hits"] += 1
+                    d["r12_tri_pay"] += tri_pay_v
 
         # === 一般戦 (grade=5): L4 本流と分離して観察集計 + F1 採用集計 ===
         if grade == 5:
@@ -168,6 +194,12 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
                 if tri_hit:
                     d["gen_tri_hits"] += 1
                     d["gen_tri_pay"] += tri_pay_v
+                # 一般戦×12R 観察 (F1 と独立の観察ベース)
+                if is_r12:
+                    d["gen_r12_tri_bets"] += 1
+                    if tri_hit:
+                        d["gen_r12_tri_hits"] += 1
+                        d["gen_r12_tri_pay"] += tri_pay_v
                 try:
                     n1 = float(natl_1) if natl_1 is not None else 0.0
                 except (TypeError, ValueError):
@@ -286,8 +318,11 @@ def main():
                gen_tri_bets, gen_tri_hits, gen_tri_pay,
                gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
                gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay,
+               prime_tri_bets, prime_tri_hits, prime_tri_pay,
+               r12_tri_bets, r12_tri_hits, r12_tri_pay,
+               gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (date) DO UPDATE SET
               n_total = EXCLUDED.n_total,
               n_l4    = EXCLUDED.n_l4,
@@ -306,6 +341,15 @@ def main():
               gen_f1_tri_bets = EXCLUDED.gen_f1_tri_bets,
               gen_f1_tri_hits = EXCLUDED.gen_f1_tri_hits,
               gen_f1_tri_pay  = EXCLUDED.gen_f1_tri_pay,
+              prime_tri_bets = EXCLUDED.prime_tri_bets,
+              prime_tri_hits = EXCLUDED.prime_tri_hits,
+              prime_tri_pay  = EXCLUDED.prime_tri_pay,
+              r12_tri_bets   = EXCLUDED.r12_tri_bets,
+              r12_tri_hits   = EXCLUDED.r12_tri_hits,
+              r12_tri_pay    = EXCLUDED.r12_tri_pay,
+              gen_r12_tri_bets = EXCLUDED.gen_r12_tri_bets,
+              gen_r12_tri_hits = EXCLUDED.gen_r12_tri_hits,
+              gen_r12_tri_pay  = EXCLUDED.gen_r12_tri_pay,
               updated_at = EXCLUDED.updated_at
         """
     else:
@@ -321,8 +365,11 @@ def main():
                gen_tri_bets, gen_tri_hits, gen_tri_pay,
                gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
                gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay,
+               prime_tri_bets, prime_tri_hits, prime_tri_pay,
+               r12_tri_bets, r12_tri_hits, r12_tri_pay,
+               gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     for s in summaries:
         batch.append((
@@ -336,6 +383,9 @@ def main():
             s.get("gen_tri_bets",0), s.get("gen_tri_hits",0), s.get("gen_tri_pay",0),
             s.get("gen_plus_tri_bets",0), s.get("gen_plus_tri_hits",0), s.get("gen_plus_tri_pay",0),
             s.get("gen_f1_tri_bets",0), s.get("gen_f1_tri_hits",0), s.get("gen_f1_tri_pay",0),
+            s.get("prime_tri_bets",0), s.get("prime_tri_hits",0), s.get("prime_tri_pay",0),
+            s.get("r12_tri_bets",0),   s.get("r12_tri_hits",0),   s.get("r12_tri_pay",0),
+            s.get("gen_r12_tri_bets",0), s.get("gen_r12_tri_hits",0), s.get("gen_r12_tri_pay",0),
             now_iso,
         ))
         if len(batch) >= BATCH:

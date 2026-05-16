@@ -1398,6 +1398,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 try:
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
+                               r.race_number,
                                e.class_number,
                                e.national_top_1_percent, e.local_top_1_percent,
                                e.avg_start_timing, e.age,
@@ -1409,10 +1410,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
                         WHERE r.race_date = ?
                     """, (target_date,))
-                    for (rid, stadium, grade, cls, natl1, loc1,
+                    for (rid, stadium, grade, race_no, cls, natl1, loc1,
                          avg_st, age, weather, ex_st, boat2_top2) in cur.fetchall():
                         all_race_info[rid] = {
-                            "stadium": stadium, "grade": grade, "class": cls,
+                            "stadium": stadium, "grade": grade,
+                            "race_number": race_no,
+                            "class": cls,
                             "natl_1": natl1, "local_1": loc1,
                             "avg_st": avg_st, "age": age,
                             "weather": weather, "ex_st": ex_st,
@@ -1485,7 +1488,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
                          race_id=None, avg_st=None, age=None, ex_st=None,
-                         boat2_top2=None):
+                         boat2_top2=None, race_number=None):
             """確定オッズベース L4 マーク判定 (L4+ / L4++ ランク付き)
 
             一般戦 (grade=5) は F1 条件
@@ -1580,11 +1583,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     f"🔥L4 PRO (ST={float(avg_st):.2f}, "
                     f"{int(age)}歳{_ex_part})"
                 )
+
+            # ▼ L4-prime / L4-12R / 一般戦×12R 観察フラグ (3 ヶ月実績で採用判断)
+            # base が確定したレース (= L4 universe 通過済) なら race_number で判定
+            try:
+                rn = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
+            if rn in (11, 12):
+                base["is_obs_prime"] = True
+            if rn == 12:
+                base["is_obs_r12"] = True
+                if grade == 5:
+                    base["is_obs_gen_r12"] = True
             return base
 
         def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None,
                                  race_id=None, avg_st=None, age=None, ex_st=None,
-                                 boat2_top2=None):
+                                 boat2_top2=None, race_number=None):
             """朝判定用 L4 候補マーク (prob_first ベース)。
 
             一般戦 (grade=5) は F1 条件
@@ -1672,6 +1688,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if rec_override is not None and not base.get("is_reference") and not base.get("is_f1"):
                 base["recovery"] = rec_override
                 base["label"] = f"{rank_emoji}{base['label']} ({rank_label})"
+
+            # ▼ L4-prime / L4-12R / 一般戦×12R 観察フラグ
+            try:
+                rn = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
+            if rn in (11, 12):
+                base["is_obs_prime"] = True
+            if rn == 12:
+                base["is_obs_r12"] = True
+                if grade == 5:
+                    base["is_obs_gen_r12"] = True
             return base
 
         signals = []
@@ -1682,6 +1710,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         for rid, info in race_iterable.items():
             stadium = info.get("stadium")
             grade = info.get("grade")
+            race_no_info = info.get("race_number")
             cls = info.get("class")
             natl_1 = info.get("natl_1")
             local_1 = info.get("local_1")
@@ -1712,7 +1741,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
                 l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid,
                                   avg_st=avg_st, age=age, ex_st=ex_st,
-                                  boat2_top2=boat2_top2)
+                                  boat2_top2=boat2_top2, race_number=race_no_info)
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
                 # バッジは出すが is_rain=True で本日候補リストから除外
@@ -1740,7 +1769,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 morning_l4 = _evaluate_morning_l4(stadium, grade, cls, prob_first,
                                                    natl_1, local_1, race_id=rid,
                                                    avg_st=avg_st, age=age, ex_st=ex_st,
-                                                   boat2_top2=boat2_top2)
+                                                   boat2_top2=boat2_top2,
+                                                   race_number=race_no_info)
                 if morning_l4:
                     if is_rain:
                         morning_l4["is_rain"] = True
@@ -1797,6 +1827,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     r.race_date,
                     r.stadium_number,
                     r.race_grade_number,
+                    r.race_number,
                     e.class_number,
                     e.national_top_1_percent AS natl_1,
                     e2.national_top_2_percent AS boat2_top2,
@@ -1854,11 +1885,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
                 "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
                 "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
+                # L4-prime / L4-12R / 一般戦×12R 観察 (3 ヶ月実績で採用判断)
+                # prime_*   = L4 universe × 11-12R 限定 (ROI 検証 185%)
+                # r12_*     = L4 universe × 12R のみ (ROI 検証 193%)
+                # gen_r12_* = 一般戦 × 12R 限定 (ROI 検証 189%)
+                "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
+                "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
+                "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
                 "grade_breakdown": {},
             }
 
         for row in cur:
-            (rdate, stadium, grade, cls, natl_1, boat2_top2,
+            (rdate, stadium, grade, race_no, cls, natl_1, boat2_top2,
              fav_pay, fav_odds, prob_first,
              w1, w2, w3, win_pay, ex_pay, tri_pay, weather) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
@@ -1885,6 +1923,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
                 "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
                 "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
+                # L4-prime / L4-12R / 一般戦×12R 観察
+                "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
+                "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
+                "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -1915,16 +1957,43 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
             tri_pay_v = (tri_pay or 0) if tri_hit else 0
+            # L4-prime/12R 観察用 race_number ガード
+            try:
+                rn = int(race_no) if race_no is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
+            is_prime = rn in (11, 12)
+            is_r12 = rn == 12
+
+            # === L4-prime / L4-12R 観察集計 (L4 universe 全体、確定済のみ) ===
+            # 一般戦 + L4 本流 (SG/G1/G2/G3) 両方を含む、is_l4_base 通過のみ
+            if is_l4_base and is_done:
+                if is_prime:
+                    d["prime_tri_bets"] += 1
+                    if tri_hit:
+                        d["prime_tri_hits"] += 1
+                        d["prime_tri_pay"] += tri_pay_v
+                if is_r12:
+                    d["r12_tri_bets"] += 1
+                    if tri_hit:
+                        d["r12_tri_hits"] += 1
+                        d["r12_tri_pay"] += tri_pay_v
 
             # === 一般戦 (grade=5): 別カウンタで分離追跡 ===
             # 採用ベース: F1 (国1%≥7 + 2号 top_2≥40) → gen_f1_tri_*
-            # 観察用     : gen_tri_* (Base), gen_plus_tri_* (× 国1%≥7)
+            # 観察用     : gen_tri_* (Base), gen_plus_tri_* (× 国1%≥7), gen_r12_* (× 12R)
             if grade == 5:
                 if is_l4_base and is_done:
                     d["gen_tri_bets"] += 1
                     if tri_hit:
                         d["gen_tri_hits"] += 1
                         d["gen_tri_pay"] += tri_pay_v
+                    # 一般戦×12R 観察 (F1 と独立、ROI 検証 189%)
+                    if is_r12:
+                        d["gen_r12_tri_bets"] += 1
+                        if tri_hit:
+                            d["gen_r12_tri_hits"] += 1
+                            d["gen_r12_tri_pay"] += tri_pay_v
                     try:
                         n1 = float(natl_1) if natl_1 is not None else 0.0
                     except (TypeError, ValueError):
@@ -1980,27 +2049,58 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 既に by_date にある日付 (raw データから集計済) は上書きしない。
         try:
             with db_connect() as conn:
-                cur = conn.execute("""
-                    SELECT date, n_total, n_l4,
-                           win_bets, win_hits, win_pay,
-                           exa_bets, exa_hits, exa_pay,
-                           tri_bets, tri_hits, tri_pay,
-                           c80_bets, c80_hits, c80_pay,
-                           pro_bets, pro_hits, pro_pay,
-                           sgg12_bets, sgg12_hits, sgg12_pay,
-                           gen_tri_bets, gen_tri_hits, gen_tri_pay,
-                           gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay,
-                           gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay
-                      FROM l4_daily_summary
-                     WHERE date BETWEEN ? AND ?
-                """, (from_date, to_date))
-                for row in cur.fetchall():
-                    (sdate, n_tot, n_l4,
-                     wb, wh, wp, eb, eh, ep, tb, th, tp,
-                     c80b, c80h, c80p, prob, proh, prop,
-                     sgb, sgh, sgp,
-                     gtb, gth, gtp, gptb, gpth, gptp,
-                     gfb, gfh, gfp) = row
+                # L4-prime/12R 観察カラムは新カラム。古い DB では COLUMN 存在しないため
+                # try-except で graceful degradation
+                base_cols = ("date, n_total, n_l4, "
+                             "win_bets, win_hits, win_pay, "
+                             "exa_bets, exa_hits, exa_pay, "
+                             "tri_bets, tri_hits, tri_pay, "
+                             "c80_bets, c80_hits, c80_pay, "
+                             "pro_bets, pro_hits, pro_pay, "
+                             "sgg12_bets, sgg12_hits, sgg12_pay, "
+                             "gen_tri_bets, gen_tri_hits, gen_tri_pay, "
+                             "gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay, "
+                             "gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay")
+                obs_cols = ("prime_tri_bets, prime_tri_hits, prime_tri_pay, "
+                            "r12_tri_bets, r12_tri_hits, r12_tri_pay, "
+                            "gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay")
+                has_obs_cols = True
+                try:
+                    cur = conn.execute(
+                        f"SELECT {base_cols}, {obs_cols} FROM l4_daily_summary "
+                        f"WHERE date BETWEEN ? AND ?", (from_date, to_date))
+                    rows = cur.fetchall()
+                except Exception:
+                    # ALTER TABLE 未実行の DB → 旧カラムのみ
+                    has_obs_cols = False
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    cur = conn.execute(
+                        f"SELECT {base_cols} FROM l4_daily_summary "
+                        f"WHERE date BETWEEN ? AND ?", (from_date, to_date))
+                    rows = cur.fetchall()
+                for row in rows:
+                    if has_obs_cols:
+                        (sdate, n_tot, n_l4,
+                         wb, wh, wp, eb, eh, ep, tb, th, tp,
+                         c80b, c80h, c80p, prob, proh, prop,
+                         sgb, sgh, sgp,
+                         gtb, gth, gtp, gptb, gpth, gptp,
+                         gfb, gfh, gfp,
+                         prb, prh, prp, r12b, r12h, r12p,
+                         gr12b, gr12h, gr12p) = row
+                    else:
+                        (sdate, n_tot, n_l4,
+                         wb, wh, wp, eb, eh, ep, tb, th, tp,
+                         c80b, c80h, c80p, prob, proh, prop,
+                         sgb, sgh, sgp,
+                         gtb, gth, gtp, gptb, gpth, gptp,
+                         gfb, gfh, gfp) = row
+                        prb = prh = prp = 0
+                        r12b = r12h = r12p = 0
+                        gr12b = gr12h = gr12p = 0
                     if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
                         # 既に raw データから集計済 → スキップ (raw が「正」)
                         continue
@@ -2019,6 +2119,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "gen_tri_bets": gtb or 0, "gen_tri_hits": gth or 0, "gen_tri_pay": gtp or 0,
                         "gen_plus_tri_bets": gptb or 0, "gen_plus_tri_hits": gpth or 0, "gen_plus_tri_pay": gptp or 0,
                         "gen_f1_tri_bets": gfb or 0, "gen_f1_tri_hits": gfh or 0, "gen_f1_tri_pay": gfp or 0,
+                        # L4-prime / L4-12R / 一般戦×12R 観察
+                        "prime_tri_bets": prb or 0, "prime_tri_hits": prh or 0, "prime_tri_pay": prp or 0,
+                        "r12_tri_bets": r12b or 0, "r12_tri_hits": r12h or 0, "r12_tri_pay": r12p or 0,
+                        "gen_r12_tri_bets": gr12b or 0, "gen_r12_tri_hits": gr12h or 0, "gen_r12_tri_pay": gr12p or 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
@@ -2030,7 +2134,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # gen_tri / gen_plus_tri は観察用 (運用前比較ベンチ)
         for d in by_date.values():
             for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
-                        "gen_tri", "gen_plus_tri", "gen_f1_tri"):
+                        "gen_tri", "gen_plus_tri", "gen_f1_tri",
+                        "prime_tri", "r12_tri", "gen_r12_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None
@@ -2268,7 +2373,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_l4": sum(r["n_l4"] for r in rows),
         }
         for k in ("win", "exa", "tri", "c80", "pro", "sgg12",
-                  "gen_tri", "gen_plus_tri", "gen_f1_tri"):
+                  "gen_tri", "gen_plus_tri", "gen_f1_tri",
+                  "prime_tri", "r12_tri", "gen_r12_tri"):
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
             totals[f"{k}_pay"]  = sum(r.get(f"{k}_pay", 0)  for r in rows)

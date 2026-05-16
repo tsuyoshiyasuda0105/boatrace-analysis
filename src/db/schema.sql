@@ -311,6 +311,19 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
   gen_f1_tri_bets   INTEGER,
   gen_f1_tri_hits   INTEGER,
   gen_f1_tri_pay    INTEGER,
+  -- L4-prime 観察集計 (11R-12R 限定、全グレード、ROI 185% 検証)
+  -- 3 ヶ月実績で採用判断する観察ベース
+  prime_tri_bets    INTEGER,
+  prime_tri_hits    INTEGER,
+  prime_tri_pay     INTEGER,
+  -- L4-12R-only 観察集計 (12R のみ、全グレード、ROI 193% 検証)
+  r12_tri_bets      INTEGER,
+  r12_tri_hits      INTEGER,
+  r12_tri_pay       INTEGER,
+  -- 一般戦×12R 観察集計 (一般戦の 12R 限定、ROI 189% 検証)
+  gen_r12_tri_bets  INTEGER,
+  gen_r12_tri_hits  INTEGER,
+  gen_r12_tri_pay   INTEGER,
   updated_at        TEXT NOT NULL
 );
 
@@ -324,3 +337,14 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_f1_tri_bets   INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_f1_tri_hits   INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_f1_tri_pay    INTEGER;
+
+-- 既存 DB へ手動適用する場合 (L4-prime/12R 観察カラム追加):
+-- ALTER TABLE l4_daily_summary ADD COLUMN prime_tri_bets    INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN prime_tri_hits    INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN prime_tri_pay     INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN r12_tri_bets      INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN r12_tri_hits      INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN r12_tri_pay       INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_bets  INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_hits  INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_pay   INTEGER;

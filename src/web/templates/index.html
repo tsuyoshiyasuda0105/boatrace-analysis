@@ -272,6 +272,31 @@
                   const pro = sig.l4.is_l4_pro ? ' 🔥' : '';
                   l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}`;
                   item.appendChild(l4Badge);
+
+                  // 観察バッジ (3 ヶ月実績で採用判断、緑色)
+                  // L4-prime (11-12R) / L4-12R / 一般戦×12R
+                  if (sig.l4.is_obs_prime || sig.l4.is_obs_r12 || sig.l4.is_obs_gen_r12) {
+                    const obs = document.createElement('span');
+                    let cls = 'obs-badge';
+                    let txt = '🟢観察';
+                    let tt = '';
+                    if (sig.l4.is_obs_gen_r12) {
+                      cls += ' obs-gen-r12';
+                      txt = '🟢一般×12R';
+                      tt = '観察: 一般戦×12R (検証 ROI 189%, n=2100)';
+                    } else if (sig.l4.is_obs_r12) {
+                      cls += ' obs-r12';
+                      txt = '🟢L4-12R';
+                      tt = '観察: L4-12R (検証 ROI 193%, n=2286)';
+                    } else {
+                      txt = '🟢L4-prime';
+                      tt = '観察: L4-prime (11-12R 限定、検証 ROI 185%, n=4298)';
+                    }
+                    obs.className = cls;
+                    obs.textContent = txt;
+                    obs.title = tt;
+                    item.appendChild(obs);
+                  }
                 }
 
                 // ユーザ指示 (backlog.md item 9): ダイヤモンドマーク (💎 +27%

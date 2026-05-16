@@ -122,6 +122,57 @@
         </span>
       </div>
     </div>
+
+    <h4 class="sub-strategy-header observe-only-header">🟢 レース番号別 観察 (3 ヶ月実績で採用判断)</h4>
+    <p class="dashboard-hint">
+      L4 universe を「夕方/メインレース」に絞った観察カテゴリ。
+      検証 ROI は L4 全体 (158%) を +25-35pt 上回るが、実運用前の観察期間中。
+      該当レースは <strong>緑色バッジ</strong> で本日のレース一覧にも表示されます。
+    </p>
+    <div class="summary-grid">
+      <div class="summary-card obs-prime"
+           title="観察。L4 universe × 11R-12R 限定。検証 ROI 185% (n=4298, CI [176, 195])">
+        <span class="card-label">🟢 L4-prime (11-12R 限定)</span>
+        <span class="card-value">
+          {% if totals.prime_tri_roi is not none %}{{ '%+.1f' | format(totals.prime_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.prime_tri_bets }} HIT={{ totals.prime_tri_hits }}
+          {% if totals.prime_tri_bets > 0 %}
+          / 損益 {{ totals.prime_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>観察 (検証 185%, n=4298)</small>
+        </span>
+      </div>
+      <div class="summary-card obs-prime"
+           title="観察。L4 universe × 12R のみ。検証 ROI 193% (n=2286, CI [180, 207])">
+        <span class="card-label">🟢 L4-12R (12R のみ)</span>
+        <span class="card-value">
+          {% if totals.r12_tri_roi is not none %}{{ '%+.1f' | format(totals.r12_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.r12_tri_bets }} HIT={{ totals.r12_tri_hits }}
+          {% if totals.r12_tri_bets > 0 %}
+          / 損益 {{ totals.r12_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>観察 (検証 193%, n=2286)</small>
+        </span>
+      </div>
+      <div class="summary-card obs-prime"
+           title="観察。一般戦 × 12R のみ。検証 ROI 189% (n=2100, CI [176, 202])">
+        <span class="card-label">🟢 一般戦×12R</span>
+        <span class="card-value">
+          {% if totals.gen_r12_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_r12_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.gen_r12_tri_bets }} HIT={{ totals.gen_r12_tri_hits }}
+          {% if totals.gen_r12_tri_bets > 0 %}
+          / 損益 {{ totals.gen_r12_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>観察 (検証 189%, n=2100)</small>
+        </span>
+      </div>
+    </div>
   </section>
 
   <!-- ROI 推移グラフ -->
