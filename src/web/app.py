@@ -2372,9 +2372,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
         }
-        for k in ("win", "exa", "tri", "c80", "pro", "sgg12",
-                  "gen_tri", "gen_plus_tri", "gen_f1_tri",
-                  "prime_tri", "r12_tri", "gen_r12_tri"):
+        bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
+                    "gen_tri", "gen_plus_tri", "gen_f1_tri",
+                    "prime_tri", "r12_tri", "gen_r12_tri")
+        for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
             totals[f"{k}_pay"]  = sum(r.get(f"{k}_pay", 0)  for r in rows)
@@ -2383,10 +2384,48 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             totals[f"{k}_recovery"] = pay/(100*n)*100 if n else None
             totals[f"{k}_profit"] = pay - 100*n if n else 0
 
+        # ===== 月別 ROI (長期推移、固定範囲 2025-07-01 〜 今日) =====
+        # daily 集計の from/to とは独立して、データある全期間を月別集約
+        monthly_from = "2025-07-01"
+        monthly_to   = today.isoformat()
+        try:
+            monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
+        except Exception as e:
+            logger.warning("monthly daily stats failed: %s", e)
+            monthly_daily = []
+
+        monthly_map: dict[str, dict] = {}
+        for r in monthly_daily:
+            ym = r["date"][:7]  # YYYY-MM
+            m = monthly_map.setdefault(ym, {
+                "ym": ym,
+                "n_total": 0, "n_l4": 0,
+                **{f"{k}_bets": 0 for k in bet_keys},
+                **{f"{k}_hits": 0 for k in bet_keys},
+                **{f"{k}_pay":  0 for k in bet_keys},
+            })
+            m["n_total"] += r.get("n_total", 0) or 0
+            m["n_l4"]    += r.get("n_l4", 0) or 0
+            for k in bet_keys:
+                m[f"{k}_bets"] += r.get(f"{k}_bets", 0) or 0
+                m[f"{k}_hits"] += r.get(f"{k}_hits", 0) or 0
+                m[f"{k}_pay"]  += r.get(f"{k}_pay", 0)  or 0
+        # ROI 計算
+        current_ym = today.strftime("%Y-%m")
+        for m in monthly_map.values():
+            m["is_current"] = (m["ym"] == current_ym)
+            for k in bet_keys:
+                n = m[f"{k}_bets"]; pay = m[f"{k}_pay"]
+                m[f"{k}_roi"] = (pay - 100*n)/(100*n)*100 if n else None
+                m[f"{k}_recovery"] = pay/(100*n)*100 if n else None
+                m[f"{k}_profit"] = pay - 100*n if n else 0
+        monthly_rows = sorted(monthly_map.values(), key=lambda x: x["ym"], reverse=True)
+
         return render_template(
             "member_strategy.html",
             rows=rows,
             totals=totals,
+            monthly_rows=monthly_rows,
             from_date=from_d,
             to_date=to_d,
             today_iso=date.today().isoformat(),

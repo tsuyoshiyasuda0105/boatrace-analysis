@@ -1629,6 +1629,45 @@ main h2 {
 .daily-table tbody tr.has-l4:hover { background: rgba(0, 212, 255, 0.08); }
 .daily-table .date-cell .date-text { font-family: monospace; color: rgba(255,255,255,0.95); }
 
+/* 月別 ROI テーブル */
+.monthly-roi-section h3 .section-hint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  font-weight: 400;
+  margin-left: 8px;
+}
+.monthly-roi-table {
+  font-size: 11px;
+}
+.monthly-roi-table th, .monthly-roi-table td {
+  padding: 4px 6px;
+}
+.monthly-roi-table .obs-col {
+  background: rgba(16, 185, 129, 0.05);
+}
+.monthly-roi-table thead th.obs-col {
+  color: #6ee7b7;
+  border-bottom-color: rgba(16, 185, 129, 0.4);
+}
+.monthly-roi-table tr.is-current-month {
+  background: rgba(255, 215, 0, 0.06);
+  font-weight: 600;
+}
+.monthly-roi-table tr.is-current-month .date-text {
+  color: #ffd700;
+}
+.in-progress-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ffd700, #ff8c00);
+  color: #1a1a2e;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+
 /* 通算サマリ行 (tfoot) — 明るく強調表示 */
 .daily-table tfoot tr.totals-row {
   background: linear-gradient(180deg, rgba(255, 215, 0, 0.08), rgba(255, 215, 0, 0.04));
