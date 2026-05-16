@@ -104,6 +104,16 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
         n_races += 1
 
         for boat in race.get("boats", []):
+            # racer_number が null の場合はスキップ (当日朝のAPIデータ未確定対策)
+            # NOT NULL 制約のためトランザクション全体が失敗するのを防ぐ。
+            # この艇は後の hourly_task で API が更新された時に再取り込みされる。
+            if boat.get("racer_number") is None:
+                logger.warning(
+                    "skip boat with null racer_number: race_id=%s boat_number=%s "
+                    "(will retry on next collect)",
+                    rid, boat.get("racer_boat_number"),
+                )
+                continue
             conn.execute("""
                 INSERT OR REPLACE INTO race_entries (
                     race_id, boat_number, racer_number, racer_name,
