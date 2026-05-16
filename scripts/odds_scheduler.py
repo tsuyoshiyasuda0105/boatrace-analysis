@@ -67,34 +67,55 @@ BIG_SNAPSHOT_RULES = [
 EXCLUDE_B_VENUES = {2, 4, 7, 8, 10, 19, 21, 24}
 L4_A1_PROB_MIN, L4_A1_PROB_MAX = 0.65, 0.85
 L4_A2_PROB_MIN, L4_A2_PROB_MAX = 0.55, 0.75
+# F1 一般戦採用条件 (Phase 2: 一般戦×国1%≥7×2号 国2連率≥40)
+# 構造的エッジで prob_first に依存せず確実に捕捉する。
+F1_NATIONAL_TOP1_MIN = 7.0
+F1_BOAT2_TOP2_MIN = 40.0
 
 
 def _get_l4_candidate_race_ids(target_dates: list[str]) -> set[str]:
     """指定日範囲の L4 候補 race_id を返す。
-    判定: predictions テーブル (boat_number=1 の prob_first) + race_entries (1号艇クラス)。
-    predictions が未生成の日は何も返さない。
-    呼び出し側で「空集合 → 取得対象なし」と扱う。
+
+    判定:
+      A. 既存 morning 候補: predictions.prob_first ベース
+         - A1 + prob_first 0.65-0.85
+         - A2 + prob_first 0.55-0.75
+      B. F1 一般戦 (Phase 2 採用): predictions に依存せず
+         race_entries の選手スペックのみで判定。
+         - grade=5 + 1号A1 + 国1%≥7 + 2号 国2連率≥40
+
+    どちらか一方でも該当すれば候補に含める (UNION)。
+    predictions が未生成の日でも F1 一般戦は捕捉可能。
     """
     if not target_dates:
         return set()
     placeholders = ",".join("?" for _ in target_dates)
     excluded = sorted(EXCLUDE_B_VENUES)
     excl_ph = ",".join("?" for _ in excluded)
+    # 2号艇 entries も JOIN (F1 一般戦判定用、LEFT JOIN で null 許容)
     sql = f"""
-        SELECT r.race_id
+        SELECT DISTINCT r.race_id
           FROM races r
           JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-          JOIN predictions p ON p.race_id = r.race_id AND p.boat_number = 1
+          LEFT JOIN race_entries e2 ON r.race_id = e2.race_id AND e2.boat_number = 2
+          LEFT JOIN predictions p ON p.race_id = r.race_id AND p.boat_number = 1
          WHERE r.race_date IN ({placeholders})
            AND r.stadium_number NOT IN ({excl_ph})
            AND (
+                -- A1 morning 候補
                 (e.class_number = 1 AND p.prob_first BETWEEN ? AND ?)
              OR (e.class_number = 2 AND p.prob_first BETWEEN ? AND ?)
+                -- F1 一般戦 (prob_first に依存せず構造的に捕捉)
+             OR (e.class_number = 1
+                 AND r.race_grade_number = 5
+                 AND e.national_top_1_percent >= ?
+                 AND e2.national_top_2_percent >= ?)
            )
     """
     params = list(target_dates) + [int(v) for v in excluded] + [
         L4_A1_PROB_MIN, L4_A1_PROB_MAX,
         L4_A2_PROB_MIN, L4_A2_PROB_MAX,
+        F1_NATIONAL_TOP1_MIN, F1_BOAT2_TOP2_MIN,
     ]
     with db_connect() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()
