@@ -122,11 +122,7 @@ def _safe_redirect_url(next_url: str, default: str = "/") -> str:
 
 
 def is_member() -> bool:
-    return bool(session.get("is_member") or session.get("is_pro"))
-
-
-def is_pro() -> bool:
-    return bool(session.get("is_pro"))
+    return bool(session.get("is_member"))
 
 
 def login_required(view):
@@ -135,16 +131,6 @@ def login_required(view):
     def wrapper(*args, **kwargs):
         if not is_member():
             return redirect(url_for("login", next=request.path))
-        return view(*args, **kwargs)
-    return wrapper
-
-
-def pro_required(view):
-    """Pro プラン専用の画面ビュー → 非Proなら /pro/login へリダイレクト"""
-    @wraps(view)
-    def wrapper(*args, **kwargs):
-        if not is_pro():
-            return redirect(url_for("pro_login", next=request.path))
         return view(*args, **kwargs)
     return wrapper
 
@@ -159,23 +145,13 @@ def member_only_api(view):
     return wrapper
 
 
-def pro_only_api(view):
-    """Pro 専用 API → 非Proなら 403"""
-    @wraps(view)
-    def wrapper(*args, **kwargs):
-        if not is_pro():
-            return jsonify({"error": "forbidden", "message": "Pro プランが必要です"}), 403
-        return view(*args, **kwargs)
-    return wrapper
-
-
 LOGIN_TEMPLATE = """
 {% extends "base.html" %}
 {% block title %}会員ログイン{% endblock %}
 {% block content %}
 <div class="login-wrap">
   <h2>会員ログイン</h2>
-  <p class="login-hint">オンタイム予測 (EV+ マーク・Value Bet 検出) は会員限定です。</p>
+  <p class="login-hint">本サービスは会員限定です。パスワードを入力してログインしてください。</p>
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('login') }}" class="login-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -185,30 +161,6 @@ LOGIN_TEMPLATE = """
       <input type="password" name="password" required autofocus>
     </label>
     <button type="submit">ログイン</button>
-  </form>
-</div>
-{% endblock %}
-"""
-
-
-PRO_LOGIN_TEMPLATE = """
-{% extends "base.html" %}
-{% block title %}Pro プラン ログイン{% endblock %}
-{% block content %}
-<div class="login-wrap pro-login">
-  <div class="pro-badge">⬢ PRO</div>
-  <h2>Pro プラン ログイン</h2>
-  <p class="login-hint">T-15分オッズによる期待値モニター。<br>
-    <strong>免責</strong>: 公営競技は控除率25%です。本ツールは支援のみで、利益保証ではありません。</p>
-  {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
-  <form method="post" action="{{ url_for('pro_login') }}" class="login-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="hidden" name="next" value="{{ safe_next(request.args.get('next', '/pro/ev'), '/pro/ev') }}">
-    <label>
-      <span>Pro パスワード</span>
-      <input type="password" name="password" required autofocus>
-    </label>
-    <button type="submit">Pro にログイン</button>
   </form>
 </div>
 {% endblock %}
@@ -254,39 +206,6 @@ def register_auth_routes(app):
             time.sleep(0.3)
             return render_template_string(LOGIN_TEMPLATE, error="パスワードが違います"), 401
         return render_template_string(LOGIN_TEMPLATE, error=None)
-
-    @app.route("/pro/login", methods=["GET", "POST"])
-    def pro_login():
-        ip = _client_ip()
-        if request.method == "POST":
-            # CSRF トークン検証
-            if not _verify_csrf_token():
-                logger.warning("CSRF token mismatch on /pro/login from %s", ip)
-                return render_template_string(
-                    PRO_LOGIN_TEMPLATE,
-                    error="セッションが無効です。ページを再読み込みしてください。"
-                ), 400
-            allowed, retry_after = _check_rate_limit(ip)
-            if not allowed:
-                logger.warning("pro_login rate-limited for %s (retry %ds)", ip, retry_after)
-                return render_template_string(
-                    PRO_LOGIN_TEMPLATE,
-                    error=f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
-                ), 429
-            pw = request.form.get("password", "")
-            if _safe_password_check(pw, config.WEB_PRO_PASSWORD):
-                _record_attempt(ip, True)
-                session.clear()
-                session["is_pro"] = True
-                session["is_member"] = True  # Pro は member の上位互換
-                session.permanent = True
-                # オープンリダイレクト対策
-                next_url = _safe_redirect_url(request.form.get("next", ""), url_for("pro_ev"))
-                return redirect(next_url)
-            _record_attempt(ip, False)
-            time.sleep(0.3)
-            return render_template_string(PRO_LOGIN_TEMPLATE, error="Pro パスワードが違います"), 401
-        return render_template_string(PRO_LOGIN_TEMPLATE, error=None)
 
     @app.route("/logout")
     def logout():

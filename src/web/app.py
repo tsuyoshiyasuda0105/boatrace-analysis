@@ -23,7 +23,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, ses
 import config
 from src.db.connection import connect as db_connect
 from src.web.auth import (
-    is_member, is_pro, login_required, member_only_api, pro_only_api, pro_required,
+    is_member, login_required, member_only_api,
     register_auth_routes,
 )
 from src.web.predictor import Predictor
@@ -737,23 +737,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # noqa: S105 は「デフォルト値リテラルとの比較」であり実パスワードではない
     _DEFAULT_SECRET = "dev-only-do-not-use-in-prod"  # noqa: S105
     _DEFAULT_MEMBER = "dev-member"  # noqa: S105
-    _DEFAULT_PRO = "dev-pro"  # noqa: S105
     if is_production and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:
         logger.critical(
             "SECURITY: WEB_SESSION_SECRET is using DEFAULT value in production. "
             "Set BOATRACE_WEB_SECRET environment variable to a long random string."
         )
-    if is_production:
-        for pw_name, pw_val, default in [
-            ("BOATRACE_MEMBER_PASSWORD", config.WEB_MEMBER_PASSWORD, _DEFAULT_MEMBER),
-            ("BOATRACE_PRO_PASSWORD", config.WEB_PRO_PASSWORD, _DEFAULT_PRO),
-        ]:
-            if pw_val == default:
-                logger.critical(
-                    "SECURITY: %s is using DEFAULT value in production. "
-                    "Set this env var to a strong password (16+ chars).",
-                    pw_name,
-                )
+    if is_production and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:
+        logger.critical(
+            "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
+            "Set this env var to a strong password (16+ chars)."
+        )
 
     # ===== gzip 圧縮 (速度改善: HTML を 70-80% 圧縮) =====
     @app.after_request
@@ -906,9 +899,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             conditions={},
         ), 500
 
-    # テンプレートから is_member() / is_pro() を呼べるように
+    # テンプレートから is_member() を呼べるように
     app.jinja_env.globals["is_member"] = is_member
-    app.jinja_env.globals["is_pro"] = is_pro
 
     # 静的ファイル cache busting 用バージョン
     # CSS/JS が変更されたら自動的に新規取得されるよう、
@@ -986,11 +978,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return {"status": "ok", "model_loaded": predictor.artifact is not None}
 
     @app.route("/")
+    @login_required
     def index():
         target = request.args.get("date") or date.today().isoformat()
         return redirect(url_for("races", date=target))
 
     @app.route("/races")
+    @login_required
     @cached(ttl=60, past_ttl=3600)  # 今日60秒/過去日1時間キャッシュ
     def races():
         target_date = request.args.get("date") or date.today().isoformat()
@@ -1026,6 +1020,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
 
     @app.route("/race/<race_id>")
+    @login_required
     @cached(ttl=60, past_ttl=3600)
     def race_detail(race_id: str):
         # 過去レース (race_date が今日より前) は 1時間キャッシュ、当日は 60秒
@@ -1152,6 +1147,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify(r)
 
     @app.route("/api/ev-races")
+    @member_only_api
     @cached(ttl=180)  # 3分キャッシュ (EV計算は重い)
     def ev_races_for_date():
         """指定日の EV+ レース一覧 (UI のマーク表示用)
@@ -1240,6 +1236,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "ev_threshold": thr, "marks": ev_marks})
 
     @app.route("/api/race/<race_id>")
+    @member_only_api
     @cached(ttl=300)  # 5分キャッシュ
     def race_api(race_id: str):
         info = _race_basic_info(race_id)
@@ -1252,6 +1249,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify({"info": info, "predictions": preds})
 
     @app.route("/api/odds-123-timeline")
+    @member_only_api
     @cached(ttl=20)  # 20秒キャッシュ (JS 側 60秒ポーリング、複数タブ/ユーザ間で再利用)
     def odds_123_timeline():
         """指定日の各レースの '1-2-3' 三連単オッズ推移を返す。
@@ -1298,6 +1296,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify({"date": target_date, "odds": result})
 
     @app.route("/api/market-signals")
+    @member_only_api
     @cached(ttl=300)  # 5分キャッシュ
     def market_signals_for_date():
         """指定日のレース一覧で「市場非効率ベース +EV」シグナルを返す。
@@ -2348,191 +2347,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # =====================================================
 
     @app.route("/admin/cache-clear", methods=["GET", "POST"])
-    @pro_required
+    @login_required
     def admin_cache_clear():
-        """全インメモリキャッシュをクリア (Pro 限定)。
+        """全インメモリキャッシュをクリア (会員限定)。
         データ投入直後など即時反映したい時に使う。"""
         n = len(_CACHE)
         invalidate_cache()
         return jsonify({"cleared": True, "entries_removed": n}), 200
 
-    @app.route("/pro/ev")
-    @pro_required
-    def pro_ev():
-        target_date = request.args.get("date") or date.today().isoformat()
-        snapshot = request.args.get("snapshot") or "T-15min"
-
-        # 指定 snapshot に該当データが無ければ final にフォールバック
-        with db_connect() as conn:
-            cnt = conn.execute("""
-                SELECT COUNT(DISTINCT o.race_id) FROM odds_trifecta o
-                  JOIN races r ON o.race_id=r.race_id
-                 WHERE r.race_date=? AND o.snapshot_label=?
-            """, (target_date, snapshot)).fetchone()[0]
-        if cnt == 0:
-            snapshot = "final"  # 暫定: T-15min 未蓄積期は final で代替
-
-        # 該当日 + snapshot のあるレースを取得
-        with db_connect() as conn:
-            rows = conn.execute("""
-                SELECT DISTINCT r.race_id, r.stadium_number, r.race_number,
-                       r.race_closed_at, s.name AS stadium_name,
-                       (SELECT COUNT(*) FROM race_results
-                         WHERE race_id = r.race_id
-                           AND finishing_position IS NOT NULL) AS results_count
-                  FROM races r
-                  JOIN stadiums s ON r.stadium_number = s.stadium_number
-                  JOIN odds_trifecta o ON o.race_id = r.race_id
-                 WHERE r.race_date = ?
-                   AND o.snapshot_label = ?
-                 ORDER BY r.race_closed_at, r.stadium_number
-            """, (target_date, snapshot)).fetchall()
-        keys = ["race_id", "stadium_number", "race_number", "race_closed_at",
-                "stadium_name", "results_count"]
-        races = [dict(zip(keys, r)) for r in rows]
-
-        # 各レースの best EV を計算
-        # min_prob=0.05 でモデル長尾過大評価を除外 (True Value Bet 検証で判明)
-        ev_min = float(request.args.get("ev_min", "-1.0"))
-        for r in races:
-            try:
-                vb = predictor.find_value_bets_for_race(
-                    target_date, r["race_id"], snapshot_label=snapshot,
-                    ev_threshold=-1.0, max_odds=100.0, min_prob=0.05,
-                )
-                if vb and vb.get("value_bets"):
-                    best = vb["value_bets"][0]
-                    r["best_combo"] = best["combination"]
-                    r["best_ev"] = best["adj_ev"]
-                    r["best_prob"] = best["prob"]
-                    r["best_odds"] = best["odds"]
-                    r["n_positive_ev"] = sum(1 for v in vb["value_bets"]
-                                              if v["adj_ev"] >= 0)
-                else:
-                    r["best_combo"] = None
-                    r["best_ev"] = None
-                    r["n_positive_ev"] = 0
-            except Exception as e:
-                logger.warning("pro_ev calc failed for %s: %s", r["race_id"], e)
-                r["best_ev"] = None
-                r["n_positive_ev"] = 0
-
-            # 会場警告
-            sn = r["stadium_number"]
-            if sn in _LOSING_VENUES:
-                r["venue_warning"] = "danger"
-            elif sn in _QUESTIONABLE_VENUES:
-                r["venue_warning"] = "caution"
-            else:
-                r["venue_warning"] = None
-
-        # フィルター適用
-        if ev_min > -1.0:
-            races = [r for r in races if (r["best_ev"] or -99) >= ev_min]
-
-        return render_template(
-            "pro_ev.html",
-            target_date=target_date,
-            races=races,
-            snapshot=snapshot,
-            ev_min=ev_min,
-            n_total=len(rows),
-            n_filtered=len(races),
-        )
-
-    @app.route("/pro/ev/race/<race_id>")
-    @pro_required
-    def pro_ev_race(race_id: str):
-        info = _race_basic_info(race_id)
-        if not info:
-            abort(404)
-        snapshot = request.args.get("snapshot", "T-15min")
-        target_date = info["race_date"]
-
-        # T-15min が無ければ自動 fallback (T-5min → final)
-        with db_connect() as conn:
-            avail = {
-                row[0] for row in conn.execute(
-                    "SELECT DISTINCT snapshot_label FROM odds_trifecta WHERE race_id=?",
-                    (race_id,)
-                ).fetchall()
-            }
-        if snapshot not in avail:
-            for fb in ["T-15min", "T-5min", "T-1min", "final"]:
-                if fb in avail:
-                    snapshot = fb
-                    break
-
-        try:
-            vb = predictor.find_value_bets_for_race(
-                target_date, race_id, snapshot_label=snapshot,
-                ev_threshold=-1.0, max_odds=200.0, min_prob=0.03,
-            )
-        except Exception as e:
-            logger.exception("pro_ev_race failed: %s", race_id)
-            vb = None
-
-        names = _racer_names(race_id)
-        try:
-            preds = _race_predictions(predictor, race_id)
-        except Exception:
-            preds = []
-
-        # 戦略タグ
-        sn = info["stadium_number"]
-        venue_warning = None
-        if sn in _LOSING_VENUES:
-            venue_warning = {
-                "level": "danger", "venue": _LOSING_VENUES[sn],
-                "msg": "Bootstrap CI で確実マイナスと検証済の会場",
-            }
-        elif sn in _QUESTIONABLE_VENUES:
-            venue_warning = {
-                "level": "caution", "venue": _QUESTIONABLE_VENUES[sn],
-                "msg": "ROI 弱マイナス会場 (慎重)",
-            }
-
-        # Kelly 比率の参考計算 (kelly = (b*p - (1-p)) / b, b=odds-1)
-        if vb and vb.get("value_bets"):
-            for bet in vb["value_bets"]:
-                p, o = bet["prob"], bet["odds"]
-                if o > 1.0 and p > 0:
-                    b = o - 1.0
-                    kelly = (b * p - (1 - p)) / b
-                    bet["kelly"] = max(0.0, kelly) * config.KELLY_FRACTION
-                else:
-                    bet["kelly"] = 0.0
-                # フェアオッズ (controlled for takeout=25%)
-                bet["fair_odds"] = (1.0 / p) if p > 0 else None
-
-        return render_template(
-            "pro_ev_race.html",
-            info=info,
-            preds=preds,
-            racer_names=names,
-            value_bet=vb,
-            snapshot=snapshot,
-            venue_warning=venue_warning,
-        )
-
-    @app.route("/api/pro/ev/<race_id>")
-    @pro_only_api
-    def pro_ev_api(race_id: str):
-        info = _race_basic_info(race_id)
-        if not info:
-            return jsonify({"error": "not found"}), 404
-        snapshot = request.args.get("snapshot", "T-15min")
-        try:
-            vb = predictor.find_value_bets_for_race(
-                info["race_date"], race_id, snapshot_label=snapshot,
-                ev_threshold=-1.0, max_odds=500.0,
-            )
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-        if not vb:
-            return jsonify({"race_id": race_id, "snapshot": snapshot,
-                            "available": False})
-        return jsonify({"race_id": race_id, "snapshot": snapshot,
-                        "available": True, **vb})
+    # ===== Pro 系ビュー (pro_ev / pro_ev_race / pro_ev_api) は廃止 =====
+    # backlog item 20: Pro モード廃止。ビュー本体は削除済み。
 
     return app

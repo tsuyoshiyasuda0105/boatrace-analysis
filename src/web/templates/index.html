@@ -129,12 +129,6 @@
       {{ total.value }} レース
     </p>
 
-    {% if not is_pro() %}
-    <div class="ev-controls">
-      <a href="{{ url_for('pro_login') }}" class="ev-btn ev-btn-mini" style="margin-left:auto;background:linear-gradient(135deg,#ffd700,#ff8c00);">⬢ Pro へ</a>
-    </div>
-    {% endif %}
-
     <!-- 次のレース ハイライト (JS で動的更新) -->
     <section class="next-race-panel" id="next-race-panel" hidden>
       <h3>⏱ 直近の次のレース</h3>
