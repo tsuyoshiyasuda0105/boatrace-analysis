@@ -16,14 +16,29 @@
         <input type="date" id="date" name="date" value="{{ target_date | default('') }}">
         <button type="submit">表示</button>
       </form>
+      {% if is_member() %}
+      <nav class="nav-actions" aria-label="戦略ダッシュボード">
+        <a href="{{ url_for('member_strategy') }}" class="nav-btn nav-btn-roi" title="L4 戦略 ROI ダッシュボード">
+          <span class="nav-icon">📊</span><span class="nav-label">ROI</span>
+        </a>
+        <a href="{{ url_for('member_strategy') }}#monthly-roi" class="nav-btn nav-btn-monthly" title="月別 ROI 推移 (採用 4 戦略 + 観察 3 戦略)">
+          <span class="nav-icon">📈</span><span class="nav-label">月別推移</span>
+        </a>
+        <a href="{{ url_for('member_health') }}" class="nav-btn nav-btn-health" title="戦略健全度監視">
+          <span class="nav-icon">🩺</span><span class="nav-label">健全度</span>
+        </a>
+      </nav>
+      {% endif %}
       <div class="auth-status">
         {% if is_member() %}
-          <a href="/alerts/subscribe" class="auth-link" title="L4 シグナルをメール通知">📬 通知登録</a>
-          <a href="{{ url_for('member_strategy') }}" class="auth-link">📊 ROI</a>
-          <a href="{{ url_for('member_health') }}" class="auth-link">🩺 健全度</a>
-          <a href="{{ url_for('logout') }}" class="auth-link">ログアウト</a>
+          <a href="/alerts/subscribe" class="account-btn account-btn-notify" title="L4 シグナルをメール通知">
+            <span class="nav-icon">📬</span><span class="nav-label">通知登録</span>
+          </a>
+          <a href="{{ url_for('logout') }}" class="account-btn account-btn-logout" title="ログアウト">
+            <span class="nav-icon">🚪</span><span class="nav-label">ログアウト</span>
+          </a>
         {% else %}
-          <a href="{{ url_for('login') }}" class="auth-link">ログイン</a>
+          <a href="{{ url_for('login') }}" class="account-btn account-btn-login">ログイン</a>
         {% endif %}
       </div>
     </div>
