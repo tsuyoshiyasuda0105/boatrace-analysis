@@ -1628,6 +1628,39 @@ main h2 {
 .daily-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
 .daily-table tbody tr.has-l4:hover { background: rgba(0, 212, 255, 0.08); }
 .daily-table .date-cell .date-text { font-family: monospace; color: rgba(255,255,255,0.95); }
+
+/* 通算サマリ行 (tfoot) — 明るく強調表示 */
+.daily-table tfoot tr.totals-row {
+  background: linear-gradient(180deg, rgba(255, 215, 0, 0.08), rgba(255, 215, 0, 0.04));
+  border-top: 2px solid rgba(255, 215, 0, 0.6);
+  font-weight: 700;
+}
+.daily-table tfoot tr.totals-row td {
+  padding: 10px 8px;
+  border-top: 2px solid rgba(255, 215, 0, 0.5);
+  color: rgba(255, 215, 0, 0.95);
+}
+.daily-table tfoot tr.totals-row td.totals-label {
+  text-align: center;
+  letter-spacing: 1px;
+  color: #ffd700;
+  font-size: 13px;
+}
+.daily-table tfoot tr.totals-row td.pos {
+  color: #34e890;
+  background: rgba(52, 232, 144, 0.06);
+}
+.daily-table tfoot tr.totals-row td.neg {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.06);
+}
+.daily-table tfoot tr.totals-row small {
+  display: inline-block;
+  margin-top: 2px;
+  font-weight: 500;
+  font-size: 10px;
+  color: rgba(255, 215, 0, 0.7);
+}
 .daily-table .detail-cell {
   text-align: center;
   padding: 4px 6px;

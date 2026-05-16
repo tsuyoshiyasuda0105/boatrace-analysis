@@ -260,6 +260,44 @@
           </tr>
           {% endfor %}
         </tbody>
+        <tfoot>
+          <tr class="totals-row">
+            <td class="totals-label">合計</td>
+            <td class="num totals-label">{{ totals.n_total }}</td>
+            <td class="num totals-label">{{ totals.n_l4 }}</td>
+            {# 単勝 合計 #}
+            <td class="num"><strong>{{ totals.win_hits }}/{{ totals.win_bets }}</strong>
+              {% if totals.win_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.win_hits / totals.win_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.win_recovery and totals.win_recovery >= 100 %}pos{% elif totals.win_recovery %}neg{% endif %}">
+              {% if totals.win_recovery is not none %}<strong>{{ '%.0f' | format(totals.win_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.win_profit and totals.win_profit > 0 %}pos{% elif totals.win_profit and totals.win_profit < 0 %}neg{% endif %}">
+              {% if totals.win_bets > 0 %}<strong>{{ totals.win_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# 2連単 1-2 合計 #}
+            <td class="num"><strong>{{ totals.exa_hits }}/{{ totals.exa_bets }}</strong>
+              {% if totals.exa_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.exa_hits / totals.exa_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.exa_recovery and totals.exa_recovery >= 100 %}pos{% elif totals.exa_recovery %}neg{% endif %}">
+              {% if totals.exa_recovery is not none %}<strong>{{ '%.0f' | format(totals.exa_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.exa_profit and totals.exa_profit > 0 %}pos{% elif totals.exa_profit and totals.exa_profit < 0 %}neg{% endif %}">
+              {% if totals.exa_bets > 0 %}<strong>{{ totals.exa_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# 3連単 1-2-3 合計 #}
+            <td class="num"><strong>{{ totals.tri_hits }}/{{ totals.tri_bets }}</strong>
+              {% if totals.tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.tri_hits / totals.tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.tri_recovery and totals.tri_recovery >= 100 %}pos{% elif totals.tri_recovery %}neg{% endif %}">
+              {% if totals.tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.tri_profit and totals.tri_profit > 0 %}pos{% elif totals.tri_profit and totals.tri_profit < 0 %}neg{% endif %}">
+              {% if totals.tri_bets > 0 %}<strong>{{ totals.tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            <td class="detail-cell">—</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </section>
@@ -342,6 +380,42 @@
           </tr>
           {% endif %}
         </tbody>
+        <tfoot>
+          <tr class="totals-row">
+            <td class="totals-label">合計</td>
+            <td class="num totals-label">{{ totals.n_total }}</td>
+            {# L4 一般戦 合計 #}
+            <td class="num"><strong>{{ totals.gen_tri_hits }}/{{ totals.gen_tri_bets }}</strong>
+              {% if totals.gen_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.gen_tri_hits / totals.gen_tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.gen_tri_recovery and totals.gen_tri_recovery >= 100 %}pos{% elif totals.gen_tri_recovery %}neg{% endif %}">
+              {% if totals.gen_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.gen_tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.gen_tri_profit and totals.gen_tri_profit > 0 %}pos{% elif totals.gen_tri_profit and totals.gen_tri_profit < 0 %}neg{% endif %}">
+              {% if totals.gen_tri_bets > 0 %}<strong>{{ totals.gen_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# L4 G+ 合計 #}
+            <td class="num"><strong>{{ totals.gen_plus_tri_hits }}/{{ totals.gen_plus_tri_bets }}</strong>
+              {% if totals.gen_plus_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.gen_plus_tri_hits / totals.gen_plus_tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.gen_plus_tri_recovery and totals.gen_plus_tri_recovery >= 100 %}pos{% elif totals.gen_plus_tri_recovery %}neg{% endif %}">
+              {% if totals.gen_plus_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.gen_plus_tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.gen_plus_tri_profit and totals.gen_plus_tri_profit > 0 %}pos{% elif totals.gen_plus_tri_profit and totals.gen_plus_tri_profit < 0 %}neg{% endif %}">
+              {% if totals.gen_plus_tri_bets > 0 %}<strong>{{ totals.gen_plus_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# L4 G++ F1 合計 (採用ベース) #}
+            <td class="num"><strong>{{ totals.gen_f1_tri_hits }}/{{ totals.gen_f1_tri_bets }}</strong>
+              {% if totals.gen_f1_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.gen_f1_tri_hits / totals.gen_f1_tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.gen_f1_tri_recovery and totals.gen_f1_tri_recovery >= 100 %}pos{% elif totals.gen_f1_tri_recovery %}neg{% endif %}">
+              {% if totals.gen_f1_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.gen_f1_tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.gen_f1_tri_profit and totals.gen_f1_tri_profit > 0 %}pos{% elif totals.gen_f1_tri_profit and totals.gen_f1_tri_profit < 0 %}neg{% endif %}">
+              {% if totals.gen_f1_tri_bets > 0 %}<strong>{{ totals.gen_f1_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </section>
@@ -426,6 +500,42 @@
           </tr>
           {% endif %}
         </tbody>
+        <tfoot>
+          <tr class="totals-row">
+            <td class="totals-label">合計</td>
+            <td class="num totals-label">{{ totals.n_total }}</td>
+            {# L4-prime 合計 #}
+            <td class="num"><strong>{{ totals.prime_tri_hits }}/{{ totals.prime_tri_bets }}</strong>
+              {% if totals.prime_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.prime_tri_hits / totals.prime_tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.prime_tri_recovery and totals.prime_tri_recovery >= 100 %}pos{% elif totals.prime_tri_recovery %}neg{% endif %}">
+              {% if totals.prime_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.prime_tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.prime_tri_profit and totals.prime_tri_profit > 0 %}pos{% elif totals.prime_tri_profit and totals.prime_tri_profit < 0 %}neg{% endif %}">
+              {% if totals.prime_tri_bets > 0 %}<strong>{{ totals.prime_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# L4-12R 合計 #}
+            <td class="num"><strong>{{ totals.r12_tri_hits }}/{{ totals.r12_tri_bets }}</strong>
+              {% if totals.r12_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.r12_tri_hits / totals.r12_tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.r12_tri_recovery and totals.r12_tri_recovery >= 100 %}pos{% elif totals.r12_tri_recovery %}neg{% endif %}">
+              {% if totals.r12_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.r12_tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.r12_tri_profit and totals.r12_tri_profit > 0 %}pos{% elif totals.r12_tri_profit and totals.r12_tri_profit < 0 %}neg{% endif %}">
+              {% if totals.r12_tri_bets > 0 %}<strong>{{ totals.r12_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# 一般戦×12R 合計 #}
+            <td class="num"><strong>{{ totals.gen_r12_tri_hits }}/{{ totals.gen_r12_tri_bets }}</strong>
+              {% if totals.gen_r12_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.gen_r12_tri_hits / totals.gen_r12_tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.gen_r12_tri_recovery and totals.gen_r12_tri_recovery >= 100 %}pos{% elif totals.gen_r12_tri_recovery %}neg{% endif %}">
+              {% if totals.gen_r12_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.gen_r12_tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.gen_r12_tri_profit and totals.gen_r12_tri_profit > 0 %}pos{% elif totals.gen_r12_tri_profit and totals.gen_r12_tri_profit < 0 %}neg{% endif %}">
+              {% if totals.gen_r12_tri_bets > 0 %}<strong>{{ totals.gen_r12_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </section>
