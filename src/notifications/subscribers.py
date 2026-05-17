@@ -29,24 +29,28 @@ from src.notifications.crypto import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_ALERT_TYPES = [
-    "L4_SG", "L4_G1", "L4_G2",
-    "L4_morning_SG", "L4_morning_G1", "L4_morning_G2",
+    # 採用ベース (本日候補リスト + メール通知の対象)
+    "L4_SG", "L4_G1", "L4_G2", "L4_G3", "L4_general_f1",
+    "L4_morning_SG", "L4_morning_G1", "L4_morning_G2", "L4_morning_G3",
+    "L4_morning_general_f1",
 ]
 ALL_ALERT_TYPES = {
     # === 確定 L4 (T-5min / T-15min オッズベース) ===
-    "L4_SG":      "L4 SG×A1 (検証回収率 258.2%)",
-    "L4_G1":      "L4 G1×A1 (検証回収率 242.8%)",
-    "L4_G2":      "L4 G2×A1 (検証回収率 242.7%)",
-    "L4_G3":      "L4 G3×A1 (検証回収率 149.2%)",
-    "L4_general": "L4 一般戦×A1 (検証回収率 147.7%)",
-    "L4_default": "L4 通算 A1 (検証回収率 160.8%)",
+    "L4_SG":         "L4 SG×A1 (検証回収率 258.2%)",
+    "L4_G1":         "L4 G1×A1 (検証回収率 242.8%)",
+    "L4_G2":         "L4 G2×A1 (検証回収率 242.7%)",
+    "L4_G3":         "L4 G3×A1 (検証回収率 149.2%)",
+    "L4_general":    "L4 一般戦×A1 (検証回収率 147.7%、参考扱い)",
+    "L4_general_f1": "⭐ L4 G++ F1 (一般戦×国1%≥7×2号40、検証 ROI 204%)",
+    "L4_default":    "L4 通算 A1 (検証回収率 160.8%)",
     # === 朝 L4 候補 (LightGBM 予測ベース、オッズ確定前) ===
-    "L4_morning_SG":      "🌅朝L4 SG候補 (予測ベース)",
-    "L4_morning_G1":      "🌅朝L4 G1候補 (予測ベース)",
-    "L4_morning_G2":      "🌅朝L4 G2候補 (予測ベース)",
-    "L4_morning_G3":      "🌅朝L4 G3候補 (予測ベース)",
-    "L4_morning_general": "🌅朝L4 一般戦候補 (予測ベース)",
-    "L4_morning_default": "🌅朝L4 候補 (予測ベース)",
+    "L4_morning_SG":         "🌅朝L4 SG候補 (予測ベース)",
+    "L4_morning_G1":         "🌅朝L4 G1候補 (予測ベース)",
+    "L4_morning_G2":         "🌅朝L4 G2候補 (予測ベース)",
+    "L4_morning_G3":         "🌅朝L4 G3候補 (予測ベース)",
+    "L4_morning_general":    "🌅朝L4 一般戦候補 (予測ベース、参考)",
+    "L4_morning_general_f1": "🌅⭐ 朝L4 G++ F1 候補 (予測ベース、ROI 204%)",
+    "L4_morning_default":    "🌅朝L4 候補 (予測ベース)",
 }
 
 
