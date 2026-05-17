@@ -2792,6 +2792,68 @@ main h2 {
 }
 .pick-link a:hover { text-decoration: underline; }
 
+/* 🎫 テレボート 投票ボタン (各候補レース行) */
+.pick-vote-head {
+  font-size: 11px;
+  color: rgba(255, 230, 160, 0.85);
+  text-align: center;
+}
+.pick-vote {
+  text-align: center;
+  padding: 4px 6px !important;
+}
+.vote-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #fff !important;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  border-radius: 6px;
+  border: 1.5px solid rgba(220, 38, 38, 0.7);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
+  white-space: nowrap;
+  transition: transform 0.1s ease, box-shadow 0.15s, border-color 0.15s;
+  min-height: 36px;        /* 押しやすい高さ */
+  min-width: 70px;
+}
+.vote-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.55);
+  border-color: rgba(248, 113, 113, 0.9);
+  background: linear-gradient(135deg, #f87171, #ef4444);
+}
+.vote-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(220, 38, 38, 0.4) inset;
+}
+/* 締切済の行は投票ボタンを薄く + 無効化 */
+.todays-pick-row.is-closed .vote-btn {
+  background: linear-gradient(135deg, #6b7280, #4b5563);
+  border-color: rgba(75, 85, 99, 0.7);
+  box-shadow: none;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* モバイル: 投票ボタンを Grid 領域に追加 */
+@media (max-width: 720px) {
+  .pick-vote {
+    grid-area: vote;
+  }
+  .vote-btn {
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    min-height: 44px;     /* iOS 推奨タップ領域 */
+  }
+}
+
 /* 1-2-3 オッズ推移セル (T-5 → T-1) */
 .pick-odds-head { font-size: 11px; color: rgba(255,255,255,0.7); }
 .pick-odds {
@@ -2937,7 +2999,8 @@ main h2 {
       "rank    rank    place   place   time    time"
       "til     til     til     til     til     til"
       "type    type    type    type    rec     rec"
-      "odds    odds    odds    odds    odds    link";
+      "odds    odds    odds    odds    odds    link"
+      "vote    vote    vote    vote    vote    vote";
     grid-template-columns: repeat(6, 1fr);
     gap: 4px 8px;
     padding: 10px 12px;
