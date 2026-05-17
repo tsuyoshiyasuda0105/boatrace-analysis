@@ -212,16 +212,33 @@ def cleanup_old_raw_data(conn, is_pg: bool, keep_days: int = 90,
             except Exception:
                 pass
 
-    # Postgres は VACUUM で実領域回収
+    # Postgres は VACUUM で実領域回収。
+    # 通常 VACUUM ANALYZE: 統計更新 + dead tuple 回収 (ファイルサイズは縮小しない)
+    # VACUUM FULL:        ファイルサイズも縮小 (テーブルロック取得、時間かかる)
+    # 大量削除時は VACUUM FULL で物理サイズも縮小する必要がある。
+    total_deleted_rows = sum(deleted.values())
+    use_vacuum_full = total_deleted_rows >= 50000  # 50,000 行超で VACUUM FULL
     if is_pg:
         try:
-            conn.commit()
-            old_autocommit = conn.autocommit
-            conn.autocommit = True
-            for table in deleted.keys():
-                conn.execute(f"VACUUM ANALYZE {table}")
-            conn.autocommit = old_autocommit
-            logger.info("VACUUM ANALYZE 完了 (%d tables)", len(deleted))
+            raw = getattr(conn, "_conn", None)
+            if raw is None:
+                logger.warning("VACUUM スキップ: 内部 psycopg connection が取得できない")
+            else:
+                try:
+                    raw.commit()
+                except Exception:
+                    pass
+                cur = raw.cursor()
+                cmd = "VACUUM FULL" if use_vacuum_full else "VACUUM ANALYZE"
+                logger.info("%s を実行 (大量削除のため)" if use_vacuum_full
+                            else "%s を実行", cmd)
+                for table in deleted.keys():
+                    try:
+                        cur.execute(f"{cmd} {table}")
+                        logger.info("  %s %s 完了", cmd, table)
+                    except Exception as e:
+                        logger.warning("  %s %s 失敗: %s", cmd, table, e)
+                cur.close()
         except Exception as e:
             logger.warning("VACUUM 失敗 (削除自体は成功): %s", e)
 
