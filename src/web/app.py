@@ -2186,11 +2186,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if tri_hit:
                             d["gen_f1_tri_hits"] += 1
                             d["gen_f1_tri_pay"] += tri_pay_v
-                        # ★ F1 は採用ベースなので、日別詳細の n_l4 / tri_*
-                        #   (= 3連単 1-2-3 採用全体) にも統合表示
-                        # 注: 単勝/2連単は SG/G1/G2/G3 のみが対象 (F1 の検証は
-                        #      3連単 1-2-3 限定のため win_bets/exa_bets は加算しない)
+                        # ★ F1 は採用ベースなので、日別詳細の n_l4 + 3 点買いすべてに統合。
+                        # 実運用では SG/G1/G2/G3 と同じく 単勝1 / 2連単1-2 / 3連単1-2-3
+                        # の 3 点を各 ¥100 で買うため、それぞれ加算する。
                         d["n_l4"] += 1
+                        # 単勝 (1号艇)
+                        d["win_bets"] += 1
+                        if w1 == 1:
+                            d["win_hits"] += 1
+                            d["win_pay"] += (win_pay or 0)
+                        # 2連単 1-2
+                        d["exa_bets"] += 1
+                        if w1 == 1 and w2 == 2:
+                            d["exa_hits"] += 1
+                            d["exa_pay"] += (ex_pay or 0)
+                        # 3連単 1-2-3
                         d["tri_bets"] += 1
                         if tri_hit:
                             d["tri_hits"] += 1
