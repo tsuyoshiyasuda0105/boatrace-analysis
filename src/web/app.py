@@ -18,6 +18,15 @@ from typing import Optional, Any
 
 from datetime import timedelta
 
+# === タイムゾーン強制設定 (Asia/Tokyo) ===
+# Render (Linux) は デフォルト UTC のため、date.today() / datetime.now() が
+# JST より 9 時間遅れて前日扱いになる。全コードを書き換えるのは大規模なので、
+# プロセス起動時に TZ 環境変数を設定 + tzset() で全 datetime API を JST 化。
+# ローカル PC (Windows) では time.tzset が無いので no-op (システム JST のまま)。
+os.environ.setdefault("TZ", "Asia/Tokyo")
+if hasattr(time, "tzset"):
+    time.tzset()
+
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 
 import config
