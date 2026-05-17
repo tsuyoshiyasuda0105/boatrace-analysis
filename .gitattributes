@@ -1,0 +1,37 @@
+# Git で改行コードを正規化する設定
+# 目的: Windows Task Scheduler から呼ばれる .bat / .cmd / .vbs ファイルが
+# cmd.exe で正しく実行されるよう、改行コードを CRLF に強制する。
+#
+# 過去のインシデント (2026-05-18):
+#   run_morning_task.bat が LF のみで保存され、cmd.exe が行を正しく
+#   分離できず実行失敗。Task Scheduler は exit code 0 を受け取って
+#   「成功」と判定したが、実際には morning_task が走らず、当日朝の
+#   レースデータが取り込まれなかった。
+
+# Windows 専用ファイルは CRLF を強制
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.vbs   text eol=crlf
+*.ps1   text eol=crlf
+
+# Python/SQL/Markdown/YAML 等は LF (Unix 標準)
+*.py    text eol=lf
+*.sql   text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+
+# バイナリは触らない
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.pkl   binary
+*.db    binary
+*.sqlite binary
+*.zip   binary
