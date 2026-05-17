@@ -133,14 +133,41 @@
     {key:'gr12',  label:'🟢 一般戦×12R',  color:'#16a34a', adopted:false},
   ];
 
+  // 表示中のシリーズ key Set。初期は全部表示。
+  // クリックで「その系列のみ表示」(isolate)、もう一度クリックで全表示に戻る。
+  let activeKeys = new Set(SERIES.map(s => s.key));
+
   // 凡例
   const legendEl = document.getElementById('monthlyChartLegend');
   if (legendEl) {
-    legendEl.innerHTML = SERIES.map(s =>
-      `<span class="legend-item" data-key="${s.key}">
-        <span class="legend-swatch" style="background:${s.color}"></span>
-        <span class="legend-label">${s.label}</span>
-      </span>`).join('');
+    function renderLegend() {
+      legendEl.innerHTML = SERIES.map(s => {
+        const active = activeKeys.has(s.key);
+        return `<button type="button"
+                 class="legend-item ${active ? 'is-active' : 'is-dim'}"
+                 data-key="${s.key}"
+                 title="クリック: この戦略のみ表示 / もう一度: 全表示に戻る">
+          <span class="legend-swatch" style="background:${s.color}"></span>
+          <span class="legend-label">${s.label}</span>
+        </button>`;
+      }).join('');
+      legendEl.querySelectorAll('.legend-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.key;
+          const isolated = activeKeys.size === 1 && activeKeys.has(key);
+          if (isolated) {
+            // 既にこの系列のみ表示 → 全表示に戻す
+            activeKeys = new Set(SERIES.map(s => s.key));
+          } else {
+            // この系列だけに絞る
+            activeKeys = new Set([key]);
+          }
+          renderLegend();
+          draw();
+        });
+      });
+    }
+    renderLegend();
   }
 
   const canvas = document.getElementById('monthlyChart');
@@ -158,9 +185,13 @@
       ctx.fillText('データなし', W/2, H/2);
       return;
     }
-    // Y 範囲は実値から決定。0 を必ず含むように
+    // 表示中シリーズのみ描画 (activeKeys でフィルタ)
+    const visibleSeries = SERIES.filter(s => activeKeys.has(s.key));
+    if (visibleSeries.length === 0) return;
+
+    // Y 範囲は表示中シリーズの実値から決定。0 を必ず含むように
     let allVals = [];
-    SERIES.forEach(s => {
+    visibleSeries.forEach(s => {
       data.forEach(d => { if (d[s.key] !== null) allVals.push(d[s.key]); });
     });
     if (allVals.length === 0) return;
@@ -178,12 +209,15 @@
     const ys = (v) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin));
     const zeroY = ys(0);
 
-    // 月グループの座標
+    // 月グループの座標 (棒幅は visibleSeries 数に応じて動的調整)
     const chartW = W - padL - padR;
     const groupW = chartW / data.length;       // 月あたりの幅
     const innerGap = 6;                          // 月間の余白
-    const barAreaW = groupW - innerGap;          // 7 本入るエリア
-    const barW = Math.max(4, barAreaW / SERIES.length - 1);
+    const barAreaW = groupW - innerGap;          // 表示シリーズ数の本数が入るエリア
+    const nVis = visibleSeries.length;
+    const barW = Math.max(4, barAreaW / Math.max(1, nVis) - 1);
+    // 単独表示時は太めにして見やすく
+    const barWidth = nVis === 1 ? Math.min(barW, barAreaW * 0.6) : barW;
 
     // === 1. グリッドと Y 軸ラベル ===
     ctx.fillStyle = '#aaa';
@@ -211,13 +245,17 @@
       ctx.fillText((v > 0 ? '+' : '') + v + '%', padL - 8, y + 3);
     }
 
-    // === 2. 棒グラフ本体 ===
+    // === 2. 棒グラフ本体 (visibleSeries のみ) ===
     data.forEach((d, mi) => {
       const groupX = padL + groupW * mi + innerGap / 2;
-      SERIES.forEach((s, si) => {
+      // 単独表示時は中央寄せ、複数は左寄せで横並び
+      const groupCenterOffset = nVis === 1
+        ? (barAreaW - barWidth) / 2
+        : 0;
+      visibleSeries.forEach((s, si) => {
         const v = d[s.key];
         if (v === null || v === undefined) return;
-        const x = groupX + si * (barW + 1);
+        const x = groupX + groupCenterOffset + si * (barWidth + 1);
         const top = ys(Math.max(v, 0));
         const bot = ys(Math.min(v, 0));
         const h = bot - top;
@@ -234,11 +272,11 @@
           grad.addColorStop(1, applyAlpha(s.color, alpha));
         }
         ctx.fillStyle = grad;
-        ctx.fillRect(x, top, barW, Math.max(1, h));
+        ctx.fillRect(x, top, barWidth, Math.max(1, h));
         // 縁取り
         ctx.strokeStyle = applyAlpha(s.color, alpha * 0.85);
         ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, top + 0.5, barW - 1, Math.max(1, h - 1));
+        ctx.strokeRect(x + 0.5, top + 0.5, barWidth - 1, Math.max(1, h - 1));
       });
     });
 
