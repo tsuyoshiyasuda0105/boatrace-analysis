@@ -1026,7 +1026,50 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/healthz")
     def healthz():
-        return {"status": "ok", "model_loaded": predictor.artifact is not None}
+        """外部死活監視用 (UptimeRobot 等) のヘルスチェック。
+
+        判定:
+          200 OK   : DB 接続 OK + データ品質に error なし
+          503      : DB 接続失敗 or system_status に error あり
+
+        UptimeRobot は HTTP ステータスコードで判定するので、データ品質
+        異常も 503 で通知できる。Body には簡易状態を JSON で返す。
+        """
+        status_info = {
+            "status": "ok",
+            "model_loaded": predictor.artifact is not None,
+            "checks": {},
+        }
+        http_status = 200
+        # DB ping
+        try:
+            with db_connect() as conn:
+                conn.execute("SELECT 1").fetchone()
+            status_info["checks"]["db"] = "ok"
+        except Exception as e:
+            status_info["checks"]["db"] = f"error: {e}"
+            status_info["status"] = "error"
+            http_status = 503
+        # system_status の最新エラー件数 (今日)
+        try:
+            today_iso = date.today().isoformat()
+            with db_connect() as conn:
+                cur = conn.execute(
+                    "SELECT status, COUNT(*) FROM system_status "
+                    "WHERE check_date = ? GROUP BY status",
+                    (today_iso,),
+                )
+                counts = {row[0]: row[1] for row in cur.fetchall()}
+            n_err = counts.get("error", 0)
+            n_warn = counts.get("warning", 0)
+            status_info["checks"]["data_quality_errors"] = n_err
+            status_info["checks"]["data_quality_warnings"] = n_warn
+            if n_err > 0:
+                status_info["status"] = "degraded"
+                http_status = 503  # UptimeRobot で通知 (1 件以上で停止と判定)
+        except Exception as e:
+            status_info["checks"]["data_quality"] = f"unknown: {e}"
+        return status_info, http_status
 
     @app.route("/")
     @login_required
