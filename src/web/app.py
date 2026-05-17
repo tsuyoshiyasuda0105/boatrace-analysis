@@ -932,10 +932,56 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app.jinja_env.filters["signed_comma"] = _signed_comma
     app.jinja_env.filters["comma"] = _comma
 
+    # backlog item 6: ERROR レベル以上の logger をメール通知に投げる
+    # 環境変数 BOATRACE_ERROR_NOTIFY_TO が設定されていれば自動有効化
+    try:
+        from src.notifications.error_handler import install_error_notifier
+        installed_app = install_error_notifier(app.logger)
+        installed_root = install_error_notifier(logging.getLogger())
+        if installed_app or installed_root:
+            logger.info("Error email notifier installed (BOATRACE_ERROR_NOTIFY_TO set)")
+    except Exception as e:
+        logger.warning("install_error_notifier failed: %s", e)
+
     # 全テンプレートに today_iso を自動注入 (BOATRACE WEB リンク等で使用)
     @app.context_processor
     def _inject_today():
         return {"today_iso_global": date.today().isoformat()}
+
+    # データ品質警告バナー用 (backlog item 3)
+    @app.context_processor
+    def _inject_system_status():
+        """全テンプレートで {{ system_warnings }} が使えるように。
+        今日と昨日の system_status から warning/error を集める (TTL 5 分、内部キャッシュ)。
+        """
+        import time as _t
+        cache_key = "_system_status_cache"
+        cache_ttl = 300  # 5 分
+        cache = getattr(app, cache_key, None)
+        now_ts = _t.time()
+        if cache and (now_ts - cache.get("ts", 0)) < cache_ttl:
+            return {"system_warnings": cache["warnings"]}
+        warnings_list: list[dict] = []
+        try:
+            today_iso = date.today().isoformat()
+            with db_connect() as conn:
+                cur = conn.execute(
+                    "SELECT check_name, status, message, checked_at "
+                    "FROM system_status "
+                    "WHERE check_date = ? AND status IN ('warning', 'error') "
+                    "ORDER BY status DESC, check_name",
+                    (today_iso,)
+                )
+                for cn, st, msg, at in cur.fetchall():
+                    warnings_list.append({
+                        "check_name": cn, "status": st,
+                        "message": msg, "checked_at": at,
+                    })
+        except Exception as e:
+            # system_status テーブル未作成等は無視 (banner 出さないだけ)
+            logger.debug("system_status lookup skipped: %s", e)
+        setattr(app, cache_key, {"ts": now_ts, "warnings": warnings_list})
+        return {"system_warnings": warnings_list}
 
     # DB 初期化 (空ディスクへの初回デプロイで必要)
     try:
@@ -1495,6 +1541,65 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """1号艇選手の成績から L4 のサブランク判定 (単一情報源を委譲)"""
             return _l4_rank_shared(natl_1, local_1)
 
+        def _compute_tetsuban(base: dict, race_no: int) -> tuple[int, str]:
+            """鉄板度スコア (1-6) と表示ラベルを計算 (backlog item 11)。
+
+            条件 (各 1 点、合計 0-6):
+              + 高グレード (SG/G1/G2)
+              + F1 一般戦 (一般×国1%≥7×2号40)
+              + race_number 11 または 12 (prime / メインレース)
+              + race_number 12 (最終レース、上に+1で 12R は計 2 点)
+                → 12R は実質 +2 点扱いで「鉄板側に振れる」
+                  ※ 11R も prime bonus が付くが 12R bonus は付かない
+              + L4 1c80 (1号艇1コース 1着率 80%+)
+              + L4 PRO (ベテラン × ST × 展示)
+              + L4++ (国1%≥7 + 地1%≥9)
+              + 1号艇国1%≥7 のみ満たす L4+ (中間)
+
+            戻り値: (score 1-6, label) — 鉄板度マーク "💎×N" + 評価名
+            """
+            level = base.get("level", "")
+            is_high_grade = level in ("SG", "G1", "G2")
+            is_f1 = bool(base.get("is_f1"))
+            is_prime_r = race_no in (11, 12)
+            is_final_r = race_no == 12
+            is_1c80 = bool(base.get("is_1c80"))
+            is_pro  = bool(base.get("is_l4_pro"))
+            rank    = base.get("rank")
+            is_plus_plus = rank == "plus_plus"
+            is_plus      = rank == "plus"
+
+            score = 0
+            if is_high_grade:    score += 1
+            if is_f1:            score += 1
+            if is_prime_r:       score += 1
+            if is_final_r:       score += 1   # 12R は更に +1 (prime と合わせて +2)
+            if is_1c80:          score += 1
+            if is_pro:           score += 1
+            if is_plus_plus:     score += 1
+            elif is_plus:        score += 0   # plus 単独は弱いので加点しない
+
+            # スコアを 1-5 の星に圧縮
+            stars = 1
+            if score >= 5: stars = 5
+            elif score >= 4: stars = 4
+            elif score >= 3: stars = 3
+            elif score >= 2: stars = 2
+            else: stars = 1
+
+            # ラベル
+            if stars >= 5:
+                lab = f"💎💎💎💎💎 鉄板 {stars}★"
+            elif stars == 4:
+                lab = f"💎💎💎💎 強推 {stars}★"
+            elif stars == 3:
+                lab = f"💎💎💎 推奨 {stars}★"
+            elif stars == 2:
+                lab = f"💎💎 候補 {stars}★"
+            else:
+                lab = f"💎 通常 {stars}★"
+            return stars, lab
+
         def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
                          race_id=None, avg_st=None, age=None, ex_st=None,
                          boat2_top2=None, race_number=None):
@@ -1605,6 +1710,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["is_obs_r12"] = True
                 if grade == 5:
                     base["is_obs_gen_r12"] = True
+
+            # ▼ 鉄板度スコア (backlog item 11): 条件が多く揃うほど高ROI 期待
+            base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base
 
         def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None,
@@ -1709,6 +1817,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["is_obs_r12"] = True
                 if grade == 5:
                     base["is_obs_gen_r12"] = True
+            # 鉄板度スコア (朝判定も同じロジック)
+            base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base
 
         signals = []

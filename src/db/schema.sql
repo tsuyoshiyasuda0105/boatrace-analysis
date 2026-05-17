@@ -361,3 +361,18 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_bets  INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_hits  INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_pay   INTEGER;
+
+-- ============================================================
+-- システム状態 (データ品質チェック / バッチ死活監視 / エラーログ)
+-- backlog item 3: 朝のバッチ後に整合性チェック → Web 上で warning 表示
+-- ============================================================
+CREATE TABLE IF NOT EXISTS system_status (
+  check_name   TEXT NOT NULL,     -- 'morning_data_complete' / 'races_count' / 'predictions_count' 等
+  check_date   TEXT NOT NULL,     -- YYYY-MM-DD
+  status       TEXT NOT NULL,     -- 'ok' / 'warning' / 'error'
+  message      TEXT,              -- 人間向けメッセージ ('尼崎 R9-12 選手情報待ち' 等)
+  detail_json  TEXT,              -- 詳細データ (JSON)
+  checked_at   TEXT NOT NULL,     -- ISO 8601
+  PRIMARY KEY (check_name, check_date)
+);
+CREATE INDEX IF NOT EXISTS idx_sysstat_date ON system_status(check_date, status);

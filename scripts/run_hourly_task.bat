@@ -22,4 +22,7 @@ REM 2. Race data -> local SQLite (keep both in sync so future morning
 REM tasks and local backtests have consistent data)
 .venv\Scripts\python.exe scripts\daily_collect.py --local >> "%LOG%" 2>&1
 
+REM 3. データ品質再チェック (hourly でリトライ取得後の状態を更新)
+.venv\Scripts\python.exe scripts\check_data_quality.py >> "%LOG%" 2>&1
+
 echo === Hourly task finished %date% %time% === >> "%LOG%"

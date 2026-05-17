@@ -157,6 +157,68 @@ a:hover { color: #66e3ff; }
   box-shadow: 0 4px 16px rgba(0, 212, 255, 0.35);
 }
 
+/* ===== System status banner (backlog item 3) ===== */
+.system-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 12px 0 18px;
+  padding: 12px 18px;
+  border-radius: 8px;
+  border: 1.5px solid;
+  background: rgba(255, 200, 80, 0.06);
+}
+.system-banner-warning {
+  border-color: rgba(251, 191, 36, 0.6);
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.10), rgba(217, 119, 6, 0.05));
+}
+.system-banner-error {
+  border-color: rgba(239, 68, 68, 0.7);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.14), rgba(220, 38, 38, 0.07));
+}
+.system-banner-icon {
+  font-size: 22px;
+  line-height: 1;
+  margin-top: 2px;
+}
+.system-banner-body {
+  flex: 1;
+  font-size: 13px;
+}
+.system-banner-body strong {
+  color: #fde68a;
+  font-size: 14px;
+}
+.system-banner-error .system-banner-body strong { color: #fecaca; }
+.system-banner-body ul {
+  margin: 8px 0 0;
+  padding-left: 16px;
+}
+.system-banner-body li {
+  margin: 4px 0;
+  color: rgba(255, 255, 255, 0.85);
+}
+.sysbanner-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+.sysbanner-warning { background: #d97706; color: #fef3c7; }
+.sysbanner-error   { background: #dc2626; color: #fee2e2; }
+.sysbanner-check {
+  font-family: monospace;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+}
+.sysbanner-time {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
 /* ===== Header navigation buttons (戦略系) ===== */
 .nav-actions {
   display: flex;
@@ -2125,6 +2187,41 @@ main h2 {
 .summary-card.obs-prime .card-sub small {
   color: #a7f3d0;
   opacity: 0.85;
+}
+
+/* 鉄板度バッジ (backlog item 11) — スコアに応じてゴールドの輝度が増す */
+.tetsuban-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  color: #1a1a2e;
+}
+.tetsuban-3 {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  border: 1px solid rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
+}
+.tetsuban-4 {
+  background: linear-gradient(135deg, #fcd34d, #f59e0b, #d97706);
+  border: 1.5px solid rgba(217, 119, 6, 0.85);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.55);
+}
+.tetsuban-5 {
+  background: linear-gradient(135deg, #fde68a, #fbbf24, #d97706, #b45309);
+  border: 2px solid rgba(180, 83, 9, 0.9);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.75),
+              inset 0 0 6px rgba(255, 255, 255, 0.35);
+  animation: tetsuban-pulse 2s ease-in-out infinite;
+}
+@keyframes tetsuban-pulse {
+  0%, 100% { box-shadow: 0 0 14px rgba(245, 158, 11, 0.75),
+                          inset 0 0 6px rgba(255, 255, 255, 0.35); }
+  50%      { box-shadow: 0 0 22px rgba(245, 158, 11, 1.0),
+                          inset 0 0 10px rgba(255, 255, 255, 0.55); }
 }
 
 /* レースカード上の観察バッジ (緑色) */

@@ -274,6 +274,15 @@
                   l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}`;
                   item.appendChild(l4Badge);
 
+                  // 鉄板度スコアバッジ (backlog item 11、緑観察より優先表示)
+                  if (sig.l4.tetsuban_score && sig.l4.tetsuban_score >= 3) {
+                    const tb = document.createElement('span');
+                    tb.className = `tetsuban-badge tetsuban-${sig.l4.tetsuban_score}`;
+                    tb.textContent = sig.l4.tetsuban_label || `💎×${sig.l4.tetsuban_score}`;
+                    tb.title = `鉄板度スコア ${sig.l4.tetsuban_score}/5 - 条件が多く揃ったレース。資金多めに賭ける候補`;
+                    item.appendChild(tb);
+                  }
+
                   // 観察バッジ (3 ヶ月実績で採用判断、緑色)
                   // L4-prime (11-12R) / L4-12R / 一般戦×12R
                   if (sig.l4.is_obs_prime || sig.l4.is_obs_r12 || sig.l4.is_obs_gen_r12) {
@@ -535,11 +544,17 @@
             const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
             const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
             const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
+            // 鉄板度バッジから score 取り出し
+            const tbEl = u.el.querySelector('.tetsuban-badge');
+            const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
+                                .find(c => c.startsWith('tetsuban-'))?.replace('tetsuban-','') || '0', 10) : 0;
+            const tbStars = tbScore >= 3 ? '💎'.repeat(tbScore) + ` ${tbScore}★ ` : '';
             let rankLabel = l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
                           : l4Cls === 'l4-rank-plus' ? '🥈 L4+'
                           : '⭐ L4';
             if (is1c80) rankLabel = '🚀 ' + rankLabel + ' 1c80';
             if (isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';
+            if (tbStars) rankLabel = tbStars + rankLabel;
             const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
             const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
             const recovery = recMatch ? recMatch[1] : '-';

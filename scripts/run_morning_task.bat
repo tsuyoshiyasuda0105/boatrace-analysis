@@ -29,4 +29,7 @@ REM 3. Morning L4 candidate email (prediction-based, before odds confirmed)
 REM 4. Also try confirmed L4 (in case some races already have T-5/T-15 odds)
 .venv\Scripts\python.exe scripts\send_l4_alerts.py --mode confirmed >> "%LOG%" 2>&1
 
+REM 5. データ品質チェック (backlog item 3): morning_task の完了状態を system_status に記録
+.venv\Scripts\python.exe scripts\check_data_quality.py >> "%LOG%" 2>&1
+
 echo === Morning task finished %date% %time% === >> "%LOG%"
