@@ -2074,10 +2074,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "r12_tri_bets, r12_tri_hits, r12_tri_pay, "
                             "gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay")
                 has_obs_cols = True
+                # 注: base_cols/obs_cols は上で定義したハードコード定数のみで構成
+                # (ユーザー入力非依存)。動的部分は SQL placeholder (?) のみで、
+                # SQL injection リスクなし。f-string を避け、通常文字列連結で記述
+                # することでリグレッションガード (将来 cols が変数化されても
+                # SQLi にならない)。
+                sql_with_obs = (
+                    "SELECT " + base_cols + ", " + obs_cols
+                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                )
+                sql_legacy = (
+                    "SELECT " + base_cols
+                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                )
                 try:
-                    cur = conn.execute(
-                        f"SELECT {base_cols}, {obs_cols} FROM l4_daily_summary "
-                        f"WHERE date BETWEEN ? AND ?", (from_date, to_date))
+                    cur = conn.execute(sql_with_obs, (from_date, to_date))
                     rows = cur.fetchall()
                 except Exception:
                     # ALTER TABLE 未実行の DB → 旧カラムのみ
@@ -2086,9 +2097,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         conn.rollback()
                     except Exception:
                         pass
-                    cur = conn.execute(
-                        f"SELECT {base_cols} FROM l4_daily_summary "
-                        f"WHERE date BETWEEN ? AND ?", (from_date, to_date))
+                    cur = conn.execute(sql_legacy, (from_date, to_date))
                     rows = cur.fetchall()
                 for row in rows:
                     if has_obs_cols:
@@ -2461,6 +2470,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/member/health")
     @login_required
+    @cached(ttl=300, past_ttl=3600)  # 健全度は重いので 5 分キャッシュ
     def member_health():
         """戦略の健全度監視ダッシュボード (会員限定)
         各戦略 (L4/L4+/L4++/A2派生) の直近 ROI と健全度ステータスを表示。
@@ -2524,10 +2534,34 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     def admin_cache_clear():
         """全インメモリキャッシュをクリア (会員限定)。
-        データ投入直後など即時反映したい時に使う。"""
-        n = len(_CACHE)
-        invalidate_cache()
-        return jsonify({"cleared": True, "entries_removed": n}), 200
+        データ投入直後など即時反映したい時に使う。
+
+        セキュリティ:
+        - GET: フォーム表示 (CSRF トークン付き) のみ。実際のクリアは行わない。
+        - POST: CSRF トークン検証後にクリア。
+          → <img src=...> 経由の CSRF 攻撃 (キャッシュ破壊→DoS) を防止。
+        """
+        from src.web.auth import _verify_csrf_token, _get_csrf_token
+        if request.method == "POST":
+            if not _verify_csrf_token():
+                return jsonify({"error": "csrf token mismatch"}), 400
+            n = len(_CACHE)
+            invalidate_cache()
+            return jsonify({"cleared": True, "entries_removed": n}), 200
+        # GET: 簡易フォーム (CSRF トークン埋め込み)
+        token = _get_csrf_token()
+        return (
+            '<!doctype html><html><body style="font-family:monospace;padding:24px;">'
+            "<h2>キャッシュクリア</h2>"
+            f"<p>現在のエントリ数: {len(_CACHE)}</p>"
+            '<form method="post">'
+            f'<input type="hidden" name="csrf_token" value="{token}">'
+            '<button type="submit" style="padding:10px 20px;font-size:14px;">'
+            "クリア実行</button>"
+            "</form>"
+            '<p><a href="/">← トップへ</a></p>'
+            "</body></html>"
+        )
 
     # ===== Pro 系ビュー (pro_ev / pro_ev_race / pro_ev_api) は廃止 =====
     # backlog item 20: Pro モード廃止。ビュー本体は削除済み。

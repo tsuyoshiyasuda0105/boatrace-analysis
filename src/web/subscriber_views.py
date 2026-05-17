@@ -39,9 +39,14 @@ _SIGNUP_WINDOW = 3600
 
 
 def _client_ip() -> str:
-    fwd = request.headers.get("X-Forwarded-For", "")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """セキュリティ: X-Forwarded-For は信頼できる逆プロキシ (Render) 背後でのみ採用。
+    それ以外では request.remote_addr を使用してなりすまし防止。
+    """
+    import os as _os
+    if _os.environ.get("RENDER"):
+        fwd = request.headers.get("X-Forwarded-For", "")
+        if fwd:
+            return fwd.split(",")[0].strip()
     return request.remote_addr or "unknown"
 
 

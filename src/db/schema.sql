@@ -175,6 +175,9 @@ CREATE TABLE IF NOT EXISTS race_results (
   PRIMARY KEY (race_id, boat_number),
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
+-- ROI 集計 SQL の "WHERE finishing_position=N" JOIN を高速化
+CREATE INDEX IF NOT EXISTS idx_results_race_pos
+  ON race_results(race_id, finishing_position);
 
 CREATE TABLE IF NOT EXISTS race_payouts (
   -- 払戻金。三連単/三連複/二連単/二連複/拡連複/単勝/複勝
@@ -186,6 +189,10 @@ CREATE TABLE IF NOT EXISTS race_payouts (
   PRIMARY KEY (race_id, bet_type, combination),
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
+-- PRIMARY KEY だけでは "WHERE bet_type='trifecta' GROUP BY race_id" のサブクエリが
+-- 全行スキャンになりがち。bet_type で先に絞り込めるよう補助 index
+CREATE INDEX IF NOT EXISTS idx_payouts_type_combination
+  ON race_payouts(bet_type, combination, race_id);
 
 -- ============================================================
 -- オッズ (オプション。スクレイピングで取得する場合)
@@ -202,6 +209,9 @@ CREATE TABLE IF NOT EXISTS odds_trifecta (
   PRIMARY KEY (race_id, combination, recorded_at),
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
+-- ROI 集計 SQL の "WHERE combination='1-2-3' AND snapshot_label IN (...)" を高速化
+CREATE INDEX IF NOT EXISTS idx_odds_combo_snap
+  ON odds_trifecta(combination, snapshot_label, race_id);
 
 -- ============================================================
 -- 予測 / バックテスト
@@ -219,6 +229,9 @@ CREATE TABLE IF NOT EXISTS predictions (
   PRIMARY KEY (race_id, boat_number, model_version),
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
+-- ROI 集計 SQL の "WHERE boat_number=1" JOIN を高速化
+CREATE INDEX IF NOT EXISTS idx_predictions_boat
+  ON predictions(boat_number, race_id);
 
 CREATE TABLE IF NOT EXISTS value_bets (
   -- 期待値プラス検出ログ
