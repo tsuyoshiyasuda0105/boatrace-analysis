@@ -1026,14 +1026,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/healthz")
     def healthz():
-        """外部死活監視用 (UptimeRobot 等) のヘルスチェック。
+        """外部死活監視 (UptimeRobot / Render health check) 用エンドポイント。
 
-        判定:
-          200 OK   : DB 接続 OK + データ品質に error なし
-          503      : DB 接続失敗 or system_status に error あり
+        判定 (HTTP ステータスコード):
+          200 OK   : サービス起動可能 (DB ping OK)
+          503      : DB 接続失敗のみ (= サービス完全停止扱い)
 
-        UptimeRobot は HTTP ステータスコードで判定するので、データ品質
-        異常も 503 で通知できる。Body には簡易状態を JSON で返す。
+        データ品質 (system_status の error/warning) は JSON ボディに
+        含めるが HTTP コードには影響させない。理由:
+          - Render の health check は 200 でないとデプロイ失敗
+          - データ品質 error はサービス自体は動いている (運用問題)
+
+        UptimeRobot 側は別の判定手段:
+          (a) HTTP 200 のみ判定: サービス生存だけ気にする (推奨)
+          (b) Keyword Monitoring で "status":"ok" 必須にする (シビア)
         """
         status_info = {
             "status": "ok",
@@ -1041,7 +1047,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "checks": {},
         }
         http_status = 200
-        # DB ping
+        # DB ping (サービス完全停止と区別)
         try:
             with db_connect() as conn:
                 conn.execute("SELECT 1").fetchone()
@@ -1050,7 +1056,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             status_info["checks"]["db"] = f"error: {e}"
             status_info["status"] = "error"
             http_status = 503
-        # system_status の最新エラー件数 (今日)
+            return status_info, http_status
+
+        # データ品質 (今日の system_status 集計) は 200 のまま JSON のみ
         try:
             today_iso = date.today().isoformat()
             with db_connect() as conn:
@@ -1066,7 +1074,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             status_info["checks"]["data_quality_warnings"] = n_warn
             if n_err > 0:
                 status_info["status"] = "degraded"
-                http_status = 503  # UptimeRobot で通知 (1 件以上で停止と判定)
+            elif n_warn > 0:
+                status_info["status"] = "warning"
         except Exception as e:
             status_info["checks"]["data_quality"] = f"unknown: {e}"
         return status_info, http_status
