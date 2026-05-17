@@ -83,9 +83,13 @@ def scrape_results_for_pending_races(target_date: date, conn,
     from datetime import datetime, timedelta
 
     # === L4 [A1] 候補レース ID 集合 (predictions ベース) ===
+    # SG/G1/G2/G3 (採用) + 一般戦 F1 採用ベース (一般×国1≥7×2号40) を対象。
+    # 一般戦は数が多いため、F1 条件を SQL に組み込んで絞り込む。
     l4_candidate_ids: set[str] = set()
     if l4_only:
         EXCLUDE_B = (2, 4, 7, 8, 10, 19, 21, 24)
+        F1_NATIONAL_TOP1_MIN = 7.0
+        F1_BOAT2_TOP2_MIN = 40.0
         try:
             placeholders = ",".join("?" for _ in EXCLUDE_B)
             cur = conn.execute(
@@ -93,14 +97,23 @@ def scrape_results_for_pending_races(target_date: date, conn,
                 SELECT r.race_id
                   FROM races r
                   JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                  LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                   JOIN predictions p  ON p.race_id = r.race_id AND p.boat_number = 1
                  WHERE r.race_date = ?
                    AND r.stadium_number NOT IN ({placeholders})
                    AND e.class_number = 1
-                   AND r.race_grade_number IN (1, 2, 3, 4)
                    AND p.prob_first BETWEEN ? AND ?
+                   AND (
+                       r.race_grade_number IN (1, 2, 3, 4)
+                       OR (
+                           r.race_grade_number = 5
+                           AND e.national_top_1_percent >= ?
+                           AND e2.national_top_2_percent >= ?
+                       )
+                   )
                 """,
-                (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85),
+                (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85,
+                 F1_NATIONAL_TOP1_MIN, F1_BOAT2_TOP2_MIN),
             )
             l4_candidate_ids = {row[0] for row in cur.fetchall()}
             logger.info("L4 [A1] candidates for %s: %d races", target_date, len(l4_candidate_ids))

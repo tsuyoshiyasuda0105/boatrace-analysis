@@ -2177,7 +2177,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if tri_hit:
                             d["gen_f1_tri_hits"] += 1
                             d["gen_f1_tri_pay"] += tri_pay_v
-                continue  # 一般戦は L4 本流集計に含めない
+                        # ★ F1 は採用ベースなので、日別詳細の n_l4 / tri_*
+                        #   (= 3連単 1-2-3 採用全体) にも統合表示
+                        # 注: 単勝/2連単は SG/G1/G2/G3 のみが対象 (F1 の検証は
+                        #      3連単 1-2-3 限定のため win_bets/exa_bets は加算しない)
+                        d["n_l4"] += 1
+                        d["tri_bets"] += 1
+                        if tri_hit:
+                            d["tri_hits"] += 1
+                            d["tri_pay"] += tri_pay_v
+                        # グレード別 breakdown にも記録 (key=5 一般戦)
+                        gb = d["grade_breakdown"].setdefault(5, {"n": 0, "tri_hits": 0, "tri_pay": 0})
+                        gb["n"] += 1
+                        if tri_hit:
+                            gb["tri_hits"] += 1
+                            gb["tri_pay"] += tri_pay_v
+                continue  # 一般戦は L4 本流集計に含めない (F1 のみ上で加算済)
 
             # L4 戦略は 1号艇 A1 のみ。A2 は対象外なので集計しない。
             if is_l4_base and cls == 1:
