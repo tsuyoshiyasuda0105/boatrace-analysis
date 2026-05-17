@@ -118,6 +118,121 @@ def cleanup_old_odds(conn, is_pg: bool, keep_days: int = 60,
     return {"deleted_rows": n_target, "cutoff_date": cutoff}
 
 
+def cleanup_old_raw_data(conn, is_pg: bool, keep_days: int = 90,
+                          dry_run: bool = False) -> dict:
+    """生データ (race_entries / race_payouts / race_results / race_previews /
+    predictions / odds_trifecta) のうち、l4_daily_summary に集計済みの古い
+    日付を削除して容量を回復させる。
+
+    安全機構:
+      1. 削除前に l4_daily_summary にその日付が存在することを確認
+         (集計が無い日付は ROI ダッシュボードで fallback できないので削除しない)
+      2. keep_days より新しい日付は触らない (運用継続性確保)
+      3. dry_run=True で削除予測のみ表示
+
+    Args:
+      keep_days: 保持日数 (default=90 日 ≒ 3 ヶ月)
+      dry_run: True なら削除予測のみ
+
+    Returns:
+      {'deleted_rows': {table: n}, 'deleted_dates': N, 'cutoff_date': ...}
+    """
+    cutoff = (date.today() - timedelta(days=keep_days)).isoformat()
+    logger.info("aggressive cleanup: cutoff=%s (keep_days=%d)", cutoff, keep_days)
+
+    # 1. 削除候補日付: races の日付 < cutoff かつ l4_daily_summary に集計済み
+    cur = conn.execute("""
+        SELECT DISTINCT r.race_date
+          FROM races r
+         WHERE r.race_date < ?
+           AND r.race_date IN (SELECT date FROM l4_daily_summary)
+         ORDER BY r.race_date
+    """, (cutoff,))
+    target_dates = [row[0] for row in cur.fetchall()]
+    if not target_dates:
+        logger.info("削除対象日付なし (l4_daily_summary に集計済の古い日付がない)")
+        return {"deleted_rows": {}, "deleted_dates": 0, "cutoff_date": cutoff}
+
+    logger.info("削除対象日付: %d 日 (%s 〜 %s)",
+                len(target_dates), target_dates[0], target_dates[-1])
+
+    # 各テーブルの削除行数を見積もり
+    TABLES = [
+        ("odds_trifecta",    "race_id IN (SELECT race_id FROM races WHERE race_date < ?)"),
+        ("race_payouts",     "race_id IN (SELECT race_id FROM races WHERE race_date < ?)"),
+        ("race_results",     "race_id IN (SELECT race_id FROM races WHERE race_date < ?)"),
+        ("race_previews",    "race_id IN (SELECT race_id FROM races WHERE race_date < ?)"),
+        ("predictions",      "race_id IN (SELECT race_id FROM races WHERE race_date < ?)"),
+        ("race_entries",     "race_id IN (SELECT race_id FROM races WHERE race_date < ?)"),
+        ("races",            "race_date < ?"),  # 親テーブルは最後
+    ]
+
+    plan = {}
+    for table, where in TABLES:
+        try:
+            count_sql = f"SELECT COUNT(*) FROM {table} WHERE {where}"
+            cur = conn.execute(count_sql, (cutoff,))
+            plan[table] = cur.fetchone()[0] or 0
+        except Exception as e:
+            logger.warning("count failed %s: %s", table, e)
+            plan[table] = 0
+
+    total_rows = sum(plan.values())
+    logger.info("削除予定 行数:")
+    for table, n in plan.items():
+        logger.info("  %-20s %s rows", table, f"{n:,}")
+    logger.info("  TOTAL: %s rows across %d tables", f"{total_rows:,}", len([t for t,n in plan.items() if n>0]))
+
+    if dry_run:
+        return {
+            "deleted_rows": {},
+            "would_delete": plan,
+            "deleted_dates": len(target_dates),
+            "cutoff_date": cutoff,
+        }
+
+    if total_rows == 0:
+        return {"deleted_rows": {}, "deleted_dates": 0, "cutoff_date": cutoff}
+
+    # 削除実行 (依存関係: 子 → 親の順)
+    deleted = {}
+    for table, where in TABLES:
+        if plan[table] == 0:
+            continue
+        try:
+            del_sql = f"DELETE FROM {table} WHERE {where}"
+            conn.execute(del_sql, (cutoff,))
+            conn.commit()
+            deleted[table] = plan[table]
+            logger.info("削除完了: %-20s %s rows", table, f"{plan[table]:,}")
+        except Exception as e:
+            logger.error("削除失敗 %s: %s (継続)", table, e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    # Postgres は VACUUM で実領域回収
+    if is_pg:
+        try:
+            conn.commit()
+            old_autocommit = conn.autocommit
+            conn.autocommit = True
+            for table in deleted.keys():
+                conn.execute(f"VACUUM ANALYZE {table}")
+            conn.autocommit = old_autocommit
+            logger.info("VACUUM ANALYZE 完了 (%d tables)", len(deleted))
+        except Exception as e:
+            logger.warning("VACUUM 失敗 (削除自体は成功): %s", e)
+
+    return {
+        "deleted_rows": deleted,
+        "deleted_dates": len(target_dates),
+        "cutoff_date": cutoff,
+        "total_deleted": sum(deleted.values()),
+    }
+
+
 def update_system_status(conn, total_bytes: int, sizes: list[dict],
                           cleanup_result: dict | None = None):
     """システム状態テーブルに DB 使用量を記録"""
@@ -166,11 +281,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cleanup", action="store_true",
                         help="古い odds_trifecta を削除")
+    parser.add_argument("--cleanup-raw", action="store_true",
+                        help="古い生データ (race_entries 等) を削除 "
+                             "(l4_daily_summary に集計済の日付のみ、--keep-days より古い)")
     parser.add_argument("--keep-days", type=int, default=60,
-                        help="保持日数 (default=60)")
+                        help="odds_trifecta の保持日数 (default=60)")
+    parser.add_argument("--keep-raw-days", type=int, default=90,
+                        help="生データの保持日数 (default=90、--cleanup-raw 時のみ有効)")
+    parser.add_argument("--auto", action="store_true",
+                        help="DB 使用量 >=80%% で生データを自動クリーンアップ "
+                             "(BOATRACE_AUTO_CLEANUP=1 でも有効化)")
     parser.add_argument("--dry-run", action="store_true",
                         help="削除予測のみ、実際には削除しない")
     args = parser.parse_args()
+    # 環境変数で自動クリーンアップを有効化
+    auto_enabled = args.auto or os.environ.get("BOATRACE_AUTO_CLEANUP") == "1"
 
     db_url = os.getenv("DATABASE_URL", "").strip()
     is_pg = db_url.startswith(("postgres://", "postgresql://"))
@@ -199,13 +324,39 @@ def main():
 
     # クリーンアップ
     cleanup_result = None
-    if args.cleanup or args.dry_run:
+    if args.cleanup or (args.dry_run and not args.cleanup_raw):
         print(f"\n=== 古い odds_trifecta 削除 (keep_days={args.keep_days}, dry_run={args.dry_run}) ===")
         cleanup_result = cleanup_old_odds(conn, is_pg, args.keep_days, args.dry_run)
         print(f"  {cleanup_result}")
 
-    # system_status 更新
-    status, msg = update_system_status(conn, total_bytes, sizes, cleanup_result)
+    # 生データの aggressive クリーンアップ
+    raw_cleanup_result = None
+    # 自動トリガー: 使用量 >= 80% かつ --auto/環境変数有効
+    trigger_auto = (auto_enabled and total_mb >= 400)
+    if args.cleanup_raw or trigger_auto:
+        if trigger_auto and not args.cleanup_raw:
+            print(f"\n⚠ 自動クリーンアップ起動 (使用量 {total_mb:.0f} MB >= 400 MB)")
+        print(f"\n=== 古い生データ削除 (keep_raw_days={args.keep_raw_days}, dry_run={args.dry_run}) ===")
+        raw_cleanup_result = cleanup_old_raw_data(
+            conn, is_pg, args.keep_raw_days, args.dry_run
+        )
+        print(f"  {raw_cleanup_result}")
+        # 削除後のサイズ再取得 (現状把握のため)
+        if not args.dry_run and raw_cleanup_result.get("total_deleted", 0) > 0:
+            if is_pg:
+                total_bytes = total_size_postgres(conn)
+                total_mb = total_bytes / 1024 / 1024
+                print(f"  クリーンアップ後の DB 容量: {total_mb:.1f} MB")
+
+    # system_status 更新 (両方のクリーンアップ結果を統合)
+    merged_cleanup = {}
+    if cleanup_result:
+        merged_cleanup["odds_trifecta"] = cleanup_result
+    if raw_cleanup_result:
+        merged_cleanup["raw_data"] = raw_cleanup_result
+    status, msg = update_system_status(
+        conn, total_bytes, sizes, merged_cleanup if merged_cleanup else None
+    )
     print(f"\n[{status.upper()}] {msg}")
 
     conn.close()
