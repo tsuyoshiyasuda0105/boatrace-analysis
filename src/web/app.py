@@ -1605,7 +1605,46 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """
             in_500_1000 = mp_int is not None and 500 <= mp_int < 1000
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
+            # 企画レース観察 (2026-05-19 追加): 戸田 7R / 桐生 6R は B除外を無視して
+            # L4 帯 + A1 のみで観察対象とする (3 ヶ月実績で採用判断)
+            try:
+                _rn_int = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                _rn_int = 0
+            is_planned_obs = (
+                in_500_1000 and cls == 1 and (
+                    (stadium == 2 and _rn_int == 7) or   # 戸田 7R (検証 ROI 171.5%)
+                    (stadium == 1 and _rn_int == 6)      # 桐生 6R (検証 ROI 127.4%)
+                )
+            )
             if not (in_500_1000 and b_excluded):
+                # 通常の L4 universe から外れていても、企画レース観察対象なら
+                # 観察バッジ用 base dict を返す (採用ベースには加算しない)
+                if is_planned_obs:
+                    if stadium == 2:
+                        label = "🟢L4-戸田7R"
+                        recovery = 171.5
+                    else:
+                        label = "🟢L4-桐生6R"
+                        recovery = 127.4
+                    return {
+                        "level": "obs_planned",
+                        "label": label,
+                        "recovery": recovery,
+                        "bet": "3連単 1-2-3",
+                        "n": 106 if stadium == 2 else 166,
+                        "is_reference": True,    # 本日候補リスト除外
+                        "is_planned_obs": True,
+                        "is_obs_toda_7r": (stadium == 2),
+                        "is_obs_kiryu_6r": (stadium == 1),
+                        "rank": "base",
+                        "rank_label": "観察",
+                        "rank_emoji": "🟢",
+                        "natl_1": natl_1,
+                        "local_1": local_1,
+                        "tetsuban_score": 0,
+                        "tetsuban_label": "",
+                    }
                 return None
 
             # L4 戦略の対象: 1号艇A1 + SG/G1/G2/G3 + 本命500-1000 + B除外
@@ -1703,6 +1742,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["is_obs_r12"] = True
                 if grade == 5:
                     base["is_obs_gen_r12"] = True
+            # 企画レース観察 (2026-05-19 追加): 戸田7R / 桐生6R
+            if stadium == 1 and rn == 6:
+                base["is_obs_kiryu_6r"] = True
+            if stadium == 2 and rn == 7:
+                base["is_obs_toda_7r"] = True
 
             # ▼ 鉄板度スコア (backlog item 11): 条件が多く揃うほど高ROI 期待
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
@@ -1720,7 +1764,45 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if prob_first is None:
                 return None
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
+            # 企画レース観察 (2026-05-19): 戸田7R / 桐生6R は B除外を無視
+            try:
+                _rn_int = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                _rn_int = 0
+            is_planned_obs_eligible = cls == 1 and 0.65 <= prob_first < 0.85 and (
+                (stadium == 2 and _rn_int == 7) or
+                (stadium == 1 and _rn_int == 6)
+            )
             if not b_excluded:
+                if is_planned_obs_eligible:
+                    # 戸田 7R 等: 通常 L4 universe 外だが観察対象
+                    if stadium == 2:
+                        label = "🌅🟢朝L4-戸田7R"
+                        recovery = 171.5
+                    else:
+                        label = "🌅🟢朝L4-桐生6R"
+                        recovery = 127.4
+                    base = {
+                        "level": "morning_obs_planned",
+                        "label": label,
+                        "recovery": recovery,
+                        "bet": "3連単 1-2-3 (確定後)",
+                        "n": 106 if stadium == 2 else 166,
+                        "is_reference": True,
+                        "is_planned_obs": True,
+                        "is_obs_toda_7r": (stadium == 2),
+                        "is_obs_kiryu_6r": (stadium == 1),
+                        "is_morning": True,
+                        "prob_first": prob_first,
+                        "rank": "base",
+                        "rank_label": "観察",
+                        "rank_emoji": "🟢",
+                        "natl_1": natl_1,
+                        "local_1": local_1,
+                        "tetsuban_score": 0,
+                        "tetsuban_label": "",
+                    }
+                    return base
                 return None
             # 1号艇 A1 + prob_first 0.65-0.85 → 500-1000帯候補
             base = None
@@ -1811,6 +1893,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["is_obs_r12"] = True
                 if grade == 5:
                     base["is_obs_gen_r12"] = True
+            # 企画レース観察 (2026-05-19 追加): 戸田7R / 桐生6R
+            if stadium == 1 and rn == 6:
+                base["is_obs_kiryu_6r"] = True
+            if stadium == 2 and rn == 7:
+                base["is_obs_toda_7r"] = True
             # 鉄板度スコア (朝判定も同じロジック)
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base
@@ -2048,6 +2135,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
                 "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
                 "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
+                # 戸田 7R / 桐生 6R 企画レース観察 (2026-05-19 追加)
+                "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
+                "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
                 "grade_breakdown": {},
             }
 
@@ -2083,6 +2173,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
                 "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
                 "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
+                # 戸田 7R / 桐生 6R 企画レース観察 (2026-05-19)
+                "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
+                "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -2093,8 +2186,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # === L4 候補判定 (T-X オッズ優先、race_payouts MIN フォールバック) ===
             # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
             # 結果 (1-2-3 hit/miss) は L4 候補性に影響しない。
-            if stadium in EXCLUDE_B_VENUES:
-                continue
             if cls != 1:
                 continue
 
@@ -2127,6 +2218,26 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 rn = 0
             is_prime = rn in (11, 12)
             is_r12 = rn == 12
+
+            # === 企画レース観察集計 (2026-05-19 追加、B除外を無視) ===
+            # 戸田 7R (B除外内、検証 ROI 171.5%, n=106) と
+            # 桐生 6R (B除外外、検証 ROI 127.4%, n=166)。
+            # B除外 check の前に処理することで戸田も観察対象に含まれる。
+            if is_l4_base and is_done:
+                if stadium == 2 and rn == 7:
+                    d["toda_7r_tri_bets"] += 1
+                    if tri_hit:
+                        d["toda_7r_tri_hits"] += 1
+                        d["toda_7r_tri_pay"] += tri_pay_v
+                if stadium == 1 and rn == 6:
+                    d["kiryu_6r_tri_bets"] += 1
+                    if tri_hit:
+                        d["kiryu_6r_tri_hits"] += 1
+                        d["kiryu_6r_tri_pay"] += tri_pay_v
+
+            # B除外チェック: 通常 L4 集計のみ skip (上の企画観察は処理済)
+            if stadium in EXCLUDE_B_VENUES:
+                continue
 
             # === L4-prime / L4-12R 観察集計 (L4 universe 全体、確定済のみ) ===
             # 一般戦 + L4 本流 (SG/G1/G2/G3) 両方を含む、is_l4_base 通過のみ
@@ -2252,12 +2363,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 obs_cols = ("prime_tri_bets, prime_tri_hits, prime_tri_pay, "
                             "r12_tri_bets, r12_tri_hits, r12_tri_pay, "
                             "gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay")
+                planned_cols = ("toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay, "
+                                "kiryu_6r_tri_bets, kiryu_6r_tri_hits, kiryu_6r_tri_pay")
                 has_obs_cols = True
+                has_planned_cols = True
                 # 注: base_cols/obs_cols は上で定義したハードコード定数のみで構成
                 # (ユーザー入力非依存)。動的部分は SQL placeholder (?) のみで、
                 # SQL injection リスクなし。f-string を避け、通常文字列連結で記述
                 # することでリグレッションガード (将来 cols が変数化されても
                 # SQLi にならない)。
+                sql_full = (
+                    "SELECT " + base_cols + ", " + obs_cols + ", " + planned_cols
+                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                )
                 sql_with_obs = (
                     "SELECT " + base_cols + ", " + obs_cols
                     + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
@@ -2267,19 +2385,39 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
                 )
                 try:
-                    cur = conn.execute(sql_with_obs, (from_date, to_date))
+                    cur = conn.execute(sql_full, (from_date, to_date))
                     rows = cur.fetchall()
                 except Exception:
-                    # ALTER TABLE 未実行の DB → 旧カラムのみ
-                    has_obs_cols = False
+                    # planned_cols 未存在 (旧 DB)
+                    has_planned_cols = False
                     try:
                         conn.rollback()
                     except Exception:
                         pass
-                    cur = conn.execute(sql_legacy, (from_date, to_date))
-                    rows = cur.fetchall()
+                    try:
+                        cur = conn.execute(sql_with_obs, (from_date, to_date))
+                        rows = cur.fetchall()
+                    except Exception:
+                        has_obs_cols = False
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                        cur = conn.execute(sql_legacy, (from_date, to_date))
+                        rows = cur.fetchall()
                 for row in rows:
-                    if has_obs_cols:
+                    # planned_cols (戸田7R/桐生6R) → obs_cols (prime/r12) → 基本のみ
+                    if has_planned_cols:
+                        (sdate, n_tot, n_l4,
+                         wb, wh, wp, eb, eh, ep, tb, th, tp,
+                         c80b, c80h, c80p, prob, proh, prop,
+                         sgb, sgh, sgp,
+                         gtb, gth, gtp, gptb, gpth, gptp,
+                         gfb, gfh, gfp,
+                         prb, prh, prp, r12b, r12h, r12p,
+                         gr12b, gr12h, gr12p,
+                         td7b, td7h, td7p, kr6b, kr6h, kr6p) = row
+                    elif has_obs_cols:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
                          c80b, c80h, c80p, prob, proh, prop,
@@ -2288,6 +2426,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          gfb, gfh, gfp,
                          prb, prh, prp, r12b, r12h, r12p,
                          gr12b, gr12h, gr12p) = row
+                        td7b = td7h = td7p = 0
+                        kr6b = kr6h = kr6p = 0
                     else:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -2298,6 +2438,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         prb = prh = prp = 0
                         r12b = r12h = r12p = 0
                         gr12b = gr12h = gr12p = 0
+                        td7b = td7h = td7p = 0
+                        kr6b = kr6h = kr6p = 0
                     if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
                         # 既に raw データから集計済 → スキップ (raw が「正」)
                         continue
@@ -2320,6 +2462,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "prime_tri_bets": prb or 0, "prime_tri_hits": prh or 0, "prime_tri_pay": prp or 0,
                         "r12_tri_bets": r12b or 0, "r12_tri_hits": r12h or 0, "r12_tri_pay": r12p or 0,
                         "gen_r12_tri_bets": gr12b or 0, "gen_r12_tri_hits": gr12h or 0, "gen_r12_tri_pay": gr12p or 0,
+                        # 戸田 7R / 桐生 6R 企画レース観察 (2026-05-19)
+                        "toda_7r_tri_bets": td7b or 0, "toda_7r_tri_hits": td7h or 0, "toda_7r_tri_pay": td7p or 0,
+                        "kiryu_6r_tri_bets": kr6b or 0, "kiryu_6r_tri_hits": kr6h or 0, "kiryu_6r_tri_pay": kr6p or 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
@@ -2332,7 +2477,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         for d in by_date.values():
             for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
                         "gen_tri", "gen_plus_tri", "gen_f1_tri",
-                        "prime_tri", "r12_tri", "gen_r12_tri"):
+                        "prime_tri", "r12_tri", "gen_r12_tri",
+                        "toda_7r_tri", "kiryu_6r_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None

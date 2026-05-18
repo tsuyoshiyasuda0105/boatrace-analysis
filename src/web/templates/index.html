@@ -283,13 +283,23 @@
                   }
 
                   // 観察バッジ (3 ヶ月実績で採用判断、緑色)
-                  // L4-prime (11-12R) / L4-12R / 一般戦×12R
-                  if (sig.l4.is_obs_prime || sig.l4.is_obs_r12 || sig.l4.is_obs_gen_r12) {
+                  // L4-prime (11-12R) / L4-12R / 一般戦×12R / 戸田7R / 桐生6R
+                  if (sig.l4.is_obs_prime || sig.l4.is_obs_r12 || sig.l4.is_obs_gen_r12
+                      || sig.l4.is_obs_toda_7r || sig.l4.is_obs_kiryu_6r) {
                     const obs = document.createElement('span');
                     let cls = 'obs-badge';
                     let txt = '🟢観察';
                     let tt = '';
-                    if (sig.l4.is_obs_gen_r12) {
+                    // 企画レース観察 (2026-05-19 追加) を優先表示
+                    if (sig.l4.is_obs_toda_7r) {
+                      cls += ' obs-toda-7r';
+                      txt = '🟢戸田7R';
+                      tt = '観察: 戸田 7R 企画 (検証 ROI 171.5%, n=106、B除外バイパス)';
+                    } else if (sig.l4.is_obs_kiryu_6r) {
+                      cls += ' obs-kiryu-6r';
+                      txt = '🟢桐生6R';
+                      tt = '観察: 桐生 6R 企画 (検証 ROI 127.4%, n=166、A1率81%)';
+                    } else if (sig.l4.is_obs_gen_r12) {
                       cls += ' obs-gen-r12';
                       txt = '🟢一般×12R';
                       tt = '観察: 一般戦×12R (検証 ROI 189%, n=2100)';
