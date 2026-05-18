@@ -1363,14 +1363,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         course1_stats: dict[str, tuple[float, int]] = {}
 
         # T-X snapshot の優先度 (小さいほど優先)
+        # T-5min を最優先 (実運用での投票タイミング = レース 5 分前)
+        # T-1min は締切間際で人気化に揺れやすいため非優先
         _SNAP_PRIORITY = {
-            "T-1min": 1, "T-2min": 2, "T-3min": 3, "T-4min": 4,
-            "T-5min": 5, "T-15min": 6,
+            "T-5min": 1, "T-4min": 2, "T-3min": 3, "T-2min": 4,
+            "T-1min": 5, "T-15min": 6,
         }
 
         try:
             with db_connect() as conn:
                 # === 1. T-X 1-2-3 オッズ (IN 句 1 クエリ統合) ===
+                # backlog item: 「いずれかの T-X snapshot が L4 帯 (500-1000円) なら
+                # 候補」とする OR ロジックに変更 (2026-05-18 ユーザ指摘:
+                # 「T-5 で 500-1000、T-1 で 500-1000 のいずれでも資金投入対象」)。
+                # 旧実装: T-1min を最優先で 1 snapshot 採用 → 直前で人気化した
+                #         レース (T-5=¥510→T-1=¥470) が L4 から漏れる
+                # 新実装: 6 snapshot 中いずれかが L4 帯なら採用、その L4 帯 odds
+                #         を min_payout に。表示用は T-5min を優先。
                 try:
                     cur = conn.execute("""
                         SELECT r.race_id, o.snapshot_label, o.odds * 100 AS min_payout
@@ -1380,14 +1389,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                            AND o.combination = '1-2-3'
                            AND o.snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min')
                     """, (target_date,))
-                    # priority が小さい snapshot を優先採用
+                    # まず全 snapshot を race_id 別に収集
+                    rid_snaps: dict[str, list[tuple[str, int]]] = {}
                     for rid, label, mp in cur.fetchall():
                         if not mp:
                             continue
-                        prio = _SNAP_PRIORITY.get(label, 99)
-                        existing = results.get(rid)
-                        if existing is None or _SNAP_PRIORITY.get(existing["source"], 99) > prio:
-                            results[rid] = {"min_payout": int(mp), "source": label}
+                        rid_snaps.setdefault(rid, []).append((label, int(mp)))
+                    # 各 race について: L4 帯 (500-1000) snapshot を抽出し、
+                    # その中で T-5min を最優先 (実運用での投票タイミング)
+                    for rid, snaps in rid_snaps.items():
+                        l4_snaps = [(lbl, mp) for lbl, mp in snaps if 500 <= mp < 1000]
+                        if l4_snaps:
+                            # L4 帯にある snapshot のうち、表示用優先度に従って 1 つ選ぶ
+                            preferred = sorted(l4_snaps, key=lambda x: _SNAP_PRIORITY.get(x[0], 99))
+                            label, mp = preferred[0]
+                            results[rid] = {"min_payout": mp, "source": label,
+                                            "any_l4_in_window": True}
+                        else:
+                            # L4 帯 snapshot 無し → 従来通り T-1min 優先で記録 (非 L4)
+                            preferred = sorted(snaps, key=lambda x: _SNAP_PRIORITY.get(x[0], 99))
+                            label, mp = preferred[0]
+                            results[rid] = {"min_payout": mp, "source": label,
+                                            "any_l4_in_window": False}
                 except Exception as e:
                     err = str(e).lower()
                     if "snapshot_label" in err or "undefinedcolumn" in err or "column" in err:
@@ -1923,6 +1946,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e2.national_top_2_percent AS boat2_top2,
                     pp.min_pay AS fav_pay,
                     oo.min_odds AS fav_odds,
+                    oo.any_in_l4 AS any_in_l4,
+                    oo.l4_odds AS l4_odds,
                     pr.prob_first AS prob_first,
                     res1.boat_number AS w1,
                     res2.boat_number AS w2,
@@ -1936,7 +1961,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                 LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
                            WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
-                LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
+                LEFT JOIN (SELECT race_id,
+                                  MIN(odds) AS min_odds,
+                                  -- ユーザ指摘 (2026-05-18): 「いずれかの snapshot
+                                  -- で 500-1000 帯にあれば賭ける」運用を反映。
+                                  -- T-5 で ¥510, T-1 で ¥470 のように直前で人気化
+                                  -- したレースも L4 候補に含める (OR ロジック)。
+                                  MAX(CASE WHEN odds >= 5 AND odds < 10 THEN 1 ELSE 0 END) AS any_in_l4,
+                                  -- L4 帯にあったときの代表 odds (表示用、T-5min 優先)
+                                  COALESCE(
+                                      MAX(CASE WHEN snapshot_label='T-5min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-4min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-3min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-15min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-1min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='final' AND odds >= 5 AND odds < 10 THEN odds END)
+                                  ) AS l4_odds
+                             FROM odds_trifecta
                            WHERE combination='1-2-3'
                              AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
                            GROUP BY race_id) oo ON oo.race_id = r.race_id
@@ -1987,7 +2028,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         for row in cur:
             (rdate, stadium, grade, race_no, cls, natl_1, boat2_top2,
-             fav_pay, fav_odds, prob_first,
+             fav_pay, fav_odds, any_in_l4, l4_odds, prob_first,
              w1, w2, w3, win_pay, ex_pay, tri_pay, weather) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
@@ -2032,10 +2073,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if cls != 1:
                 continue
 
-            # is_l4_base 判定は grade 関係なく必要 (一般戦の分離追跡用)
+            # is_l4_base 判定: ユーザ指摘 (2026-05-18) で「いずれかの T-X snapshot
+            # が L4 帯にあれば候補」とする OR ロジックに変更。
+            # 旧: MIN(odds) ベース → 直前で人気化したレース (T-5=¥510→T-1=¥470) が
+            #     L4 から漏れる。
+            # 新: any_in_l4 フラグ優先 → T-X 6 snapshot 中いずれか 500-1000 なら ✓
             is_l4_base = False
-            if fav_odds is not None:
-                # T-X 1-2-3 オッズ ベース (朝賭けた時点の本命金額)
+            if any_in_l4 is not None and any_in_l4 == 1:
+                # 1 つ以上の snapshot が L4 帯にあった
+                is_l4_base = True
+            elif fav_odds is not None:
+                # フォールバック: any_in_l4 取得不能時 (旧 DB)、MIN(odds) ベース
                 fav_int = int(float(fav_odds) * 100)
                 if 500 <= fav_int < 1000:
                     is_l4_base = True

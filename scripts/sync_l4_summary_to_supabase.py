@@ -64,6 +64,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
                pv.start_timing_exhibition,
                pp.min_pay AS fav_pay,
                oo.min_odds AS fav_odds,
+               oo.any_in_l4 AS any_in_l4,
                res1.boat_number AS w1,
                res2.boat_number AS w2,
                res3.boat_number AS w3,
@@ -76,7 +77,12 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
         LEFT JOIN race_entries e2 ON e2.race_id=r.race_id AND e2.boat_number=2
         LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
         LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
-        LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
+        LEFT JOIN (SELECT race_id,
+                          MIN(odds) AS min_odds,
+                          -- backlog item: ユーザ指摘 (2026-05-18) で「いずれかの
+                          -- T-X snapshot が 5-10 帯にあれば L4 候補」に変更
+                          MAX(CASE WHEN odds >= 5 AND odds < 10 THEN 1 ELSE 0 END) AS any_in_l4
+                     FROM odds_trifecta
                    WHERE combination='1-2-3' AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
                    GROUP BY race_id) oo ON oo.race_id=r.race_id
         LEFT JOIN race_results res1 ON res1.race_id=r.race_id AND res1.finishing_position=1
@@ -91,9 +97,12 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
           AND r.race_grade_number IN (1, 2, 3, 4, 5)
           AND (pv.weather_number IS NULL OR pv.weather_number != 3)
           AND (
-              (oo.min_odds IS NOT NULL AND oo.min_odds >= 5 AND oo.min_odds < 10)
+              -- ユーザ指摘 (2026-05-18): 「いずれかの T-X snapshot で 5-10 帯」
+              -- を L4 候補とする OR ロジック
+              oo.any_in_l4 = 1
               OR
-              (oo.min_odds IS NULL AND pp.min_pay BETWEEN 500 AND 999)
+              -- T-X オッズ未取得 (古い日) はフォールバックで race_payouts MIN
+              (oo.any_in_l4 IS NULL AND pp.min_pay BETWEEN 500 AND 999)
           )
     """
     cur = src.execute(sql, (start, end, *EXCLUDE_B))
@@ -141,7 +150,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
     by_date: dict[str, dict] = {}
     for row in cur.fetchall():
         (rdate, rid, grade, race_no, racer, avg_st, age, natl_1, ex_st,
-         fav_pay, fav_odds, w1, w2, w3, wp, ep, tp, boat2_top2) = row
+         fav_pay, fav_odds, any_in_l4, w1, w2, w3, wp, ep, tp, boat2_top2) = row
         d = by_date.setdefault(rdate, {
             "date": rdate,
             "n_total": n_total_by_date.get(rdate, 0),

@@ -17,22 +17,29 @@ def _read(rel_path: str) -> str:
 # ===== バグ 1: Layer3 補完 SQL が F1 (grade=5) を除外していた =====
 
 
-def test_layer3_scope_includes_general_grade5_f1():
-    """src/collectors/result_scraper.py の L4 候補 SQL に「F1 一般戦」が含まれること。
+def test_layer3_scope_covers_all_l4_candidates():
+    """src/collectors/result_scraper.py の Layer 3 SQL が L4 採用 + 観察候補
+    全て (= A1 + B除外 + prob_first 0.65-0.85) を対象とすること。
 
-    バグ: 以前は `race_grade_number IN (1, 2, 3, 4)` のみで F1 (grade=5) が
-    Layer3 補完対象から除外されていた。
-    修正: `OR (race_grade_number = 5 AND national_top_1_percent >= 7 AND
-              boat2 national_top_2_percent >= 40)` を追加。
+    変遷:
+      v1 (旧): SG/G1/G2/G3 のみ (race_grade_number IN 1,2,3,4)
+        → 一般戦 F1 採用候補が漏れる
+      v2: F1 を追加 (race_grade_number = 5 AND n1≥7 AND b2≥40)
+        → 一般戦 観察候補 (gen_tri / prime / r12) が漏れる
+      v3 (現状): grade 制限撤廃、A1 + B除外 + prob 0.65-0.85 で全候補カバー
+        → 採用 (SG/G1/G2/G3/F1) + 観察 (gen_tri / prime / r12) 全て速報スクレイプ
     """
     src = _read("src/collectors/result_scraper.py")
-    # SQL 内に F1 条件が含まれていること
-    assert "race_grade_number = 5" in src, (
-        "Layer3 補完 SQL に grade=5 (F1) が含まれていません。\n"
-        "→ scrape_results_for_pending_races() の SQL を確認してください。"
+    # 必須フィルタ: A1 (class_number=1), B除外, prob_first 範囲
+    assert "class_number = 1" in src, (
+        "Layer3 SQL の A1 フィルタ (class_number=1) が見つかりません"
     )
-    assert "national_top_1_percent" in src
-    assert "national_top_2_percent" in src
+    assert "stadium_number NOT IN" in src, (
+        "Layer3 SQL の B除外フィルタ (stadium_number NOT IN ...) が見つかりません"
+    )
+    assert "prob_first BETWEEN" in src, (
+        "Layer3 SQL の prob_first 範囲フィルタ (BETWEEN 0.65 AND 0.85) が見つかりません"
+    )
 
 
 # ===== バグ 2: 日別詳細で F1 の単勝/2連単/3連単が反映されない =====
