@@ -80,9 +80,26 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
     races = programs_payload.get("programs", [])
     n_races = 0
     n_entries = 0
+    n_skipped_holiday = 0
 
     for race in races:
         rid = _race_id(race["race_date"], race["race_stadium_number"], race["race_number"])
+
+        # backlog item: 休催 (canceled/no racing) 検出
+        # Open API は休催会場でも race shell を返してくるが、全 boats が
+        # racer_number=None かつ race_closed_at=None の場合は実質「休催」を意味する。
+        # 空 race shell が残ると check_data_quality.py の entries_complete が
+        # 12 件エラー扱いになるため、シェル作成自体をスキップする。
+        boats = race.get("boats", [])
+        all_boats_null = all(b.get("racer_number") is None for b in boats) if boats else True
+        if all_boats_null and race.get("race_closed_at") is None:
+            logger.info(
+                "skip race shell (休催 detected): race_id=%s "
+                "(all boats null + closed_at null = stadium not racing this day)",
+                rid,
+            )
+            n_skipped_holiday += 1
+            continue
 
         conn.execute("""
             INSERT OR REPLACE INTO races
@@ -153,7 +170,8 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
             ))
             n_entries += 1
 
-    logger.info("Programs: %d レース / %d 出走 投入", n_races, n_entries)
+    logger.info("Programs: %d レース / %d 出走 投入 (休催 skip: %d)",
+                n_races, n_entries, n_skipped_holiday)
     return n_races
 
 
