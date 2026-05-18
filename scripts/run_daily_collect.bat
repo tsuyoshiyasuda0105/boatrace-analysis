@@ -22,6 +22,14 @@ REM    する必要があり、これが抜けていたため 5/17 以降のロ�
 REM    過去 5 日分を再計算して上書き (race_payouts 確定遅延に耐性)。
 .venv\Scripts\python.exe scripts\sync_l4_summary_to_supabase.py --recent-days 5 >> "%LOG%" 2>&1
 
+REM 3.5. 翌日 Layer 1 番組表を前夜に事前取得 (ユーザ要望 2026-05-19)
+REM      boatrace.jp 公式 LZH は前日 23:00 過ぎに公開される (boatraceopenapi
+REM      の Open API は当日 0:00 過ぎまで公開されない)。
+REM      これで翌日朝の morning_task より早く出走表/選手情報が揃う。
+REM      Supabase (Render UI) と Local SQLite (backtest) 両方に投入。
+.venv\Scripts\python.exe scripts\backfill_official.py --tomorrow >> "%LOG%" 2>&1
+.venv\Scripts\python.exe scripts\backfill_official.py --tomorrow --local >> "%LOG%" 2>&1
+
 REM 4. DB 容量監視 + 自動クリーンアップ (backlog item 12)
 REM    日次で Supabase 使用量チェック。--auto により 80% 超で自動的に
 REM    生データ (race_entries / race_payouts / ... の 90 日以前) を削除。

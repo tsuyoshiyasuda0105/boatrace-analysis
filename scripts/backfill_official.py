@@ -168,14 +168,37 @@ def process_day(target_date: date, conn: sqlite3.Connection,
 
 
 def main():
+    # --local フラグの場合は config import 前に DATABASE_URL を削除
+    # (config.py が load_dotenv で .env から DATABASE_URL を再注入してしまうため)
+    import os as _os
+    if "--local" in sys.argv:
+        _os.environ.pop("DATABASE_URL", None)
+        _os.environ["DATABASE_URL"] = ""
+
     p = argparse.ArgumentParser()
-    p.add_argument("--start", required=True, help="YYYY-MM-DD")
-    p.add_argument("--end", required=True, help="YYYY-MM-DD")
+    p.add_argument("--start", help="YYYY-MM-DD (--tomorrow 指定時は省略可)")
+    p.add_argument("--end", help="YYYY-MM-DD (--tomorrow 指定時は省略可)")
+    p.add_argument("--tomorrow", action="store_true",
+                   help="明日 1 日分のみ取得 (run_daily_collect.bat 23:30 用)。"
+                        "Open API は当日 0:00 過ぎまで公開されないため、Layer 1 "
+                        "LZH (boatrace.jp 公式) で前日 23:00 過ぎに取得する。")
+    p.add_argument("--local", action="store_true",
+                   help="DATABASE_URL を無視してローカル SQLite に投入する "
+                        "(daily_collect.py と同じ挙動)")
     p.add_argument("--skip-existing", action="store_true",
                    help="その日のresults数が十分なら処理スキップ")
     p.add_argument("--log-file", default=None)
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
+
+    # --tomorrow 指定時は start/end を翌日に自動設定
+    if args.tomorrow:
+        from datetime import timedelta as _td
+        tomorrow = date.today() + _td(days=1)
+        args.start = tomorrow.isoformat()
+        args.end = tomorrow.isoformat()
+    elif not (args.start and args.end):
+        p.error("--start と --end は必須 (または --tomorrow を指定)")
 
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if args.log_file:
