@@ -1855,6 +1855,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid,
                                   avg_st=avg_st, age=age, ex_st=ex_st,
                                   boat2_top2=boat2_top2, race_number=race_no_info)
+
+                # ユーザ指摘 (2026-05-18): 朝予測 (prob_first 0.65-0.85) で候補
+                # だったが確定オッズで L4 帯外になったレースも画面表示すべき。
+                # 例: 若松 20-12 (prob_first=0.65、T-5 オッズ¥1680 で本命想定外)。
+                # → L4 評価が None でも morning_l4 を計算し、「朝候補だった
+                #   が本命想定外」として表示 (淡青 reference バッジ)。
+                if l4 is None:
+                    prob_first = morning_pred.get(rid)
+                    morning_l4 = _evaluate_morning_l4(
+                        stadium, grade, cls, prob_first,
+                        natl_1, local_1, race_id=rid,
+                        avg_st=avg_st, age=age, ex_st=ex_st,
+                        boat2_top2=boat2_top2,
+                        race_number=race_no_info,
+                    )
+                    if morning_l4:
+                        # 朝候補だが確定オッズで L4 帯外: 観察用バッジに格下げ
+                        # ラベルには既に 🌅 が含まれているため追加しない。
+                        # 確定オッズ (本命円) を付記して「想定外」と示す。
+                        morning_l4["is_reference"] = True
+                        morning_l4["label"] = (
+                            f"{morning_l4['label']} (確定¥{mp})"
+                        )
+                        l4 = morning_l4
+
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
                 # バッジは出すが is_rain=True で本日候補リストから除外
