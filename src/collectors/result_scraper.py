@@ -62,12 +62,16 @@ def scrape_results_for_pending_races(target_date: date, conn,
     """指定日の「締切後だが race_payouts が無い」レースを抽出し、
     boatrace.jp から結果をスクレイプして upsert_results 互換ペイロードに梱包。
 
-    BAN リスク低減のため、デフォルトでは L4 [A1] 候補レースのみを対象とする
-    (~5-10件/日)。条件:
+    BAN リスク低減のため、デフォルトでは L4 [A1] 候補レースのみを対象とする。
+    backlog item 19/20 (2026-05-18): Layer 3 を「採用候補のみ」から
+    「採用 + 観察候補すべて」に拡張。当日の ROI ダッシュボード反映を高速化。
       - 1号艇 A1 (class_number = 1)
-      - SG/G1/G2/G3 のみ (grade_number IN 1,2,3,4、一般戦 5 は除外)
       - B 除外会場でない
       - 朝予測 prob_first 0.65-0.85 (≈ 本命500-1000円帯)
+      - grade 制限なし (SG/G1/G2/G3 + 一般戦すべて)
+        → 採用 (SG/G1/G2/G3 + F1) と観察 (一般戦 base, L4-prime/12R) が全て
+          含まれる。1日 ~15-25 件程度に抑えられるため BAN リスクは現状の倍程度。
+
     後で Open API のバッチ更新 (~2-3h 遅延) が来ると upsert_results の
     INSERT OR REPLACE で自動的に上書きされる (Open API の数値が「正」)。
     l4_only=False で従来通り全レース対象 (~150件/日).
@@ -75,21 +79,20 @@ def scrape_results_for_pending_races(target_date: date, conn,
     Args:
         target_date: 対象日
         conn: DB connection (psycopg or sqlite)
-        l4_only: True=L4 [A1] 候補のみ (default), False=全レース
+        l4_only: True=L4 候補 (採用+観察) のみ (default), False=全レース
     Returns:
         {"results": [race_dict, ...]} の dict (upsert_results に渡せる形)。
         該当無しなら {"results": []}.
     """
     from datetime import datetime, timedelta
 
-    # === L4 [A1] 候補レース ID 集合 (predictions ベース) ===
-    # SG/G1/G2/G3 (採用) + 一般戦 F1 採用ベース (一般×国1≥7×2号40) を対象。
-    # 一般戦は数が多いため、F1 条件を SQL に組み込んで絞り込む。
+    # === L4 候補レース ID 集合 (採用 + 観察を全て含む、predictions ベース) ===
+    # backlog item 19/20 修正: grade フィルタを撤廃し、A1 + B除外 + prob 0.65-0.85
+    # の全レースを対象 = SG/G1/G2/G3 採用、F1 採用、一般戦観察 (gen_tri)、
+    # L4-prime/12R 観察 全てカバー。
     l4_candidate_ids: set[str] = set()
     if l4_only:
         EXCLUDE_B = (2, 4, 7, 8, 10, 19, 21, 24)
-        F1_NATIONAL_TOP1_MIN = 7.0
-        F1_BOAT2_TOP2_MIN = 40.0
         try:
             placeholders = ",".join("?" for _ in EXCLUDE_B)
             cur = conn.execute(
@@ -97,26 +100,16 @@ def scrape_results_for_pending_races(target_date: date, conn,
                 SELECT r.race_id
                   FROM races r
                   JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-                  LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                   JOIN predictions p  ON p.race_id = r.race_id AND p.boat_number = 1
                  WHERE r.race_date = ?
                    AND r.stadium_number NOT IN ({placeholders})
                    AND e.class_number = 1
                    AND p.prob_first BETWEEN ? AND ?
-                   AND (
-                       r.race_grade_number IN (1, 2, 3, 4)
-                       OR (
-                           r.race_grade_number = 5
-                           AND e.national_top_1_percent >= ?
-                           AND e2.national_top_2_percent >= ?
-                       )
-                   )
                 """,
-                (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85,
-                 F1_NATIONAL_TOP1_MIN, F1_BOAT2_TOP2_MIN),
+                (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85),
             )
             l4_candidate_ids = {row[0] for row in cur.fetchall()}
-            logger.info("L4 [A1] candidates for %s: %d races", target_date, len(l4_candidate_ids))
+            logger.info("L4 候補 (採用+観察) for %s: %d races", target_date, len(l4_candidate_ids))
         except Exception as e:
             logger.warning("L4 candidate lookup failed (%s) → falling back to all races", e)
             l4_only = False  # safety net
