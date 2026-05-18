@@ -160,11 +160,15 @@ def main():
     p.add_argument("--date-from", type=str)
     p.add_argument("--date-to", type=str)
     p.add_argument("--today", action="store_true")
+    p.add_argument("--tomorrow", action="store_true",
+                   help="明日のみ予測キャッシュ (run_daily_collect.bat 23:30 用)")
     p.add_argument("--version", type=str, default="v0.8")
     p.add_argument("--sync", action="store_true", help="計算後 Supabase へ同期")
     args = p.parse_args()
 
-    if args.today:
+    if args.tomorrow:
+        targets = [(date.today() + timedelta(days=1)).isoformat()]
+    elif args.today:
         targets = [date.today().isoformat()]
     elif args.date:
         targets = [args.date]
@@ -173,7 +177,7 @@ def main():
         d2 = date.fromisoformat(args.date_to)
         targets = [(d1 + timedelta(days=i)).isoformat() for i in range((d2 - d1).days + 1)]
     else:
-        print("--date / --date-from + --date-to / --today を指定してください")
+        print("--date / --date-from + --date-to / --today / --tomorrow を指定してください")
         return
 
     total = 0

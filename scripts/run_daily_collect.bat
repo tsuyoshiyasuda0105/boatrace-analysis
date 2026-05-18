@@ -30,6 +30,12 @@ REM      Supabase (Render UI) と Local SQLite (backtest) 両方に投入。
 .venv\Scripts\python.exe scripts\backfill_official.py --tomorrow >> "%LOG%" 2>&1
 .venv\Scripts\python.exe scripts\backfill_official.py --tomorrow --local >> "%LOG%" 2>&1
 
+REM 3.6. 翌日 予測キャッシュ生成 → Supabase 同期
+REM      L4 候補バッジ (🌅L4参考 / 🌅L4 G++ 等) は predictions の prob_first
+REM      に依存。Layer 1 で出走表は揃うが、予測は別計算が必要。
+REM      これにより前夜から翌日の「お金を入れる候補レース」が画面表示される。
+.venv\Scripts\python.exe scripts\cache_predictions.py --tomorrow --sync >> "%LOG%" 2>&1
+
 REM 4. DB 容量監視 + 自動クリーンアップ (backlog item 12)
 REM    日次で Supabase 使用量チェック。--auto により 80% 超で自動的に
 REM    生データ (race_entries / race_payouts / ... の 90 日以前) を削除。
