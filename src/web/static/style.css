@@ -598,8 +598,44 @@ main h2 {
   color: var(--text-mute);
   font-variant-numeric: tabular-nums;
 }
+/* 終了済レース (締切過ぎ or 結果確定): グレーアウトして判別 */
+/* .is-closed = 締切過ぎ (JS で動的付与、結果取得前でも適用)
+   .done      = 結果確定済 (results_count > 0、Jinja で付与) */
+.race-item.is-closed a,
 .race-item.done a {
-  border-color: rgba(52, 232, 144, 0.25);
+  background: rgba(120, 120, 130, 0.10);
+  border-color: rgba(120, 120, 130, 0.25);
+  opacity: 0.55;
+  filter: grayscale(35%);
+}
+.race-item.is-closed .rno,
+.race-item.done .rno {
+  color: rgba(255, 255, 255, 0.55);
+}
+.race-item.is-closed .closed,
+.race-item.done .closed {
+  color: rgba(255, 255, 255, 0.40);
+}
+.race-item.is-closed a:hover,
+.race-item.done a:hover {
+  opacity: 0.85;
+  background: rgba(120, 120, 130, 0.18);
+  border-color: rgba(160, 160, 170, 0.45);
+  filter: grayscale(20%);
+}
+.race-item.done .badge {
+  background: rgba(120, 120, 130, 0.30);
+  color: rgba(220, 220, 220, 0.85);
+}
+/* L4 / 観察 / 鉄板度バッジは「グレー化対象外」 (情報として残す) */
+.race-item.is-closed .l4-badge,
+.race-item.is-closed .obs-badge,
+.race-item.is-closed .tetsuban-badge,
+.race-item.done .l4-badge,
+.race-item.done .obs-badge,
+.race-item.done .tetsuban-badge {
+  opacity: 1.0;
+  filter: none;
 }
 .race-item .badge {
   position: absolute;

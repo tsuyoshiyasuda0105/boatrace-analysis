@@ -595,6 +595,23 @@
         // market-signals 描画完了後に再度実行 (L4 バッジを取り込むため)
         setTimeout(updateNextRaces, 1500);
 
+        // 締切過ぎたレースに .is-closed クラスを動的付与 (グレーアウト表示)
+        // 結果確定 (.done) を待たず、締切時刻を超えた時点で即視覚的にグレー化
+        function updateClosedRaceTiles() {
+          const now = new Date();
+          document.querySelectorAll('.race-item').forEach(item => {
+            const closedAt = parseClosedAt(item.dataset.closedAt);
+            if (!closedAt) return;
+            if (closedAt < now) {
+              item.classList.add('is-closed');
+            } else {
+              item.classList.remove('is-closed');
+            }
+          });
+        }
+        updateClosedRaceTiles();
+        setInterval(updateClosedRaceTiles, 60000);  // 1 分毎に判定更新
+
         // 1-2-3 オッズ推移を初回 + 60秒毎に取得
         // (odds_scheduler が T-5..T-1 まで毎分書き込む。同じ周期で UI 側も追従)
         loadOdds123Timeline();
