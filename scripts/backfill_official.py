@@ -41,6 +41,15 @@ def upsert_b(conn: sqlite3.Connection, parsed: list[dict]) -> tuple[int, int]:
             race.get("race_title"), race.get("race_subtitle"),
             race.get("race_distance"), race.get("race_closed_at"),
         ))
+        # ユーザ要望 (2026-05-19): B file から抽出した「電話投票締切予定」
+        # を既存 race shell の NULL closed_at にだけ書き込む。
+        # Open API で既に closed_at が入っていれば触らない (Open API が「正」)。
+        if race.get("race_closed_at"):
+            conn.execute(
+                "UPDATE races SET race_closed_at = ? "
+                "WHERE race_id = ? AND race_closed_at IS NULL",
+                (race["race_closed_at"], race["race_id"]),
+            )
         n_races += 1
         for boat in race["boats"]:
             conn.execute("""

@@ -91,6 +91,26 @@ def _parse_boat_row(line: str) -> Optional[dict]:
 
 RACE_HEADER_RE = re.compile(r"^\s*(\d{1,2})R\b")
 
+# 締切時刻パターン: "電話投票締切予定１０：４０" 等
+CLOSED_AT_RE = re.compile(r"電話投票締切予定\s*(\d{1,2})\s*[:：]\s*(\d{2})")
+
+
+def _extract_closed_at(line: str, target_date: _date) -> Optional[str]:
+    """B file 行から "電話投票締切予定HH:MM" を抽出し ISO 形式に変換"""
+    norm = _to_half(line)
+    m = CLOSED_AT_RE.search(norm)
+    if not m:
+        return None
+    try:
+        hh = int(m.group(1))
+        mm = int(m.group(2))
+        if 0 <= hh < 24 and 0 <= mm < 60:
+            # 'YYYY-MM-DD HH:MM:00' 形式 (Open API と同じ)
+            return f"{target_date.isoformat()} {hh:02d}:{mm:02d}:00"
+    except (ValueError, TypeError):
+        pass
+    return None
+
 
 def _extract_race_no(line: str) -> Optional[int]:
     """' １Ｒ  一般...' '   1R  一般...' から 1 を取得"""
@@ -232,6 +252,9 @@ def parse_b_text(text: str, target_date: _date) -> list[dict]:
             # 距離 H1800m → 1800
             dist_m = re.search(r"[HＨ](\d{4})[mｍ]", title)
             distance = int(dist_m.group(1)) if dist_m else None
+            # backlog item: B file には "電話投票締切予定HH:MM" が含まれる
+            # ので race header 行から抽出 (ユーザ要望 2026-05-19)
+            closed_at = _extract_closed_at(line, target_date)
             cur_race = {
                 "race_id": f"{target_date.strftime('%Y%m%d')}-{cur_stadium:02d}-{rno:02d}",
                 "race_date": target_date.isoformat(),
@@ -241,7 +264,7 @@ def parse_b_text(text: str, target_date: _date) -> list[dict]:
                 "race_subtitle": None,
                 "race_grade_number": stadium_grade.get(cur_stadium),
                 "race_distance": distance,
-                "race_closed_at": None,
+                "race_closed_at": closed_at,
                 "boats": [],
             }
             continue
