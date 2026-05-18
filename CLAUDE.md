@@ -390,6 +390,26 @@ L4 判定ロジックを変更する時は **必ず以下全てを更新**:
 - ❌ **休催会場の空 race shell**: Open API が休催でも shell を返す → upsert_programs でスキップ
 - ❌ **MIN(odds) を使う**: 直前で人気化したレースが L4 から漏れる → ANY ロジックを使う
 - ❌ **race_payouts MIN を確定前判定に使う**: これは事後 (実現払戻)、prob_first / T-X odds が事前判定
+- ❌ **INSERT OR REPLACE で前夜 Layer 1 値を NULL 上書き**: 翌朝 Open API バッチが 23:30 投入の
+  race_closed_at を消す危険。`upsert_programs` は ON CONFLICT (race_id) DO UPDATE SET
+  col = COALESCE(EXCLUDED.col, races.col) を使うこと。
+
+### 前夜 → 翌朝 データフロー (要整合)
+
+```
+23:30 (前夜)  run_daily_collect.bat
+  ├─ backfill_official.py --tomorrow         Layer 1 LZH → races/race_entries
+  │  └─ B file から "電話投票締切予定HH:MM" 抽出 → race_closed_at 埋め込み
+  └─ cache_predictions.py --tomorrow --sync  → predictions 投入
+
+06:30 (翌朝)  run_morning_task.bat
+  ├─ daily_collect.py                        Open API → races/race_entries
+  │  └─ ★COALESCE upsert で前夜 Layer 1 値の NULL 上書きを防ぐ
+  └─ cache_predictions.py --today --sync     predictions 更新 (model_version 同じなら REPLACE 安全)
+```
+
+**重要**: 23:30 ⇄ 06:30 で同じ race_id に対する書込みが発生。COALESCE upsert により Layer 1 の closed_at が
+Open API の null で消えるのを防いでいる。回帰テスト: `test_upsert_programs_uses_coalesce`
 
 ### 回帰テスト
 `tests/test_source_regression.py` に各バグの static check 追加済。L4 判定ロジック変更時は **必ず実行**:

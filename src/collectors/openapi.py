@@ -101,12 +101,23 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
             n_skipped_holiday += 1
             continue
 
+        # ユーザ要望 (2026-05-19): 翌朝の Open API バッチが前夜の Layer 1
+        # 投入値を NULL で上書きしないように COALESCE upsert にする。
+        # 旧 INSERT OR REPLACE: Open API が NULL を返すとその列が消える
+        # 新 ON CONFLICT DO UPDATE SET col=COALESCE(EXCLUDED.col, races.col):
+        #   新値が NOT NULL なら採用、NULL なら既存値保持
         conn.execute("""
-            INSERT OR REPLACE INTO races
+            INSERT INTO races
                 (race_id, race_date, stadium_number, race_number,
                  race_grade_number, race_title, race_subtitle,
                  race_distance, race_closed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (race_id) DO UPDATE SET
+                race_grade_number = COALESCE(EXCLUDED.race_grade_number, races.race_grade_number),
+                race_title = COALESCE(EXCLUDED.race_title, races.race_title),
+                race_subtitle = COALESCE(EXCLUDED.race_subtitle, races.race_subtitle),
+                race_distance = COALESCE(EXCLUDED.race_distance, races.race_distance),
+                race_closed_at = COALESCE(EXCLUDED.race_closed_at, races.race_closed_at)
         """, (
             rid,
             race["race_date"],
@@ -131,8 +142,11 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
                     rid, boat.get("racer_boat_number"),
                 )
                 continue
+            # COALESCE upsert (前夜 Layer 1 投入値を NULL で上書きしない)
+            # Open API は通常全フィールド埋まっているが、稀に top_3 系が null
+            # の場合に Layer 1 値 (top_3 は null だが top_1/2 は値) を保持する。
             conn.execute("""
-                INSERT OR REPLACE INTO race_entries (
+                INSERT INTO race_entries (
                     race_id, boat_number, racer_number, racer_name,
                     class_number, branch_number, birthplace_number,
                     age, weight, flying_count, late_count, avg_start_timing,
@@ -142,6 +156,29 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
                     assigned_boat_number, assigned_boat_top_2_percent, assigned_boat_top_3_percent
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (race_id, boat_number) DO UPDATE SET
+                    racer_number = COALESCE(EXCLUDED.racer_number, race_entries.racer_number),
+                    racer_name = COALESCE(EXCLUDED.racer_name, race_entries.racer_name),
+                    class_number = COALESCE(EXCLUDED.class_number, race_entries.class_number),
+                    branch_number = COALESCE(EXCLUDED.branch_number, race_entries.branch_number),
+                    birthplace_number = COALESCE(EXCLUDED.birthplace_number, race_entries.birthplace_number),
+                    age = COALESCE(EXCLUDED.age, race_entries.age),
+                    weight = COALESCE(EXCLUDED.weight, race_entries.weight),
+                    flying_count = COALESCE(EXCLUDED.flying_count, race_entries.flying_count),
+                    late_count = COALESCE(EXCLUDED.late_count, race_entries.late_count),
+                    avg_start_timing = COALESCE(EXCLUDED.avg_start_timing, race_entries.avg_start_timing),
+                    national_top_1_percent = COALESCE(EXCLUDED.national_top_1_percent, race_entries.national_top_1_percent),
+                    national_top_2_percent = COALESCE(EXCLUDED.national_top_2_percent, race_entries.national_top_2_percent),
+                    national_top_3_percent = COALESCE(EXCLUDED.national_top_3_percent, race_entries.national_top_3_percent),
+                    local_top_1_percent = COALESCE(EXCLUDED.local_top_1_percent, race_entries.local_top_1_percent),
+                    local_top_2_percent = COALESCE(EXCLUDED.local_top_2_percent, race_entries.local_top_2_percent),
+                    local_top_3_percent = COALESCE(EXCLUDED.local_top_3_percent, race_entries.local_top_3_percent),
+                    assigned_motor_number = COALESCE(EXCLUDED.assigned_motor_number, race_entries.assigned_motor_number),
+                    assigned_motor_top_2_percent = COALESCE(EXCLUDED.assigned_motor_top_2_percent, race_entries.assigned_motor_top_2_percent),
+                    assigned_motor_top_3_percent = COALESCE(EXCLUDED.assigned_motor_top_3_percent, race_entries.assigned_motor_top_3_percent),
+                    assigned_boat_number = COALESCE(EXCLUDED.assigned_boat_number, race_entries.assigned_boat_number),
+                    assigned_boat_top_2_percent = COALESCE(EXCLUDED.assigned_boat_top_2_percent, race_entries.assigned_boat_top_2_percent),
+                    assigned_boat_top_3_percent = COALESCE(EXCLUDED.assigned_boat_top_3_percent, race_entries.assigned_boat_top_3_percent)
             """, (
                 rid,
                 boat["racer_boat_number"],

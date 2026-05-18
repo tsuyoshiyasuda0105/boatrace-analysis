@@ -133,7 +133,49 @@ def test_healthz_does_not_return_503_on_data_quality():
         )
 
 
-# ===== バグ 5: subscriber alert_types が「採用戦略」を全カバーしていない =====
+# ===== バグ 5: 翌朝バッチが前夜 Layer 1 投入値を NULL で上書き =====
+
+
+def test_upsert_programs_uses_coalesce():
+    """src/collectors/openapi.py の upsert_programs が COALESCE upsert で
+    既存値を NULL 上書きから守ること (ユーザ要望 2026-05-19)。
+
+    バグ: 旧 INSERT OR REPLACE は Open API が NULL を返すと既存列を NULL に
+    する。前夜 23:30 に Layer 1 で投入した race_closed_at が翌朝 6:30 の
+    Open API バッチで消える危険がある。
+    修正: ON CONFLICT (race_id) DO UPDATE SET col = COALESCE(EXCLUDED.col,
+    races.col) で新値が NOT NULL のときだけ採用。
+    """
+    src = _read("src/collectors/openapi.py")
+    # races テーブルへの COALESCE
+    assert "COALESCE(EXCLUDED.race_closed_at, races.race_closed_at)" in src, (
+        "upsert_programs (races) が COALESCE upsert を使っていません。\n"
+        "→ ON CONFLICT (race_id) DO UPDATE SET race_closed_at = "
+        "COALESCE(EXCLUDED.race_closed_at, races.race_closed_at) を確認。"
+    )
+    # race_entries テーブルへの COALESCE
+    assert "COALESCE(EXCLUDED.national_top_1_percent, race_entries.national_top_1_percent)" in src, (
+        "upsert_programs (race_entries) が COALESCE upsert を使っていません。"
+    )
+
+
+def test_b_parser_extracts_closed_at():
+    """src/parsers/official_b.py が「電話投票締切予定」を抽出すること。
+
+    バグ: 旧パーサは race_closed_at = None を常に返していた。Layer 1 B file
+    には HH:MM 形式で締切時刻が含まれており、前夜表示のために抽出が必要。
+    """
+    src = _read("src/parsers/official_b.py")
+    assert "_extract_closed_at" in src, (
+        "official_b.py に _extract_closed_at 関数がありません。\n"
+        "→ 翌日の race_closed_at が NULL のまま画面に「あと何分」表示できません。"
+    )
+    assert "電話投票締切予定" in src, (
+        "official_b.py に「電話投票締切予定」パターンが見つかりません。"
+    )
+
+
+# ===== バグ 6: subscriber alert_types が「採用戦略」を全カバーしていない =====
 
 
 def test_subscriber_default_alert_types_includes_f1():
