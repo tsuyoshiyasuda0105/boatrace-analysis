@@ -215,12 +215,31 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
                         d["gen_plus_tri_hits"] += 1
                         d["gen_plus_tri_pay"] += tri_pay_v
                 # ★F1 採用: 国1%≥7 + 2号 top_2≥40
+                # F1 は本日候補リスト・メール通知の対象 (= 採用ベース) なので、
+                # n_l4 / tri_bets / win_bets / exa_bets にも加算する。
+                # これは _l4_daily_stats (app.py L2103-2126) と同じ整合性を保つ。
+                # backlog item 19: 旧実装は F1 を gen_f1_tri_* にしか入れず、
+                # 古い日の Render 表示が summary 値と乖離 (5/14 など F1 ROI が消失)
                 if n1 >= 7.0 and b2 >= 40.0:
                     d["gen_f1_tri_bets"] += 1
                     if tri_hit:
                         d["gen_f1_tri_hits"] += 1
                         d["gen_f1_tri_pay"] += tri_pay_v
-            continue  # 一般戦は L4 本流集計に含めない
+                    # ★ F1 は採用カテゴリ → メイン集計にも統合
+                    d["n_l4"] += 1
+                    d["win_bets"] += 1
+                    d["exa_bets"] += 1
+                    d["tri_bets"] += 1
+                    if w1 == 1:
+                        d["win_hits"] += 1
+                        d["win_pay"] += (wp or 0)
+                    if w1 == 1 and w2 == 2:
+                        d["exa_hits"] += 1
+                        d["exa_pay"] += (ep or 0)
+                    if tri_hit:
+                        d["tri_hits"] += 1
+                        d["tri_pay"] += tri_pay_v
+            continue  # 一般戦の他 (非F1) は L4 本流集計に含めない
 
         # === L4 本流 (grade IN 1,2,3,4) ===
         d["n_l4"] += 1
