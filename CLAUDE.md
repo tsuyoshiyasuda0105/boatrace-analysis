@@ -349,6 +349,56 @@ schtasks /Create /TN "BoatraceOddsScheduler" /SC MINUTE /MO 1 `
 
 ---
 
+## L4 戦略 実装パターン (2026-05-18 確立)
+
+ユーザフィードバックで確立された **L4 候補判定ルール**。今後の改修も同じ哲学で。
+
+### 判定優先順位 (高→低)
+1. **確定 T-X オッズ (T-5min 優先)**: `any_in_l4` フラグ — 6 snapshot (T-5/T-4/T-3/T-2/T-1/T-15) の **いずれか** で 5-10 帯にあれば L4 候補
+2. **朝予測フォールバック**: 確定オッズが L4 帯外でも `prob_first ∈ [0.65, 0.85)` なら "🌅L4参考 (確定¥XXX)" として観察表示
+3. **race_payouts MIN (古いデータ用)**: T-X オッズ未取得時のフォールバック (~2024 以前)
+
+### 採用 vs 観察の境界
+- **採用** (本日候補リスト + メール通知対象):
+  - SG/G1/G2/G3 + 1号艇A1 + B除外 + 本命500-1000
+  - 一般戦 F1 (= 上記 + 国1%≥7 ∧ 2号艇 国2連率≥40)
+- **観察** (淡青 `L4参考` バッジ、リスト・メール除外):
+  - 一般戦 (F1 非該当)、朝候補だが確定オッズ L4 外、雨レース
+
+### 「画面表示すべき」の原則
+ユーザの直感に従い、**情報量を最大化**:
+- 「あるオッズスナップショットで L4 帯」→ 表示
+- 「朝予測で候補だったが確定で外れた」→ 表示 (¥XXX 付記)
+- 「直前で人気化したレース」→ 表示 (T-5 で L4 帯だったため)
+
+### 整合性を保つべきファイル群
+
+L4 判定ロジックを変更する時は **必ず以下全てを更新**:
+
+| ファイル | 役割 |
+|---------|------|
+| `src/web/app.py::market_signals_for_date` | 画面表示 (リアルタイム) |
+| `src/web/app.py::_l4_daily_stats` | ROI 日別集計 (Render UI) |
+| `scripts/sync_l4_summary_to_supabase.py::compute_summary` | Supabase 集計テーブル (cron で更新) |
+| `src/collectors/result_scraper.py::scrape_results_for_pending_races` | Layer 3 速報スクレイプ対象選別 |
+| `src/notifications/send_l4_alerts.py` | メール通知判定 |
+| `src/evaluation/l4_strategy.py` | 単一情報源 (B除外/グレード別 ROI 定数) |
+
+### バグパターン (回避)
+- ❌ **片方だけ更新**: app.py 直しても sync 直し忘れると古い日が誤表示
+- ❌ **F1 を main 集計から漏らす**: F1 は採用なので tri_bets/win_bets/exa_bets/n_l4 全てに加算
+- ❌ **休催会場の空 race shell**: Open API が休催でも shell を返す → upsert_programs でスキップ
+- ❌ **MIN(odds) を使う**: 直前で人気化したレースが L4 から漏れる → ANY ロジックを使う
+- ❌ **race_payouts MIN を確定前判定に使う**: これは事後 (実現払戻)、prob_first / T-X odds が事前判定
+
+### 回帰テスト
+`tests/test_source_regression.py` に各バグの static check 追加済。L4 判定ロジック変更時は **必ず実行**:
+```
+.venv/Scripts/python.exe -m pytest tests/ -q
+```
+
+---
+
 ## 哲学的要点
 
 **競艇市場で +EV を取るのは難しい**。控除率 25%、市場流動性高い、参加者多い。世界的に見ても安定 +EV システムは稀。
