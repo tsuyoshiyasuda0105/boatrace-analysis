@@ -225,8 +225,7 @@
     <script>
       (function() {
         const targetDate = "{{ target_date }}";
-        // 注: EV+ 自動判定 UI はユーザ指示 (backlog.md item 3) により削除済。
-        // 関連 API: /api/ev-races (server 側は残しているが本画面からは呼ばない)
+        // 注: EV+ 自動判定 UI/API はユーザ指示 (backlog.md item 3) により削除済。
 
         // 市場非効率ベース +EV シグナル (誰でも閲覧可)
         async function loadMarketSignals() {
@@ -278,7 +277,7 @@
                   if (sig.l4.tetsuban_score && sig.l4.tetsuban_score >= 3) {
                     const tb = document.createElement('span');
                     tb.className = `tetsuban-badge tetsuban-${sig.l4.tetsuban_score}`;
-                    tb.textContent = sig.l4.tetsuban_label || `💎×${sig.l4.tetsuban_score}`;
+                    tb.textContent = sig.l4.tetsuban_label || `★×${sig.l4.tetsuban_score}`;
                     tb.title = `鉄板度スコア ${sig.l4.tetsuban_score}/5 - 条件が多く揃ったレース。資金多めに賭ける候補`;
                     item.appendChild(tb);
                   }
@@ -309,7 +308,7 @@
                   }
                 }
 
-                // ユーザ指示 (backlog.md item 9): ダイヤモンドマーク (💎 +27%
+                // ユーザ指示 (backlog.md item 9): ダイヤモンドマーク (+27%
                 // / 本命 ¥N) は完全削除。L4 バッジに必要情報が含まれているため
                 // 重複表示を廃止。market-badge の生成は行わない。
               } catch (perRaceErr) {
@@ -411,7 +410,7 @@
             u.el.querySelectorAll('.l4-badge').forEach(b => {
               badges.push(b.outerHTML);
             });
-            // 💎 市場バッジ廃止 (backlog item 9)
+            // 市場バッジ廃止 (backlog item 9: ダイヤモンドマーク完全削除)
             const badgesHtml = badges.length
               ? `<div class="next-card-badges">${badges.join('')}</div>`
               : '';
@@ -548,7 +547,7 @@
             const tbEl = u.el.querySelector('.tetsuban-badge');
             const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
                                 .find(c => c.startsWith('tetsuban-'))?.replace('tetsuban-','') || '0', 10) : 0;
-            const tbStars = tbScore >= 3 ? '💎'.repeat(tbScore) + ` ${tbScore}★ ` : '';
+            const tbStars = tbScore >= 3 ? `${tbScore}★ ` : '';
             let rankLabel = l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
                           : l4Cls === 'l4-rank-plus' ? '🥈 L4+'
                           : '⭐ L4';

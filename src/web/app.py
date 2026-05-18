@@ -27,7 +27,7 @@ os.environ.setdefault("TZ", "Asia/Tokyo")
 if hasattr(time, "tzset"):
     time.tzset()
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 
 import config
 from src.db.connection import connect as db_connect
@@ -316,23 +316,23 @@ def _detect_market_inefficiency(
                 "favorite_trifecta_payout": min_payout,
                 "tier": "ultra_confident",
                 "expected_roi": 0.1845,
-                "title": "💎 超本命レース",
-                "msg": f"三連単1番人気 ¥{min_payout:,} (<500円帯)。2026検証 ROI +18.45% (CI +15.3%~+21.7%, P>0=100%)",
+                "title": "超本命レース",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (<500円帯)",
             }
         elif min_payout < 1000:
             result = {
                 "favorite_trifecta_payout": min_payout,
                 "tier": "confident",
                 "expected_roi": 0.2741,
-                "title": "💎💎 完全 +EV レース",
-                "msg": f"三連単1番人気 ¥{min_payout:,} (500-1000円帯)。2026検証 ROI +27.41% (CI +25.3%~+29.6%, P>0=100%)。3連単1-2-3で +44.23%",
+                "title": "完全 +EV レース",
+                "msg": f"三連単1番人気 ¥{min_payout:,} (500-1000円帯)",
             }
         elif min_payout < 2000:
             result = {
                 "favorite_trifecta_payout": min_payout,
                 "tier": "moderate",
                 "expected_roi": 0.1792,
-                "title": "💎 やや本命 +EV",
+                "title": "やや本命 +EV",
                 "msg": f"三連単1番人気 ¥{min_payout:,} (1k-2k帯)。2026検証 ROI +17.92%",
             }
         elif min_payout < 5000:
@@ -818,9 +818,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
         # ログインや会員ページは絶対キャッシュさせない (機密情報漏洩防止)
         path = request.path if request else ""
-        if path in ("/login", "/pro/login", "/logout") or "/api/" in path:
+        if path in ("/login", "/logout") or "/api/" in path:
             # API は短時間 private キャッシュ (ブラウザのみ、CDN 経由しない)
-            if "/api/" in path and not path.startswith(("/login", "/pro/")):
+            if "/api/" in path and not path.startswith("/login"):
                 # 過去日 API は長く、今日のは短く
                 try:
                     req_date = request.args.get("date", "")
@@ -864,7 +864,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # (ZAP の robots.txt パッシブスキャンで CSP/HSTS が無いと言われないように)
     @app.route("/robots.txt")
     def robots_txt():
-        return ("User-agent: *\nDisallow: /login\nDisallow: /pro/\nDisallow: /api/\n",
+        return ("User-agent: *\nDisallow: /login\nDisallow: /api/\n",
                 200, {"Content-Type": "text/plain"})
 
     app.jinja_env.auto_reload = True
@@ -1014,24 +1014,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except FileNotFoundError as e:
             logger.warning("model not loaded: %s. UI will show error until model is trained.", e)
 
-        # ===== 起動後バックグラウンドで今日の三連単キャッシュを温める =====
-        # /api/ev-races の初回コールド ~40 秒のレイテンシ (predict_date + per_winner)
-        # を完全に隠す。ユーザの初回アクセスは即キャッシュヒット。
-        # 失敗してもアプリは動く (例: モデル未ロード時)。
-        if predictor.artifact is not None:
-            import threading as _th
-            def _bg_warm_today():
-                try:
-                    today = date.today().isoformat()
-                    logger.info("[bg-warm] starting trifecta cache warm for %s", today)
-                    t0 = time.time()
-                    predictor.predict_date(today)
-                    n = predictor.warm_trifecta_cache(today)
-                    logger.info("[bg-warm] completed %s: %d races in %.1fs",
-                                today, n, time.time()-t0)
-                except Exception as e:
-                    logger.warning("[bg-warm] failed: %s", e)
-            _th.Thread(target=_bg_warm_today, daemon=True, name="bg-warm-today").start()
+        # backlog item 3: /api/ev-races 廃止に伴い、起動後 bg-warm も削除済
+        # (warm_trifecta_cache は per-race の race_detail で必要時のみ実行)
 
     @app.route("/healthz")
     def healthz():
@@ -1101,7 +1085,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/races")
     @login_required
-    @cached(ttl=60, past_ttl=3600)  # 今日60秒/過去日1時間キャッシュ
+    @cached(ttl=120, past_ttl=3600)  # 今日120秒/過去日1時間キャッシュ
+    # backlog item 11: 旧 60s → 120s。レース予定の動的要素は results_count のみで
+    # poll_results が 5分間隔なので 120s 化しても表示遅延ほぼ無し。Cloudflare
+    # CDN ヒット率が大幅向上し、ユーザ体感速度が改善する。
     def races():
         target_date = request.args.get("date") or date.today().isoformat()
         races_list = _races_for_date(target_date)
@@ -1126,14 +1113,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             stadium_groups[sn]["races"].append(r)
 
-        return render_template(
+        resp = make_response(render_template(
             "index.html",
             target_date=target_date,
             today_iso=date.today().isoformat(),
             stadium_groups=sorted(stadium_groups.values(),
                                   key=lambda g: g["stadium_number"]),
             empty=False,
+        ))
+        # backlog item 11: market-signals を HTTP/2 preload で先取り
+        # ブラウザは HTML パース前に /api/market-signals に並列リクエストを
+        # 飛ばすので、JS が呼ぶ頃には返答がキャッシュ済 → 体感速度向上
+        resp.headers["Link"] = (
+            f'</api/market-signals?date={target_date}>; rel=preload; as=fetch; crossorigin'
         )
+        return resp
 
     @app.route("/race/<race_id>")
     @login_required
@@ -1262,94 +1256,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "warning": "no model prediction or no odds snapshot"})
         return jsonify(r)
 
-    @app.route("/api/ev-races")
-    @member_only_api
-    @cached(ttl=180)  # 3分キャッシュ (EV計算は重い)
-    def ev_races_for_date():
-        """指定日の EV+ レース一覧 (UI のマーク表示用)
-        snapshot: T-15min / T-5min / T-1min / final / auto (利用可能な最良に自動選択)
-        """
-        target_date = request.args.get("date") or date.today().isoformat()
-        snapshot = request.args.get("snapshot", "auto")
-        thr = float(request.args.get("ev", "0.0"))
-
-        # auto モード: T-15min → T-5min → T-1min → final の順で利用可能なものを選択
-        if snapshot == "auto":
-            with db_connect() as conn:
-                avail = {row[0] for row in conn.execute("""
-                    SELECT DISTINCT o.snapshot_label FROM odds_trifecta o
-                      JOIN races r ON o.race_id=r.race_id
-                     WHERE r.race_date=? AND o.snapshot_label IS NOT NULL
-                """, (target_date,)).fetchall()}
-            for fb in ["T-15min", "T-5min", "T-1min", "final"]:
-                if fb in avail:
-                    snapshot = fb
-                    break
-            if snapshot == "auto":
-                snapshot = "final"
-
-        # オッズと race_id を **1 クエリで** 取得 (旧実装は race_id 取得→各レースで再クエリ)
-        with db_connect() as conn:
-            rows = conn.execute("""
-                SELECT o.race_id, o.combination, o.odds
-                  FROM odds_trifecta o
-                  JOIN races r ON o.race_id = r.race_id
-                 WHERE r.race_date = ? AND o.snapshot_label = ?
-            """, (target_date, snapshot)).fetchall()
-        odds_by_race: dict[str, dict[str, float]] = {}
-        for rid, comb, o in rows:
-            try:
-                odds_by_race.setdefault(rid, {})[comb] = float(o)
-            except (TypeError, ValueError):
-                continue
-        race_ids = list(odds_by_race.keys())
-
-        # 三連単 joint 確率を **1 回の batch** で全レース計算 → 個別 cache に格納
-        # (個別 find_value_bets_for_race は cache を hit するだけになる)
-        try:
-            predictor.warm_trifecta_cache(target_date)
-        except Exception as e:
-            logger.warning("warm_trifecta_cache failed: %s", e)
-
-        # decay_table も 1 回だけロード (各レース計算で使い回し)
-        try:
-            from src.analysis.decay_factor import load_decay_table
-            decay_table_shared = load_decay_table()
-        except Exception:
-            decay_table_shared = None
-
-        ev_marks: dict[str, dict] = {}
-        n_positive = 0
-        for rid in race_ids:
-            try:
-                # 全レースの best EV を取得 (ev_threshold=-1.0 で全候補)
-                # min_prob=0.05 で長尾過大評価を除外
-                r = predictor.find_value_bets_for_race(
-                    target_date, rid,
-                    snapshot_label=snapshot,
-                    ev_threshold=-1.0,
-                    min_prob=0.05,
-                    max_odds=100.0,
-                    odds_lookup=odds_by_race.get(rid),
-                    decay_table=decay_table_shared,
-                )
-                if r and r.get("value_bets"):
-                    best = r["value_bets"][0]
-                    ev_marks[rid] = {
-                        "best_ev": best["adj_ev"],
-                        "best_combo": best["combination"],
-                        "best_prob": best["prob"],
-                        "best_odds": best["odds"],
-                        "n": sum(1 for v in r["value_bets"] if v["adj_ev"] >= thr),
-                    }
-                    if best["adj_ev"] >= thr:
-                        n_positive += 1
-            except Exception as e:
-                logger.warning("ev-races failed for %s: %s", rid, e)
-        return jsonify({"date": target_date, "snapshot": snapshot,
-                        "n_marked": n_positive,
-                        "n_total": len(ev_marks),
-                        "ev_threshold": thr, "marks": ev_marks})
+    # backlog item 3: /api/ev-races は EV+ 自動判定機能と一緒に廃止
+    # (本画面では呼ばれず、L4 戦略マーク = market-signals に一本化)
 
     @app.route("/api/race/<race_id>")
     @member_only_api
@@ -1617,7 +1525,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
               + L4++ (国1%≥7 + 地1%≥9)
               + 1号艇国1%≥7 のみ満たす L4+ (中間)
 
-            戻り値: (score 1-6, label) — 鉄板度マーク "💎×N" + 評価名
+            戻り値: (score 1-6, label) — 鉄板度マーク "★×N" + 評価名
             """
             level = base.get("level", "")
             is_high_grade = level in ("SG", "G1", "G2")
@@ -1648,17 +1556,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             elif score >= 2: stars = 2
             else: stars = 1
 
-            # ラベル
+            # ラベル (backlog item 9: ダイヤモンド廃止 → ★×N 表記に統一)
             if stars >= 5:
-                lab = f"💎💎💎💎💎 鉄板 {stars}★"
+                lab = f"鉄板 {stars}★"
             elif stars == 4:
-                lab = f"💎💎💎💎 強推 {stars}★"
+                lab = f"強推 {stars}★"
             elif stars == 3:
-                lab = f"💎💎💎 推奨 {stars}★"
+                lab = f"推奨 {stars}★"
             elif stars == 2:
-                lab = f"💎💎 候補 {stars}★"
+                lab = f"候補 {stars}★"
             else:
-                lab = f"💎 通常 {stars}★"
+                lab = f"通常 {stars}★"
             return stars, lab
 
         def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
@@ -1704,8 +1612,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         b2 = 0.0
                     if n1 >= 7.0 and b2 >= 40.0:
                         # ★ F1 該当: 採用候補 (本日候補/メール対象)
+                        # backlog item 5: バッジ名は短く (旧 "🌟L4 G++ (一般×国1%≥7×2号40)")
                         base = {"level": "general_f1",
-                                "label": "🌟L4 G++ (一般×国1%≥7×2号40)",
+                                "label": "🌟L4 G++",
                                 "recovery": 204.0,
                                 "bet": "3連単 1-2-3",
                                 "n": 1189,
@@ -1817,8 +1726,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         b2 = 0.0
                     if n1 >= 7.0 and b2 >= 40.0:
                         # ★ F1 該当: 朝候補として配信対象
+                        # backlog item 5: 短縮 (旧 "🌅🌟朝L4 G++ 候補")
                         base = {"level": "morning_general_f1",
-                                "label": "🌅🌟朝L4 G++ 候補",
+                                "label": "🌅L4 G++",
                                 "recovery": 204.0,
                                 "n": 1189,
                                 "is_reference": False,
@@ -1907,11 +1817,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 mp = data["min_payout"]
                 src = data["source"]
                 if mp < 500:
-                    tier, expected_roi, title = "ultra_confident", 0.1845, "💎 超本命"
+                    tier, expected_roi, title = "ultra_confident", 0.1845, "超本命"
                 elif mp < 1000:
-                    tier, expected_roi, title = "confident", 0.2741, "💎💎 完全+EV"
+                    tier, expected_roi, title = "confident", 0.2741, "完全+EV"
                 elif mp < 2000:
-                    tier, expected_roi, title = "moderate", 0.1792, "💎 やや本命"
+                    tier, expected_roi, title = "moderate", 0.1792, "やや本命"
                 elif mp < 5000:
                     tier, expected_roi, title = "split", -0.0859, "拮抗"
                 elif mp < 10000:

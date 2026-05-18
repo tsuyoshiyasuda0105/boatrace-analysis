@@ -25,4 +25,9 @@ REM tasks and local backtests have consistent data)
 REM 3. データ品質再チェック (hourly でリトライ取得後の状態を更新)
 .venv\Scripts\python.exe scripts\check_data_quality.py >> "%LOG%" 2>&1
 
+REM 4. l4_daily_summary 増分同期 (backlog item 19: 日中の確定レースを反映)
+REM    過去 3 日分を再計算 → 当日途中で確定したレースが ROI ダッシュボードに
+REM    反映される。daily_collect.bat (23:30) との二重実行を兼ねるため安全。
+.venv\Scripts\python.exe scripts\sync_l4_summary_to_supabase.py --recent-days 3 >> "%LOG%" 2>&1
+
 echo === Hourly task finished %date% %time% === >> "%LOG%"

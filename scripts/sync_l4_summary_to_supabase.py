@@ -266,8 +266,19 @@ def main():
     p.add_argument("--end", type=str, default=datetime.now().strftime("%Y-%m-%d"))
     p.add_argument("--src", choices=["supabase", "local"], default="supabase",
                    help="集計データ源 (default=supabase)")
+    p.add_argument("--recent-days", type=int, default=None,
+                   help="直近 N 日のみ集計 (--start/--end をオーバーライド)。"
+                        "run_daily_collect.bat や run_hourly_task.bat から日次/時間別の"
+                        "増分同期に使用 (backlog item 19)")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
+
+    # --recent-days 指定時は --start/--end をオーバーライド
+    if args.recent_days is not None and args.recent_days > 0:
+        from datetime import timedelta as _td
+        today_dt = datetime.now().date()
+        args.end = today_dt.strftime("%Y-%m-%d")
+        args.start = (today_dt - _td(days=args.recent_days - 1)).strftime("%Y-%m-%d")
 
     db_url = os.getenv("DATABASE_URL", "").strip()
     if not db_url or not db_url.startswith(("postgres://", "postgresql://")):
