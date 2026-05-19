@@ -351,6 +351,11 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
   mid_132_tri_bets  INTEGER,
   mid_132_tri_hits  INTEGER,
   mid_132_tri_pay   INTEGER,
+  -- L4-Mid Tier A (上記 + 3号艇国1% ≥ 7%): ROI 175.5% n=1312 CI[151,200] Tier 1認定
+  -- 2026-05-19 追加。3号艇が中堅A1+の時に絞り、より高 ROI で観察
+  mid_132_tier_a_tri_bets INTEGER,
+  mid_132_tier_a_tri_hits INTEGER,
+  mid_132_tier_a_tri_pay  INTEGER,
   updated_at        TEXT NOT NULL
 );
 

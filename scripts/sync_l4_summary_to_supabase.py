@@ -176,6 +176,8 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
             # L4-Mid + 1-3-2 観察 (2026-05-19): オッズ 10-20倍帯
             "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
+            # L4-Mid Tier A: 3号艇国1%≥7 絞り (ROI 175.5%, Tier 1)
+            "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
         })
         is_done = (w1 is not None and w2 is not None and w3 is not None)
         tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
@@ -337,9 +339,11 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
                oo.any_in_l4_mid AS any_in_l4_mid,
                pp.min_pay AS fav_pay,
                res1.boat_number AS w1, res2.boat_number AS w2, res3.boat_number AS w3,
-               pt_132.payout AS pay_132
+               pt_132.payout AS pay_132,
+               e3.national_top_1_percent AS boat3_natl_1
         FROM races r
         JOIN race_entries e ON r.race_id=e.race_id AND e.boat_number=1
+        LEFT JOIN race_entries e3 ON e3.race_id=r.race_id AND e3.boat_number=3
         LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
         LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
         LEFT JOIN (SELECT race_id,
@@ -361,7 +365,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
           )
     """
     for row in src.execute(sql_mid, (start, end, *EXCLUDE_B)).fetchall():
-        rdate, rid, any_mid, fav_pay, w1, w2, w3, p132 = row
+        rdate, rid, any_mid, fav_pay, w1, w2, w3, p132, boat3_natl_1 = row
         if w1 is None or w2 is None or w3 is None: continue
         hit_132 = (w1==1 and w2==3 and w3==2)
         p132_v = (p132 or 0) if hit_132 else 0
@@ -384,11 +388,22 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
             "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
             "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
+            "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
         })
         d["mid_132_tri_bets"] += 1
         if hit_132:
             d["mid_132_tri_hits"] += 1
             d["mid_132_tri_pay"] += p132_v
+        # Tier A: 3号艇 国1% ≥ 7
+        try:
+            b3_n1 = float(boat3_natl_1) if boat3_natl_1 is not None else 0.0
+        except (TypeError, ValueError):
+            b3_n1 = 0.0
+        if b3_n1 >= 7.0:
+            d["mid_132_tier_a_tri_bets"] += 1
+            if hit_132:
+                d["mid_132_tier_a_tri_hits"] += 1
+                d["mid_132_tier_a_tri_pay"] += p132_v
 
     # === 戸田 7R 観察 (B除外内、別パス) ===
     for row in src.execute(sql_toda, (start, end)).fetchall():
@@ -499,8 +514,9 @@ def main():
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
                kiryu_6r_tri_bets, kiryu_6r_tri_hits, kiryu_6r_tri_pay,
                mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
+               mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (date) DO UPDATE SET
               n_total = EXCLUDED.n_total,
               n_l4    = EXCLUDED.n_l4,
@@ -537,6 +553,9 @@ def main():
               mid_132_tri_bets = EXCLUDED.mid_132_tri_bets,
               mid_132_tri_hits = EXCLUDED.mid_132_tri_hits,
               mid_132_tri_pay  = EXCLUDED.mid_132_tri_pay,
+              mid_132_tier_a_tri_bets = EXCLUDED.mid_132_tier_a_tri_bets,
+              mid_132_tier_a_tri_hits = EXCLUDED.mid_132_tier_a_tri_hits,
+              mid_132_tier_a_tri_pay  = EXCLUDED.mid_132_tier_a_tri_pay,
               updated_at = EXCLUDED.updated_at
         """
     else:
@@ -558,8 +577,9 @@ def main():
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
                kiryu_6r_tri_bets, kiryu_6r_tri_hits, kiryu_6r_tri_pay,
                mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
+               mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     for s in summaries:
         batch.append((
@@ -579,6 +599,7 @@ def main():
             s.get("toda_7r_tri_bets",0), s.get("toda_7r_tri_hits",0), s.get("toda_7r_tri_pay",0),
             s.get("kiryu_6r_tri_bets",0), s.get("kiryu_6r_tri_hits",0), s.get("kiryu_6r_tri_pay",0),
             s.get("mid_132_tri_bets",0), s.get("mid_132_tri_hits",0), s.get("mid_132_tri_pay",0),
+            s.get("mid_132_tier_a_tri_bets",0), s.get("mid_132_tier_a_tri_hits",0), s.get("mid_132_tier_a_tri_pay",0),
             now_iso,
         ))
         if len(batch) >= BATCH:

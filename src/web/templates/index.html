@@ -286,16 +286,21 @@
                   // L4-prime (11-12R) / L4-12R / 一般戦×12R / 戸田7R / 桐生6R / L4-Mid
                   if (sig.l4.is_obs_prime || sig.l4.is_obs_r12 || sig.l4.is_obs_gen_r12
                       || sig.l4.is_obs_toda_7r || sig.l4.is_obs_kiryu_6r
-                      || sig.l4.is_obs_mid_132) {
+                      || sig.l4.is_obs_mid_132 || sig.l4.is_obs_mid_132_tier_a) {
                     const obs = document.createElement('span');
                     let cls = 'obs-badge';
                     let txt = '🟢観察';
                     let tt = '';
                     // L4-Mid 1-3-2 (オッズ 10-20倍、別 universe) を最優先表示
-                    if (sig.l4.is_obs_mid_132) {
+                    // Tier A (3号艇国1%≥7): 検証 ROI 175.5% Tier 1 認定 → 強調
+                    if (sig.l4.is_obs_mid_132_tier_a) {
+                      cls += ' obs-mid-132 obs-mid-132-tier-a';
+                      txt = '🟦+L4-Mid+ 1-3-2 (Tier A)';
+                      tt = '観察 ★Tier A: 3号艇 国1%≥7 絞り (検証 ROI 175.5%, n=1312, CI[151,200], Tier 1認定)';
+                    } else if (sig.l4.is_obs_mid_132) {
                       cls += ' obs-mid-132';
                       txt = '🟦L4-Mid 1-3-2';
-                      tt = '観察: L4-Mid (オッズ10-20倍、1-3-2単点、検証 ROI 148.1%, n=10,690)';
+                      tt = '観察 Tier B: L4-Mid 全体 (オッズ10-20倍、1-3-2単点、検証 ROI 148.1%, n=10,690)';
                     } else if (sig.l4.is_obs_toda_7r) {
                       cls += ' obs-toda-7r';
                       txt = '🟢戸田7R';
