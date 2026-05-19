@@ -174,6 +174,8 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             # 戸田 7R / 桐生 6R 企画レース観察 (2026-05-19 追加)
             "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
             "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
+            # L4-Mid + 1-3-2 観察 (2026-05-19): オッズ 10-20倍帯
+            "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
         })
         is_done = (w1 is not None and w2 is not None and w3 is not None)
         tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
@@ -328,6 +330,67 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
               OR (oo.any_in_l4 IS NULL AND pp.min_pay BETWEEN 500 AND 999)
           )
     """
+    # === L4-Mid 1-3-2 観察 (2026-05-19): オッズ 10-20倍帯、別 universe ===
+    # 検証 ROI 148.1% (n=10,690), B除外 + A1, 1-3-2 単点
+    sql_mid = f"""
+        SELECT r.race_date, r.race_id,
+               oo.any_in_l4_mid AS any_in_l4_mid,
+               pp.min_pay AS fav_pay,
+               res1.boat_number AS w1, res2.boat_number AS w2, res3.boat_number AS w3,
+               pt_132.payout AS pay_132
+        FROM races r
+        JOIN race_entries e ON r.race_id=e.race_id AND e.boat_number=1
+        LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
+        LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
+        LEFT JOIN (SELECT race_id,
+                          MAX(CASE WHEN odds >= 10 AND odds < 20 THEN 1 ELSE 0 END) AS any_in_l4_mid
+                   FROM odds_trifecta
+                   WHERE combination='1-2-3' AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
+                   GROUP BY race_id) oo ON oo.race_id=r.race_id
+        LEFT JOIN race_results res1 ON res1.race_id=r.race_id AND res1.finishing_position=1
+        LEFT JOIN race_results res2 ON res2.race_id=r.race_id AND res2.finishing_position=2
+        LEFT JOIN race_results res3 ON res3.race_id=r.race_id AND res3.finishing_position=3
+        LEFT JOIN race_payouts pt_132 ON pt_132.race_id=r.race_id AND pt_132.bet_type='trifecta' AND pt_132.combination='1-3-2'
+        WHERE r.race_date BETWEEN ? AND ?
+          AND e.class_number = 1
+          AND r.stadium_number NOT IN ({placeholders})
+          AND (pv.weather_number IS NULL OR pv.weather_number != 3)
+          AND (
+              oo.any_in_l4_mid = 1
+              OR (oo.any_in_l4_mid IS NULL AND pp.min_pay BETWEEN 1000 AND 1999)
+          )
+    """
+    for row in src.execute(sql_mid, (start, end, *EXCLUDE_B)).fetchall():
+        rdate, rid, any_mid, fav_pay, w1, w2, w3, p132 = row
+        if w1 is None or w2 is None or w3 is None: continue
+        hit_132 = (w1==1 and w2==3 and w3==2)
+        p132_v = (p132 or 0) if hit_132 else 0
+        d = by_date.setdefault(rdate, {
+            "date": rdate,
+            "n_total": n_total_by_date.get(rdate, 0),
+            "n_l4": 0,
+            "win_bets": 0, "win_hits": 0, "win_pay": 0,
+            "exa_bets": 0, "exa_hits": 0, "exa_pay": 0,
+            "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
+            "c80_bets": 0, "c80_hits": 0, "c80_pay": 0,
+            "pro_bets": 0, "pro_hits": 0, "pro_pay": 0,
+            "sgg12_bets": 0, "sgg12_hits": 0, "sgg12_pay": 0,
+            "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
+            "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
+            "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
+            "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
+            "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
+            "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
+            "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
+            "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
+            "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
+        })
+        d["mid_132_tri_bets"] += 1
+        if hit_132:
+            d["mid_132_tri_hits"] += 1
+            d["mid_132_tri_pay"] += p132_v
+
+    # === 戸田 7R 観察 (B除外内、別パス) ===
     for row in src.execute(sql_toda, (start, end)).fetchall():
         rdate, rid, any_l4, fav_pay, fav_odds, w1, w2, w3, tp = row
         if w1 is None or w2 is None or w3 is None: continue
@@ -435,8 +498,9 @@ def main():
                gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay,
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
                kiryu_6r_tri_bets, kiryu_6r_tri_hits, kiryu_6r_tri_pay,
+               mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (date) DO UPDATE SET
               n_total = EXCLUDED.n_total,
               n_l4    = EXCLUDED.n_l4,
@@ -470,6 +534,9 @@ def main():
               kiryu_6r_tri_bets = EXCLUDED.kiryu_6r_tri_bets,
               kiryu_6r_tri_hits = EXCLUDED.kiryu_6r_tri_hits,
               kiryu_6r_tri_pay  = EXCLUDED.kiryu_6r_tri_pay,
+              mid_132_tri_bets = EXCLUDED.mid_132_tri_bets,
+              mid_132_tri_hits = EXCLUDED.mid_132_tri_hits,
+              mid_132_tri_pay  = EXCLUDED.mid_132_tri_pay,
               updated_at = EXCLUDED.updated_at
         """
     else:
@@ -490,8 +557,9 @@ def main():
                gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay,
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
                kiryu_6r_tri_bets, kiryu_6r_tri_hits, kiryu_6r_tri_pay,
+               mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     for s in summaries:
         batch.append((
@@ -510,6 +578,7 @@ def main():
             s.get("gen_r12_tri_bets",0), s.get("gen_r12_tri_hits",0), s.get("gen_r12_tri_pay",0),
             s.get("toda_7r_tri_bets",0), s.get("toda_7r_tri_hits",0), s.get("toda_7r_tri_pay",0),
             s.get("kiryu_6r_tri_bets",0), s.get("kiryu_6r_tri_hits",0), s.get("kiryu_6r_tri_pay",0),
+            s.get("mid_132_tri_bets",0), s.get("mid_132_tri_hits",0), s.get("mid_132_tri_pay",0),
             now_iso,
         ))
         if len(batch) >= BATCH:

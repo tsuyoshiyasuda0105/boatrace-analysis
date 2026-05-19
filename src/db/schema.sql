@@ -346,6 +346,11 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
   kiryu_6r_tri_bets INTEGER,
   kiryu_6r_tri_hits INTEGER,
   kiryu_6r_tri_pay  INTEGER,
+  -- L4-Mid + 1-3-2 観察 (オッズ 10-20倍帯で 1-3-2 単点、検証 ROI 148.1% n=10690)
+  -- 2026-05-19 追加。L4 帯と異なる universe、1号艇1着率93%+で 1-3-2 が最頻出
+  mid_132_tri_bets  INTEGER,
+  mid_132_tri_hits  INTEGER,
+  mid_132_tri_pay   INTEGER,
   updated_at        TEXT NOT NULL
 );
 

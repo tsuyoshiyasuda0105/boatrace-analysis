@@ -2314,6 +2314,18 @@ main h2 {
 .obs-badge.obs-gen-r12 {
   background: linear-gradient(135deg, #16a34a, #15803d);
 }
+.obs-badge.obs-toda-7r {
+  background: linear-gradient(135deg, #0d9488, #0f766e);  /* teal */
+}
+.obs-badge.obs-kiryu-6r {
+  background: linear-gradient(135deg, #14b8a6, #0d9488);  /* teal-light */
+}
+/* L4-Mid 1-3-2 観察 (オッズ 10-20倍帯) — 青系で他観察と区別 */
+.obs-badge.obs-mid-132 {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);  /* blue */
+  border: 1px solid rgba(37, 99, 235, 0.8);
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.45);
+}
 @media (max-width: 480px) {
   .sub-strategy-header.observe-only-header {
     font-size: 13px;
