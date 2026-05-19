@@ -515,14 +515,22 @@
           items.forEach(el => {
             const l4 = el.querySelector('.l4-badge');
             if (!l4) return;
-            // 参考バッジ (一般戦) はお金を入れる候補リストには出さない
-            if (l4.classList.contains('l4-reference')) return;
+            const isRef = l4.classList.contains('l4-reference');
+            const labelText = l4.textContent || '';
+            // ユーザ仕様 (2026-05-19): 朝候補だったがオッズが L4 帯から外れた
+            // レースは「データを消さずグレーアウトで残す」。
+            // morning_l4 fallback (app.py L1879-1890) は label に「(確定¥XXX)」
+            // を付与するため、その有無で判定。
+            const isOddsMismatch = isRef && /\(確定¥/.test(labelText);
+            // その他の reference (観察カテゴリ / 一般戦 F1 不該当 / 雨除外 等)
+            // は従来通り候補リストから除外。
+            if (isRef && !isOddsMismatch) return;
             const closedAt = parseClosedAt(el.dataset.closedAt);
             if (!closedAt) return;
             const minutesUntil = (closedAt - now) / 60000;
             const isDone = parseInt(el.dataset.resultsCount || '0') > 0;
             const isClosed = minutesUntil < 0 || isDone;
-            picks.push({ el, closedAt, minutesUntil, isClosed, isDone });
+            picks.push({ el, closedAt, minutesUntil, isClosed, isDone, isOddsMismatch });
           });
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
@@ -570,30 +578,38 @@
             const racerMatch = l4Title.match(/1号艇\s*([^|]+)/);
             const racerInfo = racerMatch ? racerMatch[1].trim() : '';
             const l4Type = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
-            // ステータス: 締切済 / 次 / それ以外
+            // ステータス: 締切済 / 次 / オッズ外れ / それ以外
             let rowClass = 'todays-pick-row';
             if (u.isClosed) rowClass += ' is-closed';
             else if (idx === firstUpcomingIdx) rowClass += ' is-next';
+            // ユーザ仕様: 朝候補だが確定オッズが L4 帯外 → グレーアウト
+            if (u.isOddsMismatch) rowClass += ' is-odds-mismatch';
             const tr = document.createElement('tr');
             tr.className = rowClass;
             const oddsCellHtml = renderOdds123Cell(rid);
+            // 投票ボタンの活性化: オッズ外れの場合は非活性 (賭けないため)
+            const voteBtnHtml = u.isOddsMismatch
+              ? `<span class="vote-btn vote-btn-disabled" title="確定オッズが L4 帯外 (¥1000+)。投票非推奨">🚫 圏外</span>`
+              : `<a href="https://ib.mbrace.or.jp/" target="_blank" rel="noopener noreferrer"
+                    class="vote-btn" title="テレボートを新タブで開く (${stadium} ${rno}R を選択してください)">
+                   🎫 投票
+                 </a>`;
+            // ランクラベル: オッズ外れマーカー
+            const finalRankLabel = u.isOddsMismatch
+              ? `${rankLabel} <span class="mismatch-tag" title="朝予測候補だが確定オッズが L4 帯から外れたレース">⚠ 圏外</span>`
+              : rankLabel;
             tr.innerHTML = `
               <td class="pick-idx">${idx + 1}</td>
               <td class="pick-time">${hh}:${mm}</td>
               <td class="pick-til">${tilStr}</td>
-              <td class="pick-rank">${rankLabel}</td>
+              <td class="pick-rank">${finalRankLabel}</td>
               <td class="pick-place"><strong>${stadium}</strong> ${rno}R</td>
               <td class="pick-type">${l4Type}</td>
               <td class="pick-racer">${racerInfo}</td>
               <td class="pick-rec"><strong>${recovery}</strong></td>
               <td class="pick-odds">${oddsCellHtml}</td>
               <td class="pick-link"><a href="/race/${rid}">詳細→</a></td>
-              <td class="pick-vote">
-                <a href="https://ib.mbrace.or.jp/" target="_blank" rel="noopener noreferrer"
-                   class="vote-btn" title="テレボートを新タブで開く (${stadium} ${rno}R を選択してください)">
-                  🎫 投票
-                </a>
-              </td>
+              <td class="pick-vote">${voteBtnHtml}</td>
             `;
             tbody.appendChild(tr);
           });
