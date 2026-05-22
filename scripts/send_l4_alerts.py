@@ -211,8 +211,9 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
         # のためメール対象外。Web UI / 朝メール / ROI集計と整合。
         if weather == 3:
             continue
-        # ♀ 案A 女性除外: レース内に女性 1 名でもいると ROI 低下のため対象外。
-        if n_female and n_female > 0:
+        # ♀ 案A 女性除外: 混合レース (n_female=1-5) は ROI 低下のため対象外。
+        # 全女子戦 (n_female=6: Venus) は ROI 175.5% で採用。
+        if n_female and 0 < n_female < 6:
             continue
         # final (確定後) のレースは「事後判定」なので通知しない
         if payout_src == "final":
@@ -365,8 +366,9 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
         if weather == 3:
             continue
 
-        # ♀ 案A 女性除外: レース内に女性 1 名でもいると ROI 低下のため対象外。
-        if n_female and n_female > 0:
+        # ♀ 案A 女性除外: 混合レース (n_female=1-5) は ROI 低下のため対象外。
+        # 全女子戦 (n_female=6: Venus) は ROI 175.5% で採用。
+        if n_female and 0 < n_female < 6:
             continue
 
         # 一般戦は F1 条件を満たす場合のみ通す

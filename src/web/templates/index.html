@@ -155,7 +155,8 @@
       <p class="todays-picks-hint">
         ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 🌟 L4 G++ (一般戦 F1) を時刻順に表示<br>
         <small>条件: 1号艇A1 + 本命500-1000円 + B除外会場 + SG/G1/G2/G3 または 一般戦 F1 (国1%≥7 ∧ 2号 国2連率≥40)<br>
-        右側「1-2-3 推移」: <b>2h</b>=締切2時間前オッズ / T-5〜T-1=締切直前推移 (青=20倍未満, 赤=上昇, 黄=下落, 末尾%=2h→直近の変動)</small>
+        右側「1-2-3 推移」: <b>2h</b>=締切2時間前オッズ / T-5〜T-1=締切直前推移 (青=20倍未満, 赤=上昇, 黄=下落, 末尾%=2h→直近の変動)<br>
+        🌸=Venus全女子戦 (ROI 175.5%)、🟦=T-A L4-Mid Tier A (ROI 175.5%)</small>
       </p>
       <table class="todays-picks-table">
         <thead>
@@ -307,7 +308,11 @@
                     let tt = '';
                     // L4-Mid 1-3-2 (オッズ 10-20倍、別 universe) を最優先表示
                     // Tier A (3号艇国1%≥7): 検証 ROI 175.5% Tier 1 認定 → 強調
-                    if (sig.l4.is_obs_mid_132_tier_a) {
+                    if (sig.l4.is_venus) {
+                      cls += ' l4-venus';
+                      txt = '🌸 Venus L4';
+                      tt = `全女子戦 Venus L4 (検証 ROI 175.5%, n=502, A1+B除外+雨除外)`;
+                    } else if (sig.l4.is_obs_mid_132_tier_a) {
                       cls += ' obs-mid-132 obs-mid-132-tier-a';
                       txt = '🟦 T-A L4-Mid 1-3-2';
                       tt = '観察 ★Tier A (T-A): 3号艇 国1%≥7 絞り (検証 ROI 175.5%, n=1312, CI[151,200], Tier 1認定)';

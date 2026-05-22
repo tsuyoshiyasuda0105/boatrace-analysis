@@ -2032,11 +2032,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     l4["is_reference"] = True  # 候補リスト除外フラグ
                     l4["label"] = f"☔{l4['label']} (雨除外)"
 
-                # ♀ 案A: レース内女性ありは L4 候補から除外 (グレーアウト表示)
+                # 🌸 Venus パス: 全女子戦 (n_female=6) は案A除外対象外 (ROI 175.5%, n=502)
+                # 混合レース (n_female=1-5) は ROI 低下のため案A除外継続。
                 if l4 and is_female_present:
-                    l4["is_female_present"] = True
-                    l4["is_reference"] = True
-                    l4["label"] = f"♀{l4['label']} (女性{n_female}名除外)"
+                    if n_female == 6:
+                        l4["is_venus"] = True
+                        l4["is_female_present"] = True
+                        l4["label"] = "🌸 Venus L4"
+                        l4["recovery"] = 175.5
+                        l4["n"] = 502
+                        l4["bet"] = "3連単 1-2-3"
+                        l4["level"] = "venus_l4"
+                    else:
+                        l4["is_female_present"] = True
+                        l4["is_reference"] = True
+                        l4["label"] = f"♀{l4['label']} (女性{n_female}名除外)"
 
                 signals.append({
                     "race_id": rid,
@@ -2067,9 +2077,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         morning_l4["is_reference"] = True
                         morning_l4["label"] = f"☔{morning_l4['label']} (雨除外)"
                     if is_female_present:
-                        morning_l4["is_female_present"] = True
-                        morning_l4["is_reference"] = True
-                        morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
+                        if n_female == 6:
+                            morning_l4["is_venus"] = True
+                            morning_l4["is_female_present"] = True
+                            morning_l4["label"] = "🌸 Venus L4"
+                            morning_l4["recovery"] = 175.5
+                            morning_l4["n"] = 502
+                        else:
+                            morning_l4["is_female_present"] = True
+                            morning_l4["is_reference"] = True
+                            morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
                     signals.append({
                         "race_id": rid,
                         "tier": "morning_l4",
@@ -2225,6 +2242,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
                 # Tier A: 3号艇国1%≥7 絞り (ROI 175.5% Tier 1)
                 "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
+                "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
                 "grade_breakdown": {},
             }
 
@@ -2237,10 +2255,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # weather NULL (= 直前情報未取得 or 古いデータ) は通常通り集計。
             if weather == 3:
                 continue
-            # ♀ 案A 女性除外フィルタ: レース内に女性が 1 名でもいると ROI が
-            # 大幅低下 (男性のみ 180.8% / 女性混入 134-158%) のため集計対象外。
-            # n_female NULL/0 (= racers 未取得 or 全員男性) は通常通り集計。
-            if n_female and n_female > 0:
+            # ♀ 案A + 🌸 Venus フィルタ
+            # 混合レース (n_female=1-5) は ROI 低下のため除外。
+            # 全女子戦 (n_female=6: Venus) は ROI 175.5% で独立集計。
+            is_venus_race = (n_female == 6)
+            if n_female and 0 < n_female < 6:
                 continue
             d = by_date.setdefault(rdate, {
                 "date": rdate,
@@ -2272,6 +2291,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
                 # Tier A: 3号艇国1%≥7 絞り (ROI 175.5%, n=1312, CI[151,200], Tier 1)
                 "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
+                "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -2322,6 +2342,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # L4-Mid 1-3-2 ヒット判定
             hit_132 = is_done and (w1 == 1 and w2 == 3 and w3 == 2)
             pay_132_v = (pay_132 or 0) if hit_132 else 0
+            # 🌸 Venus 専用集計 (全女子戦: A1+B除外+雨除外済、独立 universe)
+            if is_venus_race and is_l4_base and cls == 1 and stadium not in EXCLUDE_B_VENUES:
+                if is_done:
+                    d["venus_tri_bets"] += 1
+                    if tri_hit:
+                        d["venus_tri_hits"] += 1
+                        d["venus_tri_pay"] += tri_pay_v
+                continue  # Venus は通常 L4 集計に含めない
 
             # === L4-Mid + 1-3-2 観察集計 (B除外チェック前、stadium B除外でも cls/odds 条件は満たす)
             # backlog: L4 universe と異なる universe (10-20倍帯)

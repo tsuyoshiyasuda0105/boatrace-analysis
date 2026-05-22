@@ -3182,6 +3182,12 @@ main h2 {
 }
 .pick-odds-trend120.is-up { background: rgba(255,128,128,0.2); color: #ff9d9d; }
 .pick-odds-trend120.is-down { background: rgba(52,211,153,0.2); color: #6ee7b7; }
+/* Venus (全女子戦) バッジ */
+.l4-badge.l4-venus {
+  background: rgba(236, 72, 153, 0.18);
+  color: #f9a8d4;
+  border: 1px solid rgba(236, 72, 153, 0.45);
+}
 .todays-picks-table tbody tr.is-closed .pick-odds-cell {
   opacity: 0.5;
 }
