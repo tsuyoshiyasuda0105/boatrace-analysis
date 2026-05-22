@@ -2900,7 +2900,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "gen_tri", "gen_plus_tri", "gen_f1_tri",
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "kiryu_6r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri")
+                    "mid_132_tier_a_tri", "venus_tri")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
@@ -2934,7 +2934,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "gen_tri", "gen_plus_tri", "gen_f1_tri",
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "kiryu_6r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri")
+                    "mid_132_tier_a_tri", "venus_tri")
         try:
             monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
         except Exception as e:

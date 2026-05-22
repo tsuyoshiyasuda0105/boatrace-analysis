@@ -232,6 +232,20 @@
           <br><small>★Tier 1 観察 (検証 175.5%, n=1,312、CI 下限 150.8%)</small>
         </span>
       </div>
+      <div class="summary-card obs-prime"
+           title="🌸 Venus専用パス。全女子戦 (n_female=6)。A1+B除外+雨除外。検証 ROI 175.5% (n=502)">
+        <span class="card-label">🌸 Venus L4 (全女子戦)</span>
+        <span class="card-value">
+          {% if totals.venus_tri_roi is not none %}{{ '%+.1f' | format(totals.venus_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.venus_tri_bets }} HIT={{ totals.venus_tri_hits }}
+          {% if totals.venus_tri_bets > 0 %}
+          / 損益 {{ totals.venus_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>独立 universe (案A除外から分離、検証 175.5%, n=502)</small>
+        </span>
+      </div>
     </div>
   </section>
 
