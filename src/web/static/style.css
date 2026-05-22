@@ -3158,6 +3158,30 @@ main h2 {
 }
 .pick-odds-trend.is-up { background: rgba(255,128,128,0.2); color: #ff9d9d; }
 .pick-odds-trend.is-down { background: rgba(255,210,76,0.2); color: #ffd24c; }
+/* T-120min (2時間前): 早期オッズ */
+.pick-odds-early {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  font-weight: 600;
+}
+.pick-odds-sep {
+  color: rgba(255,255,255,0.3);
+  padding: 0 3px;
+  font-size: 10px;
+}
+/* T-120 → 直近 変動率バッジ */
+.pick-odds-trend120 {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  font-size: 10px;
+  color: rgba(255,255,255,0.6);
+}
+.pick-odds-trend120.is-up { background: rgba(255,128,128,0.2); color: #ff9d9d; }
+.pick-odds-trend120.is-down { background: rgba(52,211,153,0.2); color: #6ee7b7; }
 .todays-picks-table tbody tr.is-closed .pick-odds-cell {
   opacity: 0.5;
 }

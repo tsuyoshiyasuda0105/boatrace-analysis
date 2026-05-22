@@ -1652,7 +1652,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     is_tier_a = (n1_3 >= 7.0)
                     return {
                         "level": "obs_mid_132_tier_a" if is_tier_a else "obs_mid_132",
-                        "label": "🟦+L4-Mid+ 1-3-2 (3号艇強)" if is_tier_a else "🟦L4-Mid 1-3-2",
+                        "label": "🟦 T-A L4-Mid 1-3-2 (3号艇強)" if is_tier_a else "🟦L4-Mid 1-3-2",
                         "recovery": 175.5 if is_tier_a else 148.1,
                         "bet": "3連単 1-3-2",
                         "n": 1312 if is_tier_a else 10690,
