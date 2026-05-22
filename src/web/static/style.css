@@ -2419,6 +2419,21 @@ main h2 {
   animation: none !important;
 }
 
+/* ♀ 案A: 女性混入レース除外バッジ (ピンク系グレーアウト)。
+   l4-reference より優先させるため後置で !important。
+   男性のみ ROI 180.8% / 女性混入 134-158% のため候補から除外。 */
+.l4-badge.l4-female-excluded,
+.l4-badge.l4-female-excluded.l4-reference,
+.l4-badge.l4-female-excluded.l4-pro,
+.l4-badge.l4-female-excluded.l4-1c80 {
+  background: rgba(244, 114, 182, 0.18) !important;
+  color: #fbcfe8 !important;
+  border: 1px solid rgba(244, 114, 182, 0.50) !important;
+  box-shadow: none !important;
+  animation: none !important;
+  font-weight: 600 !important;
+}
+
 /* L4 PRO: ベテラン (30-49) × 平均ST<0.16 × 展示ST<0.18 (検証 ROI 241%)
    backlog item 10: 旧紫グラデは「お金を入れるレース」感に合わずユーザに
    不評。royal gold (深い金 + 明るい金 + クリーム) に変更し、強めの金

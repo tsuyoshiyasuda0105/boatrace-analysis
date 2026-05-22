@@ -381,8 +381,21 @@ L4 判定ロジックを変更する時は **必ず以下全てを更新**:
 | `src/web/app.py::_l4_daily_stats` | ROI 日別集計 (Render UI) |
 | `scripts/sync_l4_summary_to_supabase.py::compute_summary` | Supabase 集計テーブル (cron で更新) |
 | `src/collectors/result_scraper.py::scrape_results_for_pending_races` | Layer 3 速報スクレイプ対象選別 |
-| `src/notifications/send_l4_alerts.py` | メール通知判定 |
+| `src/notifications/send_l4_alerts.py` (= `scripts/send_l4_alerts.py`) | メール通知判定 |
 | `src/evaluation/l4_strategy.py` | 単一情報源 (B除外/グレード別 ROI 定数) |
+
+### L4 除外フィルタ (5 経路すべてで統一)
+1. **B 除外会場** (戸田/蒲郡/三国/芦屋/常滑/下関/平和島/大村)
+2. **一般戦 (grade=5)** は ROI 本流から分離 (F1 のみ採用)
+3. **☔ 雨 (weather_number=3)** ROI ~100% break-even (2026-05-21)
+4. **♀ 女性混入 (案A、2026-05-22)**: レース内女性≥1 を除外。男性のみ ROI 180.8%
+   / 女性混入 134-158% / ベテラン男1号艇でも若手女性混入で 96.3% に崩落。
+   - 性別判定は `racers.gender` (ファン手帳 = `src/parsers/official_f.py` で投入)
+   - **重要**: `racers` テーブルは local SQLite + Supabase **両方**に投入が必要。
+     `--src local` 集計時に local が空だと女性フィルタが無効化される (silent fail)。
+     投入: `python scripts/ingest_fan_handbook.py` (Supabase) と `--local` (SQLite)。
+   - ファン手帳は半期更新 (4月=前期 fan{YY}04 / 10月=後期 fan{YY}10)。
+     URL: `https://www.boatrace.jp/static_extra/pc_static/download/data/kibetsu/fan{YYMM}.lzh`
 
 ### バグパターン (回避)
 - ❌ **片方だけ更新**: app.py 直しても sync 直し忘れると古い日が誤表示

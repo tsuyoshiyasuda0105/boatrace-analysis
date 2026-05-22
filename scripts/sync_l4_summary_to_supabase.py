@@ -77,6 +77,13 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
         JOIN race_entries e ON r.race_id=e.race_id AND e.boat_number=1
         LEFT JOIN race_entries e2 ON e2.race_id=r.race_id AND e2.boat_number=2
         LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
+        LEFT JOIN (
+            SELECT ef.race_id, COUNT(*) AS n_female
+              FROM race_entries ef
+              JOIN racers rc ON rc.racer_number = ef.racer_number
+             WHERE rc.gender = 2
+             GROUP BY ef.race_id
+        ) fem ON fem.race_id = r.race_id
         LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id=r.race_id
         LEFT JOIN (SELECT race_id,
                           MIN(odds) AS min_odds,
@@ -97,6 +104,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
           AND r.stadium_number NOT IN ({placeholders})
           AND r.race_grade_number IN (1, 2, 3, 4, 5)
           AND (pv.weather_number IS NULL OR pv.weather_number != 3)
+          AND COALESCE(fem.n_female, 0) = 0   -- ♀ 案A: 女性混入レース除外
           AND (
               -- ユーザ指摘 (2026-05-18): 「いずれかの T-X snapshot で 5-10 帯」
               -- を L4 候補とする OR ロジック

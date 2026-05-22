@@ -1274,13 +1274,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/odds-123-timeline")
     @member_only_api
-    @cached(ttl=20)  # 20秒キャッシュ (JS 側 60秒ポーリング、複数タブ/ユーザ間で再利用)
+    @cached(ttl=8)  # 8秒キャッシュ (JS 側 20秒ポーリング)
     def odds_123_timeline():
         """指定日の各レースの '1-2-3' 三連単オッズ推移を返す。
         odds_scheduler が T-5min..T-1min で毎分スナップショットを残す前提。
         本日お金を入れる候補レース欄で締切までのオッズ変動を可視化するため、
-        ブラウザ側で 30 秒ごとに再取得して描画する。
-        20 秒キャッシュ: 同時アクセスで Supabase に同じクエリが集中するのを防ぐ。
+        ブラウザ側で 20 秒ごとに再取得して描画する。
+        8 秒キャッシュ: 同時アクセスで Supabase に同じクエリが集中するのを防ぐ。
+        2026-05-21: ttl 20s→8s, polling 60s→20s に短縮。
+          理由: 旧設定では T-5 目標時刻から UI 表示まで中央値 56s/最悪 113s かかっていた。
+          新設定: 中央値 ~12s, 最悪 ~50s。BAN リスクなし(自社 API のみ短縮)。
         """
         target_date = request.args.get("date") or date.today().isoformat()
         result: dict[str, dict] = {}
@@ -1451,16 +1454,25 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e.avg_start_timing, e.age,
                                pv.weather_number, pv.start_timing_exhibition,
                                e2.national_top_2_percent AS boat2_top2,
-                               e3.national_top_1_percent AS boat3_natl_1
+                               e3.national_top_1_percent AS boat3_natl_1,
+                               COALESCE(fem.n_female, 0) AS n_female
                         FROM races r
                         LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                         LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                         LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
                         LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+                        LEFT JOIN (
+                            SELECT ef.race_id, COUNT(*) AS n_female
+                              FROM race_entries ef
+                              JOIN racers rc ON rc.racer_number = ef.racer_number
+                             WHERE rc.gender = 2
+                             GROUP BY ef.race_id
+                        ) fem ON fem.race_id = r.race_id
                         WHERE r.race_date = ?
                     """, (target_date,))
                     for (rid, stadium, grade, race_no, cls, natl1, loc1,
-                         avg_st, age, weather, ex_st, boat2_top2, boat3_natl_1) in cur.fetchall():
+                         avg_st, age, weather, ex_st, boat2_top2, boat3_natl_1,
+                         n_female) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade,
                             "race_number": race_no,
@@ -1470,6 +1482,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "weather": weather, "ex_st": ex_st,
                             "boat2_top2": boat2_top2,
                             "boat3_natl_1": boat3_natl_1,
+                            "n_female": n_female,
                         }
                 except Exception as e:
                     logger.warning("all_race_info query failed: %s", e)
@@ -1957,7 +1970,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             weather = info.get("weather")
             boat2_top2 = info.get("boat2_top2")
             boat3_natl_1 = info.get("boat3_natl_1")
+            n_female = info.get("n_female", 0) or 0
             is_rain = (weather == 3)
+            # ♀ 案A: レース内に女性が 1 名でもいると ROI が低下するため除外。
+            # 男性のみ ROI 180.8% / 女性混入 134-158% / ベテラン男1号艇でも
+            # 若手女性混入で 96.3% (analyze_female_deep.py 分析4) に崩落。
+            is_female_present = (n_female > 0)
             data = results.get(rid)
 
             if data:
@@ -2014,6 +2032,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     l4["is_reference"] = True  # 候補リスト除外フラグ
                     l4["label"] = f"☔{l4['label']} (雨除外)"
 
+                # ♀ 案A: レース内女性ありは L4 候補から除外 (グレーアウト表示)
+                if l4 and is_female_present:
+                    l4["is_female_present"] = True
+                    l4["is_reference"] = True
+                    l4["label"] = f"♀{l4['label']} (女性{n_female}名除外)"
+
                 signals.append({
                     "race_id": rid,
                     "tier": tier,
@@ -2025,6 +2049,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "weather": weather,
                     "weather_label": WEATHER_LABEL.get(weather),
                     "is_rain": is_rain,
+                    "n_female": n_female,
+                    "is_female_present": is_female_present,
                     "l4": l4,
                 })
             else:
@@ -2040,6 +2066,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         morning_l4["is_rain"] = True
                         morning_l4["is_reference"] = True
                         morning_l4["label"] = f"☔{morning_l4['label']} (雨除外)"
+                    if is_female_present:
+                        morning_l4["is_female_present"] = True
+                        morning_l4["is_reference"] = True
+                        morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
                     signals.append({
                         "race_id": rid,
                         "tier": "morning_l4",
@@ -2051,6 +2081,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "weather": weather,
                         "weather_label": WEATHER_LABEL.get(weather),
                         "is_rain": is_rain,
+                        "n_female": n_female,
+                        "is_female_present": is_female_present,
                         "l4": morning_l4,
                     })
 
@@ -2108,11 +2140,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pe.payout AS exacta_pay,
                     pt.payout AS tri_pay,
                     pt_132.payout AS pay_132,
-                    pv.weather_number AS weather
+                    pv.weather_number AS weather,
+                    COALESCE(fem.n_female, 0) AS n_female
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                 LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                 LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
+                LEFT JOIN (
+                    SELECT ef.race_id, COUNT(*) AS n_female
+                      FROM race_entries ef
+                      JOIN racers rc ON rc.racer_number = ef.racer_number
+                     WHERE rc.gender = 2
+                     GROUP BY ef.race_id
+                ) fem ON fem.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
                            WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
                 LEFT JOIN (SELECT race_id,
@@ -2191,11 +2231,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         for row in cur:
             (rdate, stadium, grade, race_no, cls, natl_1, boat2_top2, boat3_natl_1,
              fav_pay, fav_odds, any_in_l4, l4_odds, prob_first,
-             w1, w2, w3, win_pay, ex_pay, tri_pay, pay_132, weather) = row
+             w1, w2, w3, win_pay, ex_pay, tri_pay, pay_132, weather, n_female) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
             # weather NULL (= 直前情報未取得 or 古いデータ) は通常通り集計。
             if weather == 3:
+                continue
+            # ♀ 案A 女性除外フィルタ: レース内に女性が 1 名でもいると ROI が
+            # 大幅低下 (男性のみ 180.8% / 女性混入 134-158%) のため集計対象外。
+            # n_female NULL/0 (= racers 未取得 or 全員男性) は通常通り集計。
+            if n_female and n_female > 0:
                 continue
             d = by_date.setdefault(rdate, {
                 "date": rdate,
@@ -2614,10 +2659,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pw.payout AS win_pay,
                     pe.payout AS exa_pay,
                     pt.payout AS tri_pay,
-                    pv.weather_number AS weather
+                    pv.weather_number AS weather,
+                    COALESCE(fem.n_female, 0) AS n_female
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                 LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+                LEFT JOIN (
+                    SELECT ef.race_id, COUNT(*) AS n_female
+                      FROM race_entries ef
+                      JOIN racers rc ON rc.racer_number = ef.racer_number
+                     WHERE rc.gender = 2
+                     GROUP BY ef.race_id
+                ) fem ON fem.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
                            WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
@@ -2641,7 +2694,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         for row in cur:
             (rid, rno, closed, stadium, grade, cls, racer_name,
              natl_1, local_1, fav_pay, fav_odds, prob_first, w1, w2, w3,
-             win_pay, exa_pay, tri_pay, weather) = row
+             win_pay, exa_pay, tri_pay, weather, n_female) = row
             if cls != 1:
                 continue  # A1 のみ (A2 派生は対象外)
             if stadium in EXCLUDE_B_VENUES:
@@ -2650,6 +2703,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 continue  # 一般戦は回収率が低いため対象外 (147.7%)
             if weather == 3:
                 continue  # ☔ 雨は ROI ~ 100% で break-even、ベット対象外
+            if n_female and n_female > 0:
+                continue  # ♀ 案A 女性混入レースは ROI 低下のため対象外
             # === L4 候補判定 (厳密: 本命オッズ 500-1000) ===
             # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
             # 判定優先順位:

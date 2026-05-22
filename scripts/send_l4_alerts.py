@@ -72,6 +72,14 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
     締切前のメール送信を成立させるため、odds_trifecta テーブルの
     pre-race スナップショットを優先的に使う。
     最低オッズ × 100 = 三連単本命払戻と等価。
+
+    除外条件 (Web UI / 朝メール / ROI集計と整合):
+      - B 除外会場 (戸田・蒲郡・三国・芦屋・常滑・下関・平和島・大村)
+      - cls != 1 (A1 以外)
+      - L4 帯外 (500-1000 円)
+      - final (事後判定)
+      - ☔ 雨 (weather_number=3): backtest で ROI ~100% break-even
+      - ♀ レース内女性あり (案A): 男性のみ 180.8% / 女性混入 134-158%
     """
     with db_connect() as conn:
         # 共通 SELECT 部分
@@ -142,6 +150,7 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
         # シンプル版: T-5min > T-15min > final で COALESCE
         # + 1号艇選手の国1%/局1% も取得 (L4+/L4++ ランク判定用)
         # + 2号艇 国2連率 (一般戦 F1 判定用)
+        # + race_previews.weather_number (☔ 雨除外フィルタ用、2026-05-21 追加)
         cur = conn.execute("""
             SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
                    r.race_grade_number,
@@ -155,11 +164,21 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
                      WHEN t15.payout IS NOT NULL THEN 'T-15min'
                      ELSE 'final'
                    END AS payout_src,
-                   e2.national_top_2_percent AS boat2_top2
+                   e2.national_top_2_percent AS boat2_top2,
+                   pv.weather_number AS weather,
+                   COALESCE(fem.n_female, 0) AS n_female
             FROM races r
             JOIN stadiums s ON r.stadium_number = s.stadium_number
             LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
             LEFT JOIN race_entries e2 ON r.race_id = e2.race_id AND e2.boat_number = 2
+            LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+            LEFT JOIN (
+              SELECT ef.race_id, COUNT(*) AS n_female
+                FROM race_entries ef
+                JOIN racers rc ON rc.racer_number = ef.racer_number
+               WHERE rc.gender = 2
+               GROUP BY ef.race_id
+            ) fem ON fem.race_id = r.race_id
             LEFT JOIN (
               SELECT race_id, MIN(odds)*100 AS payout FROM odds_trifecta
               WHERE snapshot_label='T-5min' GROUP BY race_id
@@ -180,12 +199,20 @@ def detect_l4_alerts(target_date: str) -> list[dict]:
     alerts = []
     for row in rows:
         (rid, stadium, rno, closed_at, grade, sname, cls,
-         natl_1, local_1, racer_name, mp, payout_src, boat2_top2) = row
+         natl_1, local_1, racer_name, mp, payout_src, boat2_top2, weather,
+         n_female) = row
         if not mp or is_b_excluded(stadium):
             continue
         if cls != 1:  # A1 のみ (L4 の基本条件)
             continue
         if not is_l4_payout_range(mp):
+            continue
+        # ☔ 雨レース除外 (weather_number=3): backtest で ROI ~100% (break-even)
+        # のためメール対象外。Web UI / 朝メール / ROI集計と整合。
+        if weather == 3:
+            continue
+        # ♀ 案A 女性除外: レース内に女性 1 名でもいると ROI 低下のため対象外。
+        if n_female and n_female > 0:
             continue
         # final (確定後) のレースは「事後判定」なので通知しない
         if payout_src == "final":
@@ -280,6 +307,7 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
       - 1号艇 A1 ∧ prob_first ∈ [0.65, 0.85)  ← 本命 500-1000円帯候補
       - B 除外会場でない
       - 雨レース (weather_number=3) を除外
+      - ♀ レース内女性あり (案A) を除外
       - A2 派生 (cls=2) は対象外
       - 一般戦 (grade=5) は F1 条件
           「1号艇 国1%≥7 ∧ 2号艇 国2連率≥40」
@@ -299,13 +327,21 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
                    e.racer_name,
                    p.prob_first,
                    pv.weather_number,
-                   e2.national_top_2_percent
+                   e2.national_top_2_percent,
+                   COALESCE(fem.n_female, 0) AS n_female
             FROM races r
             JOIN stadiums s ON r.stadium_number = s.stadium_number
             LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
             LEFT JOIN race_entries e2 ON r.race_id = e2.race_id AND e2.boat_number = 2
             JOIN predictions p ON r.race_id = p.race_id AND p.boat_number = 1
             LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+            LEFT JOIN (
+              SELECT ef.race_id, COUNT(*) AS n_female
+                FROM race_entries ef
+                JOIN racers rc ON rc.racer_number = ef.racer_number
+               WHERE rc.gender = 2
+               GROUP BY ef.race_id
+            ) fem ON fem.race_id = r.race_id
             WHERE r.race_date = ?
               AND p.prob_first IS NOT NULL
         """, (target_date,))
@@ -314,7 +350,8 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
     alerts = []
     for row in rows:
         (rid, stadium, rno, closed_at, grade, sname, cls,
-         natl_1, local_1, racer_name, prob_first, weather, boat2_top2) = row
+         natl_1, local_1, racer_name, prob_first, weather, boat2_top2,
+         n_female) = row
         if is_b_excluded(stadium):
             continue
         if prob_first is None:
@@ -326,6 +363,10 @@ def detect_morning_l4_candidates(target_date: str) -> list[dict]:
 
         # 雨レース (weather_number=3) はメール対象外
         if weather == 3:
+            continue
+
+        # ♀ 案A 女性除外: レース内に女性 1 名でもいると ROI 低下のため対象外。
+        if n_female and n_female > 0:
             continue
 
         # 一般戦は F1 条件を満たす場合のみ通す

@@ -44,6 +44,7 @@
           <li>✅ <b>B 除外会場</b> (戸田/蒲郡/三国/芦屋/常滑/下関/平和島/大村)</li>
           <li>✅ <b>SG/G1/G2/G3 のみ</b> (一般戦は ROI 計算除外、参考バッジで表示)</li>
           <li>✅ <b>☔ 雨予報レース除外</b> (race_previews.weather_number=3、ROI ~100% で break-even)</li>
+          <li>✅ <b>♀ 女性混入レース除外</b> (案A: レース内女性0名のみ。男性のみ ROI 180.8% / 女性混入 134-158%)</li>
         </ul>
 
         <h5>🎯 グレード別 ROI (L4 基本のサブ分類)</h5>
@@ -251,6 +252,8 @@
                   if (sig.l4.is_l4_pro) l4Badge.className += ' l4-pro';
                   // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
                   if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
+                  // ♀ 案A: 女性混入レースは専用クラスで視覚的に区別
+                  if (sig.l4.is_female_present) l4Badge.className += ' l4-female-excluded';
                   const l4Rec = (sig.l4.recovery != null) ? sig.l4.recovery : '-';
                   const l4N = (sig.l4.n != null) ? sig.l4.n : '-';
                   const natl = (sig.l4.natl_1 != null) ? sig.l4.natl_1.toFixed(2) : '-';
@@ -647,10 +650,12 @@
         updateClosedRaceTiles();
         setInterval(updateClosedRaceTiles, 60000);  // 1 分毎に判定更新
 
-        // 1-2-3 オッズ推移を初回 + 60秒毎に取得
-        // (odds_scheduler が T-5..T-1 まで毎分書き込む。同じ周期で UI 側も追従)
+        // 1-2-3 オッズ推移を初回 + 20秒毎に取得
+        // odds_scheduler が T-5..T-1 まで毎分書き込む。
+        // 60s ポーリングだと UI 表示まで最悪 +60s 遅延するため、20s に短縮
+        // (DB 書込 +15s 中央値 → ポーリング待ち +10s 中央値 → 合計 +25s 中央値で表示)
         loadOdds123Timeline();
-        setInterval(loadOdds123Timeline, 60000);
+        setInterval(loadOdds123Timeline, 20000);
         // market-signals 描画後にも一度走らせて、L4 バッジが付いたレース全てを補完
         setTimeout(loadOdds123Timeline, 2000);
       })();
