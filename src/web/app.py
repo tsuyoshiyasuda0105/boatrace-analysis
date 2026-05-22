@@ -2649,7 +2649,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "gen_tri", "gen_plus_tri", "gen_f1_tri",
                         "prime_tri", "r12_tri", "gen_r12_tri",
                         "toda_7r_tri", "kiryu_6r_tri", "mid_132_tri",
-                        "mid_132_tier_a_tri"):
+                        "mid_132_tier_a_tri", "venus_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None
