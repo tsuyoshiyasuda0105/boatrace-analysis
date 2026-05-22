@@ -159,12 +159,17 @@ def check_previews_count(conn, target_date: str) -> tuple[str, str, dict]:
 
 def check_results_count(conn, target_date: str) -> tuple[str, str, dict]:
     """終了レースの結果が取れているか"""
+    # race_closed_at は TEXT 'YYYY-MM-DD HH:MM:SS' (スペース区切り) で格納される。
+    # datetime.now().isoformat() は 'YYYY-MM-DDThh:mm:ss' (T 区切り) を返すため、
+    # 文字列比較で空白(0x20) < 'T'(0x54) となり「同日の全レースが締切済」と
+    # 誤判定する (2026-05-22 障害)。同じスペース区切り形式で比較する。
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur = conn.execute("""
         SELECT COUNT(DISTINCT r.race_id) FROM races r
          WHERE r.race_date = ?
            AND r.race_closed_at IS NOT NULL
            AND r.race_closed_at < ?
-    """, (target_date, datetime.now().isoformat()))
+    """, (target_date, now_str))
     n_closed = cur.fetchone()[0]
     cur = conn.execute("""
         SELECT COUNT(DISTINCT res.race_id) FROM race_results res
