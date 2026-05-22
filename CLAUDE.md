@@ -397,12 +397,27 @@ L4 判定ロジックを変更する時は **必ず以下全てを更新**:
    - ファン手帳は半期更新 (4月=前期 fan{YY}04 / 10月=後期 fan{YY}10)。
      URL: `https://www.boatrace.jp/static_extra/pc_static/download/data/kibetsu/fan{YYMM}.lzh`
 
+### 単勝の手動エントリー条件 (2026-05-22)
+- **単勝オッズ 1.3 以上のときのみ単勝にエントリー** (当面は手動判断)。
+- 根拠: 単勝損益分岐 = 1 ÷ 1号艇1着率。L4 強本命の 1着率 ~77% → 分岐 ≈ 1.30。
+  オッズ1.0 は EV 必ずマイナス、1.3 未満は控除負けになりやすい。
+- 注意: 過去の「単勝HIT率98.7%」は `race_payouts` MIN(事後払戻)バイアスの疑い。
+  不偏推定 (A1 1号艇 4年 n=654) では 1着率 62.7% / 単勝ROI 84.5%。L4 強本命部分集合は
+  これより高いが ~77-85% 程度。`scripts/analyze_l4_tansho.py` で再現可能。
+- 単勝の事前オッズスナップショットは未取得 (odds_trifecta は3連単のみ)。
+  自動化するには odds_scheduler に単勝オッズ取得を追加する必要あり (未実装)。
+
 ### バグパターン (回避)
 - ❌ **片方だけ更新**: app.py 直しても sync 直し忘れると古い日が誤表示
 - ❌ **F1 を main 集計から漏らす**: F1 は採用なので tri_bets/win_bets/exa_bets/n_l4 全てに加算
 - ❌ **休催会場の空 race shell**: Open API が休催でも shell を返す → upsert_programs でスキップ
 - ❌ **MIN(odds) を使う**: 直前で人気化したレースが L4 から漏れる → ANY ロジックを使う
 - ❌ **race_payouts MIN を確定前判定に使う**: これは事後 (実現払戻)、prob_first / T-X odds が事前判定
+- ❌ **TEXT の race_closed_at を `datetime.now().isoformat()` と SQL 文字列比較**:
+  closed_at は `'YYYY-MM-DD HH:MM:SS'` (スペース区切り)、isoformat() は `'...T...'` (T区切り)。
+  位置10で空白(0x20) < 'T'(0x54) のため同日の全レースが「< now」と誤判定される
+  (2026-05-22 結果取込遅延の誤検知の原因)。比較は `strftime('%Y-%m-%d %H:%M:%S')` で
+  形式を揃えるか、Python 側で `datetime.fromisoformat()` に変換してから比較する。
 - ❌ **INSERT OR REPLACE で前夜 Layer 1 値を NULL 上書き**: 翌朝 Open API バッチが 23:30 投入の
   race_closed_at を消す危険。`upsert_programs` は ON CONFLICT (race_id) DO UPDATE SET
   col = COALESCE(EXCLUDED.col, races.col) を使うこと。
