@@ -61,17 +61,33 @@ def upsert_status(conn, check_name: str, check_date: str,
 
 
 def check_races_count(conn, target_date: str) -> tuple[str, str, dict]:
-    """今日のレース数チェック (期待: 60-120 件)"""
+    """今日のレース数チェック。
+    国内 24 会場 × 最大 12R = 288 が理論上限。
+    通常は 10-13 会場開催 (120-156 件)。
+    重複チェックは件数でなく (stadium, race_number) の重複有無で行う。
+    """
     cur = conn.execute("SELECT COUNT(*) FROM races WHERE race_date=?", (target_date,))
     n = cur.fetchone()[0]
-    detail = {"race_count": n}
+    # 重複登録チェック: 同一会場×レース番号が複数存在するか
+    cur_dup = conn.execute("""
+        SELECT COUNT(*) FROM (
+            SELECT stadium_number, race_number
+              FROM races WHERE race_date=?
+             GROUP BY stadium_number, race_number
+            HAVING COUNT(*) > 1
+        )
+    """, (target_date,))
+    n_dup = cur_dup.fetchone()[0]
+    detail = {"race_count": n, "duplicate_slots": n_dup}
+    if n_dup > 0:
+        return "error", f"重複登録あり ({n_dup} スロット)。DB 調査必要", detail
     if n < 30:
         return "error", f"レース数が異常に少ない ({n} 件)。バッチ失敗の可能性", detail
     if n < 60:
         return "warning", f"レース数が少なめ ({n} 件)。会場の途中休催かも", detail
-    if n > 144:  # 12 会場 × 12R = 144 が上限
-        return "warning", f"レース数が想定超 ({n} 件)。重複登録チェック必要", detail
-    return "ok", f"{n} 件 (正常範囲 60-120)", detail
+    if n > 288:  # 24 会場 × 12R = 288 が理論上限
+        return "error", f"レース数が理論上限超 ({n} 件)。重複以外の異常", detail
+    return "ok", f"{n} 件 / 重複なし (正常)", detail
 
 
 def check_entries_complete(conn, target_date: str) -> tuple[str, str, dict]:
@@ -183,6 +199,9 @@ def check_results_count(conn, target_date: str) -> tuple[str, str, dict]:
         return "ok", "本日まだ確定レースなし", detail
     cov = n_results / n_closed * 100
     if cov < 50:
+        # 締切済レース数が少ない (<=5) うちは結果バッチが未回収なだけ → ok
+        if n_closed <= 5:
+            return "ok", f"結果取り込み待ち ({n_results}/{n_closed}、バッチ未回収の可能性)", detail
         return "warning", f"結果取り込み遅延 ({n_results}/{n_closed}、{cov:.0f}%)", detail
     if cov < 90:
         return "ok", f"結果 {n_results}/{n_closed} ({cov:.0f}%)", detail
