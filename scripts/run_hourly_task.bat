@@ -30,4 +30,7 @@ REM    過去 3 日分を再計算 → 当日途中で確定したレースが R
 REM    反映される。daily_collect.bat (23:30) との二重実行を兼ねるため安全。
 .venv\Scripts\python.exe scripts\sync_l4_summary_to_supabase.py --recent-days 3 >> "%LOG%" 2>&1
 
+REM 5. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
+.venv\Scripts\python.exe scripts\record_task_run.py hourly success >> "%LOG%" 2>&1
+
 echo === Hourly task finished %date% %time% === >> "%LOG%"

@@ -403,3 +403,26 @@ CREATE TABLE IF NOT EXISTS system_status (
   PRIMARY KEY (check_name, check_date)
 );
 CREATE INDEX IF NOT EXISTS idx_sysstat_date ON system_status(check_date, status);
+
+-- ============================================================
+-- タスク実行ログ (起動時キャッチアップ用)
+-- サーバー(ローカルPC)がスケジュール時刻にダウンしていてタスクが実行され
+-- なかった場合に、起動時 (scripts/startup_catchup.py) が「今日そのタスクが
+-- 成功したか」を判定するための実行記録。判定はローカルPCの状態に基づくため
+-- 常にローカル SQLite に書く (src/db/task_log.py が sqlite3 直書きで担保)。
+--   task_name : 'daily_collect' / 'morning' / 'hourly' / 'poll_results'
+--   status    : 'success' / 'failure' / 'running'
+--   trigger   : 'scheduled' (通常実行) / 'catchup' (起動時キャッチアップ)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS task_runs (
+  task_name   TEXT NOT NULL,
+  run_date    TEXT NOT NULL,     -- YYYY-MM-DD (ローカル日付)
+  status      TEXT NOT NULL,     -- 'success' / 'failure' / 'running'
+  run_count   INTEGER NOT NULL DEFAULT 0,
+  started_at  TEXT,              -- ISO 8601 (最後の開始)
+  finished_at TEXT,              -- ISO 8601 (最後の終了)
+  success_at  TEXT,              -- ISO 8601 (最後に成功した時刻。当日未成功なら NULL)
+  trigger     TEXT,              -- 'scheduled' / 'catchup'
+  detail      TEXT,
+  PRIMARY KEY (task_name, run_date)
+);

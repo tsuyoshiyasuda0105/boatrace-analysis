@@ -76,6 +76,30 @@ foreach ($task in $tasks) {
     }
 }
 
+# ----- 起動時キャッチアップ (ONSTART トリガ) -----
+# PC がスケジュール時刻にダウン/スリープしていて実行されなかった
+# daily_collect / morning / hourly / poll_results を、起動時に検出して実行する。
+# 起動直後はネットワーク未確立のことがあるため 3 分遅延 (/DELAY 0003:00)。
+$catchupName = "BoatraceStartupCatchup"
+$catchupBat  = "$base\run_startup_catchup.bat"
+Write-Host ""
+Write-Host "[$catchupName]"
+if (Test-Path $catchupBat) {
+    schtasks /Query /TN $catchupName 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  Removing existing task..."
+        schtasks /Delete /TN $catchupName /F | Out-Null
+    }
+    schtasks /Create /TN $catchupName /TR "`"$catchupBat`"" /SC ONSTART /DELAY 0003:00 /RL HIGHEST /F
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  [OK] $catchupName registered (ONSTART +3min)"
+    } else {
+        Write-Error "  Failed to register $catchupName (exit $LASTEXITCODE)"
+    }
+} else {
+    Write-Warning "  Skipping $catchupName : batch file not found at $catchupBat"
+}
+
 Write-Host ""
 Write-Host "============================================================"
 Write-Host "Verification:"

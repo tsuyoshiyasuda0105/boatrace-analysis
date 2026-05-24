@@ -30,6 +30,9 @@ REM 2. 今日の予測計算
 REM 3. L4 アラートメール送信
 .venv\Scripts\python.exe scripts\send_l4_alerts.py >> "%LOG%" 2>&1
 
+REM 4. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
+.venv\Scripts\python.exe scripts\record_task_run.py morning success >> "%LOG%" 2>&1
+
 echo === Morning task finished %date% %time% === >> "%LOG%"
 "@
 

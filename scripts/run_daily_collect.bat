@@ -43,5 +43,8 @@ REM    l4_daily_summary に集計済の日付のみ削除されるため ROI 表
 REM    Local SQLite には全データ温存 (バックテスト用)。
 .venv\Scripts\python.exe scripts\db_size_check.py --auto --keep-raw-days 90 >> "%LOG%" 2>&1
 
+REM 5. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
+.venv\Scripts\python.exe scripts\record_task_run.py daily_collect success >> "%LOG%" 2>&1
+
 echo === Daily collect finished %date% %time% === >> "%LOG%"
 exit /b 0

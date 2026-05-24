@@ -28,6 +28,9 @@ REM 2. 当日分のみ Supabase に同期 (差分のみ高速)
 REM 3. 予測も再計算 (新規レースのみ。既存はスキップ)
 .venv\Scripts\python.exe scripts\cache_predictions.py --today --sync >> "%LOG%" 2>&1
 
+REM 4. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
+.venv\Scripts\python.exe scripts\record_task_run.py hourly success >> "%LOG%" 2>&1
+
 echo === Hourly task finished %date% %time% === >> "%LOG%"
 "@
 

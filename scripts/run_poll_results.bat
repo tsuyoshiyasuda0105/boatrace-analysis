@@ -13,4 +13,7 @@ echo === Poll started %date% %time% === >> "%LOG%"
 
 .venv\Scripts\python.exe scripts\poll_results.py >> "%LOG%" 2>&1
 
+REM タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
+.venv\Scripts\python.exe scripts\record_task_run.py poll_results success >> "%LOG%" 2>&1
+
 echo === Poll finished %date% %time% === >> "%LOG%"
