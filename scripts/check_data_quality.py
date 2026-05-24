@@ -139,6 +139,11 @@ def check_predictions_count(conn, target_date: str) -> tuple[str, str, dict]:
     if n_complete == 0:
         return "warning", "整合レースゼロ (まだ取り込み中?)", detail
     coverage = n_pred / n_complete * 100 if n_complete else 0
+    # 当日予測は朝バッチ (morning task 06:30) で生成される。それ以前の早朝は
+    # 未生成が正常なので error に上げない (前夜キャッシュ未実行時の誤検知防止)。
+    # 例: 06:23 に 0/144 → morning task 後 (06:30) に 144/144 へ自己解決する。
+    if datetime.now().hour < 7 and coverage < 80:
+        return "ok", f"予測生成待ち ({n_pred}/{n_complete}、朝バッチ前)", detail
     if coverage < 30:
         return "error", f"予測未生成 ({n_pred}/{n_complete}、{coverage:.0f}%)", detail
     if coverage < 80:
