@@ -76,10 +76,13 @@ foreach ($task in $tasks) {
     }
 }
 
-# ----- 起動時キャッチアップ (ONSTART トリガ) -----
-# PC がスケジュール時刻にダウン/スリープしていて実行されなかった
-# daily_collect / morning / hourly / poll_results を、起動時に検出して実行する。
-# 起動直後はネットワーク未確立のことがあるため 3 分遅延 (/DELAY 0003:00)。
+# ----- Startup catch-up task (ONSTART trigger) -----
+# Re-runs missed daily_collect / morning / hourly / poll_results on PC startup
+# (in case the PC was down/asleep at the scheduled time).
+# 3-minute delay (/DELAY 0003:00) to allow network to come up after boot.
+# NOTE: keep this file ASCII-only. Windows PowerShell 5.1 reads .ps1 without a
+# BOM as the system ANSI codepage, so non-ASCII (e.g. Japanese) comments here
+# get mis-decoded and can swallow the following line.
 $catchupName = "BoatraceStartupCatchup"
 $catchupBat  = "$base\run_startup_catchup.bat"
 Write-Host ""
