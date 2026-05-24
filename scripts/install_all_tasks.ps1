@@ -103,6 +103,24 @@ if (Test-Path $catchupBat) {
     Write-Warning "  Skipping $catchupName : batch file not found at $catchupBat"
 }
 
+# ----- Make tasks run hidden (no console window popups) -----
+# schtasks registers tasks that launch the .bat directly, so a console
+# window pops up on every run (e.g. OddsScheduler every minute). Rewrite
+# each task to run via wscript.exe + run_hidden.vbs so no window appears.
+# This MUST run after task (re)creation, otherwise re-installing reverts
+# tasks to the visible .bat action.
+Write-Host ""
+Write-Host "[Hiding task windows]"
+$hideScript = "$base\update_tasks_hidden.ps1"
+$fixOdds    = "$base\fix_odds_scheduler_hidden.ps1"
+if (Test-Path $hideScript) {
+    & $hideScript
+    # OddsScheduler runs every minute and may be busy mid-run; retry it.
+    if (Test-Path $fixOdds) { & $fixOdds }
+} else {
+    Write-Warning "  update_tasks_hidden.ps1 not found; tasks will show a window."
+}
+
 Write-Host ""
 Write-Host "============================================================"
 Write-Host "Verification:"

@@ -33,6 +33,8 @@ $tasks = [ordered]@{
     'BoatraceL4Alert'        = 'C:\boat_project\boatrace-analysis\scripts\run_l4_alert.bat'
     'BoatraceResultsPolling' = 'C:\boat_project\boatrace-analysis\scripts\run_poll_results.bat'
     'BoatraceOddsScheduler'  = 'C:\boat_project\boatrace-analysis\scripts\run_odds_scheduler.bat'
+    'BoatraceSyncSupabase'   = 'C:\boat_project\boatrace-analysis\scripts\run_sync_to_supabase.bat'
+    'BoatraceStartupCatchup' = 'C:\boat_project\boatrace-analysis\scripts\run_startup_catchup.bat'
 }
 
 if (-not (Test-Path $vbsPath)) {
