@@ -1408,12 +1408,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             label, mp = preferred[0]
                             results[rid] = {"min_payout": mp, "source": label,
                                             "any_l4_in_window": True}
-                        else:
-                            # L4 帯 snapshot 無し → 従来通り T-1min 優先で記録 (非 L4)
-                            preferred = sorted(snaps, key=lambda x: _SNAP_PRIORITY.get(x[0], 99))
-                            label, mp = preferred[0]
-                            results[rid] = {"min_payout": mp, "source": label,
-                                            "any_l4_in_window": False}
+                        # else: L4 帯 snapshot 無し。オッズは締切ジャストまで動くため、
+                        #   締切前は帯外を確定させない (ユーザ要望 2026-05-25
+                        #   「締切ジャストまで待ちたい」。びわこ4R は T-5 17.3倍 →
+                        #   T-1 15.6倍 と最後まで変動)。results に登録せず朝候補のまま
+                        #   表示し、オッズセルの現在値を判断材料とする。締切後は下の
+                        #   final 払戻フォールバックが帯外を確定し、締切超過レースは
+                        #   フロントの .is-closed (時刻ベース) で自動グレー化される。
                 except Exception as e:
                     err = str(e).lower()
                     if "snapshot_label" in err or "undefinedcolumn" in err or "column" in err:
