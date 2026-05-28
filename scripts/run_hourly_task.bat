@@ -30,7 +30,14 @@ REM    過去 3 日分を再計算 → 当日途中で確定したレースが R
 REM    反映される。daily_collect.bat (23:30) との二重実行を兼ねるため安全。
 .venv\Scripts\python.exe scripts\sync_l4_summary_to_supabase.py --recent-days 3 >> "%LOG%" 2>&1
 
-REM 5. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
+REM 5. レース確定後の天候を公式結果ページから取り直し race_previews を補正。
+REM    朝の Open API や直前情報スクレイプが取り逃した雨/晴の判定を、レース
+REM    結果ページ (boatrace.jp /raceresult) の確定値で上書きする。直近 3 時間
+REM    に締切ったレースのみ対象 → 1 回 ~30秒。2026-05-28 浜名湖12R の雨除外
+REM    誤適用への根本対策。
+.venv\Scripts\python.exe scripts\refresh_race_weather.py --since-hours 3 --interval 1.5 >> "%LOG%" 2>&1
+
+REM 6. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
 .venv\Scripts\python.exe scripts\record_task_run.py hourly success >> "%LOG%" 2>&1
 
 echo === Hourly task finished %date% %time% === >> "%LOG%"

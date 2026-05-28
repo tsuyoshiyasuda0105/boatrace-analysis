@@ -28,7 +28,7 @@ import os
 import sqlite3
 import sys
 import time as _time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -55,15 +55,23 @@ def _local_conn():
     return sqlite3.connect(config.DB_PATH)
 
 
-def _list_target_races(conn, target_date: str, stadium: int | None) -> list[tuple]:
-    """対象レース (締切済 = 現在時刻 > race_closed_at) を抽出。"""
+def _list_target_races(conn, target_date: str, stadium: int | None,
+                       since_hours: float | None) -> list[tuple]:
+    """対象レース (締切済 = 現在時刻 > race_closed_at) を抽出。
+    since_hours: 指定するとそれ以内に締切ったレースだけに絞る (hourly 自動実行用)。
+    """
+    now = datetime.now()
     sql = """SELECT race_id, stadium_number, race_number, race_closed_at
                FROM races
               WHERE race_date=? AND race_closed_at < ?"""
-    args: list = [target_date, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+    args: list = [target_date, now.strftime("%Y-%m-%d %H:%M:%S")]
     if stadium is not None:
         sql += " AND stadium_number=?"
         args.append(stadium)
+    if since_hours is not None and since_hours > 0:
+        cutoff = (now - timedelta(hours=since_hours)).strftime("%Y-%m-%d %H:%M:%S")
+        sql += " AND race_closed_at >= ?"
+        args.append(cutoff)
     sql += " ORDER BY stadium_number, race_number"
     return conn.execute(sql, args).fetchall()
 
@@ -130,14 +138,17 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--interval", type=float, default=2.0,
                         help="リクエスト間隔(秒)")
+    parser.add_argument("--since-hours", type=float, default=None,
+                        help="直近 N 時間以内に締切ったレースのみ (hourly 自動実行用)")
     args = parser.parse_args()
 
     print(f"=== refresh_race_weather {args.date}"
-          f" stadium={args.stadium} dry-run={args.dry_run} ===")
+          f" stadium={args.stadium} since_hours={args.since_hours}"
+          f" dry-run={args.dry_run} ===")
 
     # Local SQLite
     local = _local_conn()
-    races = _list_target_races(local, args.date, args.stadium)
+    races = _list_target_races(local, args.date, args.stadium, args.since_hours)
     print(f"対象レース: {len(races)} 件")
     s_local = process(local, "LOCAL", races, args.dry_run, args.interval)
     local.close()
@@ -147,7 +158,11 @@ def main():
     if os.getenv("DATABASE_URL", "").strip() and not args.dry_run:
         from src.db.connection import connect as db_connect
         pg = db_connect()
-        s_pg = process(pg, "SUPABASE", races, False, args.interval)
+        # Supabase 側は既に LOCAL でスクレイプ済の payload を再利用したいが、
+        # 現在は process() がスクレイプも内包しているため二重スクレイプになる。
+        # BAN リスク低減のため interval を倍 (3秒) にして再実行。
+        # TODO: 将来は scrape を分離して payload キャッシュを共有する。
+        s_pg = process(pg, "SUPABASE", races, False, max(args.interval, 3.0))
         pg.close()
         print(f"[SUPABASE] {s_pg}")
 
