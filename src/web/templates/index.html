@@ -575,15 +575,21 @@
             // morning_l4 fallback (app.py L1879-1890) は label に「(確定¥XXX)」
             // を付与するため、その有無で判定。
             const isOddsMismatch = isRef && /\(確定¥/.test(labelText);
-            // その他の reference (観察カテゴリ / 一般戦 F1 不該当 / 雨除外 等)
-            // は従来通り候補リストから除外。
-            if (isRef && !isOddsMismatch) return;
+            const isRainExclusion = isRef && /雨除外/.test(labelText);
+            const isFemaleExclusion = isRef && /女性\d+名除外/.test(labelText);
+            const isAnyExclusion = isOddsMismatch || isRainExclusion || isFemaleExclusion;
+            // 完全除外するのは「何の除外マークも付いていない reference」
+            // (一般戦 F1 非該当 / A2 派生 等、元から候補ではないもの) のみ。
+            // 雨/女性混合/帯外で除外された "元朝候補" はグレー残しで可視化する
+            // (2026-05-28: 浜名湖12R が雨除外で完全消滅していた不具合修正)。
+            if (isRef && !isAnyExclusion) return;
             const closedAt = parseClosedAt(el.dataset.closedAt);
             if (!closedAt) return;
             const minutesUntil = (closedAt - now) / 60000;
             const isDone = parseInt(el.dataset.resultsCount || '0') > 0;
             const isClosed = minutesUntil < 0 || isDone;
-            picks.push({ el, closedAt, minutesUntil, isClosed, isDone, isOddsMismatch });
+            picks.push({ el, closedAt, minutesUntil, isClosed, isDone,
+                         isOddsMismatch, isRainExclusion, isFemaleExclusion, isAnyExclusion });
           });
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
@@ -635,21 +641,32 @@
             let rowClass = 'todays-pick-row';
             if (u.isClosed) rowClass += ' is-closed';
             else if (idx === firstUpcomingIdx) rowClass += ' is-next';
-            // ユーザ仕様: 朝候補だが確定オッズが L4 帯外 → グレーアウト
-            if (u.isOddsMismatch) rowClass += ' is-odds-mismatch';
+            // 除外系 (帯外/雨/女性混合) はすべて既存の is-odds-mismatch
+            // styling でグレー表示 (完全消滅させない、2026-05-28 修正)。
+            if (u.isAnyExclusion) rowClass += ' is-odds-mismatch';
             const tr = document.createElement('tr');
             tr.className = rowClass;
             const oddsCellHtml = renderOdds123Cell(rid);
-            // 投票ボタンの活性化: オッズ外れの場合は非活性 (賭けないため)
-            const voteBtnHtml = u.isOddsMismatch
-              ? `<span class="vote-btn vote-btn-disabled" title="確定オッズが L4 帯外 (¥1000+)。投票非推奨">🚫 圏外</span>`
+            // 除外理由ごとのラベル/絵文字
+            let excEmoji = '🚫', excShort = '圏外',
+                excTitle = '確定オッズが L4 帯外 (¥1000+)。投票非推奨';
+            if (u.isRainExclusion) {
+              excEmoji = '☔'; excShort = '雨除外';
+              excTitle = '雨レースは ROI 約100% (break-even) のため L4 戦略では除外。確定オッズと結果は表示で確認可';
+            } else if (u.isFemaleExclusion) {
+              excEmoji = '♀'; excShort = '女性混合';
+              excTitle = '女性混合レース (n_female 1-5) は ROI 低下のため L4 戦略では除外';
+            }
+            // 投票ボタン: 除外時は非活性
+            const voteBtnHtml = u.isAnyExclusion
+              ? `<span class="vote-btn vote-btn-disabled" title="${excTitle}">${excEmoji} ${excShort}</span>`
               : `<a href="https://ib.mbrace.or.jp/" target="_blank" rel="noopener noreferrer"
                     class="vote-btn" title="テレボートを新タブで開く (${stadium} ${rno}R を選択してください)">
                    🎫 投票
                  </a>`;
-            // ランクラベル: オッズ外れマーカー
-            const finalRankLabel = u.isOddsMismatch
-              ? `${rankLabel} <span class="mismatch-tag" title="朝予測候補だが確定オッズが L4 帯から外れたレース">⚠ 圏外</span>`
+            // ランクラベル: 除外マーカー
+            const finalRankLabel = u.isAnyExclusion
+              ? `${rankLabel} <span class="mismatch-tag" title="${excTitle}">${excEmoji} ${excShort}</span>`
               : rankLabel;
             tr.innerHTML = `
               <td class="pick-idx">${idx + 1}</td>

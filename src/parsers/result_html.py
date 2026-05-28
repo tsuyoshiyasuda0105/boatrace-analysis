@@ -141,8 +141,62 @@ def parse_result_html(html: str) -> Optional[dict]:
                 "popularity": popularity,
             })
 
+    # ========================================================
+    # 水面気象情報 (div.weather1) — レース時の確定値
+    # beforeinfo の生値と同じ構造で取れる。post-race overwrite で
+    # race_previews の朝予報を確定値に置き換えるために使う。
+    # ========================================================
+    weather = {
+        "weather_number": None,
+        "wind_speed": None,
+        "wind_direction_number": None,
+        "wave_height": None,
+        "temperature": None,
+        "water_temperature": None,
+    }
+    weather_panel = soup.select_one("div.weather1")
+    if weather_panel:
+        ptxt = weather_panel.get_text(separator=" ")
+        m = re.search(r"気温\s*([-\d.]+)", ptxt)
+        if m:
+            try:
+                weather["temperature"] = float(m.group(1))
+            except ValueError:
+                pass
+        m = re.search(r"水温\s*([-\d.]+)", ptxt)
+        if m:
+            try:
+                weather["water_temperature"] = float(m.group(1))
+            except ValueError:
+                pass
+        m = re.search(r"風速\s*([\d.]+)", ptxt)
+        if m:
+            try:
+                weather["wind_speed"] = int(float(m.group(1)))
+            except ValueError:
+                pass
+        m = re.search(r"波高?\s*([\d.]+)", ptxt)
+        if m:
+            try:
+                weather["wave_height"] = int(float(m.group(1)))
+            except ValueError:
+                pass
+        for img in weather_panel.select("p.weather1_bodyUnitImage"):
+            cls_attr = " ".join(img.get("class", []))
+            m = re.search(r"is-weather(\d+)\b", cls_attr)
+            if m:
+                n = int(m.group(1))
+                if 1 <= n <= 5:
+                    weather["weather_number"] = n
+            m = re.search(r"is-wind(\d+)\b", cls_attr)
+            if m:
+                n = int(m.group(1))
+                if 1 <= n <= 17:
+                    weather["wind_direction_number"] = n
+
     return {
         "boats": boats,
         "payouts": payouts,
         "race_kimarite": None,
+        "weather": weather,
     }

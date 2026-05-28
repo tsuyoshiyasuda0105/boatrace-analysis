@@ -54,7 +54,54 @@ def scrape_race_result(race_id: str) -> Optional[dict]:
         "race_kimarite": parsed.get("race_kimarite"),
         "boats": parsed["boats"],
         "payouts": parsed["payouts"],
+        # 確定後の水面気象情報 (weather_number/wind/wave/temp/water_temp/wind_dir)。
+        # post-race の上書き用 (race_previews の朝予報を実観測値で置き換える)。
+        "weather": parsed.get("weather") or {},
     }
+
+
+def overwrite_race_previews_weather(race_id: str, weather: dict, conn) -> int:
+    """結果ページから取得した確定 weather で race_previews を上書き。
+
+    race_previews は (race_id, boat_number) ごとに行があり、weather 系列は
+    レース内全艇で同値。全艇行に同じ値を一括 UPDATE する。
+    朝予報や直前情報が誤っていた場合の最終確定値として機能する。
+
+    Returns:
+        UPDATE された行数 (race_previews の boats 数)
+    """
+    if not weather:
+        return 0
+    # 全部 None なら何もしない (パース失敗のときに既存値を壊さない)
+    if not any(v is not None for v in weather.values()):
+        return 0
+    cur = conn.execute(
+        """UPDATE race_previews
+              SET weather_number        = COALESCE(?, weather_number),
+                  wind_speed            = COALESCE(?, wind_speed),
+                  wind_direction_number = COALESCE(?, wind_direction_number),
+                  wave_height           = COALESCE(?, wave_height),
+                  temperature           = COALESCE(?, temperature),
+                  water_temperature     = COALESCE(?, water_temperature),
+                  live_updated_at       = COALESCE(live_updated_at, ?)
+            WHERE race_id=?""",
+        (
+            weather.get("weather_number"),
+            weather.get("wind_speed"),
+            weather.get("wind_direction_number"),
+            weather.get("wave_height"),
+            weather.get("temperature"),
+            weather.get("water_temperature"),
+            "post-race",
+            race_id,
+        ),
+    )
+    try:
+        n = cur.rowcount
+    except Exception:
+        n = 0
+    conn.commit()
+    return n
 
 
 def scrape_results_for_pending_races(target_date: date, conn,

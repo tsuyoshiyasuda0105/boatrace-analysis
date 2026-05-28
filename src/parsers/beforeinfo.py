@@ -241,5 +241,23 @@ def parse_beforeinfo(html: str) -> BeforeInfoPage:
         m = re.search(r"波高?\s*([\d.]+)", ptxt)
         if m:
             page["wave_height"] = _to_int(m.group(1))
+        # 天候・風向は <p class="weather1_bodyUnitImage is-weather{1-5}"> /
+        # is-wind{1-17}> の CSS クラスから抽出。
+        # 1=晴 / 2=曇 / 3=雨 / 4=霧 / 5=雪 / 風向 1-16=16方位, 17=無風
+        # (この抽出を入れないと scrape_beforeinfo_live が weather_number を
+        #  常に None で返し COALESCE で朝の Open API 値が消えず雨除外が
+        #  誤って残り続ける。2026-05-28 浜名湖12R で発覚した実バグ修正。)
+        for img in weather_panel.select("p.weather1_bodyUnitImage"):
+            cls_attr = " ".join(img.get("class", []))
+            m = re.search(r"is-weather(\d+)\b", cls_attr)
+            if m:
+                n = int(m.group(1))
+                if 1 <= n <= 5:
+                    page["weather_number"] = n
+            m = re.search(r"is-wind(\d+)\b", cls_attr)
+            if m:
+                n = int(m.group(1))
+                if 1 <= n <= 17:
+                    page["wind_direction_number"] = n
 
     return page
