@@ -37,7 +37,12 @@ REM    に締切ったレースのみ対象 → 1 回 ~30秒。2026-05-28 浜名
 REM    誤適用への根本対策。
 .venv\Scripts\python.exe scripts\refresh_race_weather.py --since-hours 3 --interval 1.5 >> "%LOG%" 2>&1
 
-REM 6. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
+REM 6. 各エージェント (タスク/常駐スクレイパー/Render/Supabase) 死活監視。
+REM    結果を system_status (check_name='agent_*') に書き込み、Web UI バナーで
+REM    異常時に即気づけるようにする。
+.venv\Scripts\python.exe scripts\agent_monitor.py --quiet >> "%LOG%" 2>&1
+
+REM 7. タスク実行を task_runs に記録 (起動時キャッチアップの判定根拠)
 .venv\Scripts\python.exe scripts\record_task_run.py hourly success >> "%LOG%" 2>&1
 
 echo === Hourly task finished %date% %time% === >> "%LOG%"
