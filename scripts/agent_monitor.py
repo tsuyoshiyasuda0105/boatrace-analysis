@@ -163,6 +163,149 @@ def check_supabase():
         return "error", f"接続失敗: {type(e).__name__}: {e}"
 
 
+# ======================================================================
+# サボリ検知 (タスクが "成功" したと record していても実際に成果物が
+# 出ていないケース = 仕事をしていない/サボリ を検出する)
+# ======================================================================
+
+def _local_conn():
+    return sqlite3.connect(config.DB_PATH)
+
+
+def _supabase_conn():
+    if not os.getenv("DATABASE_URL", "").strip():
+        return None
+    from src.db.connection import connect as db_connect
+    return db_connect()
+
+
+def work_daily_collect():
+    """daily_collect が「今日のレース」を実際に取り込んでいるか。
+    成功記録あっても races が 0 件ならサボリ。"""
+    today = TODAY.isoformat()
+    try:
+        c = _local_conn()
+        n_races = c.execute("SELECT COUNT(*) FROM races WHERE race_date=?",
+                            (today,)).fetchone()[0]
+        # 翌日分の事前取得もチェック (前夜 23:30 で取るはず)
+        tmr = (TODAY + timedelta(days=1)).isoformat()
+        n_tmr = c.execute("SELECT COUNT(*) FROM races WHERE race_date=?",
+                          (tmr,)).fetchone()[0]
+        c.close()
+    except Exception as e:  # noqa: BLE001
+        return "error", f"DB エラー: {e}"
+    if n_races == 0:
+        # 6時以降に今日のレースが0件 = 明らかにサボリ
+        if _hour_now() >= 6:
+            return "error", f"今日のレース 0 件 (取込サボリ?)"
+        return "ok", "未取込 (朝6時前は正常)"
+    msg = f"今日 {n_races} R"
+    # 翌日分は 23:30 daily_collect で投入。22時以降にゼロは怪しい
+    if _hour_now() >= 22 and n_tmr == 0:
+        return "warning", f"{msg} / 明日 0 件 (前夜先行投入の取りこぼし?)"
+    if n_tmr > 0:
+        msg += f" + 明日 {n_tmr} R"
+    return "ok", msg
+
+
+def work_morning_predict():
+    """morning が「今日の予測」を実際に生成しているか。
+    成功記録ありで predictions が極端に少ないならサボリ。"""
+    today = TODAY.isoformat()
+    try:
+        c = _local_conn()
+        n = c.execute(
+            "SELECT COUNT(DISTINCT p.race_id) FROM predictions p "
+            "JOIN races r ON p.race_id=r.race_id WHERE r.race_date=?",
+            (today,),
+        ).fetchone()[0]
+        n_races = c.execute("SELECT COUNT(*) FROM races WHERE race_date=?",
+                            (today,)).fetchone()[0]
+        c.close()
+    except Exception as e:  # noqa: BLE001
+        return "error", f"DB エラー: {e}"
+    if n_races == 0:
+        return "ok", "今日レースなし"
+    # 7時以降 (morning は 06:30) に予測ゼロ = サボリ
+    if _hour_now() >= 7 and n == 0:
+        return "error", "今日の予測 0 件 (生成サボリ?)"
+    cov = n / n_races * 100 if n_races else 0
+    if _hour_now() >= 8 and cov < 50:
+        return "warning", f"予測カバレッジ低 {n}/{n_races} ({cov:.0f}%)"
+    return "ok", f"予測 {n}/{n_races} ({cov:.0f}%)"
+
+
+def work_odds_scheduler():
+    """odds_scheduler が直近実際にスナップを書いているか。
+    Supabase にしか書かないので Supabase をチェック。
+    レース時間中に直近 10 分のスナップが 0 件 = サボリ。"""
+    if not (8.5 <= _hour_now() <= 22.5):
+        return "ok", "稼働時間外"
+    pg = _supabase_conn()
+    if pg is None:
+        return "warning", "DATABASE_URL 未設定 (確認不可)"
+    try:
+        # Postgres でも SQLite でも "直近 N 分" は now() からの差で取る
+        # snapshot recorded_at は ISO 文字列。Pythonで now -10min を作って渡す
+        cutoff = (NOW - timedelta(minutes=10)).isoformat(timespec="seconds")
+        cur = pg.execute(
+            "SELECT COUNT(*) FROM odds_trifecta WHERE recorded_at >= ?",
+            (cutoff,),
+        )
+        n = cur.fetchone()[0]
+        pg.close()
+    except Exception as e:  # noqa: BLE001
+        return "error", f"クエリ失敗: {e}"
+    if n == 0:
+        return "error", "直近10分のオッズ取得 0 件 (サボリ?)"
+    if n < 20:
+        return "warning", f"直近10分 {n} 件 (少ない)"
+    return "ok", f"直近10分 {n} スナップ"
+
+
+def work_beforeinfo_live():
+    """beforeinfo_live が締切間近のレースに live データを書いているか。
+    締切が 5-30 分後のレースを対象 (live スクレイパーの target window)。
+    そのレースに live_updated_at が無ければサボリ。"""
+    if not (8 <= _hour_now() <= 22):
+        return "ok", "稼働時間外"
+    today = TODAY.isoformat()
+    now_s = NOW.strftime("%Y-%m-%d %H:%M:%S")
+    later_s = (NOW + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    soon_s = (NOW + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        c = _local_conn()
+        # 締切まで 5-30 分のレース (target window)
+        rows = c.execute(
+            """SELECT r.race_id, MAX(pv.live_updated_at)
+                 FROM races r
+                 LEFT JOIN race_previews pv ON pv.race_id=r.race_id
+                WHERE r.race_date=? AND r.race_closed_at BETWEEN ? AND ?
+                GROUP BY r.race_id""",
+            (today, soon_s, later_s),
+        ).fetchall()
+        c.close()
+    except Exception as e:  # noqa: BLE001
+        return "error", f"DB エラー: {e}"
+    if not rows:
+        return "ok", "対象レースなし (締切5-30分のレースが今ない)"
+    total = len(rows)
+    no_live = [rid for rid, upd in rows if not upd]
+    if no_live and len(no_live) == total:
+        return "error", f"対象 {total} レース全部 live未更新 (サボリ?)"
+    if no_live:
+        return "warning", f"{len(no_live)}/{total} レース live未更新"
+    return "ok", f"対象 {total} レース全部 live更新済"
+
+
+WORK_CHECKS = [
+    ("agent_work_daily_collect", "daily_collect の仕事", work_daily_collect),
+    ("agent_work_morning",        "morning の仕事",     work_morning_predict),
+    ("agent_work_odds_scheduler", "odds_scheduler の仕事", work_odds_scheduler),
+    ("agent_work_beforeinfo",     "beforeinfo_live の仕事", work_beforeinfo_live),
+]
+
+
 def _upsert_status(conn, check_name: str, status: str, message: str,
                    detail: dict | None = None) -> None:
     """system_status へ upsert (check_data_quality.py と同様)。"""
@@ -235,6 +378,13 @@ def main() -> int:
     results.append(("agent_render_web", "Render Web", s, m))
     s, m = check_supabase()
     results.append(("agent_supabase", "Supabase接続", s, m))
+    # ▼ サボリ検知 (タスクが「成功」記録していても成果物が無いケース検出)
+    for cn, label, fn in WORK_CHECKS:
+        try:
+            s, m = fn()
+        except Exception as e:  # noqa: BLE001
+            s, m = "error", f"check失敗: {type(e).__name__}: {e}"
+        results.append((cn, label, s, m))
 
     n_warn = n_err = 0
     for cn, label, status, msg in results:
