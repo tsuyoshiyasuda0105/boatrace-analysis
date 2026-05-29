@@ -63,11 +63,13 @@ RACE_NO_AXIS = [None] + list(range(1, 13))
 KIMARITE_AXIS = [None, "逃げ", "まくり", "差し", "まくり差し"]
 WEATHER_EXC_AXIS = [None, [3]]  # 雨除外有無
 ODDS_BAND_AXIS = [None, (5, 10), (10, 20), (20, 50)]  # 1-2-3 オッズ帯
+LOCAL_TOP1_AXIS = [None, 40.0, 50.0, 60.0]  # 1号艇 当地1着率閾値 (%)
+MOTOR_TOP2_AXIS = [None, 35.0, 40.0, 45.0]  # 1号艇 モーター2連率閾値 (%)
 BET_COMBOS = ["1-2-3", "1-3-2", "1-2-4", "2-1-3", "1-4-2"]
 
 
 def build_method(stadium, cls, race_no, kimarite, weather_exc, bet_combo, bet_type,
-                 odds_band=None):
+                 odds_band=None, local_min=None, motor_min=None):
     cond: dict = {"bet_type": bet_type, "finish_pattern": bet_combo}
     if stadium is not None:
         cond["stadium"] = [stadium]
@@ -82,31 +84,39 @@ def build_method(stadium, cls, race_no, kimarite, weather_exc, bet_combo, bet_ty
     if odds_band is not None:
         cond["odds_min"] = odds_band[0]
         cond["odds_max"] = odds_band[1]
+    if local_min is not None:
+        cond["boat1_local_1_min"] = local_min
+    if motor_min is not None:
+        cond["boat1_motor_top2_min"] = motor_min
     return {"conditions": cond, "source_url": "(combinatorial search)",
             "source_quote": "", "confidence": 1.0}
 
 
 def search(n_min: int, top: int, bet_type: str, combos: list[str],
            include_kimarite: bool, include_race_no: bool,
-           include_odds_band: bool = False):
+           include_odds_band: bool = False,
+           include_local: bool = False, include_motor: bool = False):
     """組合せ走査。Tier 1/2/3 候補を返す。"""
     results = []
     kim_axis = KIMARITE_AXIS if include_kimarite else [None]
     rn_axis = RACE_NO_AXIS if include_race_no else [None]
     ob_axis = ODDS_BAND_AXIS if include_odds_band else [None]
+    lo_axis = LOCAL_TOP1_AXIS if include_local else [None]
+    mo_axis = MOTOR_TOP2_AXIS if include_motor else [None]
     n_total = (len(STADIUMS_AXIS) * len(CLASS_AXIS) * len(rn_axis)
                * len(kim_axis) * len(WEATHER_EXC_AXIS) * len(combos)
-               * len(ob_axis))
+               * len(ob_axis) * len(lo_axis) * len(mo_axis))
     print(f"=== combinatorial search: {n_total:,} cells ===")
     i = 0
     last_log = datetime.now()
-    for stadium, cls, rn, kim, wexc, combo, ob in product(
+    for stadium, cls, rn, kim, wexc, combo, ob, lo, mo in product(
             STADIUMS_AXIS, CLASS_AXIS, rn_axis, kim_axis,
-            WEATHER_EXC_AXIS, combos, ob_axis):
+            WEATHER_EXC_AXIS, combos, ob_axis, lo_axis, mo_axis):
         i += 1
-        if all(x is None for x in (stadium, cls, rn, kim, wexc, ob)):
+        if all(x is None for x in (stadium, cls, rn, kim, wexc, ob, lo, mo)):
             continue
-        method = build_method(stadium, cls, rn, kim, wexc, combo, bet_type, ob)
+        method = build_method(stadium, cls, rn, kim, wexc, combo, bet_type,
+                              ob, lo, mo)
         try:
             bt = backtest_method(method)
         except Exception as e:  # noqa: BLE001
@@ -168,6 +178,12 @@ def render_report(results: list[dict], output: Path, n_min: int):
                 parts.append(cond["kimarite"])
             if cond.get("weather_exclude"):
                 parts.append("雨除外")
+            if cond.get("odds_min") is not None:
+                parts.append(f"odds{int(cond['odds_min'])}-{int(cond['odds_max'])}")
+            if cond.get("boat1_local_1_min") is not None:
+                parts.append(f"当地≥{int(cond['boat1_local_1_min'])}")
+            if cond.get("boat1_motor_top2_min") is not None:
+                parts.append(f"モ2≥{int(cond['boat1_motor_top2_min'])}")
             parts.append(cond["finish_pattern"])
             title = " × ".join(parts)
             lines.append(f"| {i} | {title} | {bt['n_races']:,} | "
@@ -196,13 +212,17 @@ def main():
                         help="レース番号次元を省略 (高速化)")
     parser.add_argument("--odds-band", action="store_true",
                         help="オッズ帯軸 (5-10/10-20/20-50) を有効化")
+    parser.add_argument("--local", action="store_true",
+                        help="当地1着率閾値軸 (40/50/60%%) を有効化")
+    parser.add_argument("--motor", action="store_true",
+                        help="モーター2連率閾値軸 (35/40/45%%) を有効化")
     parser.add_argument("--output", default="reports")
     args = parser.parse_args()
 
     combos = [c.strip() for c in args.combos.split(",") if c.strip()]
     results = search(args.n_min, args.top, args.bet, combos,
                      not args.no_kimarite, not args.no_race_no,
-                     args.odds_band)
+                     args.odds_band, args.local, args.motor)
     out = render_report(results, Path(args.output), args.n_min)
     print(f"\nレポート出力: {out}")
     print(f"Tier 1: {sum(1 for m in results if m['backtest']['tier']=='tier_1')}")

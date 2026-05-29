@@ -196,6 +196,41 @@ def extract_single(text: str, source_url: str = "") -> Optional[dict]:
         except ValueError:
             pass
 
+    # 地元1着率 (1号艇): "当地1着率" / "ローカル" / "地元勝率"
+    m = re.search(r"(?:当地|地元|ローカル|local)\s*1着率\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上"
+                  r"|local_?top_?1\s*[≧≥]\s*(\d+\.?\d*)", text, re.IGNORECASE)
+    if m:
+        try:
+            cond["boat1_local_1_min"] = float(m.group(1) or m.group(2))
+        except ValueError:
+            pass
+
+    # 地元 2 連率 (top_2)
+    m = re.search(r"(?:当地|地元|ローカル)\s*(?:2連率|2着以内率|連対率)\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上", text)
+    if m:
+        try:
+            cond["boat1_local_2_min"] = float(m.group(1))
+        except ValueError:
+            pass
+
+    # モーター 2 連率: "モーター2連率 N% 以上" / "良モーター" (デフォ 40)
+    m = re.search(r"モーター\s*2連率\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上", text)
+    if m:
+        try:
+            cond["boat1_motor_top2_min"] = float(m.group(1))
+        except ValueError:
+            pass
+    elif re.search(r"良モーター|モーター.*?(?:絶好|抜群|好調)", text):
+        cond["boat1_motor_top2_min"] = 40.0
+
+    # モーター 3 連率
+    m = re.search(r"モーター\s*3連率\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上", text)
+    if m:
+        try:
+            cond["boat1_motor_top3_min"] = float(m.group(1))
+        except ValueError:
+            pass
+
     # 2号艇連対率 (top_2)
     m = re.search(r"2号艇\s*(?:連対率|top[_-]?2|2連率)\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上"
                   r"|2号艇\s*top[_-]?2\s*[≧≥]\s*(\d+\.?\d*)", text)

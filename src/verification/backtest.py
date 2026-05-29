@@ -70,6 +70,22 @@ def _build_where(cond: dict) -> tuple[str, list[Any], list[str]]:
         clauses.append("e1.national_top_1_percent >= ?")
         args.append(float(cond["boat1_natl_1_min"]))
 
+    if cond.get("boat1_local_1_min") is not None:
+        clauses.append("e1.local_top_1_percent >= ?")
+        args.append(float(cond["boat1_local_1_min"]))
+
+    if cond.get("boat1_local_2_min") is not None:
+        clauses.append("e1.local_top_2_percent >= ?")
+        args.append(float(cond["boat1_local_2_min"]))
+
+    if cond.get("boat1_motor_top2_min") is not None:
+        clauses.append("e1.assigned_motor_top_2_percent >= ?")
+        args.append(float(cond["boat1_motor_top2_min"]))
+
+    if cond.get("boat1_motor_top3_min") is not None:
+        clauses.append("e1.assigned_motor_top_3_percent >= ?")
+        args.append(float(cond["boat1_motor_top3_min"]))
+
     if cond.get("boat2_top2_min") is not None:
         extra_joins.append(
             "LEFT JOIN race_entries e2 ON e2.race_id=r.race_id AND e2.boat_number=2")
