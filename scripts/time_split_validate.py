@@ -86,10 +86,10 @@ TOP_PICKS = [
     {"racer_class": [2], "race_number": [5], "weather_exclude": [3],
      "finish_pattern": "1-3-2", "bet_type": "trifecta",
      "label": "A2 × 5R × 雨除外 × 1-3-2"},
-    # ▼ 4号艇カド分析の新発見 (boat4_kado.py より)
-    # NOTE: backtest_method の WHERE は boat 1 ベースなので、ここでは
-    # 会場 + 1号艇 A1 で部分代用。本来は boat 4 専用 WHERE が必要。
-    # 取り急ぎ会場別フルレース × boat4 単勝 LIKE 検証は別途。
+    # ▼ search 4 (local+motor) の robust 候補
+    {"stadium": [7], "racer_class": [1], "boat1_motor_top2_min": 35.0,
+     "finish_pattern": "1-2-3", "bet_type": "trifecta",
+     "label": "蒲郡 × A1 × motor2≥35 × 1-2-3 (NEW robust)"},
 ]
 
 
