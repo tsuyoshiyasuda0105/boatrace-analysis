@@ -119,6 +119,23 @@ def _build_where(cond: dict) -> tuple[str, list[Any], list[str]]:
         args.append(omin)
         args.append(omax)
 
+    # Venus (全女子戦): n_female=6
+    if cond.get("venus_only"):
+        clauses.append(
+            "EXISTS (SELECT 1 FROM ("
+            "  SELECT race_id, COUNT(*) AS nf FROM race_entries e2 "
+            "  JOIN racers ra ON e2.racer_number=ra.racer_number "
+            "  WHERE ra.gender=2 GROUP BY race_id"
+            ") f WHERE f.race_id=r.race_id AND f.nf=6)"
+        )
+    # 女性混在除外 (n_female=0)
+    if cond.get("no_female"):
+        clauses.append(
+            "NOT EXISTS (SELECT 1 FROM race_entries e2 "
+            "JOIN racers ra ON e2.racer_number=ra.racer_number "
+            "WHERE e2.race_id=r.race_id AND ra.gender=2)"
+        )
+
     # 決まり手 (1着の決まり手で絞り込み)
     if cond.get("kimarite"):
         clauses.append(
