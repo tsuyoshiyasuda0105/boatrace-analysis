@@ -62,10 +62,12 @@ CLASS_AXIS = [None, 1, 2]  # A1 / A2 のみ (B 級は ROI 低いので除外)
 RACE_NO_AXIS = [None] + list(range(1, 13))
 KIMARITE_AXIS = [None, "逃げ", "まくり", "差し", "まくり差し"]
 WEATHER_EXC_AXIS = [None, [3]]  # 雨除外有無
+ODDS_BAND_AXIS = [None, (5, 10), (10, 20), (20, 50)]  # 1-2-3 オッズ帯
 BET_COMBOS = ["1-2-3", "1-3-2", "1-2-4", "2-1-3", "1-4-2"]
 
 
-def build_method(stadium, cls, race_no, kimarite, weather_exc, bet_combo, bet_type):
+def build_method(stadium, cls, race_no, kimarite, weather_exc, bet_combo, bet_type,
+                 odds_band=None):
     cond: dict = {"bet_type": bet_type, "finish_pattern": bet_combo}
     if stadium is not None:
         cond["stadium"] = [stadium]
@@ -77,29 +79,34 @@ def build_method(stadium, cls, race_no, kimarite, weather_exc, bet_combo, bet_ty
         cond["kimarite"] = kimarite
     if weather_exc is not None:
         cond["weather_exclude"] = weather_exc
+    if odds_band is not None:
+        cond["odds_min"] = odds_band[0]
+        cond["odds_max"] = odds_band[1]
     return {"conditions": cond, "source_url": "(combinatorial search)",
             "source_quote": "", "confidence": 1.0}
 
 
 def search(n_min: int, top: int, bet_type: str, combos: list[str],
-           include_kimarite: bool, include_race_no: bool):
+           include_kimarite: bool, include_race_no: bool,
+           include_odds_band: bool = False):
     """組合せ走査。Tier 1/2/3 候補を返す。"""
     results = []
     kim_axis = KIMARITE_AXIS if include_kimarite else [None]
     rn_axis = RACE_NO_AXIS if include_race_no else [None]
+    ob_axis = ODDS_BAND_AXIS if include_odds_band else [None]
     n_total = (len(STADIUMS_AXIS) * len(CLASS_AXIS) * len(rn_axis)
-               * len(kim_axis) * len(WEATHER_EXC_AXIS) * len(combos))
+               * len(kim_axis) * len(WEATHER_EXC_AXIS) * len(combos)
+               * len(ob_axis))
     print(f"=== combinatorial search: {n_total:,} cells ===")
     i = 0
     last_log = datetime.now()
-    for stadium, cls, rn, kim, wexc, combo in product(
+    for stadium, cls, rn, kim, wexc, combo, ob in product(
             STADIUMS_AXIS, CLASS_AXIS, rn_axis, kim_axis,
-            WEATHER_EXC_AXIS, combos):
+            WEATHER_EXC_AXIS, combos, ob_axis):
         i += 1
-        # 全 None なら大雑把すぎるのでスキップ
-        if all(x is None for x in (stadium, cls, rn, kim, wexc)):
+        if all(x is None for x in (stadium, cls, rn, kim, wexc, ob)):
             continue
-        method = build_method(stadium, cls, rn, kim, wexc, combo, bet_type)
+        method = build_method(stadium, cls, rn, kim, wexc, combo, bet_type, ob)
         try:
             bt = backtest_method(method)
         except Exception as e:  # noqa: BLE001
@@ -187,12 +194,15 @@ def main():
                         help="決まり手次元を省略 (高速化)")
     parser.add_argument("--no-race-no", action="store_true",
                         help="レース番号次元を省略 (高速化)")
+    parser.add_argument("--odds-band", action="store_true",
+                        help="オッズ帯軸 (5-10/10-20/20-50) を有効化")
     parser.add_argument("--output", default="reports")
     args = parser.parse_args()
 
     combos = [c.strip() for c in args.combos.split(",") if c.strip()]
     results = search(args.n_min, args.top, args.bet, combos,
-                     not args.no_kimarite, not args.no_race_no)
+                     not args.no_kimarite, not args.no_race_no,
+                     args.odds_band)
     out = render_report(results, Path(args.output), args.n_min)
     print(f"\nレポート出力: {out}")
     print(f"Tier 1: {sum(1 for m in results if m['backtest']['tier']=='tier_1')}")
