@@ -1,5 +1,9 @@
 {
-  "notes": "検証エージェントが巡回する競艇情報サイトのURLリスト。robots.txt と利用規約に従い、過度な負荷を与えないこと (REQUEST_INTERVAL_SECONDS の遵守)。著作権上の引用範囲も意識する。",
-  "urls": [],
-  "extraction_hints": "1段落=1手法 と仮定。1手法あたり 2 条件以上抽出されないとノイズとして破棄される。条件として: 会場名 / コース番号 / クラス (A1等) / 風向 / 天気除外 / ST / オッズ / レース番号 / 賭け式 / 着順パターン を解釈する。"
+  "notes": "公開・引用可能な情報源を中心に巡回。robots.txt と REQUEST_INTERVAL_SECONDS を遵守。",
+  "urls": [
+    "https://ja.wikipedia.org/wiki/競艇",
+    "https://ja.wikipedia.org/wiki/競艇場",
+    "https://ja.wikipedia.org/wiki/ボートレーサー"
+  ],
+  "extraction_hints": "1段落=1手法。条件 2 個未満は破棄。"
 }

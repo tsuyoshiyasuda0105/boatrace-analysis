@@ -26,7 +26,16 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-EXTRACTOR_VERSION = "v0.1"
+EXTRACTOR_VERSION = "v0.2"
+
+# B 除外場 (L4 戦略で ROI 低下が認められた場 set)
+EXCLUDE_B = {2, 4, 7, 8, 10, 19, 21, 24}
+# {戸田, 平和島, 蒲郡, 常滑, 三国, 下関, 芦屋, 大村}
+
+# 決まり手 (race_results.kimarite との照合)
+KIMARITE_KEYWORDS = [
+    "逃げ", "まくり差し", "差し", "まくり", "抜き", "恵まれ",
+]
 
 STADIUMS = {
     "桐生": 1, "戸田": 2, "江戸川": 3, "平和島": 4, "多摩川": 5, "浜名湖": 6,
@@ -115,9 +124,15 @@ def extract_single(text: str, source_url: str = "") -> Optional[dict]:
             cond.setdefault("weather_exclude", []).append(num)
 
     # コース / 号艇
+    # ただし「N号艇 連対率/N着率」のように直後が選手統計キーワードなら
+    # course 指定ではなく boat-N の stat 参照と解釈 → 追加しない
     course_set = set()
     for m in re.finditer(r"(?<!\d)([1-6])\s*(?:コース|号艇|カド)", text):
-        course_set.add(int(m.group(1)))
+        n = int(m.group(1))
+        after = text[m.end():m.end() + 8]
+        if re.match(r"\s*(?:連対率|[123]着率|勝率|top|連率)", after):
+            continue
+        course_set.add(n)
     if course_set:
         cond["course"] = sorted(course_set)
 
@@ -157,16 +172,51 @@ def extract_single(text: str, source_url: str = "") -> Optional[dict]:
             cond["bet_type"] = bt
             break
 
-    # 着順パターン
+    # 着順パターン (3連単 X-Y-Z)
     m = re.search(r"([1-6])\s*[-=]\s*([1-6])\s*[-=]\s*([1-6])", text)
     if m:
         a, b, c = m.group(1), m.group(2), m.group(3)
         if len({a, b, c}) == 3:
             cond["finish_pattern"] = f"{a}-{b}-{c}"
-    elif re.search(r"まくり|捲り", text):
-        cond["finish_pattern"] = "makuri"
     elif re.search(r"頭固定|1着固定", text):
         cond["finish_pattern"] = "head_fix"
+
+    # 決まり手 (1着の決まり手で検索)
+    for kw in KIMARITE_KEYWORDS:
+        if kw in text:
+            cond["kimarite"] = kw
+            break
+
+    # 国1着率 (1号艇): "国1%≥N" / "全国1着率 N% 以上" 等
+    m = re.search(r"(?:全国)?1着率\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上"
+                  r"|国1%?\s*[≧≥]\s*(\d+\.?\d*)", text)
+    if m:
+        try:
+            cond["boat1_natl_1_min"] = float(m.group(1) or m.group(2))
+        except ValueError:
+            pass
+
+    # 2号艇連対率 (top_2)
+    m = re.search(r"2号艇\s*(?:連対率|top[_-]?2|2連率)\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上"
+                  r"|2号艇\s*top[_-]?2\s*[≧≥]\s*(\d+\.?\d*)", text)
+    if m:
+        try:
+            cond["boat2_top2_min"] = float(m.group(1) or m.group(2))
+        except ValueError:
+            pass
+
+    # 3号艇 国1%
+    m = re.search(r"3号艇\s*(?:全国)?1着率\s*[≧≥]?\s*(\d+\.?\d*)\s*%?\s*以上"
+                  r"|3号艇\s*国1%?\s*[≧≥]\s*(\d+\.?\d*)", text)
+    if m:
+        try:
+            cond["boat3_natl_1_min"] = float(m.group(1) or m.group(2))
+        except ValueError:
+            pass
+
+    # B 除外場フィルタ
+    if re.search(r"B\s*除外|戸田.{0,12}平和島|B\s*級\s*会場\s*除外", text):
+        cond["exclude_b_venues"] = True
 
     # 条件 2 個未満ならノイズ扱い
     if len(cond) < 2:

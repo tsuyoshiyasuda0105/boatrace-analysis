@@ -14,6 +14,7 @@ Tier 判定 (保守的):
 from __future__ import annotations
 
 import math
+import os
 import sqlite3
 from typing import Any
 
@@ -21,20 +22,35 @@ import config
 
 
 def _conn():
+    """DATABASE_URL があれば Supabase に接続、無ければローカル SQLite。
+    odds_trifecta は Supabase にしか書かれていないため、本当の検証は
+    Supabase 接続必須。"""
+    if os.getenv("DATABASE_URL", "").strip():
+        try:
+            from src.db.connection import connect as db_connect
+            return db_connect()
+        except Exception:  # noqa: BLE001
+            pass
     return sqlite3.connect(config.DB_PATH)
 
 
-def _build_where(cond: dict) -> tuple[str, list[Any]]:
-    """conditions dict から WHERE 句と引数リストを構築。
-    無視する条件 (まだ実装していないもの) は build_where_unsupported に記録。
-    """
+def _build_where(cond: dict) -> tuple[str, list[Any], list[str]]:
+    """conditions dict から WHERE 句、引数リスト、追加 JOIN 句を構築。"""
     clauses: list[str] = []
     args: list[Any] = []
+    extra_joins: list[str] = []
 
     if cond.get("stadium"):
         ph = ",".join("?" * len(cond["stadium"]))
         clauses.append(f"r.stadium_number IN ({ph})")
         args.extend(cond["stadium"])
+
+    if cond.get("exclude_b_venues"):
+        # extract.EXCLUDE_B を import すると循環するので明示的に書く
+        excl = [2, 4, 7, 8, 10, 19, 21, 24]
+        ph = ",".join("?" * len(excl))
+        clauses.append(f"r.stadium_number NOT IN ({ph})")
+        args.extend(excl)
 
     if cond.get("race_number"):
         ph = ",".join("?" * len(cond["race_number"]))
@@ -50,6 +66,22 @@ def _build_where(cond: dict) -> tuple[str, list[Any]]:
         clauses.append("e1.avg_start_timing <= ?")
         args.append(float(cond["racer_avg_st_max"]))
 
+    if cond.get("boat1_natl_1_min") is not None:
+        clauses.append("e1.national_top_1_percent >= ?")
+        args.append(float(cond["boat1_natl_1_min"]))
+
+    if cond.get("boat2_top2_min") is not None:
+        extra_joins.append(
+            "LEFT JOIN race_entries e2 ON e2.race_id=r.race_id AND e2.boat_number=2")
+        clauses.append("e2.national_top_2_percent >= ?")
+        args.append(float(cond["boat2_top2_min"]))
+
+    if cond.get("boat3_natl_1_min") is not None:
+        extra_joins.append(
+            "LEFT JOIN race_entries e3 ON e3.race_id=r.race_id AND e3.boat_number=3")
+        clauses.append("e3.national_top_1_percent >= ?")
+        args.append(float(cond["boat3_natl_1_min"]))
+
     if cond.get("weather_exclude"):
         ph = ",".join("?" * len(cond["weather_exclude"]))
         clauses.append(f"(pv.weather_number IS NULL OR pv.weather_number NOT IN ({ph}))")
@@ -59,24 +91,38 @@ def _build_where(cond: dict) -> tuple[str, list[Any]]:
         clauses.append("(pv.wind_speed IS NULL OR pv.wind_speed >= ?)")
         args.append(float(cond["wind_speed_min"]))
 
-    return (" AND ".join(clauses) if clauses else "1=1"), args
+    # オッズ帯 (1-2-3 のいずれかのスナップが帯に入ったか)
+    if cond.get("odds_min") is not None or cond.get("odds_max") is not None:
+        omin = float(cond.get("odds_min") or 0)
+        omax = float(cond.get("odds_max") or 99999)
+        clauses.append(
+            "EXISTS (SELECT 1 FROM odds_trifecta o WHERE o.race_id=r.race_id "
+            "AND o.combination='1-2-3' AND o.odds >= ? AND o.odds < ? "
+            "AND o.snapshot_label IN ('T-5min','T-4min','T-3min','T-2min','T-1min','final'))"
+        )
+        args.append(omin)
+        args.append(omax)
+
+    # 決まり手 (1着の決まり手で絞り込み)
+    if cond.get("kimarite"):
+        clauses.append(
+            "EXISTS (SELECT 1 FROM race_results rr WHERE rr.race_id=r.race_id "
+            "AND rr.finishing_position=1 AND rr.kimarite=?)"
+        )
+        args.append(cond["kimarite"])
+
+    return (" AND ".join(clauses) if clauses else "1=1"), args, extra_joins
 
 
 def unsupported_conditions(cond: dict) -> list[str]:
     """現在 SQL に落とせない条件 (= バックテスト不完全) を返す。"""
     unsupp: list[str] = []
     if cond.get("wind_direction"):
-        # 風向は会場ごとに「追い風」が何向なのか異なる → ヒューリスティック必要
         unsupp.append("wind_direction (要・会場別追い風方向マッピング)")
     if cond.get("course"):
-        # course は race_results.course_number で判定可だがベットの「頭」と
-        # 関連付ける必要があり、bet_pattern に依存 → 今後対応
-        unsupp.append("course (要・bet_pattern との整合)")
-    if cond.get("finish_pattern") in ("makuri", "head_fix"):
-        unsupp.append(f"finish_pattern={cond['finish_pattern']} (要・決まり手 or 着順条件化)")
-    if cond.get("odds_min") is not None or cond.get("odds_max") is not None:
-        # 1-2-3 オッズ範囲はバックテスト時に T-5min 等で参照可
-        unsupp.append("odds range (要・odds_trifecta join)")
+        unsupp.append("course (要・進入コースとbetパターン整合)")
+    if cond.get("finish_pattern") in ("head_fix",):
+        unsupp.append(f"finish_pattern={cond['finish_pattern']} (頭固定は bet_combo 化必要)")
     return unsupp
 
 
@@ -95,23 +141,22 @@ def _tier(roi: float, n: int) -> str:
 def backtest_method(method: dict, max_races: int = 500_000) -> dict:
     """method 1 件を DB で検証して結果 dict を返す。"""
     cond = method.get("conditions", {})
-    where, args = _build_where(cond)
+    where, args, extra_joins = _build_where(cond)
+    joins_str = "\n          ".join(extra_joins)
 
     bet_type = cond.get("bet_type", "trifecta")
     finish_pat = cond.get("finish_pattern")
-    # 着順パターン文字列 "1-2-3" 等が finish_pat にあればそのまま combination に使う
     if finish_pat and "-" in finish_pat:
         bet_combo = finish_pat
     else:
-        # デフォルト: 3連単 1-2-3 (L4 戦略系のデフォルト)
         bet_combo = "1-2-3"
 
-    # 対象レース総数 (1号艇 entry + boat1 preview を LEFT JOIN)
     sql_total = f"""
         SELECT COUNT(DISTINCT r.race_id)
           FROM races r
           LEFT JOIN race_entries e1 ON e1.race_id=r.race_id AND e1.boat_number=1
           LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
+          {joins_str}
          WHERE {where}
     """
     sql_hits = f"""
@@ -119,6 +164,7 @@ def backtest_method(method: dict, max_races: int = 500_000) -> dict:
           FROM races r
           LEFT JOIN race_entries e1 ON e1.race_id=r.race_id AND e1.boat_number=1
           LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
+          {joins_str}
           JOIN race_payouts pp ON pp.race_id=r.race_id
                               AND pp.bet_type=? AND pp.combination=?
          WHERE {where}
