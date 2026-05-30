@@ -120,8 +120,13 @@ def check_log(spec: dict):
         return "ok", f"稼働時間外 (現在 {_hour_now():.1f}h)"
     pat = spec["glob"]
     candidates: list[Path] = []
+    # 日付付きログ (例: beforeinfo_live_20260530.log)
     for d in (TODAY, TODAY - timedelta(days=1)):
         candidates.extend(LOG_DIR.glob(f"{pat}_{d.strftime('%Y%m%d')}*.log"))
+    # 日付なし固定名ログも候補に (例: odds_scheduler.log)
+    # 2026-05-30: 監視ロジック修正 — odds_scheduler は単一ファイルに append する
+    # 設計なので日付付きでは見つからない → 固定名も追加
+    candidates.extend(LOG_DIR.glob(f"{pat}.log"))
     if not candidates:
         return "error", "ログファイルなし"
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
