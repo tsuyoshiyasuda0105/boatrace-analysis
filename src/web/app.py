@@ -2449,7 +2449,60 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """日別の L4 戦略統計を集計。
         L4 条件: 三連単本命 500-1000 + B除外 + 1号艇A1
         集計対象: 単勝 / 2連単1-2 / 3連単1-2-3
+
+        2026-05-30 パフォーマンス改善:
+          - l4_daily_stats_cache テーブルに過去日分の集計値を JSON で保存.
+          - 過去日 (date < today) のみ cache 優先で取得し、 残りを SQL で計算.
+          - Supabase 環境では l4_daily_summary (既存) と併用可能.
         """
+        import json as _json
+        from datetime import date as _date
+
+        # === A. cache テーブルから過去日分を取得 (高速) ===
+        cached_by_date: dict[str, dict] = {}
+        try:
+            with db_connect() as conn_c:
+                cur_c = conn_c.execute(
+                    "SELECT race_date, stats_json FROM l4_daily_stats_cache "
+                    "WHERE race_date BETWEEN ? AND ?",
+                    (from_date, to_date),
+                )
+                for rdate, sjson in cur_c.fetchall():
+                    try:
+                        cached_by_date[rdate] = _json.loads(sjson)
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:  # noqa: BLE001
+            # cache テーブル無い (= migration 前) → 既存 SQL で全部計算
+            pass
+
+        # === B. cache に無い日付を識別 ===
+        today_iso = _date.today().isoformat()
+        try:
+            d_from = _date.fromisoformat(from_date)
+            d_to = _date.fromisoformat(to_date)
+            all_dates = []
+            cur_d = d_from
+            from datetime import timedelta as _td
+            while cur_d <= d_to:
+                all_dates.append(cur_d.isoformat())
+                cur_d += _td(days=1)
+        except ValueError:
+            all_dates = []
+
+        missing_dates = [d for d in all_dates if d not in cached_by_date]
+        # 当日分は常に再計算 (cache に保存しない、 リアルタイム性確保)
+        # 過去日でも cache に無いものは今回 SQL で取得
+        if not missing_dates:
+            # 完全 cache hit → 早期 return
+            return [cached_by_date[d] for d in sorted(cached_by_date)]
+
+        # missing_dates の範囲で SQL 実行 (連続範囲を想定、 非連続は filter で対応)
+        sql_from = missing_dates[0]
+        sql_to = missing_dates[-1]
+        # 既存 SQL 実装に流す (sql_from, sql_to で範囲取得)
+        from_date = sql_from
+        to_date = sql_to
         with db_connect() as conn:
             # 別途、日別の総レース数を取得 (確定有無に関わらず)
             # _l4_daily_stats の n_total が「確定済のみ」だと
@@ -2983,7 +3036,38 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 d[f"{bet}_recovery"] = pay / (100 * n) * 100 if n else None
                 d[f"{bet}_profit"] = pay - 100 * n if n else 0
 
-        return sorted(by_date.values(), key=lambda x: x["date"], reverse=True)
+        # === C. cache に過去日分を save (当日は save しない、 リアルタイム性確保) ===
+        # missing_dates の SQL 結果 (by_date) のうち、 過去日 (date < today) を cache に保存.
+        try:
+            from datetime import datetime as _dt
+            now_iso = _dt.now().isoformat(timespec="seconds")
+            with db_connect() as conn_s:
+                for rdate, day_d in by_date.items():
+                    if rdate >= today_iso:
+                        continue  # 当日/未来日は save しない
+                    if rdate not in missing_dates:
+                        continue  # cache に既にあったものは再 save 不要
+                    try:
+                        sjson = _json.dumps(day_d, ensure_ascii=False)
+                        conn_s.execute(
+                            "INSERT OR REPLACE INTO l4_daily_stats_cache "
+                            "(race_date, stats_json, cached_at) VALUES (?, ?, ?)",
+                            (rdate, sjson, now_iso),
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                conn_s.commit()
+        except Exception:  # noqa: BLE001
+            # cache 保存に失敗してもアプリ動作は続行
+            pass
+
+        # === D. cache hit 分と SQL 結果をマージ ===
+        result_by_date = dict(by_date)  # SQL 結果をベース
+        for rdate, day_d in cached_by_date.items():
+            if rdate not in result_by_date:  # cache hit のみ (SQL 結果が優先)
+                result_by_date[rdate] = day_d
+
+        return sorted(result_by_date.values(), key=lambda x: x["date"], reverse=True)
 
     def _l4_races_for_date(target_date: str) -> list[dict]:
         """指定日の L4 該当レース全件を取得 (1号艇A1 + A2派生)。
