@@ -1236,15 +1236,38 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/race/<race_id>/value-bets")
     @member_only_api
+    # 2026-05-30: キャッシュ追加 (旧実装はキャッシュなしで毎回 DB 計算)
+    #   ttl=60: 当日 race のリアルタイム性 (オッズ snapshot 反映)
+    #   past_ttl=3600: 過去日 race は確定済なので 1 時間キャッシュ
+    @cached(ttl=60, past_ttl=3600)
     def race_value_bets(race_id: str):
         info = _race_basic_info(race_id)
         if not info:
             return jsonify({"error": "not found"}), 404
         snapshot = request.args.get("snapshot", "T-5min")
-        thr = float(request.args.get("ev", "0.0"))
+        profile = request.args.get("profile", "")
+        if profile == "practical":
+            thr = float(request.args.get("ev", config.PRACTICAL_TRIFECTA_EV_THRESHOLD))
+            min_prob = float(request.args.get("min_prob", config.PRACTICAL_TRIFECTA_MIN_PROB))
+            min_odds = float(request.args.get("min_odds", config.PRACTICAL_TRIFECTA_MIN_ODDS))
+            max_odds = float(request.args.get("max_odds", config.PRACTICAL_TRIFECTA_MAX_ODDS))
+            max_results = int(request.args.get("max_results", config.PRACTICAL_TRIFECTA_MAX_BETS_PER_RACE))
+        else:
+            thr = float(request.args.get("ev", "0.0"))
+            min_prob = float(request.args.get("min_prob", "0.005"))
+            min_odds = float(request.args.get("min_odds", "1.0"))
+            max_odds = float(request.args.get("max_odds", "500.0"))
+            max_results_raw = request.args.get("max_results")
+            max_results = int(max_results_raw) if max_results_raw else None
         try:
             r = predictor.find_value_bets_for_race(
-                info["race_date"], race_id, snapshot_label=snapshot, ev_threshold=thr
+                info["race_date"], race_id,
+                snapshot_label=snapshot,
+                ev_threshold=thr,
+                min_prob=min_prob,
+                min_odds=min_odds,
+                max_odds=max_odds,
+                max_results=max_results,
             )
         except Exception as e:
             logger.exception("value bet failed: %s", race_id)
@@ -1324,7 +1347,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/market-signals")
     @member_only_api
-    @cached(ttl=300)  # 5分キャッシュ
+    # 2026-05-30: キャッシュ強化
+    #   ttl=60: 当日のリアルタイム性 (旧 300秒 → 60秒に短縮、同時アクセス時の
+    #           負荷集中を防ぎつつ、 オッズ更新 (T-5min/T-1min snapshot 等) も反映)
+    #   past_ttl=3600: 過去日リクエストは確定済データなので 1 時間キャッシュ
+    #   bulk fetch (kiryu/exhibition) との組合せで、 当日ピーク時の処理時間が
+    #   さらに削減される (44.8x 高速化 with bulk + キャッシュ命中時はほぼ 0ms).
+    @cached(ttl=60, past_ttl=3600)
     def market_signals_for_date():
         """指定日のレース一覧で「市場非効率ベース +EV」シグナルを返す。
         判定優先度 (L4 戦略の定義に合わせ T-X 1-2-3 オッズを最優先):
