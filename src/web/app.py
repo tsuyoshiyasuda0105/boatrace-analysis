@@ -1824,42 +1824,51 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             evaluate_l4_with_bonus as _exb_eval,
         )
 
-        def _compute_exhibition_bonus_for_l4(rid):
-            """L4 候補 race に対する展示タイム補助点を計算.
+        # 2026-05-30: パフォーマンス改善 — 旧実装は race ごとに db_connect()
+        # を新規に開いていた (180 race × 2 戦略 = 最大 360 DB 接続). 当日
+        # 全 race 分を 1 つの bulk クエリで取得し、 dict[race_id] で
+        # lookup する設計に変更.
 
-            race_previews から boat1-6 の start_timing_exhibition を取得し
-            evaluate_l4_with_bonus を呼ぶ. 展示タイム不足/取得失敗時は
-            None を返す (L4 表示には影響なし、補助点だけ未集計扱い).
+        def _bulk_load_exhibition_times(date_iso):
+            """当日 race の展示タイム (exhibition_time) を 1 クエリで一括取得.
+
+            Returns: dict[race_id, dict[boat_number, exhibition_time]]
+              race_previews に該当データが無い race は dict にキーが立たない.
             """
             try:
-                with db_connect() as conn3:
-                    rows = conn3.execute(
+                with db_connect() as bconn:
+                    cur = bconn.execute(
                         """
-                        SELECT boat_number, start_timing_exhibition,
-                               exhibition_time
-                        FROM race_previews
-                        WHERE race_id = ?
-                        ORDER BY boat_number
+                        SELECT pv.race_id, pv.boat_number, pv.exhibition_time
+                        FROM race_previews pv
+                        JOIN races r ON r.race_id = pv.race_id
+                        WHERE r.race_date = ?
                         """,
-                        (rid,),
-                    ).fetchall()
+                        (date_iso,),
+                    )
+                    out: dict[str, dict[int, Optional[float]]] = {}
+                    for rid_v, bn, et in cur.fetchall():
+                        d = out.setdefault(rid_v, {})
+                        d[bn] = et
+                    return out
             except Exception:  # noqa: BLE001
+                return {}
+
+        def _compute_exhibition_bonus_for_l4(rid, ex_by_race):
+            """L4 候補 race に対する展示タイム補助点を計算.
+
+            ex_by_race は _bulk_load_exhibition_times で取得した
+            dict[race_id, dict[boat_number, exhibition_time]].
+            展示タイム不足/取得失敗時は None を返す.
+            """
+            ex_by_boat = ex_by_race.get(rid)
+            if not ex_by_boat or len(ex_by_boat) < 6:
                 return None
-            if not rows or len(rows) < 6:
-                return None
-            # exhibition_time (周回展示タイム) を使う.
-            # start_timing_exhibition はスタートタイミングなので別物 (補助点は周回タイム).
-            ex_by_boat: dict[int, Optional[float]] = {i: None for i in range(1, 7)}
-            for row in rows:
-                bn = row[0]
-                et = row[2]  # exhibition_time
-                if bn in ex_by_boat:
-                    ex_by_boat[bn] = et
-            all_times = [ex_by_boat[i] for i in range(1, 7)]
+            all_times = [ex_by_boat.get(i) for i in range(1, 7)]
             return _exb_eval(
-                boat1_ex_time=ex_by_boat[1],
-                boat2_ex_time=ex_by_boat[2],
-                boat3_ex_time=ex_by_boat[3],
+                boat1_ex_time=ex_by_boat.get(1),
+                boat2_ex_time=ex_by_boat.get(2),
+                boat3_ex_time=ex_by_boat.get(3),
                 all_ex_times=all_times,
             )
 
@@ -1877,12 +1886,43 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             K2_PRIME_ROI_TEST_PCT as _KS_K2P_ROI,
         )
 
-        def _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather):
+        def _bulk_load_kiryu_data(date_iso):
+            """当日 桐生 race のデータを 1 クエリで一括取得.
+
+            Returns: dict[race_id, (b1_motor, b4_class, b5_motor, wd)]
+            stadium=1 (桐生) の race のみ含む.
+            """
+            try:
+                with db_connect() as bconn:
+                    cur = bconn.execute(
+                        f"""
+                        SELECT r.race_id,
+                               e1.assigned_motor_top_2_percent AS b1_motor,
+                               e4.class_number AS b4_class,
+                               e5.assigned_motor_top_2_percent AS b5_motor,
+                               pv.wind_direction_number AS wd
+                        FROM races r
+                        LEFT JOIN race_entries e1 ON e1.race_id=r.race_id AND e1.boat_number=1
+                        LEFT JOIN race_entries e4 ON e4.race_id=r.race_id AND e4.boat_number=4
+                        LEFT JOIN race_entries e5 ON e5.race_id=r.race_id AND e5.boat_number=5
+                        LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
+                        WHERE r.race_date = ? AND r.stadium_number = {_KS_STADIUM}
+                        """,
+                        (date_iso,),
+                    )
+                    return {
+                        row[0]: (row[1], row[2], row[3], row[4])
+                        for row in cur.fetchall()
+                    }
+            except Exception:  # noqa: BLE001
+                return {}
+
+        def _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather, kiryu_data):
             """桐生戦略 (K1/K2/K1_PRIME/K2_PRIME) 判定 per race.
 
-            stadium != 1 ならクエリせず None を返す.
-            桐生 race のみ追加 SQL で boat1_motor, boat4_class, boat5_motor,
-            wind_direction を取得し kiryu_strategy.evaluate_kiryu_race_prime を呼ぶ.
+            stadium != 1 なら即 None.
+            kiryu_data は _bulk_load_kiryu_data で取得した
+            dict[race_id, (b1_motor, b4_class, b5_motor, wd)].
 
             Returns: dict | None
               {
@@ -1897,26 +1937,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """
             if stadium != _KS_STADIUM:
                 return None
-            # 桐生のみ追加クエリ (1 日 12 race 程度なのでオーバーヘッド小)
-            try:
-                with db_connect() as conn2:
-                    row = conn2.execute(
-                        """
-                        SELECT e1.assigned_motor_top_2_percent AS b1_motor,
-                               e4.class_number AS b4_class,
-                               e5.assigned_motor_top_2_percent AS b5_motor,
-                               pv.wind_direction_number AS wd
-                        FROM races r
-                        LEFT JOIN race_entries e1 ON e1.race_id=r.race_id AND e1.boat_number=1
-                        LEFT JOIN race_entries e4 ON e4.race_id=r.race_id AND e4.boat_number=4
-                        LEFT JOIN race_entries e5 ON e5.race_id=r.race_id AND e5.boat_number=5
-                        LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
-                        WHERE r.race_id = ?
-                        """,
-                        (rid,),
-                    ).fetchone()
-            except Exception:  # noqa: BLE001
-                return None
+            row = kiryu_data.get(rid)
+            if not row:
+                # 旧来動作互換 — bulk fetch 失敗時のフォールバック (per-race クエリ)
+                try:
+                    with db_connect() as conn2:
+                        row = conn2.execute(
+                            """
+                            SELECT e1.assigned_motor_top_2_percent AS b1_motor,
+                                   e4.class_number AS b4_class,
+                                   e5.assigned_motor_top_2_percent AS b5_motor,
+                                   pv.wind_direction_number AS wd
+                            FROM races r
+                            LEFT JOIN race_entries e1 ON e1.race_id=r.race_id AND e1.boat_number=1
+                            LEFT JOIN race_entries e4 ON e4.race_id=r.race_id AND e4.boat_number=4
+                            LEFT JOIN race_entries e5 ON e5.race_id=r.race_id AND e5.boat_number=5
+                            LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
+                            WHERE r.race_id = ?
+                            """,
+                            (rid,),
+                        ).fetchone()
+                except Exception:  # noqa: BLE001
+                    return None
             if not row:
                 return None
             b1_motor, b4_class, b5_motor, wd = row
@@ -2154,6 +2196,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # all_race_info が空 (DB エラー等) なら results のレースだけ処理
         race_iterable = all_race_info if all_race_info else {rid: {} for rid in results}
         WEATHER_LABEL = {1:"☀️ 晴", 2:"🌤️ 曇", 3:"☔ 雨", 4:"❄️ 雪"}
+
+        # === パフォーマンス改善 (2026-05-30): bulk fetch ===
+        # race ループの前に 1 度だけ DB を叩いて当日全 race 分のデータを取得.
+        # これにより N+1 クエリ (race 数 × 戦略数 = 最大数百回 DB 接続) を
+        # 2 回の bulk クエリに削減. 旧実装で 1race ≈ 100ms 程度かかっていた
+        # 部分が dict lookup (O(1)) になる.
+        kiryu_bulk = _bulk_load_kiryu_data(target_date)
+        ex_bulk = _bulk_load_exhibition_times(target_date)
+
         for rid, info in race_iterable.items():
             stadium = info.get("stadium")
             grade = info.get("grade")
@@ -2245,15 +2296,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         l4["is_reference"] = True
                         l4["label"] = f"♀{l4['label']} (女性{n_female}名除外)"
 
-                # 桐生 K1/K2/K1_PRIME/K2_PRIME (stadium=1 のみ)
-                kiryu = _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather)
+                # 桐生 K1/K2/K1_PRIME/K2_PRIME (stadium=1 のみ、 bulk dict 経由)
+                kiryu = _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather, kiryu_bulk)
 
                 # 展示タイム補助点 (L4 候補のみ、3連単 1-2-3 の本命買い強弱付け).
                 # L4 が無い / 既に Mid_132 等別 universe のものはスキップ.
                 if l4 and not l4.get("is_obs_mid_132") \
                         and not l4.get("is_obs_mid_132_tier_a") \
                         and l4.get("bet", "").startswith("3連単 1-2-3"):
-                    ex_bonus = _compute_exhibition_bonus_for_l4(rid)
+                    ex_bonus = _compute_exhibition_bonus_for_l4(rid, ex_bulk)
                     if ex_bonus is not None:
                         l4["ex_bonus_score"] = ex_bonus["score"]
                         l4["ex_bonus_label"] = ex_bonus["score_label"]
@@ -2303,8 +2354,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             morning_l4["is_female_present"] = True
                             morning_l4["is_reference"] = True
                             morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
-                    # 桐生 K1/K2 (朝判定でも適用 — 風向は preview 段階で取れる)
-                    kiryu_m = _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather)
+                    # 桐生 K1/K2 (朝判定でも適用 — 風向は preview 段階で取れる、 bulk dict 経由)
+                    kiryu_m = _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather, kiryu_bulk)
                     signals.append({
                         "race_id": rid,
                         "tier": "morning_l4",
