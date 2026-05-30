@@ -2328,6 +2328,40 @@ main h2 {
 .obs-badge.obs-kiryu-6r {
   background: linear-gradient(135deg, #14b8a6, #0d9488);  /* teal-light */
 }
+/* 展示タイム補助点バッジ (検証 2026-05-30、L4 強弱付け用) */
+.ex-bonus-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  margin-left: 4px;
+  border-radius: 5px;
+  font-size: 0.76em;
+  font-weight: 700;
+  color: #fff;
+  cursor: help;
+  vertical-align: middle;
+  letter-spacing: 0.2px;
+}
+/* score=0: グレー (L4 基準扱い、強弱なし) */
+.ex-bonus-badge.ex-bonus-0 {
+  background: linear-gradient(135deg, #6b7280, #4b5563);
+  border: 1px solid rgba(107, 114, 128, 0.7);
+  opacity: 0.85;
+}
+/* score=1: シアン (補助点 1 軸成立、150円推奨) */
+.ex-bonus-badge.ex-bonus-1 {
+  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  border: 1px solid rgba(6, 182, 212, 0.8);
+  box-shadow: 0 0 7px rgba(6, 182, 212, 0.45);
+}
+/* score=2: 紫グラデ + パルス (補助点満点、200円推奨、最強候補) */
+.ex-bonus-badge.ex-bonus-2 {
+  background: linear-gradient(135deg, #7c3aed, #a855f7, #c084fc) !important;
+  border: 2px solid #5b21b6 !important;
+  box-shadow: 0 0 13px rgba(168, 85, 247, 0.75) !important;
+  font-weight: 800 !important;
+  animation: tier-a-pulse 2.5s ease-in-out infinite;
+}
+
 /* 桐生 K1/K2/K1_PRIME/K2_PRIME バッジ — 大穴狙い戦略、黄金系 */
 .kiryu-badge {
   display: inline-block;

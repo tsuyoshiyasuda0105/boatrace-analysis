@@ -1803,6 +1803,55 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base
 
+        # --- L4 展示タイム補助点 (検証 2026-05-30) ---
+        # ユーザー検証: 展示タイムは「除外」ではなく「強弱付け」に向く.
+        # 軸A: 1号艇 best差 ≤ 0.03, 軸B: 2号艇 < 3号艇 → 0-2点.
+        # 推奨投入: 100/150/200円 (補助点 0/1/2).
+        # 検証 ROI: 展示なし L4 164.4% / score=0 146.9% / =1 171.4% / =2 180.8%.
+        # 詳細: src/evaluation/exhibition_bonus.py
+        from src.evaluation.exhibition_bonus import (
+            evaluate_l4_with_bonus as _exb_eval,
+        )
+
+        def _compute_exhibition_bonus_for_l4(rid):
+            """L4 候補 race に対する展示タイム補助点を計算.
+
+            race_previews から boat1-6 の start_timing_exhibition を取得し
+            evaluate_l4_with_bonus を呼ぶ. 展示タイム不足/取得失敗時は
+            None を返す (L4 表示には影響なし、補助点だけ未集計扱い).
+            """
+            try:
+                with db_connect() as conn3:
+                    rows = conn3.execute(
+                        """
+                        SELECT boat_number, start_timing_exhibition,
+                               exhibition_time
+                        FROM race_previews
+                        WHERE race_id = ?
+                        ORDER BY boat_number
+                        """,
+                        (rid,),
+                    ).fetchall()
+            except Exception:  # noqa: BLE001
+                return None
+            if not rows or len(rows) < 6:
+                return None
+            # exhibition_time (周回展示タイム) を使う.
+            # start_timing_exhibition はスタートタイミングなので別物 (補助点は周回タイム).
+            ex_by_boat: dict[int, Optional[float]] = {i: None for i in range(1, 7)}
+            for row in rows:
+                bn = row[0]
+                et = row[2]  # exhibition_time
+                if bn in ex_by_boat:
+                    ex_by_boat[bn] = et
+            all_times = [ex_by_boat[i] for i in range(1, 7)]
+            return _exb_eval(
+                boat1_ex_time=ex_by_boat[1],
+                boat2_ex_time=ex_by_boat[2],
+                boat3_ex_time=ex_by_boat[3],
+                all_ex_times=all_times,
+            )
+
         # --- 桐生 K1/K2/K1_PRIME/K2_PRIME 判定 ---
         # 既存 _evaluate_l4 と並列で動く独立 strategy.
         # 大穴狙い (3連単 5-1-2 / 4-5-2)、的中率 1-4%、平均配当 16,000-27,000円.
@@ -2180,6 +2229,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
                 # 桐生 K1/K2/K1_PRIME/K2_PRIME (stadium=1 のみ)
                 kiryu = _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather)
+
+                # 展示タイム補助点 (L4 候補のみ、3連単 1-2-3 の本命買い強弱付け).
+                # L4 が無い / 既に Mid_132 等別 universe のものはスキップ.
+                if l4 and not l4.get("is_obs_mid_132") \
+                        and not l4.get("is_obs_mid_132_tier_a") \
+                        and l4.get("bet", "").startswith("3連単 1-2-3"):
+                    ex_bonus = _compute_exhibition_bonus_for_l4(rid)
+                    if ex_bonus is not None:
+                        l4["ex_bonus_score"] = ex_bonus["score"]
+                        l4["ex_bonus_label"] = ex_bonus["score_label"]
+                        l4["ex_axis_best_diff"] = ex_bonus["axis_best_diff"]
+                        l4["ex_axis_boat2_faster"] = ex_bonus["axis_boat2_faster"]
+                        l4["ex_incomplete"] = ex_bonus["incomplete"]
+                        l4["ex_recommended_bet_yen"] = ex_bonus["recommended_bet_yen"]
+                        l4["ex_expected_roi_pct"] = ex_bonus["expected_roi_pct"]
 
                 signals.append({
                     "race_id": rid,

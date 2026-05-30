@@ -297,6 +297,37 @@
                     item.appendChild(tb);
                   }
 
+                  // 展示タイム補助点バッジ (検証 2026-05-30)
+                  // ex_bonus_score が定義されていれば表示 (= 展示タイム集計済).
+                  // score=2: 200円推奨 (ROI 180.8%)
+                  // score=1: 150円推奨 (ROI 171.4%)
+                  // score=0: 100円推奨 (ROI 146.9%)
+                  if (sig.l4.ex_bonus_score !== undefined && !sig.l4.ex_incomplete) {
+                    const exb = document.createElement('span');
+                    const s = sig.l4.ex_bonus_score;
+                    const bet = sig.l4.ex_recommended_bet_yen;
+                    const exRoi = sig.l4.ex_expected_roi_pct;
+                    let cls = `ex-bonus-badge ex-bonus-${s}`;
+                    let txt;
+                    if (s === 2) {
+                      txt = `★★ ¥${bet}`;
+                    } else if (s === 1) {
+                      txt = `★ ¥${bet}`;
+                    } else {
+                      txt = `☆ ¥${bet}`;
+                    }
+                    let tt = `展示タイム補助点 ${s}/2 (検証 ROI ${exRoi}%)\n`;
+                    if (sig.l4.ex_axis_best_diff) tt += '✅ 1号艇 展示最速級 (best差≤0.03)\n';
+                    if (sig.l4.ex_axis_boat2_faster) tt += '✅ 2号艇 展示 > 3号艇\n';
+                    if (s === 2) tt += '推奨資金: 200円 (補助点満点、最強候補)';
+                    else if (s === 1) tt += '推奨資金: 150円 (補助点 1 軸成立)';
+                    else tt += '推奨資金: 100円 (補助点 0、通常 L4 と同等)';
+                    exb.className = cls;
+                    exb.textContent = txt;
+                    exb.title = tt;
+                    item.appendChild(exb);
+                  }
+
                   // 観察バッジ (3 ヶ月実績で採用判断、緑色)
                   // L4-prime (11-12R) / L4-12R / 一般戦×12R / 戸田7R / 桐生6R / L4-Mid
                   if (sig.l4.is_obs_prime || sig.l4.is_obs_r12 || sig.l4.is_obs_gen_r12
