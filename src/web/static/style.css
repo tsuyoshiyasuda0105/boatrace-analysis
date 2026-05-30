@@ -288,14 +288,6 @@ a:hover { color: #66e3ff; }
   border-color: rgba(168, 85, 247, 0.85);
   box-shadow: 0 4px 14px rgba(168, 85, 247, 0.3);
 }
-.nav-btn-kiryu {
-  border-color: rgba(245, 158, 11, 0.5);
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(217, 119, 6, 0.06));
-}
-.nav-btn-kiryu:hover {
-  border-color: rgba(245, 158, 11, 0.85);
-  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3);
-}
 
 /* ===== Auth state in header (account-btn) ===== */
 .auth-status {
@@ -635,13 +627,15 @@ main h2 {
   background: rgba(120, 120, 130, 0.30);
   color: rgba(220, 220, 220, 0.85);
 }
-/* L4 / 観察 / 鉄板度バッジは「グレー化対象外」 (情報として残す) */
+/* L4 / 観察 / 鉄板度 / 6号艇本命バッジは「グレー化対象外」 (情報として残す) */
 .race-item.is-closed .l4-badge,
 .race-item.is-closed .obs-badge,
 .race-item.is-closed .tetsuban-badge,
+.race-item.is-closed .outer6-badge,
 .race-item.done .l4-badge,
 .race-item.done .obs-badge,
-.race-item.done .tetsuban-badge {
+.race-item.done .tetsuban-badge,
+.race-item.done .outer6-badge {
   opacity: 1.0;
   filter: none;
 }
@@ -2325,9 +2319,6 @@ main h2 {
 .obs-badge.obs-toda-7r {
   background: linear-gradient(135deg, #0d9488, #0f766e);  /* teal */
 }
-.obs-badge.obs-kiryu-6r {
-  background: linear-gradient(135deg, #14b8a6, #0d9488);  /* teal-light */
-}
 /* 抜きフィルター バッジ (2026-05-30、 江戸川/浜名湖/鳴門の水面流れあり会場)
    L4 base ROI から +14pt 上振れの増額推奨候補 → 水色グラデで穏やか強調 */
 .nuki-filter-badge {
@@ -2364,6 +2355,32 @@ main h2 {
   animation: tier-a-pulse 2.5s ease-in-out infinite;
 }
 
+/* 🚤 6号艇本命 (外枠本命) バッジ (2026-05-31 追加、実弾投入対象)
+   モデル本命 (prob_first最大) = 6号艇 & p1>=0.35 → 6号艇 単勝 100円。
+   検証 ROI 140% / 的中 53% / n=103 (約4回/月)、全年プラス。
+   枠バイアスの旗艦シグナル (最も人気薄の艇をモデルが本命視 = +EV)。
+   クリムゾン→オレンジのグラデ + 専用パルスで他バッジと差別化し最優先で目立たせる。 */
+.outer6-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-left: 4px;
+  border-radius: 6px;
+  font-size: 0.8em;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(135deg, #b91c1c, #ef4444, #f97316);
+  border: 2px solid #7f1d1d;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.7);
+  cursor: help;
+  vertical-align: middle;
+  letter-spacing: 0.3px;
+  animation: outer6-pulse 2.5s ease-in-out infinite;
+}
+@keyframes outer6-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.55); }
+  50%      { box-shadow: 0 0 20px rgba(249, 115, 22, 1.0); }
+}
+
 /* 展示タイム補助点バッジ (検証 2026-05-30、L4 強弱付け用) */
 .ex-bonus-badge {
   display: inline-block;
@@ -2398,29 +2415,6 @@ main h2 {
   animation: tier-a-pulse 2.5s ease-in-out infinite;
 }
 
-/* 桐生 K1/K2/K1_PRIME/K2_PRIME バッジ — 大穴狙い戦略、黄金系 */
-.kiryu-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  margin-left: 4px;
-  border-radius: 6px;
-  font-size: 0.78em;
-  font-weight: 700;
-  color: #fff;
-  background: linear-gradient(135deg, #f59e0b, #d97706);  /* amber */
-  border: 1px solid rgba(245, 158, 11, 0.8);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
-  cursor: help;
-  vertical-align: middle;
-}
-/* K1_PRIME / K2_PRIME が発火していれば強調 (ゴールド + パルス) */
-.kiryu-badge.kiryu-prime {
-  background: linear-gradient(135deg, #b45309, #f59e0b, #fbbf24) !important;
-  border: 2px solid #92400e !important;
-  box-shadow: 0 0 14px rgba(251, 191, 36, 0.75) !important;
-  font-weight: 800 !important;
-  animation: tier-a-pulse 2.5s ease-in-out infinite;
-}
 /* L4-Mid 1-3-2 観察 (オッズ 10-20倍帯) — 青系で他観察と区別 */
 .obs-badge.obs-mid-132 {
   background: linear-gradient(135deg, #2563eb, #1d4ed8);  /* blue (Tier B) */

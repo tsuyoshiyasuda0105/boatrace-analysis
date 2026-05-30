@@ -342,10 +342,6 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
   toda_7r_tri_bets  INTEGER,
   toda_7r_tri_hits  INTEGER,
   toda_7r_tri_pay   INTEGER,
-  -- 桐生 6R A1 企画レース観察 (A1率81%、ROI 127.4% 検証 n=166)
-  kiryu_6r_tri_bets INTEGER,
-  kiryu_6r_tri_hits INTEGER,
-  kiryu_6r_tri_pay  INTEGER,
   -- L4-Mid + 1-3-2 観察 (オッズ 10-20倍帯で 1-3-2 単点、検証 ROI 148.1% n=10690)
   -- 2026-05-19 追加。L4 帯と異なる universe、1号艇1着率93%+で 1-3-2 が最頻出
   mid_132_tri_bets  INTEGER,
@@ -381,13 +377,10 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_hits  INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN gen_r12_tri_pay   INTEGER;
 
--- 既存 DB へ手動適用する場合 (戸田7R/桐生6R 企画レース観察カラム追加 2026-05-19):
+-- 既存 DB へ手動適用する場合 (戸田7R 企画レース観察カラム追加 2026-05-19):
 -- ALTER TABLE l4_daily_summary ADD COLUMN toda_7r_tri_bets  INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN toda_7r_tri_hits  INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN toda_7r_tri_pay   INTEGER;
--- ALTER TABLE l4_daily_summary ADD COLUMN kiryu_6r_tri_bets INTEGER;
--- ALTER TABLE l4_daily_summary ADD COLUMN kiryu_6r_tri_hits INTEGER;
--- ALTER TABLE l4_daily_summary ADD COLUMN kiryu_6r_tri_pay  INTEGER;
 
 -- ============================================================
 -- システム状態 (データ品質チェック / バッチ死活監視 / エラーログ)

@@ -191,20 +191,6 @@
         </span>
       </div>
       <div class="summary-card obs-prime"
-           title="観察。桐生 6R 企画レース。A1 率 81% の典型企画。検証 ROI 127.4% (n=166)">
-        <span class="card-label">🟢 桐生 6R 企画</span>
-        <span class="card-value">
-          {% if totals.kiryu_6r_tri_roi is not none %}{{ '%+.1f' | format(totals.kiryu_6r_tri_roi) }}%{% else %}-{% endif %}
-        </span>
-        <span class="card-sub">
-          n={{ totals.kiryu_6r_tri_bets }} HIT={{ totals.kiryu_6r_tri_hits }}
-          {% if totals.kiryu_6r_tri_bets > 0 %}
-          / 損益 {{ totals.kiryu_6r_tri_profit | signed_comma }}円
-          {% endif %}
-          <br><small>観察 (検証 127.4%, n=166)</small>
-        </span>
-      </div>
-      <div class="summary-card obs-prime"
            title="観察。L4-Mid: オッズ10-20倍帯で1-3-2単点 (全体)。検証 ROI 148.1% (n=10,690)">
         <span class="card-label">🟦 L4-Mid 1-3-2 (Tier B)</span>
         <span class="card-value">
@@ -614,14 +600,13 @@
     </div>
   </section>
 
-  <!-- 企画レース観察 日別詳細 (戸田 7R / 桐生 6R / L4-Mid 1-3-2 Tier A/B) 2026-05-19 追加 -->
+  <!-- 企画レース観察 日別詳細 (戸田 7R / L4-Mid 1-3-2 Tier A/B) 2026-05-19 追加 -->
   <section class="daily-table-section observe-only-section">
     <h3>📋 企画レース観察 日別詳細 (3 ヶ月実績で採用判断)</h3>
     <p class="dashboard-hint">
-      💡 <strong>🟢 戸田 7R / 桐生 6R / 🟦 L4-Mid 1-3-2 (Tier A/B) / 🌸 Venus 観察中。</strong><br>
+      💡 <strong>🟢 戸田 7R / 🟦 L4-Mid 1-3-2 (Tier A/B) / 🌸 Venus 観察中。</strong><br>
       <small>
         🟢 戸田 7R (B除外内だが 7R 限定で +EV、検証 ROI 171.5%, n=106) ／
-        🟢 桐生 6R (A1 率 81% の典型企画、検証 ROI 127.4%, n=166) ／
         🟦 L4-Mid Tier B (オッズ 10-20倍帯 + 1-3-2 単点 全体、検証 ROI 148.1%, n=10,690) ／
         🟦+ <strong>L4-Mid Tier A</strong> (+3号艇 国1%≥7 絞り、検証 ROI <strong>175.5%</strong>, n=1,312, CI[151,200], <strong>Tier 1</strong>) ／
         🌸 <strong>Venus L4</strong> (全女子戦 n_female=6、A1+B除外+雨除外、検証 ROI <strong>175.5%</strong>, n=502)<br>
@@ -635,7 +620,6 @@
             <th rowspan="2">日付</th>
             <th rowspan="2">総R</th>
             <th colspan="3">🟢 戸田 7R 企画</th>
-            <th colspan="3">🟢 桐生 6R 企画</th>
             <th colspan="3">🟦 Tier B (全)</th>
             <th colspan="3">🟦+ Tier A (★)</th>
             <th colspan="3">🌸 Venus L4</th>
@@ -645,12 +629,11 @@
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
-            <th>HIT</th><th>回収</th><th>損益</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.kiryu_6r_tri_bets and r.kiryu_6r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
+          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
           {% if has_planned %}
           <tr class="has-l4-observe">
             <td class="date-cell">
@@ -665,15 +648,6 @@
             </td>
             <td class="num {% if r.toda_7r_tri_profit and r.toda_7r_tri_profit > 0 %}pos{% elif r.toda_7r_tri_profit and r.toda_7r_tri_profit < 0 %}neg{% endif %}">
               {% if r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0 %}{{ r.toda_7r_tri_profit | signed_comma }}{% else %}-{% endif %}
-            </td>
-
-            {# 桐生 6R 列 #}
-            <td class="num">{{ r.kiryu_6r_tri_hits or 0 }}/{{ r.kiryu_6r_tri_bets or 0 }}</td>
-            <td class="num {% if r.kiryu_6r_tri_recovery and r.kiryu_6r_tri_recovery >= 100 %}pos{% elif r.kiryu_6r_tri_recovery %}neg{% endif %}">
-              {% if r.kiryu_6r_tri_recovery is not none %}{{ '%.0f' | format(r.kiryu_6r_tri_recovery) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num {% if r.kiryu_6r_tri_profit and r.kiryu_6r_tri_profit > 0 %}pos{% elif r.kiryu_6r_tri_profit and r.kiryu_6r_tri_profit < 0 %}neg{% endif %}">
-              {% if r.kiryu_6r_tri_bets and r.kiryu_6r_tri_bets > 0 %}{{ r.kiryu_6r_tri_profit | signed_comma }}{% else %}-{% endif %}
             </td>
 
             {# L4-Mid 1-3-2 Tier B (全) 列 #}
@@ -707,13 +681,13 @@
           {% endfor %}
           {% set planned_total = namespace(n=0) %}
           {% for r in rows %}
-            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.kiryu_6r_tri_bets and r.kiryu_6r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
+            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
               {% set planned_total.n = planned_total.n + 1 %}
             {% endif %}
           {% endfor %}
           {% if planned_total.n == 0 %}
           <tr class="is-empty">
-            <td colspan="17" class="num muted">企画レース観察データなし</td>
+            <td colspan="14" class="num muted">企画レース観察データなし</td>
           </tr>
           {% endif %}
         </tbody>
@@ -730,16 +704,6 @@
             </td>
             <td class="num {% if totals.toda_7r_tri_profit and totals.toda_7r_tri_profit > 0 %}pos{% elif totals.toda_7r_tri_profit and totals.toda_7r_tri_profit < 0 %}neg{% endif %}">
               {% if totals.toda_7r_tri_bets > 0 %}<strong>{{ totals.toda_7r_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
-            </td>
-            {# 桐生 6R 合計 #}
-            <td class="num"><strong>{{ totals.kiryu_6r_tri_hits }}/{{ totals.kiryu_6r_tri_bets }}</strong>
-              {% if totals.kiryu_6r_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.kiryu_6r_tri_hits / totals.kiryu_6r_tri_bets * 100) }}%</small>{% endif %}
-            </td>
-            <td class="num {% if totals.kiryu_6r_tri_recovery and totals.kiryu_6r_tri_recovery >= 100 %}pos{% elif totals.kiryu_6r_tri_recovery %}neg{% endif %}">
-              {% if totals.kiryu_6r_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.kiryu_6r_tri_recovery) }}%</strong>{% else %}-{% endif %}
-            </td>
-            <td class="num {% if totals.kiryu_6r_tri_profit and totals.kiryu_6r_tri_profit > 0 %}pos{% elif totals.kiryu_6r_tri_profit and totals.kiryu_6r_tri_profit < 0 %}neg{% endif %}">
-              {% if totals.kiryu_6r_tri_bets > 0 %}<strong>{{ totals.kiryu_6r_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
             </td>
             {# L4-Mid 1-3-2 合計 #}
             <td class="num"><strong>{{ totals.mid_132_tri_hits }}/{{ totals.mid_132_tri_bets }}</strong>

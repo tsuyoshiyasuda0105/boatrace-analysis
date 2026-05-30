@@ -179,9 +179,8 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
             "r12_tri_bets": 0,   "r12_tri_hits": 0,   "r12_tri_pay": 0,
             "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
-            # 戸田 7R / 桐生 6R 企画レース観察 (2026-05-19 追加)
+            # 戸田 7R 企画レース観察 (2026-05-19 追加)
             "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
-            "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
             # L4-Mid + 1-3-2 観察 (2026-05-19): オッズ 10-20倍帯
             "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
             # L4-Mid Tier A: 3号艇国1%≥7 絞り (ROI 175.5%, Tier 1)
@@ -211,14 +210,6 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
                 if tri_hit:
                     d["r12_tri_hits"] += 1
                     d["r12_tri_pay"] += tri_pay_v
-            # 企画レース観察 (2026-05-19): 桐生6R は B除外外なのでこちら経由で集計
-            # 戸田7R は B除外内 → SQL pre-filter で弾かれるため、別途 compute_planned_obs() で
-            if stadium_no == 1 and rn == 6:
-                d["kiryu_6r_tri_bets"] += 1
-                if tri_hit:
-                    d["kiryu_6r_tri_hits"] += 1
-                    d["kiryu_6r_tri_pay"] += tri_pay_v
-
         # === 一般戦 (grade=5): L4 本流と分離して観察集計 + F1 採用集計 ===
         if grade == 5:
             if is_done:
@@ -394,7 +385,6 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
             "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
             "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
-            "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
             "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
             "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
         })
@@ -437,7 +427,6 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
             "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
             "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
-            "kiryu_6r_tri_bets": 0, "kiryu_6r_tri_hits": 0, "kiryu_6r_tri_pay": 0,
         })
         d["toda_7r_tri_bets"] += 1
         if tri_hit:
@@ -520,11 +509,10 @@ def main():
                r12_tri_bets, r12_tri_hits, r12_tri_pay,
                gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay,
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
-               kiryu_6r_tri_bets, kiryu_6r_tri_hits, kiryu_6r_tri_pay,
                mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
                mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (date) DO UPDATE SET
               n_total = EXCLUDED.n_total,
               n_l4    = EXCLUDED.n_l4,
@@ -555,9 +543,6 @@ def main():
               toda_7r_tri_bets = EXCLUDED.toda_7r_tri_bets,
               toda_7r_tri_hits = EXCLUDED.toda_7r_tri_hits,
               toda_7r_tri_pay  = EXCLUDED.toda_7r_tri_pay,
-              kiryu_6r_tri_bets = EXCLUDED.kiryu_6r_tri_bets,
-              kiryu_6r_tri_hits = EXCLUDED.kiryu_6r_tri_hits,
-              kiryu_6r_tri_pay  = EXCLUDED.kiryu_6r_tri_pay,
               mid_132_tri_bets = EXCLUDED.mid_132_tri_bets,
               mid_132_tri_hits = EXCLUDED.mid_132_tri_hits,
               mid_132_tri_pay  = EXCLUDED.mid_132_tri_pay,
@@ -583,11 +568,10 @@ def main():
                r12_tri_bets, r12_tri_hits, r12_tri_pay,
                gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay,
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
-               kiryu_6r_tri_bets, kiryu_6r_tri_hits, kiryu_6r_tri_pay,
                mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
                mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     for s in summaries:
         batch.append((
@@ -605,7 +589,6 @@ def main():
             s.get("r12_tri_bets",0),   s.get("r12_tri_hits",0),   s.get("r12_tri_pay",0),
             s.get("gen_r12_tri_bets",0), s.get("gen_r12_tri_hits",0), s.get("gen_r12_tri_pay",0),
             s.get("toda_7r_tri_bets",0), s.get("toda_7r_tri_hits",0), s.get("toda_7r_tri_pay",0),
-            s.get("kiryu_6r_tri_bets",0), s.get("kiryu_6r_tri_hits",0), s.get("kiryu_6r_tri_pay",0),
             s.get("mid_132_tri_bets",0), s.get("mid_132_tri_hits",0), s.get("mid_132_tri_pay",0),
             s.get("mid_132_tier_a_tri_bets",0), s.get("mid_132_tier_a_tri_hits",0), s.get("mid_132_tier_a_tri_pay",0),
             now_iso,
