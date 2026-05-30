@@ -250,9 +250,15 @@ def work_odds_scheduler():
     if pg is None:
         return "warning", "DATABASE_URL 未設定 (確認不可)"
     try:
-        # Postgres でも SQLite でも "直近 N 分" は now() からの差で取る
-        # snapshot recorded_at は ISO 文字列。Pythonで now -10min を作って渡す
-        cutoff = (NOW - timedelta(minutes=10)).isoformat(timespec="seconds")
+        # Postgres でも SQLite でも "直近 N 分" は recorded_at との差で取る。
+        # 重要: odds_trifecta.recorded_at は collectors/odds.py が
+        # datetime.utcnow() で書く UTC の ISO 文字列。一方 NOW は
+        # datetime.now() = ローカル (JST=UTC+9)。ここで NOW から cutoff を
+        # 作ると JST 基準になり、UTC で記録された recorded_at とは常に 9h
+        # ずれて COUNT=0 → レース時間中でも恒常的に誤 ERROR を出していた
+        # (2026-05-30 19:16 の「直近10分0件(サボリ?)」誤検知の根本原因)。
+        # cutoff も UTC で作って recorded_at と同一時系で比較する。
+        cutoff = (datetime.utcnow() - timedelta(minutes=10)).isoformat(timespec="seconds")
         cur = pg.execute(
             "SELECT COUNT(*) FROM odds_trifecta WHERE recorded_at >= ?",
             (cutoff,),
