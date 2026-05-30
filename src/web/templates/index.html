@@ -347,6 +347,30 @@
                   }
                 }
 
+                // 桐生 K1/K2/K1_PRIME/K2_PRIME バッジ (L4 とは独立した大穴狙い戦略)
+                if (sig.kiryu && sig.kiryu.any_eligible) {
+                  const kb = document.createElement('span');
+                  let kcls = 'kiryu-badge';
+                  let ktxt = sig.kiryu.label || '🏆 桐生';
+                  const roi = sig.kiryu.expected_roi_pct;
+                  const roiStr = (roi != null) ? ` (期待ROI ${roi.toFixed(0)}%)` : '';
+                  let ktt = `桐生大穴戦略 ${ktxt}${roiStr}\n`;
+                  if (sig.kiryu.k1_prime) ktt += '👑K1\': 4-5-2 (4号艇A1) test ROI 689.5%, 的中率 3.51%\n';
+                  if (sig.kiryu.k2_prime) ktt += '👑K2\': 5-1-2 (wd≠6 + 5号艇motor≥35) test ROI 406.9%, 的中率 3.85%\n';
+                  if (sig.kiryu.k1 && !sig.kiryu.k1_prime) ktt += 'K1: 5-1-2+4-5-2 test ROI 277.1%\n';
+                  if (sig.kiryu.k2 && !sig.kiryu.k2_prime) ktt += 'K2: 5-1-2 (wd≠6) test ROI 237.3%\n';
+                  if (sig.kiryu.bets && sig.kiryu.bets.length) {
+                    ktt += '推奨買い目: ' + sig.kiryu.bets.map(b => `${b.combination} ¥${b.amount_yen}`).join(' + ');
+                  }
+                  ktt += '\n大穴狙い: 的中率 1-4%、平均配当 16,000-27,000円。小額長期推奨。';
+                  // PRIME が発火していれば強調
+                  if (sig.kiryu.k1_prime || sig.kiryu.k2_prime) kcls += ' kiryu-prime';
+                  kb.className = kcls;
+                  kb.textContent = ktxt + roiStr;
+                  kb.title = ktt;
+                  item.appendChild(kb);
+                }
+
                 // ユーザ指示 (backlog.md item 9): ダイヤモンドマーク (+27%
                 // / 本命 ¥N) は完全削除。L4 バッジに必要情報が含まれているため
                 // 重複表示を廃止。market-badge の生成は行わない。

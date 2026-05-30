@@ -1803,6 +1803,135 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base
 
+        # --- 桐生 K1/K2/K1_PRIME/K2_PRIME 判定 ---
+        # 既存 _evaluate_l4 と並列で動く独立 strategy.
+        # 大穴狙い (3連単 5-1-2 / 4-5-2)、的中率 1-4%、平均配当 16,000-27,000円.
+        # 詳細: src/evaluation/kiryu_strategy.py / reports/kiryu_wind_boat4.md
+        from src.evaluation.kiryu_strategy import (
+            evaluate_kiryu_race as _ks_eval_legacy,
+            evaluate_kiryu_race_prime as _ks_eval_prime,
+            KIRYU_STADIUM_NUMBER as _KS_STADIUM,
+            K1_ROI_TEST_PCT as _KS_K1_ROI,
+            K2_ROI_TEST_PCT as _KS_K2_ROI,
+            K1_PRIME_ROI_TEST_PCT as _KS_K1P_ROI,
+            K2_PRIME_ROI_TEST_PCT as _KS_K2P_ROI,
+        )
+
+        def _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather):
+            """桐生戦略 (K1/K2/K1_PRIME/K2_PRIME) 判定 per race.
+
+            stadium != 1 ならクエリせず None を返す.
+            桐生 race のみ追加 SQL で boat1_motor, boat4_class, boat5_motor,
+            wind_direction を取得し kiryu_strategy.evaluate_kiryu_race_prime を呼ぶ.
+
+            Returns: dict | None
+              {
+                "any_eligible": bool,
+                "k1": bool, "k2": bool, "k1_prime": bool, "k2_prime": bool,
+                "bets": [(bet_type, combo, amount_yen), ...],
+                "labels": [str, ...],
+                "expected_roi_pct": float,
+                # 表示用バッジ
+                "label": "🏆 桐生K1...K2'",   # 集約ラベル
+              }
+            """
+            if stadium != _KS_STADIUM:
+                return None
+            # 桐生のみ追加クエリ (1 日 12 race 程度なのでオーバーヘッド小)
+            try:
+                with db_connect() as conn2:
+                    row = conn2.execute(
+                        """
+                        SELECT e1.assigned_motor_top_2_percent AS b1_motor,
+                               e4.class_number AS b4_class,
+                               e5.assigned_motor_top_2_percent AS b5_motor,
+                               pv.wind_direction_number AS wd
+                        FROM races r
+                        LEFT JOIN race_entries e1 ON e1.race_id=r.race_id AND e1.boat_number=1
+                        LEFT JOIN race_entries e4 ON e4.race_id=r.race_id AND e4.boat_number=4
+                        LEFT JOIN race_entries e5 ON e5.race_id=r.race_id AND e5.boat_number=5
+                        LEFT JOIN race_previews pv ON pv.race_id=r.race_id AND pv.boat_number=1
+                        WHERE r.race_id = ?
+                        """,
+                        (rid,),
+                    ).fetchone()
+            except Exception:  # noqa: BLE001
+                return None
+            if not row:
+                return None
+            b1_motor, b4_class, b5_motor, wd = row
+            # legacy K1/K2 + refined K1'/K2' を同時評価
+            legacy = _ks_eval_legacy(
+                stadium_number=stadium,
+                boat1_class=cls,
+                boat1_motor_top_2_percent=b1_motor,
+                boat1_national_top_1_percent=natl_1,
+                weather_number=weather,
+                wind_direction_number=wd,
+            )
+            prime = _ks_eval_prime(
+                stadium_number=stadium,
+                boat1_class=cls,
+                boat1_motor_top_2_percent=b1_motor,
+                boat1_national_top_1_percent=natl_1,
+                weather_number=weather,
+                wind_direction_number=wd,
+                boat4_class=b4_class,
+                boat5_motor_top_2_percent=b5_motor,
+            )
+            k1 = legacy.get("k1_eligible", False)
+            k2 = legacy.get("k2_eligible", False)
+            k1p = prime.get("k1_prime_eligible", False)
+            k2p = prime.get("k2_prime_eligible", False)
+            if not (k1 or k2 or k1p or k2p):
+                return None
+            # 集約: PRIME を優先 (高ROI) 表示
+            badge_parts = []
+            if k1p:
+                badge_parts.append("K1'")
+            if k2p:
+                badge_parts.append("K2'")
+            if k1 and not k1p:
+                badge_parts.append("K1")
+            if k2 and not k2p:
+                badge_parts.append("K2")
+            label = "🏆 桐生 " + "+".join(badge_parts)
+            # 集約 bets (PRIME を優先したリスト)
+            merged: dict[tuple, int] = {}
+            if k1p or k2p:
+                for bt, combo, amt in prime.get("bets", []):
+                    merged[(bt, combo)] = merged.get((bt, combo), 0) + amt
+            else:
+                for bt, combo, amt in legacy.get("bets", []):
+                    merged[(bt, combo)] = merged.get((bt, combo), 0) + amt
+            bets = [
+                {"bet_type": bt, "combination": c, "amount_yen": a}
+                for (bt, c), a in merged.items()
+            ]
+            # expected ROI (PRIME 優先)
+            if k1p and k2p:
+                exp_roi = (_KS_K1P_ROI + _KS_K2P_ROI) / 2.0
+            elif k1p:
+                exp_roi = _KS_K1P_ROI
+            elif k2p:
+                exp_roi = _KS_K2P_ROI
+            elif k1 and k2:
+                exp_roi = (_KS_K1_ROI + _KS_K2_ROI) / 2.0
+            elif k1:
+                exp_roi = _KS_K1_ROI
+            elif k2:
+                exp_roi = _KS_K2_ROI
+            else:
+                exp_roi = None
+            return {
+                "any_eligible": True,
+                "k1": k1, "k2": k2,
+                "k1_prime": k1p, "k2_prime": k2p,
+                "bets": bets,
+                "label": label,
+                "expected_roi_pct": exp_roi,
+            }
+
         def _evaluate_morning_l4(stadium, grade, cls, prob_first, natl_1=None, local_1=None,
                                  race_id=None, avg_st=None, age=None, ex_st=None,
                                  boat2_top2=None, race_number=None):
@@ -2049,6 +2178,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         l4["is_reference"] = True
                         l4["label"] = f"♀{l4['label']} (女性{n_female}名除外)"
 
+                # 桐生 K1/K2/K1_PRIME/K2_PRIME (stadium=1 のみ)
+                kiryu = _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather)
+
                 signals.append({
                     "race_id": rid,
                     "tier": tier,
@@ -2063,6 +2195,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "n_female": n_female,
                     "is_female_present": is_female_present,
                     "l4": l4,
+                    "kiryu": kiryu,
                 })
             else:
                 # === 未確定 (朝判定) → 予測ベース L4 候補 ===
@@ -2088,6 +2221,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             morning_l4["is_female_present"] = True
                             morning_l4["is_reference"] = True
                             morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
+                    # 桐生 K1/K2 (朝判定でも適用 — 風向は preview 段階で取れる)
+                    kiryu_m = _evaluate_kiryu_for_race(rid, stadium, cls, natl_1, weather)
                     signals.append({
                         "race_id": rid,
                         "tier": "morning_l4",
@@ -2102,6 +2237,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "n_female": n_female,
                         "is_female_present": is_female_present,
                         "l4": morning_l4,
+                        "kiryu": kiryu_m,
                     })
 
         return jsonify({
@@ -2110,6 +2246,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
+            "n_kiryu": sum(1 for s in signals if s.get("kiryu")),
             "signals": {s["race_id"]: s for s in signals},
         })
 
@@ -2977,6 +3114,144 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             monthly_rows=monthly_rows,
             monthly_rows_asc=monthly_rows_asc,
             today_iso=today.isoformat(),
+        )
+
+    @app.route("/member/strategy/kiryu")
+    @login_required
+    @cached(ttl=600, past_ttl=3600)  # 10 分キャッシュ (CSV 元なので頻繁に変わらない)
+    def member_strategy_kiryu():
+        """桐生 (K1/K2/K1_PRIME/K2_PRIME) 戦略 ROI ダッシュボード.
+
+        backfill 済 CSV (data/kiryu_strategy_daily_stats.csv 等) を読み込んで
+        全期間サマリ + 年別/月別/直近 race を表示。
+        CSV が無い場合は backfill スクリプトの実行を案内。
+        """
+        import csv
+        from datetime import datetime
+        from pathlib import Path
+
+        data_dir = Path(__file__).resolve().parents[2] / "data"
+        race_csv = data_dir / "kiryu_strategy_daily_stats.csv"
+        monthly_csv = data_dir / "kiryu_strategy_monthly_stats.csv"
+
+        if not race_csv.exists() or not monthly_csv.exists():
+            # 未 backfill の場合の案内
+            return render_template(
+                "member_strategy_kiryu.html",
+                overall_rows=[],
+                yearly_rows=[],
+                monthly_rows=[],
+                recent_rows=[],
+                all_races_count=0,
+                generated_at="未生成 (py -3 scripts/kiryu_backfill_daily_stats.py を実行してください)",
+            )
+
+        # race-level CSV を読み込んで全期間/年別/直近を計算
+        race_rows: list[dict] = []
+        with open(race_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # 整数化
+                for k in row:
+                    if k in ("race_id", "race_date"):
+                        continue
+                    try:
+                        row[k] = int(row[k])
+                    except (TypeError, ValueError):
+                        row[k] = 0
+                race_rows.append(row)
+
+        # 全期間サマリ集計
+        STRATEGIES = ["K1", "K2", "K1_PRIME", "K2_PRIME"]
+        overall: dict[str, dict] = {
+            s: {"bets": 0, "hits": 0, "pay": 0} for s in STRATEGIES
+        }
+        for r in race_rows:
+            for s in STRATEGIES:
+                overall[s]["bets"] += r.get(f"{s}_bets", 0)
+                overall[s]["hits"] += r.get(f"{s}_hits", 0)
+                overall[s]["pay"] += r.get(f"{s}_pay", 0)
+
+        # 100円単位の bet 数 = bets / 100
+        overall_rows = []
+        for s in STRATEGIES:
+            agg = overall[s]
+            n_bet_units = max(1, agg["bets"] // 100)
+            hit_rate = (agg["hits"] / n_bet_units) * 100
+            roi = (agg["pay"] / max(1, agg["bets"])) * 100 if agg["bets"] else 0
+            profit = agg["pay"] - agg["bets"]
+            overall_rows.append({
+                "strategy": s,
+                "bets": agg["bets"],
+                "hits": agg["hits"],
+                "hit_rate_pct": hit_rate,
+                "pay": agg["pay"],
+                "roi_pct": roi,
+                "profit": profit,
+            })
+
+        # monthly CSV をパース (period, strategy, bets, hits, pay, hit_rate_pct, roi_pct)
+        monthly_csv_rows: list[dict] = []
+        yearly_csv_rows: list[dict] = []
+        with open(monthly_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # 数値化
+                row["bets"] = int(row["bets"])
+                row["hits"] = int(row["hits"])
+                row["pay"] = int(row["pay"])
+                row["hit_rate_pct"] = float(row["hit_rate_pct"])
+                row["roi_pct"] = float(row["roi_pct"])
+                # period が 7 文字なら月、4 文字なら年
+                p = row["period"]
+                if len(p) == 7:
+                    monthly_csv_rows.append(row)
+                elif len(p) == 4:
+                    row["year"] = p
+                    yearly_csv_rows.append(row)
+
+        # 月別を最近 24 ヶ月に絞り、新しい順
+        months = sorted({r["period"] for r in monthly_csv_rows}, reverse=True)[:24]
+        month_set = set(months)
+        monthly_filtered = [r for r in monthly_csv_rows if r["period"] in month_set]
+        # 新しい順 + 戦略 (K1/K2/K1_PRIME/K2_PRIME) 順
+        strategy_order = {s: i for i, s in enumerate(STRATEGIES)}
+        monthly_filtered.sort(
+            key=lambda r: (r["period"], strategy_order.get(r["strategy"], 99)),
+            reverse=False,
+        )
+        monthly_filtered.sort(key=lambda r: r["period"], reverse=True)
+
+        # 年別: 戦略順に揃える
+        yearly_csv_rows.sort(key=lambda r: (r["year"], strategy_order.get(r["strategy"], 99)))
+
+        # 直近の発火 race
+        eligible = [
+            r for r in race_rows
+            if any(r.get(f"{s}_eligible", 0) for s in STRATEGIES)
+        ]
+        recent = eligible[-20:]
+        # any_hit 計算 + bool 化
+        for r in recent:
+            r["any_hit"] = any(r.get(f"{s}_pay", 0) > 0 for s in STRATEGIES)
+            for s in STRATEGIES:
+                r[f"{s}_eligible"] = bool(r.get(f"{s}_eligible", 0))
+
+        # 生成時刻 (CSV mtime)
+        try:
+            mt = datetime.fromtimestamp(race_csv.stat().st_mtime)
+            generated_at = mt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            generated_at = "不明"
+
+        return render_template(
+            "member_strategy_kiryu.html",
+            overall_rows=overall_rows,
+            yearly_rows=yearly_csv_rows,
+            monthly_rows=monthly_filtered,
+            recent_rows=recent,
+            all_races_count=len(race_rows),
+            generated_at=generated_at,
         )
 
     @app.route("/member/health")
