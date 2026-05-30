@@ -288,6 +288,26 @@
                   l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}`;
                   item.appendChild(l4Badge);
 
+                  // 🌊 抜きフィルター バッジ (2026-05-30 決まり手データ投入後)
+                  //   stadium ∈ {3 江戸川, 6 浜名湖, 14 鳴門} で抜き決まり手率高い
+                  //   L4 base ROI 115.9% → フィルター成立で 129.9% (+14pt)
+                  //   train 132.1% / test 116.9% で両期間 robust
+                  if (sig.l4.is_nuki_filter) {
+                    const nb = document.createElement('span');
+                    nb.className = 'nuki-filter-badge';
+                    const rec = (sig.l4.nuki_recovery != null) ? sig.l4.nuki_recovery : '-';
+                    nb.textContent = `🌊 抜き ${rec}%`;
+                    nb.title = (
+                      `抜きフィルター成立 (${sig.l4.nuki_label})\n`
+                      + `条件: 江戸川/浜名湖/鳴門 ∧ 1号艇A1 ∧ 雨除外\n`
+                      + `検証 ROI: ${rec}% (L4 base 115.9% から +14pt)\n`
+                      + `train 132.1% / test 116.9% (両期間 robust)\n`
+                      + `機序: 水面流れ強い → 1号艇 抜き決まり比率 1.62x\n`
+                      + `推奨: L4 base 1-2-3 に追加100-300円 (L4 sub-rank 別)`
+                    );
+                    item.appendChild(nb);
+                  }
+
                   // 🎖 F1 Prime 11-12R バッジ (ユーザー提案 2026-05-30)
                   //   条件: F1 (L4 G++) AND race_number IN (11, 12)
                   //   L4 帯 (本命500-999円) 制約は L4 universe 通過済の段階で

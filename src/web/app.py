@@ -1866,6 +1866,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 from src.evaluation.l4_strategy import F1_PRIME_RECOVERY
                 base["recovery_f1_prime"] = F1_PRIME_RECOVERY
 
+            # ▼ 抜きフィルター (2026-05-30 追加、 決まり手データ投入後検証)
+            #   江戸川/浜名湖/鳴門は水面流れあり → 1号艇「抜き」勝ち比率高い
+            #   L4 base 1号艇 1着 cohort で ROI 115.9% → フィルター成立で 129.9% (+14pt)
+            #   時系列 robust (train 132.1% / test 116.9%)
+            #   詳細: src/evaluation/nuki_filter.py
+            try:
+                from src.evaluation.nuki_filter import (
+                    is_nuki_likely as _ns_is_likely,
+                    NUKI_RECOVERY as _NS_REC,
+                    NUKI_FILTER_LABEL as _NS_LABEL,
+                )
+                if _ns_is_likely(
+                    stadium_number=stadium,
+                    boat1_class=cls,
+                    weather_number=weather,
+                ):
+                    base["is_nuki_filter"] = True
+                    base["nuki_recovery"] = _NS_REC
+                    base["nuki_label"] = _NS_LABEL
+            except Exception:  # noqa: BLE001
+                pass
+
             # ▼ 鉄板度スコア (backlog item 11): 条件が多く揃うほど高ROI 期待
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base
@@ -2242,6 +2264,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["is_f1_prime"] = True
                 from src.evaluation.l4_strategy import F1_PRIME_RECOVERY
                 base["recovery_f1_prime"] = F1_PRIME_RECOVERY
+
+            # ▼ 抜きフィルター (朝判定も同じロジック、 2026-05-30 追加)
+            try:
+                from src.evaluation.nuki_filter import (
+                    is_nuki_likely as _ns_is_likely,
+                    NUKI_RECOVERY as _NS_REC,
+                    NUKI_FILTER_LABEL as _NS_LABEL,
+                )
+                if _ns_is_likely(
+                    stadium_number=stadium,
+                    boat1_class=cls,
+                    weather_number=None,  # 朝判定では weather 未確定なので None で通す
+                ):
+                    base["is_nuki_filter"] = True
+                    base["nuki_recovery"] = _NS_REC
+                    base["nuki_label"] = _NS_LABEL
+            except Exception:  # noqa: BLE001
+                pass
 
             # 鉄板度スコア (朝判定も同じロジック)
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
