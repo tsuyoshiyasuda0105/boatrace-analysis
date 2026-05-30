@@ -1799,6 +1799,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if stadium == 2 and rn == 7:
                 base["is_obs_toda_7r"] = True
 
+            # ▼ F1 Prime 11-12R (ユーザー提案、 2026-05-30 追加)
+            #   F1 (一般戦×国1%≥7×2号モ2連率≥40) + 11/12R + L4 帯
+            #   = is_f1 AND rn in (11, 12) のとき is_f1_prime=True
+            #   検証 ROI: 暫定 204% (F1 単体と同等、 本番再検証で更新予定)
+            if base.get("is_f1") and rn in (11, 12):
+                base["is_f1_prime"] = True
+                # 専用 recovery (現状は F1 単体と同じ 204%)
+                # 本番再検証後に F1_PRIME_RECOVERY を更新するとここに反映
+                from src.evaluation.l4_strategy import F1_PRIME_RECOVERY
+                base["recovery_f1_prime"] = F1_PRIME_RECOVERY
+
             # ▼ 鉄板度スコア (backlog item 11): 条件が多く揃うほど高ROI 期待
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base
@@ -2127,6 +2138,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["is_obs_kiryu_6r"] = True
             if stadium == 2 and rn == 7:
                 base["is_obs_toda_7r"] = True
+
+            # ▼ F1 Prime 11-12R (朝判定も同じロジック、 2026-05-30 追加)
+            if base.get("is_f1") and rn in (11, 12):
+                base["is_f1_prime"] = True
+                from src.evaluation.l4_strategy import F1_PRIME_RECOVERY
+                base["recovery_f1_prime"] = F1_PRIME_RECOVERY
+
             # 鉄板度スコア (朝判定も同じロジック)
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return base

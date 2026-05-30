@@ -288,6 +288,27 @@
                   l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}`;
                   item.appendChild(l4Badge);
 
+                  // 🎖 F1 Prime 11-12R バッジ (ユーザー提案 2026-05-30)
+                  //   条件: F1 (L4 G++) AND race_number IN (11, 12)
+                  //   L4 帯 (本命500-999円) 制約は L4 universe 通過済の段階で
+                  //   既に満たされている (is_f1 が立つには min_payout∈[500,1000) 必要)
+                  if (sig.l4.is_f1_prime) {
+                    const fpBadge = document.createElement('span');
+                    fpBadge.className = 'f1-prime-badge';
+                    const fpRec = (sig.l4.recovery_f1_prime != null)
+                      ? sig.l4.recovery_f1_prime : '-';
+                    fpBadge.textContent = `🎖 F1 Prime ${fpRec}%`;
+                    fpBadge.title = (
+                      `F1 Prime 11-12R (ユーザー提案条件)\n`
+                      + `条件: 一般戦×1号艇A1×B除外×男性のみ×雨除外×\n`
+                      + `      1号艇国1%≥7×2号モ2連率≥40×11/12R×本命500-999円帯\n`
+                      + `買い目: 3連単 1-2-3 (100円)\n`
+                      + `検証 ROI: ${fpRec}% (暫定値、本番再検証で更新予定)\n`
+                      + `→ F1 + L4-prime が同時成立した最上位候補`
+                    );
+                    item.appendChild(fpBadge);
+                  }
+
                   // 鉄板度スコアバッジ (backlog item 11、緑観察より優先表示)
                   if (sig.l4.tetsuban_score && sig.l4.tetsuban_score >= 3) {
                     const tb = document.createElement('span');

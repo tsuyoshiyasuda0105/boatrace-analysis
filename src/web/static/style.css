@@ -2328,6 +2328,24 @@ main h2 {
 .obs-badge.obs-kiryu-6r {
   background: linear-gradient(135deg, #14b8a6, #0d9488);  /* teal-light */
 }
+/* F1 Prime 11-12R バッジ (ユーザー提案 2026-05-30)
+   F1 + L4-prime が同時成立した最上位候補 → 金メダル風で強調 */
+.f1-prime-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-left: 4px;
+  border-radius: 6px;
+  font-size: 0.78em;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(135deg, #b45309, #f59e0b, #fde047);
+  border: 2px solid #92400e;
+  box-shadow: 0 0 12px rgba(253, 224, 71, 0.7);
+  cursor: help;
+  vertical-align: middle;
+  animation: tier-a-pulse 2.5s ease-in-out infinite;
+}
+
 /* 展示タイム補助点バッジ (検証 2026-05-30、L4 強弱付け用) */
 .ex-bonus-badge {
   display: inline-block;

@@ -57,6 +57,30 @@ def lookup_rule(grade: Optional[int], cls: Optional[int]) -> Optional[dict]:
 
 
 # ============================================================
+# F1 Prime 11-12R (ユーザー提案、 2026-05-30 追加)
+#   条件: L4 G++ F1 (一般戦×1号艇A1×国1%≥7×2号モ2連率≥40)
+#        AND race_number IN (11, 12)
+#   買い目: 3連単 1-2-3 (L4 ベース、追加なし)
+#
+#   検証 ROI:
+#     - F1 単体 (既存): 204.0% (n=1189, L4 帯 500-1000円)
+#     - F1 Prime ROI: ローカル DB に odds_trifecta が 3 日分しか無いため、
+#       T-5min snapshot に基づく厳密な L4 帯絞り版は本番 (Supabase)
+#       環境での再検証が必要.
+#     - 暫定: F1 単体 ROI 204.0% を継承 (Prime 絞りで test サンプル小)
+#
+#   詳細: reports/verify_f1_prime.md / scripts/verify_f1_prime.py
+# ============================================================
+F1_PRIME_RECOVERY: float = 204.0
+"""F1 Prime 11-12R の検証 ROI % (暫定: F1 単体と同等扱い).
+
+本番環境での再検証が完了したら更新する.
+"""
+F1_PRIME_RACE_NUMBERS: tuple[int, ...] = (11, 12)
+"""F1 Prime に該当する race_number."""
+
+
+# ============================================================
 # L4 サブランク (1号艇選手の国1%/局1% で +EV 強化)
 #   plus_plus: 国1%>=7.0 ∧ 局1%>=7.0  → 検証 190.3%
 #   plus:      国1%>=7.0               → 検証 188.2%
