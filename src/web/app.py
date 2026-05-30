@@ -1540,36 +1540,63 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         pass
 
                 # === 5. course1_stats (L4+1c80 用、過去 180 日 1コース成績) ===
-                # 旧実装は別 connection を開いていた → 同一 conn に統合
+                # 2026-05-30: 事前集計テーブル course1_stats_cache を優先使用.
+                #   旧実装は WITH 句 + 多段 LEFT JOIN で重く 数百ms かかっていた.
+                #   cache table を使えば 1 SQL の SELECT 結合 1 回で取得可能.
+                #   cache がない (= バッチ未実行 / 当日分なし) ときは旧 SQL に fallback.
+                used_cache = False
                 try:
                     cur = conn.execute("""
-                        WITH target_races AS (
-                            SELECT r.race_id, r.race_date, e.racer_number
-                            FROM races r
-                            JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
-                            WHERE r.race_date = ?
-                        )
-                        SELECT t.race_id,
-                               COUNT(res.race_id) AS starts,
-                               SUM(CASE WHEN res.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
-                          FROM target_races t
-                          LEFT JOIN race_entries e2 ON e2.racer_number = t.racer_number AND e2.boat_number = 1
-                          LEFT JOIN races r2 ON r2.race_id = e2.race_id
-                          LEFT JOIN race_results res ON res.race_id = e2.race_id AND res.boat_number = 1
-                          WHERE r2.race_date < t.race_date
-                            AND r2.race_date >= ?
-                            AND res.finishing_position IS NOT NULL
-                          GROUP BY t.race_id
-                    """, (target_date, cutoff_date_iso))
-                    for rid, starts, wins in cur.fetchall():
-                        if starts and starts >= COURSE1_MIN_STARTS:
+                        SELECT e.race_id, c.starts, c.wins
+                          FROM course1_stats_cache c
+                          JOIN race_entries e
+                            ON e.racer_number = c.racer_number
+                           AND e.boat_number = 1
+                          JOIN races r ON r.race_id = e.race_id
+                         WHERE c.as_of_date = ?
+                           AND r.race_date = ?
+                           AND c.starts >= ?
+                    """, (target_date, target_date, COURSE1_MIN_STARTS))
+                    rows = cur.fetchall()
+                    if rows:
+                        used_cache = True
+                        for rid, starts, wins in rows:
                             course1_stats[rid] = (wins / starts, starts)
                 except Exception as e:
-                    logger.warning("course1 stats fetch failed: %s", e)
+                    # cache table が無い (= migration 前) なら fallback へ
+                    logger.debug("course1 cache lookup failed: %s", e)
+
+                if not used_cache:
+                    # Fallback: 旧 SQL で計算 (cache 未生成 / 当日分なしの場合)
                     try:
-                        conn.rollback()
-                    except Exception:
-                        pass
+                        cur = conn.execute("""
+                            WITH target_races AS (
+                                SELECT r.race_id, r.race_date, e.racer_number
+                                FROM races r
+                                JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                                WHERE r.race_date = ?
+                            )
+                            SELECT t.race_id,
+                                   COUNT(res.race_id) AS starts,
+                                   SUM(CASE WHEN res.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                              FROM target_races t
+                              LEFT JOIN race_entries e2 ON e2.racer_number = t.racer_number AND e2.boat_number = 1
+                              LEFT JOIN races r2 ON r2.race_id = e2.race_id
+                              LEFT JOIN race_results res ON res.race_id = e2.race_id AND res.boat_number = 1
+                              WHERE r2.race_date < t.race_date
+                                AND r2.race_date >= ?
+                                AND res.finishing_position IS NOT NULL
+                              GROUP BY t.race_id
+                        """, (target_date, cutoff_date_iso))
+                        for rid, starts, wins in cur.fetchall():
+                            if starts and starts >= COURSE1_MIN_STARTS:
+                                course1_stats[rid] = (wins / starts, starts)
+                    except Exception as e:
+                        logger.warning("course1 stats fetch failed: %s", e)
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
         except Exception as e:
             logger.exception("market-signals setup failed: %s", e)
 

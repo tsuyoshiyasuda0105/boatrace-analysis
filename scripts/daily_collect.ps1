@@ -35,6 +35,16 @@ for ($i = 1; $i -le $maxAttempts; $i++) {
     $code = $LASTEXITCODE
     if ($code -eq 0) {
         Add-Content $LogFile ("[INFO] {0:yyyy-MM-dd HH:mm:ss} success" -f (Get-Date))
+
+        # 2026-05-30 追加: course1_stats_cache の事前集計 (高速化用)
+        # 失敗してもアプリは fallback 動作するので非 fatal
+        $CacheCourse1Script = Join-Path $ProjectRoot "scripts\cache_course1_stats.py"
+        if (Test-Path $CacheCourse1Script) {
+            Add-Content $LogFile ("[INFO] {0:yyyy-MM-dd HH:mm:ss} populating course1_stats_cache" -f (Get-Date))
+            & $Python $CacheCourse1Script 2>&1 | Out-File -Append -Encoding utf8 $LogFile
+            Add-Content $LogFile ("[INFO] course1_stats_cache update exit={0}" -f $LASTEXITCODE)
+        }
+
         exit 0
     }
     Add-Content $LogFile ("[WARN] attempt {0} failed exit={1}" -f $i, $code)
