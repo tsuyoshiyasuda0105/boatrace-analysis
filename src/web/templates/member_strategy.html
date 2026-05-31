@@ -232,6 +232,20 @@
           <br><small>独立 universe (案A除外から分離、検証 175.5%, n=502)</small>
         </span>
       </div>
+      <div class="summary-card f1-adopt"
+           title="🚤 6号艇本命。モデル head=6 かつ p1≥0.35 で単勝6を100円。検証 ROI 140% (raw, n=103, 的中53%) / 172% (per-date, n=117)。月あたり数本のみ＝実測は高分散">
+        <span class="card-label">🚤 6号艇本命 (単勝6)</span>
+        <span class="card-value">
+          {% if totals.outer6_roi is not none %}{{ '%+.1f' | format(totals.outer6_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.outer6_bets }} HIT={{ totals.outer6_hits }}
+          {% if totals.outer6_bets > 0 %}
+          / 損益 {{ totals.outer6_profit | signed_comma }}円
+          {% endif %}
+          <br><small>★採用 (検証 140%/172%、月数本のみ＝高分散)</small>
+        </span>
+      </div>
     </div>
   </section>
 
@@ -623,8 +637,10 @@
             <th colspan="3">🟦 Tier B (全)</th>
             <th colspan="3">🟦+ Tier A (★)</th>
             <th colspan="3">🌸 Venus L4</th>
+            <th colspan="3">🚤 6号艇本命</th>
           </tr>
           <tr>
+            <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
@@ -633,7 +649,7 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
+          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.outer6_bets and r.outer6_bets > 0) %}
           {% if has_planned %}
           <tr class="has-l4-observe">
             <td class="date-cell">
@@ -676,18 +692,27 @@
             <td class="num {% if r.venus_tri_profit and r.venus_tri_profit > 0 %}pos{% elif r.venus_tri_profit and r.venus_tri_profit < 0 %}neg{% endif %}">
               {% if r.venus_tri_bets and r.venus_tri_bets > 0 %}{{ r.venus_tri_profit | signed_comma }}{% else %}-{% endif %}
             </td>
+
+            {# 🚤 6号艇本命 (単勝6) 列 #}
+            <td class="num">{{ r.outer6_hits or 0 }}/{{ r.outer6_bets or 0 }}</td>
+            <td class="num {% if r.outer6_recovery and r.outer6_recovery >= 100 %}pos{% elif r.outer6_recovery %}neg{% endif %}">
+              {% if r.outer6_recovery is not none %}{{ '%.0f' | format(r.outer6_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.outer6_profit and r.outer6_profit > 0 %}pos{% elif r.outer6_profit and r.outer6_profit < 0 %}neg{% endif %}">
+              {% if r.outer6_bets and r.outer6_bets > 0 %}{{ r.outer6_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
           </tr>
           {% endif %}
           {% endfor %}
           {% set planned_total = namespace(n=0) %}
           {% for r in rows %}
-            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
+            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.outer6_bets and r.outer6_bets > 0) %}
               {% set planned_total.n = planned_total.n + 1 %}
             {% endif %}
           {% endfor %}
           {% if planned_total.n == 0 %}
           <tr class="is-empty">
-            <td colspan="14" class="num muted">企画レース観察データなし</td>
+            <td colspan="17" class="num muted">企画レース観察データなし</td>
           </tr>
           {% endif %}
         </tbody>
@@ -734,6 +759,16 @@
             </td>
             <td class="num {% if totals.venus_tri_profit and totals.venus_tri_profit > 0 %}pos{% elif totals.venus_tri_profit and totals.venus_tri_profit < 0 %}neg{% endif %}">
               {% if totals.venus_tri_bets > 0 %}<strong>{{ totals.venus_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# 🚤 6号艇本命 合計 #}
+            <td class="num"><strong>{{ totals.outer6_hits }}/{{ totals.outer6_bets }}</strong>
+              {% if totals.outer6_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.outer6_hits / totals.outer6_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.outer6_recovery and totals.outer6_recovery >= 100 %}pos{% elif totals.outer6_recovery %}neg{% endif %}">
+              {% if totals.outer6_recovery is not none %}<strong>{{ '%.0f' | format(totals.outer6_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.outer6_profit and totals.outer6_profit > 0 %}pos{% elif totals.outer6_profit and totals.outer6_profit < 0 %}neg{% endif %}">
+              {% if totals.outer6_bets > 0 %}<strong>{{ totals.outer6_profit | signed_comma }}</strong>{% else %}-{% endif %}
             </td>
           </tr>
         </tfoot>
