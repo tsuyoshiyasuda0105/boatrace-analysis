@@ -1393,8 +1393,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         all_race_info: dict[str, dict] = {}
         morning_pred: dict[str, float] = {}
         course1_stats: dict[str, tuple[float, int]] = {}
-        # 外枠本命 (6号艇単勝) 戦略用: race_id -> {"head": 本命艇番, "p1": 最大prob_first}
-        head_pred: dict[str, dict] = {}
 
         # T-X snapshot の優先度 (小さいほど優先)
         # T-5min を最優先 (実運用での投票タイミング = レース 5 分前)
@@ -1536,34 +1534,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             morning_pred[rid] = p1
                 except Exception as e:
                     logger.warning("morning_pred query failed: %s", e)
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-
-                # === 4b. head_pred (外枠本命 用: 全6艇 prob_first の argmax) ===
-                # 6号艇本命戦略 (head==6 & p1>=0.35) のため、レースごとに
-                # prob_first が最大の艇 (head) とその確率 (p1) を求める。
-                # SQLite/Postgres 両対応のため argmax は Python 側で計算する
-                # (window 関数の方言差を回避。1 日 ~1200 行と軽量)。
-                # ORDER BY boat_number でタイは最小艇番が勝つ = backtest の
-                # pandas idxmax (行順=艇番順で先勝ち) と整合し、6号艇の誤発火を防ぐ。
-                try:
-                    cur = conn.execute("""
-                        SELECT p.race_id, p.boat_number, p.prob_first
-                        FROM predictions p
-                        JOIN races r ON p.race_id = r.race_id
-                        WHERE r.race_date = ?
-                        ORDER BY p.race_id, p.boat_number
-                    """, (target_date,))
-                    for rid, bno, pf in cur.fetchall():
-                        if pf is None or bno is None:
-                            continue
-                        cur_best = head_pred.get(rid)
-                        if cur_best is None or float(pf) > cur_best["p1"]:
-                            head_pred[rid] = {"head": int(bno), "p1": float(pf)}
-                except Exception as e:
-                    logger.warning("head_pred query failed: %s", e)
                     try:
                         conn.rollback()
                     except Exception:
@@ -2169,20 +2139,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             is_female_present = (n_female > 0)
             data = results.get(rid)
 
-            # 外枠本命 (6号艇単勝) シグナル: モデル本命(argmax prob_first)==6 & p1>=0.35
-            # → 6号艇単勝 100円。head_pred はループ前に bulk 取得済 (race_id -> {head,p1})。
-            # 確定/朝判定どちらの分岐でも同じシグナルを付与する。
-            outer6 = None
-            _hp = head_pred.get(rid)
-            if _hp is not None:
-                try:
-                    from src.evaluation.outer_value_strategy import evaluate_outer6_race
-                    _o6 = evaluate_outer6_race(_hp.get("head"), _hp.get("p1"))
-                    if _o6.get("eligible"):
-                        outer6 = _o6
-                except Exception:  # noqa: BLE001
-                    outer6 = None
-
             if data:
                 # === 確定オッズあり (L4 マーク) ===
                 mp = data["min_payout"]
@@ -2282,7 +2238,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "n_female": n_female,
                     "is_female_present": is_female_present,
                     "l4": l4,
-                    "outer6": outer6,
                 })
             else:
                 # === 未確定 (朝判定) → 予測ベース L4 候補 ===
@@ -2322,27 +2277,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "n_female": n_female,
                         "is_female_present": is_female_present,
                         "l4": morning_l4,
-                        "outer6": outer6,
-                    })
-                elif outer6:
-                    # L4 候補ではないが 6号艇本命シグナルがある朝レース。
-                    # outer6 (boat6 本命) と L4 (boat1 A1 本命) はほぼ排他なので、
-                    # この分岐が無いと当日の 6号艇本命バッジが表示されない。
-                    signals.append({
-                        "race_id": rid,
-                        "tier": "outer6",
-                        "min_payout": None,
-                        "source": "morning_predict",
-                        "expected_roi": (outer6["recovery"] - 100) / 100,
-                        "title": outer6["label"],
-                        "is_positive_ev": outer6["recovery"] >= 100,
-                        "weather": weather,
-                        "weather_label": WEATHER_LABEL.get(weather),
-                        "is_rain": is_rain,
-                        "n_female": n_female,
-                        "is_female_present": is_female_present,
-                        "l4": None,
-                        "outer6": outer6,
                     })
 
         return jsonify({
@@ -2351,7 +2285,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
-            "n_outer6": sum(1 for s in signals if s.get("outer6")),
             "signals": {s["race_id"]: s for s in signals},
         })
 

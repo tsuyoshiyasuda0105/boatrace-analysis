@@ -251,9 +251,8 @@
               try {
                 const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
                 if (!item) continue;
-                // 既存の L4 / 6号艇本命 バッジを削除 (再描画用)
+                // 既存の L4 バッジを削除 (再描画用)
                 item.querySelectorAll('.l4-badge').forEach(el => el.remove());
-                item.querySelectorAll('.outer6-badge').forEach(el => el.remove());
 
                 // L4 マーク (該当時、市場バッジより優先表示)
                 if (sig.l4) {
@@ -416,23 +415,6 @@
                   }
                 }
 
-                // 🚤 6号艇本命 (外枠本命): モデル本命(prob_first最大)が6号艇 & p1>=0.35
-                //   → 6号艇 単勝 100円。検証 ROI 140% / 的中 53% / n=103 (約4回/月)。
-                //   枠バイアス: 最も人気薄の6号艇をモデルが本命視 = +EV。実弾投入対象。
-                //   sig.l4 とは独立 (boat1本命 L4 とほぼ排他) なので if(sig.l4) の外で描画。
-                if (sig.outer6 && sig.outer6.eligible) {
-                  const o6 = document.createElement('span');
-                  o6.className = 'outer6-badge';
-                  const o6p1 = (sig.outer6.p1 != null) ? (sig.outer6.p1 * 100).toFixed(0) : '-';
-                  const o6hit = (sig.outer6.hit_rate != null) ? (sig.outer6.hit_rate * 100).toFixed(0) : '-';
-                  o6.textContent = `${sig.outer6.label} 単勝 ${sig.outer6.recovery}%`;
-                  o6.title = `${sig.outer6.label}: モデル本命が6号艇 (p1=${o6p1}%)\n`
-                           + `買い目: 6号艇 単勝 ${sig.outer6.amount_yen}円 (1点)\n`
-                           + `検証 ROI ${sig.outer6.recovery}% / 的中 ${o6hit}% / n=${sig.outer6.n} (約4回/月)\n`
-                           + `枠バイアス: 最も人気薄の6号艇をモデルが本命視 = +EV`;
-                  item.appendChild(o6);
-                }
-
                 // ユーザ指示 (backlog.md item 9): ダイヤモンドマーク (+27%
                 // / 本命 ¥N) は完全削除。L4 バッジに必要情報が含まれているため
                 // 重複表示を廃止。market-badge の生成は行わない。
@@ -533,10 +515,6 @@
             const badges = [];
             // L4 バッジ (最優先)
             u.el.querySelectorAll('.l4-badge').forEach(b => {
-              badges.push(b.outerHTML);
-            });
-            // 🚤 6号艇本命 バッジ (実弾投入対象、次レースカードにもミラー表示)
-            u.el.querySelectorAll('.outer6-badge').forEach(b => {
               badges.push(b.outerHTML);
             });
             // 市場バッジ廃止 (backlog item 9: ダイヤモンドマーク完全削除)

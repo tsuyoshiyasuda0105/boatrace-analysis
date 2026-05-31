@@ -627,15 +627,13 @@ main h2 {
   background: rgba(120, 120, 130, 0.30);
   color: rgba(220, 220, 220, 0.85);
 }
-/* L4 / 観察 / 鉄板度 / 6号艇本命バッジは「グレー化対象外」 (情報として残す) */
+/* L4 / 観察 / 鉄板度 バッジは「グレー化対象外」 (情報として残す) */
 .race-item.is-closed .l4-badge,
 .race-item.is-closed .obs-badge,
 .race-item.is-closed .tetsuban-badge,
-.race-item.is-closed .outer6-badge,
 .race-item.done .l4-badge,
 .race-item.done .obs-badge,
-.race-item.done .tetsuban-badge,
-.race-item.done .outer6-badge {
+.race-item.done .tetsuban-badge {
   opacity: 1.0;
   filter: none;
 }
@@ -2353,32 +2351,6 @@ main h2 {
   cursor: help;
   vertical-align: middle;
   animation: tier-a-pulse 2.5s ease-in-out infinite;
-}
-
-/* 🚤 6号艇本命 (外枠本命) バッジ (2026-05-31 追加、実弾投入対象)
-   モデル本命 (prob_first最大) = 6号艇 & p1>=0.35 → 6号艇 単勝 100円。
-   検証 ROI 140% / 的中 53% / n=103 (約4回/月)、全年プラス。
-   枠バイアスの旗艦シグナル (最も人気薄の艇をモデルが本命視 = +EV)。
-   クリムゾン→オレンジのグラデ + 専用パルスで他バッジと差別化し最優先で目立たせる。 */
-.outer6-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  margin-left: 4px;
-  border-radius: 6px;
-  font-size: 0.8em;
-  font-weight: 800;
-  color: #fff;
-  background: linear-gradient(135deg, #b91c1c, #ef4444, #f97316);
-  border: 2px solid #7f1d1d;
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.7);
-  cursor: help;
-  vertical-align: middle;
-  letter-spacing: 0.3px;
-  animation: outer6-pulse 2.5s ease-in-out infinite;
-}
-@keyframes outer6-pulse {
-  0%, 100% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.55); }
-  50%      { box-shadow: 0 0 20px rgba(249, 115, 22, 1.0); }
 }
 
 /* 展示タイム補助点バッジ (検証 2026-05-30、L4 強弱付け用) */
