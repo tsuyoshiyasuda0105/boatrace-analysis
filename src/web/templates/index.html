@@ -251,9 +251,8 @@
               try {
                 const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
                 if (!item) continue;
-                // 既存の L4 / 6号艇本命 バッジを削除 (再描画用)
+                // 既存の L4 バッジを削除 (再描画用)
                 item.querySelectorAll('.l4-badge').forEach(el => el.remove());
-                item.querySelectorAll('.outer6-badge').forEach(el => el.remove());
 
                 // L4 マーク (該当時、市場バッジより優先表示)
                 if (sig.l4) {
@@ -416,41 +415,6 @@
                   }
                 }
 
-                // 🚤 6号艇本命 (外枠本命): モデル本命(prob_first最大)が6号艇 & p1>=0.35
-                //   → 6号艇 単勝 100円。検証 (gate-1b 2026-05-31): per-date 補正後
-                //   ROI 172% / 的中 50% / n=117 (raw prob では 140%/53%/n103)。
-                //   枠バイアス: 最も人気薄の6号艇をモデルが本命視 = +EV。
-                //   sig.l4 とは独立 (boat1本命 L4 とほぼ排他) なので if(sig.l4) の外で描画。
-                //   【展示後ゲート】is_post_exhibition=true (展示済=全情報予測) のみ実弾対象。
-                //   false (展示前=preview欠落の退化予測) は「暫定」表示で賭け非推奨。
-                //   これが本番 head6 を 2.7倍誤発火させた撤去 (fd06aa9) への対策。
-                if (sig.outer6 && sig.outer6.eligible) {
-                  const o6 = document.createElement('span');
-                  const post = !!sig.outer6.is_post_exhibition;
-                  o6.className = post ? 'outer6-badge' : 'outer6-badge is-provisional';
-                  // 候補テーブル (renderTodaysPicks) が DOM 経由で参照する SSOT。
-                  // テキストパースより堅牢なデータ属性として埋めておく。
-                  o6.dataset.recovery = sig.outer6.recovery;
-                  o6.dataset.post = post ? '1' : '0';
-                  o6.dataset.label = sig.outer6.label;
-                  const o6p1 = (sig.outer6.p1 != null) ? (sig.outer6.p1 * 100).toFixed(0) : '-';
-                  const o6hit = (sig.outer6.hit_rate != null) ? (sig.outer6.hit_rate * 100).toFixed(0) : '-';
-                  if (post) {
-                    o6.textContent = `${sig.outer6.label} 単勝 ${sig.outer6.recovery}%`;
-                    o6.title = `${sig.outer6.label}: モデル本命が6号艇 (p1=${o6p1}%) ✅展示後=確定\n`
-                             + `買い目: 6号艇 単勝 ${sig.outer6.amount_yen}円 (1点)\n`
-                             + `検証 ROI ${sig.outer6.recovery}% / 的中 ${o6hit}% / n=${sig.outer6.n} (約4-5回/月)\n`
-                             + `枠バイアス: 最も人気薄の6号艇をモデルが本命視 = +EV\n`
-                             + `⚠ 会場差大 (浜名湖等は苦手 ROI59%)・小n高分散。点推定を過信しない`;
-                  } else {
-                    o6.textContent = `${sig.outer6.label}(展示前・暫定)`;
-                    o6.title = `${sig.outer6.label} 暫定: モデル本命が6号艇 (p1=${o6p1}%)\n`
-                             + `⚠ まだ展示前 (preview欠落の退化予測)。展示後に再判定されるまで賭けない。\n`
-                             + `展示後にこのバッジが残れば確定 (6号艇 単勝 100円)。消えたら見送り。`;
-                  }
-                  item.appendChild(o6);
-                }
-
                 // ユーザ指示 (backlog.md item 9): ダイヤモンドマーク (+27%
                 // / 本命 ¥N) は完全削除。L4 バッジに必要情報が含まれているため
                 // 重複表示を廃止。market-badge の生成は行わない。
@@ -551,10 +515,6 @@
             const badges = [];
             // L4 バッジ (最優先)
             u.el.querySelectorAll('.l4-badge').forEach(b => {
-              badges.push(b.outerHTML);
-            });
-            // 🚤 6号艇本命 バッジ (次レースカードにもミラー表示)
-            u.el.querySelectorAll('.outer6-badge').forEach(b => {
               badges.push(b.outerHTML);
             });
             // 市場バッジ廃止 (backlog item 9: ダイヤモンドマーク完全削除)
@@ -675,11 +635,7 @@
           const picks = [];
           items.forEach(el => {
             const l4 = el.querySelector('.l4-badge');
-            // 🚤 6号艇本命 (outer6) は L4 (1号艇A1本命) とは独立した別戦略。
-            // L4 バッジが無くても outer6-badge があれば候補テーブルに含める
-            // (2026-05-31 修正: 6号艇本命レースが「高ROI候補」に出ない不具合)。
-            const o6 = el.querySelector('.outer6-badge');
-            if (!l4 && !o6) return;
+            if (!l4) return;
             // --- L4 の reference/除外判定 (L4 バッジがある時のみ) ---
             let isRef = false, isOddsMismatch = false, isRainExclusion = false,
                 isFemaleExclusion = false, isAnyExclusion = false, l4Actionable = false;
@@ -701,18 +657,14 @@
               // (2026-05-28: 浜名湖12R が雨除外で完全消滅していた不具合修正)。
               l4Actionable = !isRef || isAnyExclusion;
             }
-            // L4 行にならず outer6 だけある場合は「6号艇本命行」として出す。
-            const isOuter6Row = !l4Actionable && !!o6;
-            if (!l4Actionable && !isOuter6Row) return;
-            const isOuter6Provisional = !!o6 && o6.classList.contains('is-provisional');
+            if (!l4Actionable) return;
             const closedAt = parseClosedAt(el.dataset.closedAt);
             if (!closedAt) return;
             const minutesUntil = (closedAt - now) / 60000;
             const isDone = parseInt(el.dataset.resultsCount || '0') > 0;
             const isClosed = minutesUntil < 0 || isDone;
             picks.push({ el, closedAt, minutesUntil, isClosed, isDone,
-                         isOddsMismatch, isRainExclusion, isFemaleExclusion, isAnyExclusion,
-                         isOuter6Row, isOuter6Provisional });
+                         isOddsMismatch, isRainExclusion, isFemaleExclusion, isAnyExclusion });
           });
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
@@ -723,7 +675,7 @@
           if (picks.length === 0) {
             const tr = document.createElement('tr');
             tr.className = 'todays-pick-row is-empty';
-            tr.innerHTML = '<td colspan="11" class="pick-empty">該当候補なし (L4 / 🚤6号艇本命とも条件を満たすレースがありません or バッジ読込中)</td>';
+            tr.innerHTML = '<td colspan="11" class="pick-empty">該当候補なし (L4 条件を満たすレースがありません or バッジ読込中)</td>';
             tbody.appendChild(tr);
             return;
           }
@@ -738,41 +690,14 @@
             const hh = String(u.closedAt.getHours()).padStart(2, '0');
             const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
             const tilStr = u.isClosed ? '🔒 締切済' : fmtTimeTil(u.minutesUntil);
-            // ステータス: 締切済 / 次 / それ以外 (L4・outer6 共通)
+            // ステータス: 締切済 / 次 / それ以外
             let rowClass = 'todays-pick-row';
             if (u.isClosed) rowClass += ' is-closed';
             else if (idx === firstUpcomingIdx) rowClass += ' is-next';
             const oddsCellHtml = renderOdds123Cell(rid);
             let finalRankLabel, pickType, racerInfo, recovery, voteBtnHtml;
 
-            if (u.isOuter6Row) {
-              // === 🚤 6号艇本命 (outer6): L4 とは独立した単勝戦略 ===
-              const o6 = u.el.querySelector('.outer6-badge');
-              const rec = (o6 && o6.dataset.recovery) ? `${o6.dataset.recovery}%` : '-';
-              const lbl = (o6 && o6.dataset.label) ? o6.dataset.label : '🚤6号艇本命';
-              racerInfo = '6号艇';
-              if (u.isOuter6Provisional) {
-                // 展示前・暫定: 賭け非推奨。グレー寄せ + 投票ボタン非活性。
-                rowClass += ' is-odds-mismatch';
-                finalRankLabel = '🚤 6号艇本命 '
-                  + '<span class="mismatch-tag" title="まだ展示前 (preview欠落の退化予測)。'
-                  + '展示後に再判定されるまで賭けない。展示後にバッジが残れば確定。">⏳ 展示前</span>';
-                pickType = `${lbl}(展示前・暫定)`;
-                recovery = '-';
-                voteBtnHtml = '<span class="vote-btn vote-btn-disabled" '
-                  + 'title="展示前・暫定。展示後にバッジが残ってから投票してください">⏳ 展示前</span>';
-              } else {
-                // 展示後・確定: 6号艇 単勝 100円。
-                finalRankLabel = '🚤 6号艇本命 単勝';
-                pickType = `${lbl} 単勝100円`;
-                recovery = rec;
-                voteBtnHtml = `<a href="https://ib.mbrace.or.jp/" target="_blank" rel="noopener noreferrer"
-                      class="vote-btn" title="テレボートを新タブで開く (${stadium} ${rno}R / 6号艇 単勝)">
-                     🎫 投票
-                   </a>`;
-              }
-            } else {
-              // === ⭐ L4 (1号艇A1本命) 行: 既存ロジック ===
+            // === ⭐ L4 (1号艇A1本命) 行 ===
               const l4Badge = u.el.querySelector('.l4-badge');
               const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
               const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
@@ -818,7 +743,6 @@
               finalRankLabel = u.isAnyExclusion
                 ? `${rankLabel} <span class="mismatch-tag" title="${excTitle}">${excEmoji} ${excShort}</span>`
                 : rankLabel;
-            }
 
             const tr = document.createElement('tr');
             tr.className = rowClass;

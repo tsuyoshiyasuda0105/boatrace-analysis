@@ -1393,8 +1393,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         all_race_info: dict[str, dict] = {}
         morning_pred: dict[str, float] = {}
         course1_stats: dict[str, tuple[float, int]] = {}
-        # 外枠本命 (6号艇単勝) 戦略用: race_id -> {"head": 本命艇番, "p1": 最大prob_first}
-        head_pred: dict[str, dict] = {}
 
         # T-X snapshot の優先度 (小さいほど優先)
         # T-5min を最優先 (実運用での投票タイミング = レース 5 分前)
@@ -1536,34 +1534,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             morning_pred[rid] = p1
                 except Exception as e:
                     logger.warning("morning_pred query failed: %s", e)
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-
-                # === 4b. head_pred (外枠本命 用: 全6艇 prob_first の argmax) ===
-                # 6号艇本命戦略 (head==6 & p1>=0.35) のため、レースごとに
-                # prob_first が最大の艇 (head) とその確率 (p1) を求める。
-                # SQLite/Postgres 両対応のため argmax は Python 側で計算する
-                # (window 関数の方言差を回避。1 日 ~1200 行と軽量)。
-                # ORDER BY boat_number でタイは最小艇番が勝つ = backtest の
-                # pandas idxmax (行順=艇番順で先勝ち) と整合し、6号艇の誤発火を防ぐ。
-                try:
-                    cur = conn.execute("""
-                        SELECT p.race_id, p.boat_number, p.prob_first
-                        FROM predictions p
-                        JOIN races r ON p.race_id = r.race_id
-                        WHERE r.race_date = ?
-                        ORDER BY p.race_id, p.boat_number
-                    """, (target_date,))
-                    for rid, bno, pf in cur.fetchall():
-                        if pf is None or bno is None:
-                            continue
-                        cur_best = head_pred.get(rid)
-                        if cur_best is None or float(pf) > cur_best["p1"]:
-                            head_pred[rid] = {"head": int(bno), "p1": float(pf)}
-                except Exception as e:
-                    logger.warning("head_pred query failed: %s", e)
                     try:
                         conn.rollback()
                     except Exception:
@@ -2169,27 +2139,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             is_female_present = (n_female > 0)
             data = results.get(rid)
 
-            # 外枠本命 (6号艇単勝) シグナル: モデル本命(argmax prob_first)==6 & p1>=0.35
-            # → 6号艇単勝 100円。head_pred はループ前に bulk 取得済 (race_id -> {head,p1})。
-            # 確定/朝判定どちらの分岐でも同じシグナルを付与する。
-            #
-            # 【展示後ゲート】 ex_st (= 1号艇 start_timing_exhibition) が埋まっていれば
-            # 展示後 = 全情報予測。検証で per-date 補正後 ROI 172%/的中50%/n117 を継承する
-            # 唯一の賭け対象 (gate-1b 2026-05-31)。NULL なら展示前 = preview欠落の退化予測で、
-            # これが本番 head6 を 2.7倍に誤発火させた撤去 (fd06aa9) の根本原因。
-            # → 展示前は is_post_exhibition=False を立て、UI で「暫定」表示し賭け非推奨にする。
-            outer6 = None
-            _hp = head_pred.get(rid)
-            if _hp is not None:
-                try:
-                    from src.evaluation.outer_value_strategy import evaluate_outer6_race
-                    _o6 = evaluate_outer6_race(_hp.get("head"), _hp.get("p1"))
-                    if _o6.get("eligible"):
-                        _o6["is_post_exhibition"] = (ex_st is not None)
-                        outer6 = _o6
-                except Exception:  # noqa: BLE001
-                    outer6 = None
-
             if data:
                 # === 確定オッズあり (L4 マーク) ===
                 mp = data["min_payout"]
@@ -2289,7 +2238,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "n_female": n_female,
                     "is_female_present": is_female_present,
                     "l4": l4,
-                    "outer6": outer6,
                 })
             else:
                 # === 未確定 (朝判定) → 予測ベース L4 候補 ===
@@ -2329,27 +2277,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "n_female": n_female,
                         "is_female_present": is_female_present,
                         "l4": morning_l4,
-                        "outer6": outer6,
-                    })
-                elif outer6:
-                    # L4 候補ではないが 6号艇本命シグナルがある朝レース。
-                    # outer6 (boat6 本命) と L4 (boat1 A1 本命) はほぼ排他なので、
-                    # この分岐が無いと当日の 6号艇本命バッジが表示されない。
-                    signals.append({
-                        "race_id": rid,
-                        "tier": "outer6",
-                        "min_payout": None,
-                        "source": "morning_predict",
-                        "expected_roi": (outer6["recovery"] - 100) / 100,
-                        "title": outer6["label"],
-                        "is_positive_ev": outer6["recovery"] >= 100,
-                        "weather": weather,
-                        "weather_label": WEATHER_LABEL.get(weather),
-                        "is_rain": is_rain,
-                        "n_female": n_female,
-                        "is_female_present": is_female_present,
-                        "l4": None,
-                        "outer6": outer6,
                     })
 
         return jsonify({
@@ -2358,7 +2285,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
-            "n_outer6": sum(1 for s in signals if s.get("outer6")),
             "signals": {s["race_id"]: s for s in signals},
         })
 
@@ -2413,12 +2339,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             all_dates = []
 
-        # cache スキーマ版チェック: outer6_bets を持たない旧 cache entry は
-        # 「未集計」とみなして再計算 → prod でも DB 操作なしで自己修復する。
-        missing_dates = [
-            d for d in all_dates
-            if d not in cached_by_date or "outer6_bets" not in cached_by_date[d]
-        ]
+        missing_dates = [d for d in all_dates if d not in cached_by_date]
         # 当日分は常に再計算 (cache に保存しない、 リアルタイム性確保)
         # 過去日でも cache に無いものは今回 SQL で取得
         if not missing_dates:
@@ -2466,10 +2387,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pt.payout AS tri_pay,
                     pt_132.payout AS pay_132,
                     pv.weather_number AS weather,
-                    COALESCE(fem.n_female, 0) AS n_female,
-                    phead.head_boat AS head_boat,
-                    phead.head_p1 AS head_p1,
-                    pw6.payout AS win6_pay
+                    COALESCE(fem.n_female, 0) AS n_female
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                 LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
@@ -2513,17 +2431,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_payouts pe ON pe.race_id = r.race_id AND pe.bet_type='exacta' AND pe.combination='1-2'
                 LEFT JOIN race_payouts pt ON pt.race_id = r.race_id AND pt.bet_type='trifecta' AND pt.combination='1-2-3'
                 LEFT JOIN race_payouts pt_132 ON pt_132.race_id = r.race_id AND pt_132.bet_type='trifecta' AND pt_132.combination='1-3-2'
-                LEFT JOIN (
-                    SELECT p.race_id,
-                           MIN(p.boat_number) AS head_boat,
-                           MAX(p.prob_first)  AS head_p1
-                      FROM predictions p
-                      JOIN (SELECT race_id, MAX(prob_first) AS mx
-                              FROM predictions GROUP BY race_id) mm
-                        ON mm.race_id = p.race_id AND p.prob_first = mm.mx
-                     GROUP BY p.race_id
-                ) phead ON phead.race_id = r.race_id
-                LEFT JOIN race_payouts pw6 ON pw6.race_id = r.race_id AND pw6.bet_type='win' AND pw6.combination='6'
                 WHERE r.race_date BETWEEN ? AND ?
                 ORDER BY r.race_date
             """, (from_date, to_date)).fetchall()
@@ -2564,16 +2471,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # Tier A: 3号艇国1%≥7 絞り (ROI 175.5% Tier 1)
                 "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
-                # 🚤 6号艇本命 (model head=6 & p1>=.35 → 単勝6、検証 ROI 140%/172%)
-                "outer6_bets": 0, "outer6_hits": 0, "outer6_pay": 0,
                 "grade_breakdown": {},
             }
 
         for row in cur:
             (rdate, stadium, grade, race_no, cls, natl_1, boat2_top2, boat3_natl_1,
              fav_pay, fav_odds, any_in_l4, l4_odds, prob_first,
-             w1, w2, w3, win_pay, ex_pay, tri_pay, pay_132, weather, n_female,
-             head_boat, head_p1, win6_pay) = row
+             w1, w2, w3, win_pay, ex_pay, tri_pay, pay_132, weather, n_female) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
             # weather NULL (= 直前情報未取得 or 古いデータ) は通常通り集計。
@@ -2615,28 +2519,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # Tier A: 3号艇国1%≥7 絞り (ROI 175.5%, n=1312, CI[151,200], Tier 1)
                 "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
-                # 🚤 6号艇本命 (model head=6 & p1>=.35 → 単勝6、検証 ROI 140%/172%)
-                "outer6_bets": 0, "outer6_hits": 0, "outer6_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
             is_done = w1 is not None and w2 is not None and w3 is not None
             if is_done:
                 d["n_done"] += 1
-
-            # === 🚤 6号艇本命 (outer6) 集計 ===
-            # ルール: モデル head (prob_first argmax) == 6 かつ p1(=head_p1) >= 0.35
-            #         → 単勝6 を 100円。検証 ROI 140%(raw,n103)/172%(per-date,n117)。
-            # ※ 1号艇クラス(cls)非依存の戦略のため、cls!=1 の continue より前で判定する。
-            try:
-                _o6_p1 = float(head_p1) if head_p1 is not None else 0.0
-            except (TypeError, ValueError):
-                _o6_p1 = 0.0
-            if head_boat == 6 and _o6_p1 >= 0.35 and is_done:
-                d["outer6_bets"] += 1
-                if w1 == 6:
-                    d["outer6_hits"] += 1
-                    d["outer6_pay"] += (win6_pay or 0)
 
             # === L4 候補判定 (T-X オッズ優先、race_payouts MIN フォールバック) ===
             # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
@@ -2964,8 +2852,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         # L4-Mid 1-3-2 観察 (2026-05-19)
                         "mid_132_tri_bets": m132b or 0, "mid_132_tri_hits": m132h or 0, "mid_132_tri_pay": m132p or 0,
                         "mid_132_tier_a_tri_bets": m132ab or 0, "mid_132_tier_a_tri_hits": m132ah or 0, "mid_132_tier_a_tri_pay": m132ap or 0,
-                        # 🚤 6号艇本命: 旧 summary テーブルには無いため 0 (raw 再計算分のみ実値)
-                        "outer6_bets": 0, "outer6_hits": 0, "outer6_pay": 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
@@ -2980,7 +2866,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "gen_tri", "gen_plus_tri", "gen_f1_tri",
                         "prime_tri", "r12_tri", "gen_r12_tri",
                         "toda_7r_tri", "mid_132_tri",
-                        "mid_132_tier_a_tri", "venus_tri", "outer6"):
+                        "mid_132_tier_a_tri", "venus_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None
@@ -3262,7 +3148,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "gen_tri", "gen_plus_tri", "gen_f1_tri",
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri", "venus_tri", "outer6")
+                    "mid_132_tier_a_tri", "venus_tri")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
@@ -3296,7 +3182,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "gen_tri", "gen_plus_tri", "gen_f1_tri",
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri", "venus_tri", "outer6")
+                    "mid_132_tier_a_tri", "venus_tri")
         try:
             monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
         except Exception as e:
