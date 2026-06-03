@@ -638,10 +638,13 @@
             if (!l4) return;
             // --- L4 の reference/除外判定 (L4 バッジがある時のみ) ---
             let isRef = false, isOddsMismatch = false, isRainExclusion = false,
-                isFemaleExclusion = false, isAnyExclusion = false, l4Actionable = false;
+                isFemaleExclusion = false, isMorningBadge = false,
+                isMorningOutOfRange = false, isAnyExclusion = false,
+                l4Actionable = false;
             if (l4) {
               isRef = l4.classList.contains('l4-reference');
               const labelText = l4.textContent || '';
+              isMorningBadge = Array.from(l4.classList).some(c => c.startsWith('l4-morning_'));
               // ユーザ仕様 (2026-05-19): 朝候補だったがオッズが L4 帯から外れた
               // レースは「データを消さずグレーアウトで残す」。
               // morning_l4 fallback (app.py L1879-1890) は label に「(確定¥XXX)」
@@ -649,7 +652,10 @@
               isOddsMismatch = isRef && /\(確定¥/.test(labelText);
               isRainExclusion = isRef && /雨除外/.test(labelText);
               isFemaleExclusion = isRef && /女性\d+名除外/.test(labelText);
-              isAnyExclusion = isOddsMismatch || isRainExclusion || isFemaleExclusion;
+              isMorningOutOfRange = isRef && isMorningBadge
+                && !isOddsMismatch && !isRainExclusion && !isFemaleExclusion;
+              isAnyExclusion = isOddsMismatch || isRainExclusion
+                || isFemaleExclusion || isMorningOutOfRange;
               // L4 行として出すのは「非reference」or「除外マーク付き(グレー残し)」。
               // 完全除外するのは「何の除外マークも付いていない reference」
               // (一般戦 F1 非該当 / A2 派生 等、元から候補ではないもの) のみ。
@@ -664,7 +670,8 @@
             const isDone = parseInt(el.dataset.resultsCount || '0') > 0;
             const isClosed = minutesUntil < 0 || isDone;
             picks.push({ el, closedAt, minutesUntil, isClosed, isDone,
-                         isOddsMismatch, isRainExclusion, isFemaleExclusion, isAnyExclusion });
+                         isOddsMismatch, isRainExclusion, isFemaleExclusion,
+                         isMorningOutOfRange, isAnyExclusion });
           });
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
@@ -731,6 +738,9 @@
               } else if (u.isFemaleExclusion) {
                 excEmoji = '♀'; excShort = '女性混合';
                 excTitle = '女性混合レース (n_female 1-5) は ROI 低下のため L4 戦略では除外';
+              } else if (u.isMorningOutOfRange) {
+                excEmoji = '圏外'; excShort = '朝候補';
+                excTitle = '朝時点では L4 候補でしたが、確定オッズ・直前条件では採用条件の圏外です。履歴確認用に表示しています。';
               }
               // 投票ボタン: 除外時は非活性
               voteBtnHtml = u.isAnyExclusion
