@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import date
+from datetime import date, datetime
 from typing import Optional, Any
 
 from datetime import timedelta
@@ -1124,8 +1124,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # backlog item 11: market-signals を HTTP/2 preload で先取り
         # ブラウザは HTML パース前に /api/market-signals に並列リクエストを
         # 飛ばすので、JS が呼ぶ頃には返答がキャッシュ済 → 体感速度向上
+        refresh_bucket = int(time.time() // 30)
         resp.headers["Link"] = (
-            f'</api/market-signals?date={target_date}>; rel=preload; as=fetch; crossorigin'
+            f'</api/market-signals?date={target_date}&refresh={refresh_bucket}>; rel=preload; as=fetch; crossorigin'
         )
         return resp
 
@@ -1370,7 +1371,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         #   - 6 個の snapshot_label 別ループ → IN 句 1 クエリ
         #   - all_race_info / morning_pred / final_payout / course1_stats
         #     を同じ conn で実行
-        from datetime import datetime, timedelta as _td
+        from datetime import datetime as _dt, timedelta as _td
         from src.evaluation.l4_strategy import (
             l4_rank as _l4_rank_shared,
             RANK_PLUS_PLUS_RECOVERY,
@@ -1384,7 +1385,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             is_l4_pro,
         )
         try:
-            _td_dt = datetime.fromisoformat(target_date).date()
+            _td_dt = _dt.fromisoformat(target_date).date()
             cutoff_date_iso = (_td_dt - _td(days=COURSE1_WINDOW_DAYS)).isoformat()
         except Exception:
             cutoff_date_iso = "1900-01-01"
@@ -1478,7 +1479,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 try:
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
-                               r.race_number,
+                               r.race_number, r.race_closed_at,
                                e.class_number,
                                e.national_top_1_percent, e.local_top_1_percent,
                                e.avg_start_timing, e.age,
@@ -1500,12 +1501,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         ) fem ON fem.race_id = r.race_id
                         WHERE r.race_date = ?
                     """, (target_date,))
-                    for (rid, stadium, grade, race_no, cls, natl1, loc1,
+                    for (rid, stadium, grade, race_no, race_closed_at, cls, natl1, loc1,
                          avg_st, age, weather, ex_st, boat2_top2, boat3_natl_1,
                          n_female) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade,
                             "race_number": race_no,
+                            "race_closed_at": race_closed_at,
                             "class": cls,
                             "natl_1": natl1, "local_1": loc1,
                             "avg_st": avg_st, "age": age,
@@ -1601,6 +1603,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             logger.exception("market-signals setup failed: %s", e)
 
         EXCLUDE_B = set(_LOSING_VENUES.keys()) | set(_QUESTIONABLE_VENUES.keys())
+
+        def _rain_exclusion_active(race_closed_at) -> bool:
+            """Return True from five minutes before close; weather is judged then."""
+            if not race_closed_at:
+                return False
+            try:
+                closed = datetime.fromisoformat(str(race_closed_at).replace(" ", "T"))
+            except (TypeError, ValueError):
+                return False
+            now = datetime.now(closed.tzinfo) if closed.tzinfo else datetime.now()
+            return now >= closed - timedelta(minutes=5)
 
         def _l4_rank(natl_1, local_1):
             """1号艇選手の成績から L4 のサブランク判定 (単一情報源を委譲)"""
@@ -2129,10 +2142,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             age = info.get("age")
             ex_st = info.get("ex_st")
             weather = info.get("weather")
+            race_closed_at = info.get("race_closed_at")
             boat2_top2 = info.get("boat2_top2")
             boat3_natl_1 = info.get("boat3_natl_1")
             n_female = info.get("n_female", 0) or 0
             is_rain = (weather == 3)
+            rain_exclusion_active = _rain_exclusion_active(race_closed_at)
+            is_rain_excluded = is_rain and rain_exclusion_active
             # ♀ 案A: レース内に女性が 1 名でもいると ROI が低下するため除外。
             # 男性のみ ROI 180.8% / 女性混入 134-158% / ベテラン男1号艇でも
             # 若手女性混入で 96.3% (analyze_female_deep.py 分析4) に崩落。
@@ -2188,8 +2204,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
                 # バッジは出すが is_rain=True で本日候補リストから除外
-                if l4 and is_rain:
+                if l4 and is_rain_excluded:
                     l4["is_rain"] = True
+                    l4["rain_exclusion_active"] = True
                     l4["is_reference"] = True  # 候補リスト除外フラグ
                     l4["label"] = f"☔{l4['label']} (雨除外)"
 
@@ -2235,6 +2252,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "weather": weather,
                     "weather_label": WEATHER_LABEL.get(weather),
                     "is_rain": is_rain,
+                    "rain_exclusion_active": rain_exclusion_active,
+                    "is_rain_excluded": is_rain_excluded,
                     "n_female": n_female,
                     "is_female_present": is_female_present,
                     "l4": l4,
@@ -2248,8 +2267,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                                    boat2_top2=boat2_top2,
                                                    race_number=race_no_info)
                 if morning_l4:
-                    if is_rain:
+                    if is_rain_excluded:
                         morning_l4["is_rain"] = True
+                        morning_l4["rain_exclusion_active"] = True
                         morning_l4["is_reference"] = True
                         morning_l4["label"] = f"☔{morning_l4['label']} (雨除外)"
                     if is_female_present:
@@ -2274,6 +2294,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "weather": weather,
                         "weather_label": WEATHER_LABEL.get(weather),
                         "is_rain": is_rain,
+                        "rain_exclusion_active": rain_exclusion_active,
+                        "is_rain_excluded": is_rain_excluded,
                         "n_female": n_female,
                         "is_female_present": is_female_present,
                         "l4": morning_l4,
@@ -2293,6 +2315,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # =====================================================
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
+    STRICT_ODDS_DAILY_START = "2026-05-30"
 
     def _l4_daily_stats(from_date: str, to_date: str) -> list[dict]:
         """日別の L4 戦略統計を集計。
@@ -2318,7 +2341,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 for rdate, sjson in cur_c.fetchall():
                     try:
-                        cached_by_date[rdate] = _json.loads(sjson)
+                        day_d = _json.loads(sjson)
+                        # 2026-05-30 以降は実運用ROIとして扱うため、締切前オッズ
+                        # ベースで再計算した cache のみ使う。古い cache は確定払戻
+                        # 代理を含み、実際に買えた案件とズレる。
+                        if rdate >= STRICT_ODDS_DAILY_START and not day_d.get("_strict_odds_only"):
+                            continue
+                        cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
                         pass
         except Exception:  # noqa: BLE001
@@ -2546,7 +2575,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 fav_int = int(float(fav_odds) * 100)
                 if 500 <= fav_int < 1000:
                     is_l4_base = True
-            elif fav_pay is not None:
+            elif fav_pay is not None and rdate < STRICT_ODDS_DAILY_START:
                 # T-X オッズ無し → race_payouts MIN ベース (過去日フォールバック)
                 pay_int = int(fav_pay)
                 if 500 <= pay_int < 1000:
@@ -2825,6 +2854,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         td7b = td7h = td7p = 0
                         m132b = m132h = m132p = 0
                         m132ab = m132ah = m132ap = 0
+                    if sdate >= STRICT_ODDS_DAILY_START:
+                        # Recent live-operation stats must come from raw odds snapshots.
+                        # Legacy summaries may include final-payout proxy rows.
+                        continue
                     if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
                         # 既に raw データから集計済 → スキップ (raw が「正」)
                         continue
@@ -2885,6 +2918,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if rdate not in missing_dates:
                         continue  # cache に既にあったものは再 save 不要
                     try:
+                        day_d["_strict_odds_only"] = rdate >= STRICT_ODDS_DAILY_START
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
                             "INSERT OR REPLACE INTO l4_daily_stats_cache "
@@ -2910,10 +2944,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """指定日の L4 該当レース全件を取得 (1号艇A1 + A2派生)。
         買い目ごとの的中/損益も含む。
         判定ソース優先順位:
-          1. confirmed - race_payouts MIN (確定後の実際の本命配当)
-          2. odds - odds_trifecta の 1-2-3 オッズ × 100 (T-5/T-15 がある場合)
-          3. morning - predictions テーブルの prob_first (朝予測のみ、オッズ未取得時)
+          1. odds - odds_trifecta の 1-2-3 オッズ × 100 (T-5/T-15 がある場合)
+          2. confirmed - race_payouts MIN (2026-05-30 より前の検証用代替)
         """
+        strict_odds_only = target_date >= STRICT_ODDS_DAILY_START
         with db_connect() as conn:
             cur = conn.execute("""
                 SELECT
@@ -2999,7 +3033,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     fav_source = "odds"
                 else:
                     continue
-            elif fav_pay is not None:
+            elif fav_pay is not None and not strict_odds_only:
                 # T-X オッズなし → race_payouts MIN ベース判定 (過去日フォールバック)
                 # 1-2-3 hit してれば本命の代理値、ハズレなら別 combo の払戻なので
                 # 厳密には L4 判定できないが現状の生データだけでは最善の近似。

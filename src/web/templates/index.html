@@ -238,15 +238,26 @@
     <script>
       (function() {
         const targetDate = "{{ target_date }}";
+        let marketSignalsLoading = false;
         // 注: EV+ 自動判定 UI/API はユーザ指示 (backlog.md item 3) により削除済。
 
         // 市場非効率ベース +EV シグナル (誰でも閲覧可)
         async function loadMarketSignals() {
+          if (marketSignalsLoading) return;
+          marketSignalsLoading = true;
           try {
-            const r = await fetch(`/api/market-signals?date=${targetDate}`);
+            const refreshBucket = Math.floor(Date.now() / 30000);
+            const r = await fetch(`/api/market-signals?date=${targetDate}&refresh=${refreshBucket}`, {
+              cache: 'no-store',
+            });
             if (!r.ok) return;
             const data = await r.json();
             const signals = data.signals || {};
+            document.querySelectorAll(
+              '.race-item .l4-badge, .race-item .nuki-filter-badge, ' +
+              '.race-item .f1-prime-badge, .race-item .tetsuban-badge, ' +
+              '.race-item .ex-bonus-badge, .race-item .obs-badge'
+            ).forEach(el => el.remove());
             for (const [raceId, sig] of Object.entries(signals)) {
               try {
                 const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
@@ -425,12 +436,15 @@
             }
           } catch (e) {
             console.warn('market-signals failed:', e);
+          } finally {
+            marketSignalsLoading = false;
           }
           // market-signals 描画が終わったら、次のレースカードを再描画して
           // 取り込まれた L4 バッジをミラー表示する
           try { updateNextRaces(); } catch (e) { /* updateNextRaces 未定義時は無視 */ }
         }
         loadMarketSignals();
+        setInterval(loadMarketSignals, 30000);
 
         // ============================================================
         // 「次のレース」 ハイライト機能 (1分毎に再評価)
