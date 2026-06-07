@@ -51,5 +51,47 @@ services:
         sync: false                  # ダッシュボードで手動入力
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+
+  - type: cron
+    name: boatrace-odds-cron
+    runtime: python
+    plan: starter
+    branch: main
+    region: singapore
+    schedule: "* * * * *"
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python scripts/odds_scheduler.py --no-jitter
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        sync: false
+      - key: BOATRACE_HISTORY_DAYS
+        value: "30"
+      - key: BOATRACE_USER_AGENT
+        value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+
+  - type: cron
+    name: boatrace-regular-cron
+    runtime: python
+    plan: starter
+    branch: main
+    region: singapore
+    schedule: "*/5 * * * *"
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python scripts/render_regular_scheduler.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        sync: false
+      - key: BOATRACE_HISTORY_DAYS
+        value: "30"
+      - key: BOATRACE_USER_AGENT
+        value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
     # 注: Render Free プランは disk:対応外 のため、SQLite は使えない。
     # 必ず DATABASE_URL に Supabase / Neon 等の外部 Postgres を指定すること。

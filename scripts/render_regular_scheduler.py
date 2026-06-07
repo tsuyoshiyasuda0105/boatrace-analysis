@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.db.connection import connect as db_connect
+
+
+REPO = Path(__file__).resolve().parents[1]
+JST = timezone(timedelta(hours=9))
+
+
+def jst_now() -> datetime:
+    return datetime.now(tz=JST)
+
+
+def run_py(args: list[str], timeout: int = 1800) -> bool:
+    cmd = [sys.executable, *args]
+    print("$ " + " ".join(args), flush=True)
+    started = time.monotonic()
+    proc = subprocess.run(cmd, cwd=REPO, timeout=timeout, check=False)
+    elapsed = time.monotonic() - started
+    print(f"exit={proc.returncode} elapsed={elapsed:.1f}s", flush=True)
+    return proc.returncode == 0
+
+
+def task_success_exists(task_name: str, run_date: str) -> bool:
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT success_at
+                  FROM task_runs
+                 WHERE task_name = ?
+                   AND run_date = ?
+                """,
+                (task_name, run_date),
+            ).fetchone()
+        return bool(row and row[0])
+    except Exception as exc:
+        print(f"[task_runs] read failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+
+
+def ensure_task_runs_table() -> None:
+    with db_connect() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS task_runs (
+              task_name TEXT NOT NULL,
+              run_date TEXT NOT NULL,
+              status TEXT NOT NULL,
+              run_count INTEGER NOT NULL DEFAULT 0,
+              started_at TEXT,
+              finished_at TEXT,
+              success_at TEXT,
+              trigger TEXT,
+              detail TEXT,
+              PRIMARY KEY (task_name, run_date)
+            );
+            ALTER TABLE task_runs ENABLE ROW LEVEL SECURITY;
+        """)
+        conn.commit()
+
+
+def record_task(task_name: str, run_date: str, status: str, detail: str | None = None) -> None:
+    now_iso = jst_now().replace(tzinfo=None).isoformat(timespec="seconds")
+    success_at = now_iso if status == "success" else None
+    try:
+        with db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO task_runs
+                    (task_name, run_date, status, run_count, started_at, finished_at,
+                     success_at, trigger, detail)
+                VALUES (?, ?, ?, 1, ?, ?, ?, 'render-cron', ?)
+                ON CONFLICT (task_name, run_date) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    run_count = task_runs.run_count + 1,
+                    started_at = EXCLUDED.started_at,
+                    finished_at = EXCLUDED.finished_at,
+                    success_at = COALESCE(EXCLUDED.success_at, task_runs.success_at),
+                    trigger = EXCLUDED.trigger,
+                    detail = EXCLUDED.detail
+                """,
+                (task_name, run_date, status, now_iso, now_iso, success_at, detail),
+            )
+            conn.commit()
+    except Exception as exc:
+        print(f"[task_runs] write failed: {type(exc).__name__}: {exc}", flush=True)
+
+
+def run_beforeinfo(now: datetime) -> bool:
+    from scripts.scrape_beforeinfo_live import (
+        find_due_races,
+        scrape_one_race,
+        write_updates,
+    )
+
+    due = find_due_races(now, window_min=5, window_max=30, cooldown_min=8)
+    print(f"[beforeinfo] due={len(due)}", flush=True)
+    if not due:
+        return True
+
+    updates = []
+    for race_id, stadium, race_no, close in due:
+        print(f"[beforeinfo] scrape {race_id} close={close.strftime('%H:%M')}", flush=True)
+        page = scrape_one_race(stadium, race_no, now.date())
+        if page:
+            updates.append((race_id, page))
+
+    if not updates:
+        print("[beforeinfo] no valid pages", flush=True)
+        return True
+
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    summary = write_updates(updates, now_iso, also_local=False)
+    print(f"[beforeinfo] written={summary}", flush=True)
+    if summary.get("races", 0) > 0:
+        return run_py(["scripts/render_cache_predictions.py", "--date", now.date().isoformat()], timeout=1800)
+    return True
+
+
+def run_morning(now: datetime) -> bool:
+    today = now.date().isoformat()
+    ok = True
+    ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
+    ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
+    ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
+    return ok
+
+
+def run_hourly(now: datetime) -> bool:
+    ok = True
+    ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "3"], timeout=1800)
+    ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
+    ok &= run_py(["scripts/agent_monitor.py", "--quiet"], timeout=600)
+    return ok
+
+
+def run_nightly(now: datetime) -> bool:
+    today = now.date().isoformat()
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+    ok = True
+    ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
+    ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "5"], timeout=1800)
+    ok &= run_py(["scripts/daily_collect.py", "--date", tomorrow], timeout=1800)
+    ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
+    return ok
+
+
+def main() -> int:
+    os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-cron")
+    now = jst_now()
+    today = now.date().isoformat()
+    print(f"[render-regular] now_jst={now.isoformat(timespec='seconds')}", flush=True)
+
+    if not os.getenv("DATABASE_URL", "").strip():
+        raise RuntimeError("DATABASE_URL is required for Render regular scheduler")
+    ensure_task_runs_table()
+
+    # Morning data and predictions: run once per JST day.
+    morning_start = now.replace(hour=6, minute=25, second=0, microsecond=0)
+    morning_end = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    if morning_start <= now < morning_end:
+        task = "render_morning"
+        if not task_success_exists(task, today):
+            ok = run_morning(now)
+            record_task(task, today, "success" if ok else "failure")
+        else:
+            print("[morning] already successful today", flush=True)
+
+    # Live beforeinfo/weather correction. The scrape function has its own cooldown.
+    if 8 <= now.hour <= 22:
+        run_beforeinfo(now)
+
+    # Lightweight result polling during race hours.
+    if 8 <= now.hour <= 23:
+        run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
+
+    # Hourly summaries/health checks near the top of the hour.
+    if now.minute < 5 and 9 <= now.hour <= 23:
+        task = f"render_hourly_{now.hour:02d}"
+        if not task_success_exists(task, today):
+            ok = run_hourly(now)
+            record_task(task, today, "success" if ok else "failure")
+
+    # End-of-day refresh and tomorrow preload: run once per JST day.
+    if now.hour == 23 and now.minute >= 30:
+        task = "render_nightly"
+        if not task_success_exists(task, today):
+            ok = run_nightly(now)
+            record_task(task, today, "success" if ok else "failure")
+        else:
+            print("[nightly] already successful today", flush=True)
+
+    print("[render-regular] done", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

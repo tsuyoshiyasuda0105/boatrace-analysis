@@ -260,14 +260,12 @@ def run_one_pass(verbose: bool = False) -> dict:
     return summary
 
 
-def _auto_paper_trade(race_id: str, verbose: bool = False) -> int:
-    """T-5min オッズ確定時にペーパートレード記録"""
-    from datetime import datetime as _dt
-    with db_connect() as conn:
-        # paper_trades テーブル存在確認 (なければ作る)
+def _ensure_paper_trades_table(conn) -> None:
+    """Create paper_trades with syntax that works on SQLite and Postgres."""
+    if getattr(conn, "_kind", "") == "postgres":
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS paper_trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGINT PRIMARY KEY,
                 race_id TEXT NOT NULL,
                 race_date TEXT NOT NULL,
                 strategy TEXT NOT NULL,
@@ -280,11 +278,47 @@ def _auto_paper_trade(race_id: str, verbose: bool = False) -> int:
                 settled INTEGER NOT NULL DEFAULT 0,
                 payout INTEGER,
                 hit INTEGER,
-                roi REAL,
-                UNIQUE(race_id, strategy, bet_type, combination)
+                roi REAL
             );
+            CREATE SEQUENCE IF NOT EXISTS paper_trades_id_seq;
+            ALTER SEQUENCE paper_trades_id_seq OWNED BY paper_trades.id;
+            SELECT setval('paper_trades_id_seq', COALESCE((SELECT MAX(id) FROM paper_trades), 0) + 1, false);
+            ALTER TABLE paper_trades ALTER COLUMN id SET DEFAULT nextval('paper_trades_id_seq');
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_trades_signal
+                ON paper_trades(race_id, strategy, bet_type, combination);
             CREATE INDEX IF NOT EXISTS idx_paper_trades_date ON paper_trades(race_date);
+            ALTER TABLE paper_trades ENABLE ROW LEVEL SECURITY;
         """)
+        return
+
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            race_id TEXT NOT NULL,
+            race_date TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            bet_type TEXT NOT NULL,
+            combination TEXT NOT NULL,
+            bet_amount INTEGER NOT NULL DEFAULT 100,
+            recorded_at TEXT NOT NULL,
+            t5_favorite_payout INTEGER,
+            t5_judgment TEXT,
+            settled INTEGER NOT NULL DEFAULT 0,
+            payout INTEGER,
+            hit INTEGER,
+            roi REAL,
+            UNIQUE(race_id, strategy, bet_type, combination)
+        );
+        CREATE INDEX IF NOT EXISTS idx_paper_trades_date ON paper_trades(race_date);
+    """)
+
+
+def _auto_paper_trade(race_id: str, verbose: bool = False) -> int:
+    """T-5min オッズ確定時にペーパートレード記録"""
+    from datetime import datetime as _dt
+    with db_connect() as conn:
+        # paper_trades テーブル存在確認 (なければ作る)
+        _ensure_paper_trades_table(conn)
 
         # T-5min での最低オッズ取得
         cur = conn.execute(
