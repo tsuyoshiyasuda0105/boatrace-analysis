@@ -156,7 +156,7 @@
         ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 🌟 L4 G++ (一般戦 F1) を時刻順に表示<br>
         <small>条件: 1号艇A1 + 本命500-1000円 + B除外会場 + SG/G1/G2/G3 または 一般戦 F1 (国1%≥7 ∧ 2号 国2連率≥40)<br>
         右側「1-2-3 推移」: <b>2h</b>=締切2時間前オッズ / T-5〜T-1=締切直前推移 (青=20倍未満, 赤=上昇, 黄=下落, 末尾%=2h→直近の変動)<br>
-        🌸=Venus全女子戦 (ROI 175.5%)、🟦=T-A L4-Mid Tier A (ROI 175.5%)</small>
+        🌸=Venus全女子戦 (ROI 175.5%)</small>
       </p>
       <table class="todays-picks-table">
         <thead>
@@ -658,6 +658,10 @@
             if (l4) {
               isRef = l4.classList.contains('l4-reference');
               const labelText = l4.textContent || '';
+              const isMid132 = l4.classList.contains('l4-obs_mid_132')
+                || l4.classList.contains('l4-obs_mid_132_tier_a')
+                || /L4-Mid/.test(labelText);
+              if (isMid132) return;
               isMorningBadge = Array.from(l4.classList).some(c => c.startsWith('l4-morning_'));
               // ユーザ仕様 (2026-05-19): 朝候補だったがオッズが L4 帯から外れた
               // レースは「データを消さずグレーアウトで残す」。

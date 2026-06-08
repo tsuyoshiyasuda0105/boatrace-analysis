@@ -5,7 +5,8 @@ numpy>=1.24
 
 # 機械学習
 lightgbm>=4.0
-scikit-learn>=1.3
+# Pickled calibration models were saved with 1.8.0; keep Render aligned.
+scikit-learn==1.8.0
 
 # スクレイピング (Layer 3)
 beautifulsoup4>=4.12
