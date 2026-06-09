@@ -156,6 +156,16 @@ def test_morning_watch_badge_is_prominent_in_today_picks():
     assert "@keyframes morning-watch-pulse" in css
 
 
+def test_today_high_roi_hides_female_mixed_and_general_references():
+    """高ROI一覧では女性混合と一般参考を表示しないこと。"""
+    index = _read("src/web/templates/index.html")
+    assert "if (isFemaleExclusion || isGeneralReference) return;" in index
+    assert "l4.classList.contains('l4-morning_general')" in index
+    assert "l4.classList.contains('l4-morning_default')" in index
+    assert "L4参考|一般" in index
+    assert "女性混合と一般参考は高ROI一覧から非表示" in index
+
+
 # ===== バグ 4: /healthz が 503 を返すと Render deploy が timed out =====
 
 

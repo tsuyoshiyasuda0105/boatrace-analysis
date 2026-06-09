@@ -674,12 +674,18 @@
               isFemaleExclusion = isRef && /女性\d+名除外/.test(labelText);
               isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch
                 && !isOddsMismatch && !isRainExclusion && !isFemaleExclusion;
+              const isGeneralReference = isRef && isMorningBadge && !isMorningWatch
+                && (l4.classList.contains('l4-morning_general')
+                  || l4.classList.contains('l4-morning_default')
+                  || /L4参考|一般/.test(labelText));
+              if (isFemaleExclusion || isGeneralReference) return;
               isAnyExclusion = isOddsMismatch || isRainExclusion
-                || isFemaleExclusion || isMorningOutOfRange || isMorningWatch;
+                || isMorningOutOfRange || isMorningWatch;
               // L4 行として出すのは「非reference」or「除外マーク付き(グレー残し)」。
               // 完全除外するのは「何の除外マークも付いていない reference」
               // (一般戦 F1 非該当 / A2 派生 等、元から候補ではないもの) のみ。
-              // 雨/女性混合/帯外で除外された "元朝候補" はグレー残しで可視化する
+              // 雨/帯外で除外された "元朝候補" はグレー残しで可視化する。
+              // 女性混合と一般参考は高ROI一覧から非表示 (2026-06-10)。
               // (2026-05-28: 浜名湖12R が雨除外で完全消滅していた不具合修正)。
               l4Actionable = !isRef || isAnyExclusion;
             }
