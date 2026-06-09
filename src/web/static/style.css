@@ -2486,6 +2486,38 @@ main h2 {
   animation: none !important;
 }
 
+/* 朝監視: 展示前に本採用へ届く可能性がある見逃し防止枠。
+   reference より優先し、候補一覧でも埋もれないよう警戒色で強調する。 */
+.l4-badge.l4-morning_watch_SG,
+.l4-badge.l4-morning_watch_G1,
+.l4-badge.l4-morning_watch_G2,
+.l4-badge.l4-morning_watch_G3,
+.l4-badge.l4-reference.l4-morning_watch_SG,
+.l4-badge.l4-reference.l4-morning_watch_G1,
+.l4-badge.l4-reference.l4-morning_watch_G2,
+.l4-badge.l4-reference.l4-morning_watch_G3 {
+  background: linear-gradient(135deg, #f59e0b, #fde047, #22d3ee) !important;
+  color: #261600 !important;
+  border: 2px solid #fbbf24 !important;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.25),
+              0 0 18px rgba(34, 211, 238, 0.55) !important;
+  animation: morning-watch-pulse 1.6s ease-in-out infinite !important;
+  font-weight: 900 !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+  opacity: 1 !important;
+}
+
+@keyframes morning-watch-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.22),
+                0 0 16px rgba(34, 211, 238, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.45),
+                0 0 28px rgba(34, 211, 238, 0.85);
+  }
+}
+
 /* ♀ 案A: 女性混入レース除外バッジ (ピンク系グレーアウト)。
    l4-reference より優先させるため後置で !important。
    男性のみ ROI 180.8% / 女性混入 134-158% のため候補から除外。 */
@@ -3077,6 +3109,48 @@ main h2 {
   border-radius: 6px;
   font-size: 12px;
   font-weight: 700;
+  cursor: not-allowed;
+  min-height: 36px;
+  min-width: 70px;
+}
+
+/* 朝監視行: 投票候補ではないが、見逃すと実運用に響くため強く残す。 */
+.todays-picks-table tbody tr.is-watch {
+  background: linear-gradient(90deg,
+    rgba(245, 158, 11, 0.24),
+    rgba(34, 211, 238, 0.12));
+  outline: 1px solid rgba(251, 191, 36, 0.72);
+  box-shadow: inset 4px 0 0 rgba(251, 191, 36, 0.95),
+              0 0 14px rgba(34, 211, 238, 0.16);
+}
+.todays-picks-table tbody tr.is-watch .pick-rank,
+.todays-picks-table tbody tr.is-watch .pick-place strong,
+.todays-picks-table tbody tr.is-watch .pick-type {
+  color: #fde68a !important;
+  font-weight: 900 !important;
+}
+.todays-picks-table tbody tr.is-watch .mismatch-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 7px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(34, 211, 238, 0.85));
+  color: #111827;
+  border: 1px solid rgba(254, 240, 138, 0.85);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 900;
+}
+.todays-picks-table tbody tr.is-watch .vote-btn-disabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  background: linear-gradient(135deg, #f59e0b, #22d3ee);
+  color: #111827 !important;
+  border: 1.5px solid rgba(254, 240, 138, 0.85);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 900;
   cursor: not-allowed;
   min-height: 36px;
   min-width: 70px;
@@ -4397,4 +4471,3 @@ main h2 {
   margin-bottom: 16px;
   box-shadow: 0 4px 16px rgba(255, 140, 0, 0.3);
 }
-

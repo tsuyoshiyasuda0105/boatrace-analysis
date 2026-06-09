@@ -104,6 +104,58 @@ def test_l4_daily_stats_f1_increments_n_l4():
     )
 
 
+def test_l4_races_for_date_includes_general_f1():
+    """日別詳細一覧でも一般戦 F1 採用レースを表示すること。
+
+    バグ: _l4_daily_stats は一般戦 F1 を n_l4 / win / exa / tri に加算する一方、
+    _l4_races_for_date は grade == 5 を無条件除外していたため、
+    日別ROIは 8件3的中でも詳細一覧は 7件2的中になる不整合が起きた。
+    """
+    src = _read("src/web/app.py")
+    idx = src.find("def _l4_races_for_date(")
+    assert idx >= 0, "_l4_races_for_date 関数が見つかりません"
+    block = src[idx: idx + 9000]
+    assert "e2.national_top_2_percent AS boat2_top2" in block
+    assert "is_general_f1 = (grade == 5" in block
+    assert "n1_for_f1 >= 7.0" in block
+    assert "b2_for_f1 >= 40.0" in block
+    assert "if grade == 5 and not is_general_f1:" in block
+    assert 'rank = "L4 G++"' in block
+
+
+def test_morning_watch_covers_near_l4_before_exhibition():
+    """展示前に本採用へ少し届かないSG/G1/G2/G3を監視候補として出すこと。
+
+    バグ: 2026-06-09 宮島7R は G1/A1/男性/雨なしで直前に L4 帯へ入ったが、
+    朝時点の prob_first=0.6366 が本採用下限 0.65 未満だったため一覧から漏れた。
+    運用上は見逃し防止のため、0.63-0.65 は朝監視として表示する。
+    """
+    src = _read("src/web/app.py")
+    idx = src.find("def _evaluate_morning_l4(")
+    assert idx >= 0, "_evaluate_morning_l4 関数が見つかりません"
+    block = src[idx: idx + 7000]
+    assert "0.63 <= prob_first < 0.65" in block
+    assert "grade in (1, 2, 3, 4)" in block
+    assert '"level": "morning_watch_G1"' in block
+    assert '"label": "🌅👀朝監視 G1"' in block
+    assert '"is_morning_watch": True' in block
+    assert '"is_reference": True' in block
+
+
+def test_morning_watch_badge_is_prominent_in_today_picks():
+    """朝監視バッジを圏外グレー扱いにせず、専用の強調表示にすること。"""
+    index = _read("src/web/templates/index.html")
+    assert "isMorningWatch" in index
+    assert "startsWith('l4-morning_watch_')" in index
+    assert "rowClass += ' is-watch'" in index
+    assert "excShort = '朝監視'" in index
+
+    css = _read("src/web/static/style.css")
+    assert ".l4-badge.l4-morning_watch_G1" in css
+    assert ".todays-picks-table tbody tr.is-watch" in css
+    assert "@keyframes morning-watch-pulse" in css
+
+
 # ===== バグ 4: /healthz が 503 を返すと Render deploy が timed out =====
 
 

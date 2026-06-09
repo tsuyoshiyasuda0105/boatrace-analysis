@@ -2037,6 +2037,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 "label": "🌅L4参考",
                                 "recovery": 147.7, "n": 1776,
                                 "is_reference": True}
+            elif cls == 1 and 0.63 <= prob_first < 0.65 and grade in (1, 2, 3, 4):
+                # 展示前の朝監視枠:
+                # 実弾の朝候補 (0.65-0.85) には少し届かないが、SG/G1/G2/G3 の
+                # 1号艇A1で直前オッズ次第では L4 入りし得るものを見逃さない。
+                # 例: 2026-06-09 宮島7R (prob_first=0.6366, T-120=12.7, T-5=9.9)。
+                # is_reference=True のまま高ROI一覧へ「監視」として薄く残し、
+                # 実際のROI集計には入れない。
+                if grade == 1:
+                    base = {"level": "morning_watch_SG", "label": "🌅👀朝監視 SG",
+                            "recovery": 258.2, "n": 40, "is_reference": True,
+                            "is_morning_watch": True}
+                elif grade == 2:
+                    base = {"level": "morning_watch_G1", "label": "🌅👀朝監視 G1",
+                            "recovery": 242.8, "n": 227, "is_reference": True,
+                            "is_morning_watch": True}
+                elif grade == 3:
+                    base = {"level": "morning_watch_G2", "label": "🌅👀朝監視 G2",
+                            "recovery": 242.7, "n": 30, "is_reference": True,
+                            "is_morning_watch": True}
+                elif grade == 4:
+                    base = {"level": "morning_watch_G3", "label": "🌅👀朝監視 G3",
+                            "recovery": 149.2, "n": 195, "is_reference": True,
+                            "is_morning_watch": True}
             # grade unknown は対象外
             if not base:
                 return None
@@ -2960,6 +2983,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e.racer_name,
                     e.national_top_1_percent,
                     e.local_top_1_percent,
+                    e2.national_top_2_percent AS boat2_top2,
                     pp.min_pay AS fav_pay,
                     oo.min_odds AS fav_odds,
                     pr.prob_first AS prob_first,
@@ -2973,6 +2997,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     COALESCE(fem.n_female, 0) AS n_female
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
+                LEFT JOIN race_entries e2 ON r.race_id = e2.race_id AND e2.boat_number = 2
                 LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
                 LEFT JOIN (
                     SELECT ef.race_id, COUNT(*) AS n_female
@@ -3003,14 +3028,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         out = []
         for row in cur:
             (rid, rno, closed, stadium, grade, cls, racer_name,
-             natl_1, local_1, fav_pay, fav_odds, prob_first, w1, w2, w3,
+             natl_1, local_1, boat2_top2, fav_pay, fav_odds, prob_first, w1, w2, w3,
              win_pay, exa_pay, tri_pay, weather, n_female) = row
             if cls != 1:
                 continue  # A1 のみ (A2 派生は対象外)
             if stadium in EXCLUDE_B_VENUES:
                 continue
-            if grade == 5:
-                continue  # 一般戦は回収率が低いため対象外 (147.7%)
+            try:
+                n1_for_f1 = float(natl_1) if natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1_for_f1 = 0.0
+            try:
+                b2_for_f1 = float(boat2_top2) if boat2_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                b2_for_f1 = 0.0
+            is_general_f1 = (grade == 5 and n1_for_f1 >= 7.0 and b2_for_f1 >= 40.0)
+            if grade == 5 and not is_general_f1:
+                continue  # 一般戦は F1 条件成立時のみ採用ベースとして表示
             if weather == 3:
                 continue  # ☔ 雨は ROI ~ 100% で break-even、ベット対象外
             if n_female and n_female > 0:
@@ -3053,7 +3087,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except (TypeError, ValueError):
                 n1 = l1 = 0.0
             if cls == 1:
-                if n1 >= 7.0 and l1 >= 7.0:
+                if is_general_f1:
+                    rank = "L4 G++"
+                elif n1 >= 7.0 and l1 >= 7.0:
                     rank = "L4++"
                 elif n1 >= 7.0:
                     rank = "L4+"
