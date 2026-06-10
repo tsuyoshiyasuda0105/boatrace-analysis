@@ -2222,6 +2222,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                   boat2_top2=boat2_top2, race_number=race_no_info,
                                   boat3_natl_1=boat3_natl_1)
 
+                if l4 is not None:
+                    prob_first = morning_pred.get(rid)
+                    morning_l4 = _evaluate_morning_l4(
+                        stadium, grade, cls, prob_first,
+                        natl_1, local_1, race_id=rid,
+                        avg_st=avg_st, age=age, ex_st=ex_st,
+                        boat2_top2=boat2_top2,
+                        race_number=race_no_info,
+                    )
+                    if morning_l4 and morning_l4.get("is_morning_watch_st"):
+                        l4["promoted_from_morning_watch_st"] = True
+                        l4["promotion_label"] = "朝監視ST→L4"
+
                 # ユーザ指摘 (2026-05-18): 朝予測 (prob_first 0.65-0.85) で候補
                 # だったが確定オッズで L4 帯外になったレースも画面表示すべき。
                 # 例: 若松 20-12 (prob_first=0.65、T-5 オッズ¥1680 で本命想定外)。

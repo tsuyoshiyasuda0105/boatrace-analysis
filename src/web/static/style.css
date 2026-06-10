@@ -2335,6 +2335,25 @@ main h2 {
   letter-spacing: 0.2px;
 }
 
+/* 朝監視STからT-5本採用へ昇格したことを示す小タグ */
+.promotion-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  margin-left: 4px;
+  border-radius: 5px;
+  font-size: 0.74em;
+  font-weight: 800;
+  cursor: help;
+  vertical-align: middle;
+  letter-spacing: 0.1px;
+}
+.promotion-badge.promotion-watch-st {
+  color: #111827;
+  background: linear-gradient(135deg, #fef08a, #f59e0b);
+  border: 1px solid rgba(251, 191, 36, 0.85);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.45);
+}
+
 /* F1 Prime 11-12R バッジ (ユーザー提案 2026-05-30)
    F1 + L4-prime が同時成立した最上位候補 → 金メダル風で強調 */
 .f1-prime-badge {

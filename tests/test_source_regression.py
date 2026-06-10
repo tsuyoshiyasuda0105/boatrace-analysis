@@ -157,6 +157,21 @@ def test_morning_watch_st_covers_fast_st_floaters_without_t120_odds():
     assert "T-120 オッズは見ず" in block
 
 
+def test_l4_promotion_tag_shows_when_morning_watch_st_becomes_l4():
+    """朝監視STがT-5でL4本採用になった場合、小タグを出すこと。"""
+    src = _read("src/web/app.py")
+    assert '"promoted_from_morning_watch_st"' in src
+    assert 'l4["promotion_label"] = "朝監視ST→L4"' in src
+
+    index = _read("src/web/templates/index.html")
+    assert "sig.l4.promoted_from_morning_watch_st" in index
+    assert "promotion-badge promotion-watch-st" in index
+    assert "朝監視ST→L4" in index
+
+    css = _read("src/web/static/style.css")
+    assert ".promotion-badge.promotion-watch-st" in css
+
+
 def test_morning_watch_badge_is_prominent_in_today_picks():
     """朝監視バッジを圏外グレー扱いにせず、専用の強調表示にすること。"""
     index = _read("src/web/templates/index.html")

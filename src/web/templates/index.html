@@ -293,11 +293,21 @@
                   if (sig.l4.is_l4_pro) {
                     title += ` | 🔥L4 PRO: ${sig.l4.label_l4_pro}、検証ROI ${sig.l4.recovery_l4_pro}% → ベテラン×スタート好調`;
                   }
+                  if (sig.l4.promoted_from_morning_watch_st) {
+                    title += ' | 朝監視STからT-5本採用へ昇格';
+                  }
                   l4Badge.title = title;
                   const onec80 = sig.l4.is_1c80 ? ' 🚀' : '';
                   const pro = sig.l4.is_l4_pro ? ' 🔥' : '';
                   l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}`;
                   item.appendChild(l4Badge);
+                  if (sig.l4.promoted_from_morning_watch_st) {
+                    const promotionBadge = document.createElement('span');
+                    promotionBadge.className = 'promotion-badge promotion-watch-st';
+                    promotionBadge.textContent = sig.l4.promotion_label || '朝監視ST→L4';
+                    promotionBadge.title = '朝時点では平均ST条件の監視候補、T-5でL4本採用に昇格';
+                    item.appendChild(promotionBadge);
+                  }
 
                   // 🌊 抜きフィルター バッジ (2026-05-30 決まり手データ投入後)
                   //   stadium ∈ {3 江戸川, 6 浜名湖, 14 鳴門} で抜き決まり手率高い
