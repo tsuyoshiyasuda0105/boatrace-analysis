@@ -128,18 +128,33 @@ def test_morning_watch_covers_near_l4_before_exhibition():
 
     バグ: 2026-06-09 宮島7R は G1/A1/男性/雨なしで直前に L4 帯へ入ったが、
     朝時点の prob_first=0.6366 が本採用下限 0.65 未満だったため一覧から漏れた。
-    運用上は見逃し防止のため、0.63-0.65 は朝監視として表示する。
+    運用上は見逃し防止のため、0.60-0.65 は朝監視として表示する。
     """
     src = _read("src/web/app.py")
     idx = src.find("def _evaluate_morning_l4(")
     assert idx >= 0, "_evaluate_morning_l4 関数が見つかりません"
     block = src[idx: idx + 7000]
-    assert "0.63 <= prob_first < 0.65" in block
+    assert "0.60 <= prob_first < 0.65" in block
     assert "grade in (1, 2, 3, 4)" in block
     assert '"level": "morning_watch_G1"' in block
     assert '"label": "🌅👀朝監視 G1"' in block
     assert '"is_morning_watch": True' in block
     assert '"is_reference": True' in block
+
+
+def test_morning_watch_st_covers_fast_st_floaters_without_t120_odds():
+    """T-120オッズを見ず、平均STの良い直前浮上候補を朝から監視すること。"""
+    src = _read("src/web/app.py")
+    idx = src.find("def _evaluate_morning_l4(")
+    assert idx >= 0, "_evaluate_morning_l4 関数が見つかりません"
+    block = src[idx: idx + 8500]
+    assert "0.58 <= prob_first < 0.60" in block
+    assert "grade in (1, 2, 3)" in block
+    assert "avg_st_for_watch <= 0.15" in block
+    assert '"level": "morning_watch_st_G1"' in block
+    assert '"label": "🌅⚡朝監視ST G1"' in block
+    assert '"is_morning_watch_st": True' in block
+    assert "T-120 オッズは見ず" in block
 
 
 def test_morning_watch_badge_is_prominent_in_today_picks():
@@ -152,6 +167,7 @@ def test_morning_watch_badge_is_prominent_in_today_picks():
 
     css = _read("src/web/static/style.css")
     assert ".l4-badge.l4-morning_watch_G1" in css
+    assert ".l4-badge.l4-morning_watch_st_G1" in css
     assert ".todays-picks-table tbody tr.is-watch" in css
     assert "@keyframes morning-watch-pulse" in css
 

@@ -2492,10 +2492,16 @@ main h2 {
 .l4-badge.l4-morning_watch_G1,
 .l4-badge.l4-morning_watch_G2,
 .l4-badge.l4-morning_watch_G3,
+.l4-badge.l4-morning_watch_st_SG,
+.l4-badge.l4-morning_watch_st_G1,
+.l4-badge.l4-morning_watch_st_G2,
 .l4-badge.l4-reference.l4-morning_watch_SG,
 .l4-badge.l4-reference.l4-morning_watch_G1,
 .l4-badge.l4-reference.l4-morning_watch_G2,
-.l4-badge.l4-reference.l4-morning_watch_G3 {
+.l4-badge.l4-reference.l4-morning_watch_G3,
+.l4-badge.l4-reference.l4-morning_watch_st_SG,
+.l4-badge.l4-reference.l4-morning_watch_st_G1,
+.l4-badge.l4-reference.l4-morning_watch_st_G2 {
   background: linear-gradient(135deg, #f59e0b, #fde047, #22d3ee) !important;
   color: #261600 !important;
   border: 2px solid #fbbf24 !important;

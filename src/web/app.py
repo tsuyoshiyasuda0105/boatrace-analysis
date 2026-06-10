@@ -2037,7 +2037,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 "label": "🌅L4参考",
                                 "recovery": 147.7, "n": 1776,
                                 "is_reference": True}
-            elif cls == 1 and 0.63 <= prob_first < 0.65 and grade in (1, 2, 3, 4):
+            elif cls == 1 and 0.60 <= prob_first < 0.65 and grade in (1, 2, 3, 4):
                 # 展示前の朝監視枠:
                 # 実弾の朝候補 (0.65-0.85) には少し届かないが、SG/G1/G2/G3 の
                 # 1号艇A1で直前オッズ次第では L4 入りし得るものを見逃さない。
@@ -2060,6 +2060,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     base = {"level": "morning_watch_G3", "label": "🌅👀朝監視 G3",
                             "recovery": 149.2, "n": 195, "is_reference": True,
                             "is_morning_watch": True}
+            elif cls == 1 and 0.58 <= prob_first < 0.60 and grade in (1, 2, 3):
+                # 朝監視ST:
+                # T-120 オッズは見ず、1号艇A1 + 予測やや低め + 平均STの良さで
+                # 直前浮上を朝から監視する。例: 2026-06-10 尼崎11R
+                # (prob_first=0.5839, G1, avg_st=0.14, T-5=9.8)。
+                try:
+                    avg_st_for_watch = float(avg_st) if avg_st is not None else 9.99
+                except (TypeError, ValueError):
+                    avg_st_for_watch = 9.99
+                if avg_st_for_watch <= 0.15:
+                    if grade == 1:
+                        base = {"level": "morning_watch_st_SG", "label": "🌅⚡朝監視ST SG",
+                                "recovery": 258.2, "n": 40, "is_reference": True,
+                                "is_morning_watch": True, "is_morning_watch_st": True}
+                    elif grade == 2:
+                        base = {"level": "morning_watch_st_G1", "label": "🌅⚡朝監視ST G1",
+                                "recovery": 242.8, "n": 227, "is_reference": True,
+                                "is_morning_watch": True, "is_morning_watch_st": True}
+                    elif grade == 3:
+                        base = {"level": "morning_watch_st_G2", "label": "🌅⚡朝監視ST G2",
+                                "recovery": 242.7, "n": 30, "is_reference": True,
+                                "is_morning_watch": True, "is_morning_watch_st": True}
             # grade unknown は対象外
             if not base:
                 return None
