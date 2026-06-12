@@ -75,6 +75,7 @@ _TABLE_PRIMARY_KEYS = {
     "odds_trifecta": ["race_id", "combination", "recorded_at"],
     "predictions": ["race_id", "boat_number", "model_version"],
     "value_bets": ["race_id", "bet_type", "combination", "model_version"],
+    "l4_daily_stats_cache": ["race_date"],
 }
 
 

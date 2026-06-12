@@ -273,6 +273,12 @@ def test_upsert_programs_uses_coalesce():
     )
 
 
+def test_postgres_upsert_knows_l4_daily_stats_cache_pk():
+    """l4_daily_stats_cache の INSERT OR REPLACE が Postgres で上書きになること。"""
+    src = _read("src/db/connection.py")
+    assert '"l4_daily_stats_cache": ["race_date"]' in src
+
+
 def test_b_parser_extracts_closed_at():
     """src/parsers/official_b.py が「電話投票締切予定」を抽出すること。
 
