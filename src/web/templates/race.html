@@ -237,6 +237,7 @@
         <span>🚤 6艇詳細</span>
       </summary>
     <div class="preds">
+      {% set has_result_col = preds[0].finishing_position is not none %}
       <table class="preds-table">
         <thead>
           <tr>
@@ -251,7 +252,7 @@
             <th>1着確率</th>
             <th>2着以内</th>
             <th>3着以内</th>
-            {% if preds[0].finishing_position is not none %}
+            {% if has_result_col %}
               <th>結果</th>
             {% endif %}
           </tr>
@@ -275,7 +276,26 @@
               </td>
               <td>{{ '%.2f' | format(p.national_top_2_percent) if p.national_top_2_percent is not none else '—' }}</td>
               <td>{{ '%.2f' | format(p.local_top_2_percent) if p.local_top_2_percent is not none else '—' }}</td>
-              <td>{{ '%.2f' | format(p.assigned_motor_top_2_percent) if p.assigned_motor_top_2_percent is not none else '—' }}</td>
+              <td>
+                {% if p.assigned_motor_top_2_percent is not none %}
+                  <button
+                    type="button"
+                    class="motor-history-btn"
+                    data-race-id="{{ info.race_id }}"
+                    data-boat-number="{{ p.boat_number }}"
+                    aria-expanded="false"
+                    aria-controls="motor-history-row-{{ p.boat_number }}"
+                    title="このモーターの直近履歴を表示"
+                  >
+                    <span class="motor-rate">{{ '%.2f' | format(p.assigned_motor_top_2_percent) }}</span>
+                    {% if p.assigned_motor_number is defined and p.assigned_motor_number is not none %}
+                      <span class="motor-no">M{{ p.assigned_motor_number }}</span>
+                    {% endif %}
+                  </button>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
               <td>{{ '%.2f' | format(p.exhibition_time) if p.exhibition_time is not none else '—' }}</td>
               <td>{{ '%.2f' | format(p.start_timing_exhibition) if p.start_timing_exhibition is not none else '—' }}</td>
               <td>
@@ -296,11 +316,22 @@
                   <span class="prob-num">{{ '%.1f' | format(p.prob_top_3 * 100) }}%</span>
                 </div>
               </td>
-              {% if p.finishing_position is not none %}
+              {% if has_result_col %}
                 <td>
-                  <span class="finish-badge f-{{ p.finishing_position | int }}">{{ p.finishing_position | int }}着</span>
+                  {% if p.finishing_position is not none %}
+                    <span class="finish-badge f-{{ p.finishing_position | int }}">{{ p.finishing_position | int }}着</span>
+                  {% else %}
+                    <span class="dim">—</span>
+                  {% endif %}
                 </td>
               {% endif %}
+            </tr>
+            <tr class="motor-history-row" id="motor-history-row-{{ p.boat_number }}" hidden>
+              <td colspan="{{ 12 if has_result_col else 11 }}">
+                <div class="motor-history-panel" data-motor-history-panel="{{ p.boat_number }}">
+                  <div class="motor-history-loading">モーター履歴を読み込み中...</div>
+                </div>
+              </td>
             </tr>
           {% endfor %}
         </tbody>
@@ -308,4 +339,112 @@
     </div>
     </details>
   {% endif %}
+  <script>
+    (() => {
+      const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+      const pct = (value) => value == null ? "-" : `${Number(value).toFixed(1)}%`;
+      const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
+      const posClass = (value) => value ? `f-${Number(value)}` : "";
+      const renderHistory = (data) => {
+        const current = data.current || {};
+        const summary = data.summary || {};
+        const rows = data.history || [];
+        const title = `M${esc(current.motor_number ?? "-")} 現行期の直近履歴`;
+        const cycleNote = current.motor_cycle_start
+          ? `現行モーター期: ${esc(current.motor_cycle_start)}以降`
+          : "現行モーター期のみ";
+        const summaryHtml = `
+          <div class="motor-history-summary">
+            <div><span>出走</span><b>${summary.starts ?? 0}</b></div>
+            <div><span>1着率</span><b>${pct(summary.win_rate)}</b></div>
+            <div><span>2連率</span><b>${pct(summary.top2_rate)}</b></div>
+            <div><span>3連率</span><b>${pct(summary.top3_rate)}</b></div>
+            <div><span>平均ST</span><b>${num(summary.avg_start_timing)}</b></div>
+            <div><span>平均展示</span><b>${num(summary.avg_exhibition_time)}</b></div>
+          </div>`;
+
+        if (!rows.length) {
+          return `
+            <div class="motor-history-head">
+              <strong>${title}</strong>
+              <span>${esc(current.stadium_name)} / ${esc(current.racer_name)} / ${cycleNote}</span>
+            </div>
+            ${summaryHtml}
+            <div class="motor-history-empty">この会場で同じモーターの過去結果がまだ見つかりません。</div>
+          `;
+        }
+
+        const body = rows.map((r) => `
+          <tr>
+            <td>${esc(r.race_date)}</td>
+            <td>${esc(r.race_number)}R</td>
+            <td><span class="lane lane-${esc(r.boat_number)} motor-mini-lane">${esc(r.boat_number)}</span></td>
+            <td class="left">${esc(r.racer_name)}<div class="racer-meta">No. ${esc(r.racer_number)}</div></td>
+            <td>${esc(r.course_number ?? "-")}</td>
+            <td>${num(r.start_timing)}</td>
+            <td>${num(r.exhibition_time)}</td>
+            <td>${num(r.start_timing_exhibition)}</td>
+            <td><span class="finish-badge ${posClass(r.finishing_position)}">${esc(r.finishing_position ?? "-")}着</span></td>
+            <td class="left">${esc(r.kimarite || "-")}</td>
+          </tr>
+        `).join("");
+
+        return `
+          <div class="motor-history-head">
+            <strong>${title}</strong>
+            <span>${esc(current.stadium_name)} / 今回 ${esc(current.boat_number)}号艇 ${esc(current.racer_name)} / ${cycleNote}</span>
+          </div>
+          ${summaryHtml}
+          <div class="motor-history-table-wrap">
+            <table class="motor-history-table">
+              <thead>
+                <tr>
+                  <th>日付</th><th>R</th><th>艇</th><th class="left">選手</th>
+                  <th>進入</th><th>ST</th><th>展示T</th><th>展示ST</th><th>着</th><th class="left">決まり手</th>
+                </tr>
+              </thead>
+              <tbody>${body}</tbody>
+            </table>
+          </div>
+        `;
+      };
+
+      document.querySelectorAll(".motor-history-btn").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const boatNumber = button.dataset.boatNumber;
+          const raceId = button.dataset.raceId;
+          const row = document.getElementById(`motor-history-row-${boatNumber}`);
+          const panel = row?.querySelector("[data-motor-history-panel]");
+          if (!row || !panel) return;
+
+          if (!row.hidden && panel.dataset.loaded === "1") {
+            row.hidden = true;
+            button.setAttribute("aria-expanded", "false");
+            return;
+          }
+
+          row.hidden = false;
+          button.setAttribute("aria-expanded", "true");
+          if (panel.dataset.loaded === "1") return;
+
+          panel.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
+          try {
+            const res = await fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            panel.innerHTML = renderHistory(data);
+            panel.dataset.loaded = "1";
+          } catch (err) {
+            panel.innerHTML = '<div class="motor-history-empty">モーター履歴の取得に失敗しました。</div>';
+          }
+        });
+      });
+    })();
+  </script>
 {% endblock %}

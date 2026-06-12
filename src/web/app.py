@@ -192,6 +192,7 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
                 SELECT p.boat_number, p.prob_first, p.prob_top_2, p.prob_top_3,
                        e.racer_number, e.class_number,
                        e.national_top_2_percent, e.local_top_2_percent,
+                       e.assigned_motor_number,
                        e.assigned_motor_top_2_percent,
                        pv.exhibition_time, pv.start_timing_exhibition,
                        res.finishing_position
@@ -209,6 +210,7 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
     keys = ["boat_number", "prob_first", "prob_top_2", "prob_top_3",
             "racer_number", "class_number",
             "national_top_2_percent", "local_top_2_percent",
+            "assigned_motor_number",
             "assigned_motor_top_2_percent",
             "exhibition_time", "start_timing_exhibition",
             "finishing_position"]
@@ -251,7 +253,8 @@ def _race_predictions(predictor: Predictor, race_id: str) -> list[dict]:
     cols = [
         "boat_number", "racer_number",
         "class_number", "national_top_2_percent", "local_top_2_percent",
-        "assigned_motor_top_2_percent", "exhibition_time", "start_timing_exhibition",
+        "assigned_motor_number", "assigned_motor_top_2_percent",
+        "exhibition_time", "start_timing_exhibition",
         "prob_first", "prob_top_2", "prob_top_3", "raw_score", "pred_rank",
         "finishing_position",
     ]
@@ -270,6 +273,26 @@ def _racer_names(race_id: str) -> dict[int, str]:
 # Bootstrap CI で確実マイナスと検証された会場 (v0.2 検証)
 _LOSING_VENUES = {2: "戸田", 7: "蒲郡", 10: "三国", 21: "芦屋"}
 _QUESTIONABLE_VENUES = {4: "平和島", 8: "常滑", 19: "下関", 24: "大村"}
+
+# 会場別のモーター入替月。履歴表示では現行モーター期だけを表示する。
+_MOTOR_REPLACEMENT_MONTH = {
+    1: 3, 2: 5, 3: 11, 4: 3, 5: 4, 6: 4, 7: 6, 8: 7,
+    9: 8, 10: 3, 11: 10, 12: 5, 13: 7, 14: 6, 15: 9, 16: 4,
+    17: 3, 18: 10, 19: 6, 20: 4, 21: 11, 22: 2, 23: 12, 24: 7,
+}
+
+
+def _motor_cycle_start(race_date_iso: str, stadium_number: int) -> Optional[str]:
+    """Return YYYY-MM-01 for the current motor cycle at the venue."""
+    replacement_month = _MOTOR_REPLACEMENT_MONTH.get(stadium_number)
+    if not replacement_month:
+        return None
+    try:
+        d = datetime.fromisoformat(race_date_iso).date()
+    except Exception:
+        return None
+    year = d.year if d.month >= replacement_month else d.year - 1
+    return f"{year:04d}-{replacement_month:02d}-01"
 
 
 def _detect_market_inefficiency(
@@ -1295,6 +1318,115 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
         return jsonify({"info": info, "predictions": preds})
+
+    @app.route("/api/race/<race_id>/motor-history/<int:boat_number>")
+    @member_only_api
+    @cached(ttl=300, past_ttl=3600)
+    def race_motor_history(race_id: str, boat_number: int):
+        if boat_number < 1 or boat_number > 6:
+            return jsonify({"error": "invalid boat_number"}), 400
+
+        info = _race_basic_info(race_id)
+        if not info:
+            return jsonify({"error": "not found"}), 404
+
+        with db_connect() as conn:
+            current_row = conn.execute(
+                """
+                SELECT assigned_motor_number, assigned_motor_top_2_percent,
+                       assigned_motor_top_3_percent, racer_name
+                  FROM race_entries
+                 WHERE race_id = ? AND boat_number = ?
+                """,
+                (race_id, boat_number),
+            ).fetchone()
+
+        if not current_row:
+            return jsonify({"error": "entry not found"}), 404
+
+        motor_no, motor_top2, motor_top3, current_racer = current_row
+        cycle_start = _motor_cycle_start(info["race_date"], info["stadium_number"])
+        current = {
+            "race_id": race_id,
+            "boat_number": boat_number,
+            "racer_name": current_racer,
+            "stadium_number": info["stadium_number"],
+            "stadium_name": info.get("stadium_name", ""),
+            "motor_number": motor_no,
+            "motor_top_2_percent": motor_top2,
+            "motor_top_3_percent": motor_top3,
+            "motor_cycle_start": cycle_start,
+            "motor_replacement_month": _MOTOR_REPLACEMENT_MONTH.get(info["stadium_number"]),
+        }
+        if motor_no is None:
+            return jsonify({"current": current, "summary": {}, "history": []})
+
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.race_id, r.race_date, r.race_number,
+                       e.boat_number, e.racer_name, e.racer_number,
+                       e.assigned_motor_top_2_percent,
+                       e.assigned_motor_top_3_percent,
+                       pv.exhibition_time, pv.start_timing_exhibition,
+                       rr.finishing_position, rr.course_number,
+                       rr.start_timing, rr.kimarite
+                  FROM races r
+                  JOIN race_entries e
+                    ON e.race_id = r.race_id
+                  JOIN race_results rr
+                    ON rr.race_id = e.race_id
+                   AND rr.boat_number = e.boat_number
+                  LEFT JOIN race_previews pv
+                    ON pv.race_id = e.race_id
+                   AND pv.boat_number = e.boat_number
+                 WHERE r.stadium_number = ?
+                   AND e.assigned_motor_number = ?
+                   AND r.race_id <> ?
+                   AND r.race_date <= ?
+                   AND (? IS NULL OR r.race_date >= ?)
+                   AND rr.finishing_position IS NOT NULL
+                 ORDER BY r.race_date DESC, r.race_number DESC
+                 LIMIT 10
+                """,
+                (
+                    info["stadium_number"],
+                    motor_no,
+                    race_id,
+                    info["race_date"],
+                    cycle_start,
+                    cycle_start,
+                ),
+            ).fetchall()
+
+        keys = [
+            "race_id", "race_date", "race_number", "boat_number",
+            "racer_name", "racer_number", "motor_top_2_percent",
+            "motor_top_3_percent", "exhibition_time",
+            "start_timing_exhibition", "finishing_position",
+            "course_number", "start_timing", "kimarite",
+        ]
+        history = [dict(zip(keys, row)) for row in rows]
+
+        starts = len(history)
+        wins = sum(1 for r in history if r.get("finishing_position") == 1)
+        top2 = sum(1 for r in history if (r.get("finishing_position") or 99) <= 2)
+        top3 = sum(1 for r in history if (r.get("finishing_position") or 99) <= 3)
+        st_vals = [r["start_timing"] for r in history if r.get("start_timing") is not None]
+        ex_vals = [r["exhibition_time"] for r in history if r.get("exhibition_time") is not None]
+        summary = {
+            "starts": starts,
+            "wins": wins,
+            "top2": top2,
+            "top3": top3,
+            "win_rate": (wins / starts * 100) if starts else None,
+            "top2_rate": (top2 / starts * 100) if starts else None,
+            "top3_rate": (top3 / starts * 100) if starts else None,
+            "avg_start_timing": (sum(st_vals) / len(st_vals)) if st_vals else None,
+            "avg_exhibition_time": (sum(ex_vals) / len(ex_vals)) if ex_vals else None,
+        }
+
+        return jsonify({"current": current, "summary": summary, "history": history})
 
     @app.route("/api/odds-123-timeline")
     @member_only_api
