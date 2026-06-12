@@ -288,7 +288,12 @@ def _motor_cycle_start(race_date_iso: str, stadium_number: int) -> Optional[str]
     if not replacement_month:
         return None
     try:
-        d = datetime.fromisoformat(race_date_iso).date()
+        if isinstance(race_date_iso, datetime):
+            d = race_date_iso.date()
+        elif isinstance(race_date_iso, date):
+            d = race_date_iso
+        else:
+            d = datetime.fromisoformat(str(race_date_iso)).date()
     except Exception:
         return None
     year = d.year if d.month >= replacement_month else d.year - 1
@@ -1361,9 +1366,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if motor_no is None:
             return jsonify({"current": current, "summary": {}, "history": []})
 
+        cycle_filter_sql = "AND r.race_date >= ?" if cycle_start else ""
+        params = [
+            info["stadium_number"],
+            motor_no,
+            race_id,
+            info["race_date"],
+        ]
+        if cycle_start:
+            params.append(cycle_start)
+
         with db_connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT r.race_id, r.race_date, r.race_number,
                        e.boat_number, e.racer_name, e.racer_number,
                        e.assigned_motor_top_2_percent,
@@ -1384,19 +1399,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                    AND e.assigned_motor_number = ?
                    AND r.race_id <> ?
                    AND r.race_date <= ?
-                   AND (? IS NULL OR r.race_date >= ?)
+                   {cycle_filter_sql}
                    AND rr.finishing_position IS NOT NULL
                  ORDER BY r.race_date DESC, r.race_number DESC
                  LIMIT 10
                 """,
-                (
-                    info["stadium_number"],
-                    motor_no,
-                    race_id,
-                    info["race_date"],
-                    cycle_start,
-                    cycle_start,
-                ),
+                tuple(params),
             ).fetchall()
 
         keys = [
