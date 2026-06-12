@@ -3280,7 +3280,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
         """
         today = date.today()
-        monthly_from = "2025-07-01"
+        monthly_from = date(today.year - 2, today.month, 1).isoformat()
         monthly_to   = today.isoformat()
 
         bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
@@ -3300,12 +3300,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             m = monthly_map.setdefault(ym, {
                 "ym": ym,
                 "n_total": 0, "n_l4": 0,
+                "actual_days": 0,
+                "reference_days": 0,
                 **{f"{k}_bets": 0 for k in bet_keys},
                 **{f"{k}_hits": 0 for k in bet_keys},
                 **{f"{k}_pay":  0 for k in bet_keys},
             })
             m["n_total"] += r.get("n_total", 0) or 0
             m["n_l4"]    += r.get("n_l4", 0) or 0
+            if r["date"] >= STRICT_ODDS_DAILY_START:
+                m["actual_days"] += 1
+            else:
+                m["reference_days"] += 1
             for k in bet_keys:
                 m[f"{k}_bets"] += r.get(f"{k}_bets", 0) or 0
                 m[f"{k}_hits"] += r.get(f"{k}_hits", 0) or 0
@@ -3314,6 +3320,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         current_ym = today.strftime("%Y-%m")
         for m in monthly_map.values():
             m["is_current"] = (m["ym"] == current_ym)
+            if m["actual_days"] and m["reference_days"]:
+                m["quality"] = "mixed"
+                m["quality_label"] = "混在"
+            elif m["actual_days"]:
+                m["quality"] = "actual"
+                m["quality_label"] = "実運用"
+            else:
+                m["quality"] = "reference"
+                m["quality_label"] = "参考検証"
             for k in bet_keys:
                 n = m[f"{k}_bets"]; pay = m[f"{k}_pay"]
                 m[f"{k}_roi"] = (pay - 100*n)/(100*n)*100 if n else None
@@ -3328,6 +3343,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "member_monthly.html",
             monthly_rows=monthly_rows,
             monthly_rows_asc=monthly_rows_asc,
+            monthly_from=monthly_from,
+            monthly_to=monthly_to,
+            strict_odds_daily_start=STRICT_ODDS_DAILY_START,
             today_iso=today.isoformat(),
         )
 

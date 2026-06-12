@@ -11,7 +11,13 @@
   <h2>📈 月別 ROI 推移 <span class="live-indicator" title="3 分毎に自動更新">🔴 LIVE</span></h2>
   <p class="dashboard-hint">
     <strong>採用戦略 4 種 + 観察戦略 3 種を月別に長期推移で可視化。</strong><br>
-    集計範囲: 2025-07-01 〜 今日 / 当月は完了レース分のみの暫定値
+    集計範囲: {{ monthly_from }} 〜 {{ monthly_to }} / 当月は完了レース分のみの暫定値<br>
+    <small>
+      <span class="monthly-quality-badge is-actual">実運用</span>
+      {{ strict_odds_daily_start }} 以降の直前オッズベース /
+      <span class="monthly-quality-badge is-reference">参考検証</span>
+      それ以前のバックテスト基準
+    </small>
   </p>
 
   <!-- グラフ: 月別 ROI 推移 (3連単 / L4 G++ F1 / 一般戦×12R) — 棒グラフ -->
@@ -61,6 +67,10 @@
           <tr class="{% if m.is_current %}is-current-month{% endif %}">
             <td class="date-cell">
               <span class="date-text">{{ m.ym }}</span>
+              <span class="monthly-quality-badge is-{{ m.quality }}"
+                    title="{% if m.quality == 'actual' %}直前オッズベースの実運用ROI{% elif m.quality == 'mixed' %}実運用ROIと参考検証が同月内で混在{% else %}過去データによる参考バックテスト{% endif %}">
+                {{ m.quality_label }}
+              </span>
               {% if m.is_current %}<span class="in-progress-badge">進行中</span>{% endif %}
             </td>
             <td class="num">{{ m.n_l4 + (m.gen_f1_tri_bets or 0) }}</td>
@@ -114,6 +124,7 @@
     {
       ym: "{{ m.ym }}",
       is_current: {{ 'true' if m.is_current else 'false' }},
+      quality: "{{ m.quality }}",
       win:    {{ ('null' if m.win_roi is none         else '%.1f' | format(m.win_roi))         }},
       exa:    {{ ('null' if m.exa_roi is none         else '%.1f' | format(m.exa_roi))         }},
       tri:    {{ ('null' if m.tri_roi is none         else '%.1f' | format(m.tri_roi))         }},

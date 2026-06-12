@@ -197,6 +197,27 @@ def test_today_high_roi_hides_female_mixed_and_general_references():
     assert "女性混合と一般参考は高ROI一覧から非表示" in index
 
 
+def test_monthly_roi_uses_two_year_window_with_quality_labels():
+    """月別ROIは固定開始日ではなく2年前まで表示し、実運用/参考検証を区別すること。"""
+    src = _read("src/web/app.py")
+    idx = src.find("def member_strategy_monthly():")
+    assert idx >= 0, "member_strategy_monthly 関数が見つかりません"
+    block = src[idx: idx + 3500]
+    assert 'monthly_from = "2025-07-01"' not in block
+    assert "date(today.year - 2, today.month, 1).isoformat()" in block
+    assert "STRICT_ODDS_DAILY_START" in block
+    assert '"quality_label"] = "実運用"' in block
+    assert '"quality_label"] = "参考検証"' in block
+    assert '"quality_label"] = "混在"' in block
+    assert "monthly_from=monthly_from" in block
+
+    tpl = _read("src/web/templates/member_monthly.html")
+    assert "{{ monthly_from }} 〜 {{ monthly_to }}" in tpl
+    assert "monthly-quality-badge" in tpl
+    assert "参考検証" in tpl
+    assert "実運用" in tpl
+
+
 # ===== バグ 4: /healthz が 503 を返すと Render deploy が timed out =====
 
 
