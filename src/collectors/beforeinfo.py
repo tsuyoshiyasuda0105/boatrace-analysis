@@ -127,7 +127,7 @@ def _supplement_preview(
                temperature             = COALESCE(temperature, ?),
                water_temperature       = COALESCE(water_temperature, ?),
                course_number           = COALESCE(course_number, ?),
-               exhibition_time         = COALESCE(exhibition_time, ?),
+               exhibition_time         = COALESCE(NULLIF(exhibition_time, 0), ?),
                start_timing_exhibition = COALESCE(start_timing_exhibition, ?),
                weight_adjustment       = COALESCE(weight_adjustment, ?),
                tilt_adjustment         = COALESCE(tilt_adjustment, ?)

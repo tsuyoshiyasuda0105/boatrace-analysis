@@ -247,8 +247,11 @@ def upsert_previews(conn: sqlite3.Connection, payload: dict) -> int:
             boat_list = boats
 
         for boat in boat_list:
+            exhibition_time = boat.get("racer_exhibition_time")
+            if exhibition_time == 0:
+                exhibition_time = None
             conn.execute("""
-                INSERT OR REPLACE INTO race_previews (
+                INSERT INTO race_previews (
                     race_id, boat_number,
                     weather_number, wind_speed, wind_direction_number,
                     wave_height, temperature, water_temperature,
@@ -256,13 +259,25 @@ def upsert_previews(conn: sqlite3.Connection, payload: dict) -> int:
                     weight_adjustment, tilt_adjustment
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (race_id, boat_number) DO UPDATE SET
+                    weather_number = COALESCE(excluded.weather_number, race_previews.weather_number),
+                    wind_speed = COALESCE(excluded.wind_speed, race_previews.wind_speed),
+                    wind_direction_number = COALESCE(excluded.wind_direction_number, race_previews.wind_direction_number),
+                    wave_height = COALESCE(excluded.wave_height, race_previews.wave_height),
+                    temperature = COALESCE(excluded.temperature, race_previews.temperature),
+                    water_temperature = COALESCE(excluded.water_temperature, race_previews.water_temperature),
+                    course_number = COALESCE(excluded.course_number, race_previews.course_number),
+                    exhibition_time = COALESCE(NULLIF(excluded.exhibition_time, 0), race_previews.exhibition_time),
+                    start_timing_exhibition = COALESCE(excluded.start_timing_exhibition, race_previews.start_timing_exhibition),
+                    weight_adjustment = COALESCE(excluded.weight_adjustment, race_previews.weight_adjustment),
+                    tilt_adjustment = COALESCE(excluded.tilt_adjustment, race_previews.tilt_adjustment)
             """, (
                 rid,
                 boat["racer_boat_number"],
                 weather_number, wind_speed, wind_dir,
                 wave, temp, water_temp,
                 boat.get("racer_course_number"),
-                boat.get("racer_exhibition_time"),
+                exhibition_time,
                 boat.get("racer_start_timing"),
                 boat.get("racer_weight_adjustment"),
                 boat.get("racer_tilt_adjustment"),

@@ -194,7 +194,7 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
                        e.national_top_2_percent, e.local_top_2_percent,
                        e.assigned_motor_number,
                        e.assigned_motor_top_2_percent,
-                       pv.exhibition_time, pv.start_timing_exhibition,
+                       NULLIF(pv.exhibition_time, 0), pv.start_timing_exhibition,
                        res.finishing_position
                 FROM predictions p
                 JOIN race_entries e ON p.race_id = e.race_id AND p.boat_number = e.boat_number
@@ -666,7 +666,7 @@ def _race_current_conditions(race_id: str) -> dict:
         rows = conn.execute("""
             SELECT boat_number, weather_number, wind_speed, wind_direction_number,
                    wave_height, temperature, water_temperature,
-                   course_number, exhibition_time, start_timing_exhibition,
+                   course_number, NULLIF(exhibition_time, 0), start_timing_exhibition,
                    weight_adjustment, tilt_adjustment
               FROM race_previews
              WHERE race_id = ?
@@ -1383,7 +1383,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                        e.boat_number, e.racer_name, e.racer_number,
                        e.assigned_motor_top_2_percent,
                        e.assigned_motor_top_3_percent,
-                       pv.exhibition_time, pv.start_timing_exhibition,
+                       NULLIF(pv.exhibition_time, 0), pv.start_timing_exhibition,
                        rr.finishing_position, rr.course_number,
                        rr.start_timing, rr.kimarite
                   FROM races r
@@ -2060,7 +2060,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 with db_connect() as bconn:
                     cur = bconn.execute(
                         """
-                        SELECT pv.race_id, pv.boat_number, pv.exhibition_time
+                        SELECT pv.race_id, pv.boat_number, NULLIF(pv.exhibition_time, 0)
                         FROM race_previews pv
                         JOIN races r ON r.race_id = pv.race_id
                         WHERE r.race_date = ?

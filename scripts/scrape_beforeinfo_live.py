@@ -57,9 +57,8 @@ logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
 
 
-# Volatile な列だけ更新する (Open API データを「上書き」する対象)
-# 注: course_number / exhibition_time / start_timing_exhibition / parts は
-# 直前情報固有の値なので通常 collector で扱う。本スクリプトは「天候・水面」のみ。
+# Volatile な列だけ更新する (Open API データを「上書き」する対象)。
+# 天候・水面に加えて、直前で確定する展示T/ST/進入/チルトも艇別に補完する。
 _VOLATILE_COLS = ("weather_number", "wind_speed", "wind_direction_number",
                   "wave_height", "temperature", "water_temperature")
 
@@ -180,9 +179,44 @@ def _update_volatile(conn, race_id: str, page_data: dict, now_iso: str) -> int:
         (weather, wind, wind_dir, wave, temp, wtemp, now_iso, race_id),
     )
     try:
-        return cur.rowcount or 0
+        updated = cur.rowcount or 0
     except Exception:
-        return 0
+        updated = 0
+
+    for boat in page_data.get("boats", []) or []:
+        boat_no = boat.get("boat_number")
+        if not boat_no:
+            continue
+        exhibition_time = boat.get("exhibition_time")
+        if exhibition_time == 0:
+            exhibition_time = None
+        cur = conn.execute(
+            """
+            UPDATE race_previews
+               SET course_number           = COALESCE(?, course_number),
+                   exhibition_time         = COALESCE(?, exhibition_time),
+                   start_timing_exhibition = COALESCE(?, start_timing_exhibition),
+                   weight_adjustment       = COALESCE(?, weight_adjustment),
+                   tilt_adjustment         = COALESCE(?, tilt_adjustment),
+                   live_updated_at         = ?
+             WHERE race_id = ? AND boat_number = ?
+            """,
+            (
+                boat.get("course_number"),
+                exhibition_time,
+                boat.get("start_timing_exhibition"),
+                boat.get("weight_adjustment"),
+                boat.get("tilt_adjustment"),
+                now_iso,
+                race_id,
+                boat_no,
+            ),
+        )
+        try:
+            updated += cur.rowcount or 0
+        except Exception:
+            pass
+    return updated
 
 
 def scrape_one_race(stadium: int, race_no: int, target_date: date, dry_run: bool = False
