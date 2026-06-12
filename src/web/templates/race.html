@@ -351,6 +351,7 @@
       const pct = (value) => value == null ? "-" : `${Number(value).toFixed(1)}%`;
       const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
       const posClass = (value) => value ? `f-${Number(value)}` : "";
+      const historyCache = new Map();
       const renderHistory = (data) => {
         const current = data.current || {};
         const summary = data.summary || {};
@@ -415,10 +416,33 @@
         `;
       };
 
+      const fetchHistory = (button) => {
+        const boatNumber = button.dataset.boatNumber;
+        const raceId = button.dataset.raceId;
+        const key = `${raceId}:${boatNumber}`;
+        if (!historyCache.has(key)) {
+          historyCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}`, {
+            credentials: "same-origin",
+            headers: { "Accept": "application/json" },
+            cache: "force-cache",
+          }).then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          }).catch((err) => {
+            historyCache.delete(key);
+            throw err;
+          }));
+        }
+        return historyCache.get(key);
+      };
+
       document.querySelectorAll(".motor-history-btn").forEach((button) => {
+        const warm = () => { fetchHistory(button).catch(() => {}); };
+        button.addEventListener("pointerenter", warm, { passive: true });
+        button.addEventListener("focus", warm);
+        button.addEventListener("touchstart", warm, { passive: true });
         button.addEventListener("click", async () => {
           const boatNumber = button.dataset.boatNumber;
-          const raceId = button.dataset.raceId;
           const row = document.getElementById(`motor-history-row-${boatNumber}`);
           const panel = row?.querySelector("[data-motor-history-panel]");
           if (!row || !panel) return;
@@ -435,12 +459,7 @@
 
           panel.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
           try {
-            const res = await fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}`, {
-              credentials: "same-origin",
-              headers: { "Accept": "application/json" },
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
+            const data = await fetchHistory(button);
             panel.innerHTML = renderHistory(data);
             panel.dataset.loaded = "1";
           } catch (err) {

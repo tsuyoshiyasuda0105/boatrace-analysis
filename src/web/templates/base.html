@@ -68,5 +68,65 @@
       <small>LightGBM Ranker v0.8 (recency 180d + 選手×会場/コース 100走長期) / Isotonic 較正 / PerWinner Cascade / 学習: 2022-04-01〜2026-03-31</small>
     </div>
   </footer>
+  <script>
+    (() => {
+      const prefetched = new Set();
+      const inflight = new Set();
+      const sameOrigin = (url) => {
+        try {
+          const u = new URL(url, location.href);
+          return u.origin === location.origin && u.pathname !== location.pathname;
+        } catch (_) {
+          return false;
+        }
+      };
+      const canPrefetch = () => {
+        const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        return !(c && (c.saveData || /2g/.test(c.effectiveType || "")));
+      };
+      const prefetchUrl = (url) => {
+        if (!canPrefetch() || !sameOrigin(url)) return;
+        const u = new URL(url, location.href);
+        if (!/^\/(race|races|member)\b/.test(u.pathname)) return;
+        const key = u.pathname + u.search;
+        if (prefetched.has(key) || inflight.has(key)) return;
+        inflight.add(key);
+        const run = () => {
+          fetch(u.href, {
+            credentials: "same-origin",
+            cache: "force-cache",
+            headers: { "X-Purpose": "prefetch" },
+          }).then((res) => {
+            if (res.ok) prefetched.add(key);
+          }).catch(() => {}).finally(() => inflight.delete(key));
+        };
+        if ("requestIdleCallback" in window) {
+          requestIdleCallback(run, { timeout: 900 });
+        } else {
+          setTimeout(run, 80);
+        }
+      };
+      window.BoatraceSpeed = { prefetchUrl };
+
+      const findAnchor = (target) => target && target.closest && target.closest("a[href]");
+      const warmAnchor = (target) => {
+        const a = findAnchor(target);
+        if (a && !a.target && !a.hasAttribute("download")) prefetchUrl(a.href);
+      };
+      document.addEventListener("pointerover", (e) => warmAnchor(e.target), { passive: true });
+      document.addEventListener("focusin", (e) => warmAnchor(e.target));
+      document.addEventListener("touchstart", (e) => warmAnchor(e.target), { passive: true });
+      document.addEventListener("click", (e) => {
+        const a = findAnchor(e.target);
+        if (!a || a.target || a.hasAttribute("download")) return;
+        if (a.origin !== location.origin || a.pathname === location.pathname && a.search === location.search) return;
+        document.documentElement.classList.add("is-navigating");
+        a.classList.add("is-loading-link");
+      }, { capture: true });
+      document.querySelector(".date-form")?.addEventListener("submit", () => {
+        document.documentElement.classList.add("is-navigating");
+      });
+    })();
+  </script>
 </body>
 </html>

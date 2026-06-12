@@ -239,6 +239,14 @@
       (function() {
         const targetDate = "{{ target_date }}";
         let marketSignalsLoading = false;
+        const warmRaceDetail = (raceId) => {
+          if (!raceId || !window.BoatraceSpeed) return;
+          window.BoatraceSpeed.prefetchUrl(`/race/${encodeURIComponent(raceId)}`);
+        };
+        const warmRaceDetails = (raceIds) => {
+          const unique = [...new Set((raceIds || []).filter(Boolean))].slice(0, 8);
+          unique.forEach((rid, idx) => setTimeout(() => warmRaceDetail(rid), 120 + idx * 120));
+        };
         // 注: EV+ 自動判定 UI/API はユーザ指示 (backlog.md item 3) により削除済。
 
         // 市場非効率ベース +EV シグナル (誰でも閲覧可)
@@ -515,6 +523,7 @@
           top.forEach((u, idx) => {
             if (idx === 0) u.el.classList.add('next-race');
           });
+          warmRaceDetails(top.map(u => u.el.dataset.raceId));
 
           // ▼ 本日 L4 候補レース (締切済も含む全件・時系列) を別途生成
           renderTodaysPicks();
@@ -713,6 +722,7 @@
           picks.sort((a, b) => a.closedAt - b.closedAt);
           panel.hidden = false;
           tbody.innerHTML = '';
+          warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
 
           // 該当なし表示 (loadMarketSignals 完了前 or 本当に無い日)
           if (picks.length === 0) {
