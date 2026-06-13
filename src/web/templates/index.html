@@ -264,7 +264,8 @@
             document.querySelectorAll(
               '.race-item .l4-badge, .race-item .nuki-filter-badge, ' +
               '.race-item .f1-prime-badge, .race-item .tetsuban-badge, ' +
-              '.race-item .ex-bonus-badge, .race-item .obs-badge'
+              '.race-item .ex-bonus-badge, .race-item .obs-badge, ' +
+              '.race-item .portfolio-strong-badge'
             ).forEach(el => el.remove());
             for (const [raceId, sig] of Object.entries(signals)) {
               try {
@@ -301,14 +302,33 @@
                   if (sig.l4.is_l4_pro) {
                     title += ` | 🔥L4 PRO: ${sig.l4.label_l4_pro}、検証ROI ${sig.l4.recovery_l4_pro}% → ベテラン×スタート好調`;
                   }
+                  if (sig.l4.is_portfolio_strong) {
+                    title += ` | 🔥強バッジ: 10年検証 回収率 ${sig.l4.portfolio_recovery}%`
+                          + ` / 的中率 ${sig.l4.portfolio_hit_rate}% / n=${sig.l4.portfolio_n}`
+                          + ` / タグ ${sig.l4.portfolio_tag}。年別150%以上だが件数は薄いため強監視扱い`;
+                  }
                   if (sig.l4.promoted_from_morning_watch_st) {
                     title += ' | 朝監視STからT-5本採用へ昇格';
                   }
                   l4Badge.title = title;
                   const onec80 = sig.l4.is_1c80 ? ' 🚀' : '';
                   const pro = sig.l4.is_l4_pro ? ' 🔥' : '';
-                  l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}`;
+                  const portfolio = sig.l4.is_portfolio_strong ? ' 🔥強' : '';
+                  l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}${portfolio}`;
                   item.appendChild(l4Badge);
+                  if (sig.l4.is_portfolio_strong) {
+                    const ps = document.createElement('span');
+                    ps.className = 'portfolio-strong-badge';
+                    ps.textContent = `🔥強監視 ${sig.l4.portfolio_recovery}%`;
+                    ps.title = (
+                      `L4派生ポートフォリオ強バッジ\n`
+                      + `条件タグ: ${sig.l4.portfolio_tag}\n`
+                      + `買い目: 3連単 1-2-3 100円\n`
+                      + `10年検証: 回収率 ${sig.l4.portfolio_recovery}% / 的中率 ${sig.l4.portfolio_hit_rate}% / n=${sig.l4.portfolio_n}\n`
+                      + `年別では150%以上。ただし件数が少ないため、まず強監視として扱う`
+                    );
+                    item.appendChild(ps);
+                  }
                   if (sig.l4.promoted_from_morning_watch_st) {
                     const promotionBadge = document.createElement('span');
                     promotionBadge.className = 'promotion-badge promotion-watch-st';
@@ -672,7 +692,8 @@
             // --- L4 の reference/除外判定 (L4 バッジがある時のみ) ---
             let isRef = false, isOddsMismatch = false, isRainExclusion = false,
                 isFemaleExclusion = false, isMorningBadge = false,
-                isMorningWatch = false, isMorningOutOfRange = false, isAnyExclusion = false,
+                isMorningWatch = false, isPortfolioStrong = false,
+                isMorningOutOfRange = false, isAnyExclusion = false,
                 l4Actionable = false;
             if (l4) {
               isRef = l4.classList.contains('l4-reference');
@@ -684,6 +705,9 @@
               isMorningBadge = Array.from(l4.classList).some(c => c.startsWith('l4-morning_'));
               isMorningWatch = Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'))
                 || /朝監視/.test(labelText);
+              isPortfolioStrong = l4.classList.contains('l4-portfolio_strong')
+                || Boolean(el.querySelector('.portfolio-strong-badge'))
+                || /強バッジ|強監視/.test(labelText);
               // ユーザ仕様 (2026-05-19): 朝候補だったがオッズが L4 帯から外れた
               // レースは「データを消さずグレーアウトで残す」。
               // morning_l4 fallback (app.py L1879-1890) は label に「(確定¥XXX)」
@@ -716,7 +740,8 @@
             const isClosed = minutesUntil < 0 || isDone;
             picks.push({ el, closedAt, minutesUntil, isClosed, isDone,
                          isOddsMismatch, isRainExclusion, isFemaleExclusion,
-                         isMorningWatch, isMorningOutOfRange, isAnyExclusion });
+                         isMorningWatch, isPortfolioStrong,
+                         isMorningOutOfRange, isAnyExclusion });
           });
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
@@ -765,6 +790,7 @@
                             : '⭐ L4';
               if (is1c80) rankLabel = '🚀 ' + rankLabel + ' 1c80';
               if (isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';
+              if (u.isPortfolioStrong) rankLabel = '🔥 強監視 ' + rankLabel;
               if (tbStars) rankLabel = tbStars + rankLabel;
               const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
               const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
@@ -775,7 +801,10 @@
               // 除外系 (帯外/雨/女性混合) はすべて既存の is-odds-mismatch
               // styling でグレー表示 (完全消滅させない、2026-05-28 修正)。
               if (u.isMorningWatch) rowClass += ' is-watch';
-              else if (u.isAnyExclusion) rowClass += ' is-odds-mismatch';
+              if (u.isPortfolioStrong) rowClass += ' is-portfolio-strong';
+              if (!u.isMorningWatch && !u.isPortfolioStrong && u.isAnyExclusion) {
+                rowClass += ' is-odds-mismatch';
+              }
               // 除外理由ごとのラベル/絵文字
               let excEmoji = '🚫', excShort = '圏外',
                   excTitle = '確定オッズが L4 帯外 (¥1000+)。投票非推奨';

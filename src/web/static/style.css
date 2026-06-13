@@ -2555,6 +2555,54 @@ main h2 {
   animation: tier-a-pulse 2.5s ease-in-out infinite;
 }
 
+/* L4 派生ポートフォリオ強バッジ
+   10年検証で年別150%以上。ただし N が薄いため「強監視」として目立たせる。 */
+.portfolio-strong-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 226, 89, 0.9);
+  background: linear-gradient(135deg, #fff6a8, #ffb703 48%, #ff4d6d);
+  color: #111827;
+  font-size: 0.78em;
+  font-weight: 900;
+  letter-spacing: 0;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+    0 0 16px rgba(255, 183, 3, 0.7),
+    0 0 28px rgba(255, 77, 109, 0.35);
+  animation: portfolio-strong-pulse 1.45s ease-in-out infinite;
+  white-space: nowrap;
+  cursor: help;
+  vertical-align: middle;
+}
+
+.l4-badge.l4-portfolio_strong,
+.l4-badge.l4-rank-portfolio {
+  border-color: rgba(255, 226, 89, 0.95) !important;
+  background: linear-gradient(135deg, #fff6a8, #ffb703 50%, #ef4444) !important;
+  color: #111827 !important;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.2) inset,
+    0 0 18px rgba(255, 183, 3, 0.75),
+    0 0 34px rgba(239, 68, 68, 0.35) !important;
+  animation: portfolio-strong-pulse 1.45s ease-in-out infinite !important;
+}
+
+@keyframes portfolio-strong-pulse {
+  0%, 100% {
+    transform: translateY(0);
+    filter: brightness(1);
+  }
+  50% {
+    transform: translateY(-1px);
+    filter: brightness(1.16);
+  }
+}
+
 /* 展示タイム補助点バッジ (検証 2026-05-30、L4 強弱付け用) */
 .ex-bonus-badge {
   display: inline-block;
@@ -3362,6 +3410,27 @@ main h2 {
   cursor: not-allowed;
   min-height: 36px;
   min-width: 70px;
+}
+
+/* 強監視行: 10年検証ポートフォリオに該当。N薄めのため「監視」だが視認性は最上位。 */
+.todays-picks-table tbody tr.is-portfolio-strong {
+  background: linear-gradient(90deg,
+    rgba(255, 183, 3, 0.26),
+    rgba(255, 77, 109, 0.18),
+    rgba(34, 211, 238, 0.10));
+  outline: 1px solid rgba(255, 226, 89, 0.86);
+  box-shadow:
+    inset 5px 0 0 rgba(255, 183, 3, 0.98),
+    0 0 18px rgba(255, 183, 3, 0.20),
+    0 0 28px rgba(255, 77, 109, 0.14);
+}
+.todays-picks-table tbody tr.is-portfolio-strong .pick-rank,
+.todays-picks-table tbody tr.is-portfolio-strong .pick-place strong,
+.todays-picks-table tbody tr.is-portfolio-strong .pick-type,
+.todays-picks-table tbody tr.is-portfolio-strong .pick-rec {
+  color: #fff6a8 !important;
+  font-weight: 950 !important;
+  text-shadow: 0 0 8px rgba(255, 183, 3, 0.45);
 }
 
 .todays-picks-table tbody tr.is-empty .pick-empty {

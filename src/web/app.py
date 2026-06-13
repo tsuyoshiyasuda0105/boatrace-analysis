@@ -1624,7 +1624,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e.national_top_1_percent, e.local_top_1_percent,
                                e.avg_start_timing, e.age,
                                pv.weather_number, pv.start_timing_exhibition,
+                               pv.wind_speed,
                                e2.national_top_2_percent AS boat2_top2,
+                               e2.assigned_motor_top_2_percent AS boat2_motor_top2,
                                e3.national_top_1_percent AS boat3_natl_1,
                                COALESCE(fem.n_female, 0) AS n_female
                         FROM races r
@@ -1642,7 +1644,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         WHERE r.race_date = ?
                     """, (target_date,))
                     for (rid, stadium, grade, race_no, race_closed_at, cls, natl1, loc1,
-                         avg_st, age, weather, ex_st, boat2_top2, boat3_natl_1,
+                         avg_st, age, weather, ex_st, wind_speed,
+                         boat2_top2, boat2_motor_top2, boat3_natl_1,
                          n_female) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade,
@@ -1652,7 +1655,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "natl_1": natl1, "local_1": loc1,
                             "avg_st": avg_st, "age": age,
                             "weather": weather, "ex_st": ex_st,
+                            "wind_speed": wind_speed,
                             "boat2_top2": boat2_top2,
+                            "boat2_motor_top2": boat2_motor_top2,
                             "boat3_natl_1": boat3_natl_1,
                             "n_female": n_female,
                         }
@@ -1817,6 +1822,120 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             else:
                 lab = f"通常 {stars}★"
             return stars, lab
+
+        def _evaluate_l4_portfolio_strong(stadium, grade, cls, natl_1=None,
+                                          avg_st=None, age=None,
+                                          boat2_motor_top2=None,
+                                          race_number=None, wind_speed=None,
+                                          n_female=0, target_date_iso=None):
+            """10年検証で年別150%以上だったL4派生ポートフォリオ。
+
+            確定オッズや払戻では絞らず、レース前に分かる条件だけで強監視する。
+            検証: 2016-06-13〜2026-06-13、N=96、的中35、回収率312.5%。
+            ただし年別Nは薄いため、実弾本命ではなく「強バッジ」扱い。
+            """
+            try:
+                rn = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
+            try:
+                n1 = float(natl_1) if natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = 0.0
+            try:
+                st = float(avg_st) if avg_st is not None else 9.99
+            except (TypeError, ValueError):
+                st = 9.99
+            try:
+                a = int(age) if age is not None else 0
+            except (TypeError, ValueError):
+                a = 0
+            try:
+                m2 = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                m2 = 0.0
+            try:
+                wind = int(wind_speed) if wind_speed is not None else None
+            except (TypeError, ValueError):
+                wind = None
+            try:
+                month = int(str(target_date_iso)[5:7]) if target_date_iso else 0
+            except (TypeError, ValueError):
+                month = 0
+
+            no_female = not n_female
+            n1_75_85 = 7.5 <= n1 < 8.5
+            m2_ge45 = m2 >= 45.0
+            highgrade_or_f1 = (
+                grade in (1, 2, 3, 4)
+                or (grade == 5 and n1 >= 7.0 and m2 >= 40.0)
+            )
+            if not (highgrade_or_f1 and no_female and n1_75_85 and m2_ge45):
+                return None
+
+            tag_a_venues = {1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23}
+            tag_b_venues = {5, 12, 13}
+            tag_b_months = {2, 5, 6, 11, 12}
+            wind_le3_unknown = wind is None or wind <= 3
+            wind_not2_unknown = wind is None or wind != 2
+
+            tag_a = (
+                9 <= rn <= 11
+                and st < 0.160
+                and 40 <= a <= 49
+                and wind_le3_unknown
+                and stadium in tag_a_venues
+            )
+            tag_b = (
+                7 <= rn <= 12
+                and st < 0.165
+                and 30 <= a <= 49
+                and wind_not2_unknown
+                and stadium in tag_b_venues
+                and month in tag_b_months
+            )
+            if not (tag_a or tag_b):
+                return None
+
+            tag_label = "A+B" if tag_a and tag_b else ("A" if tag_a else "B")
+            return {
+                "level": "portfolio_strong",
+                "label": "🔥強バッジ",
+                "recovery": 312.5,
+                "bet": "3連単 1-2-3",
+                "n": 96,
+                "rank": "portfolio",
+                "rank_label": f"強監視 {tag_label}",
+                "rank_emoji": "🔥",
+                "natl_1": natl_1,
+                "local_1": None,
+                "is_portfolio_strong": True,
+                "portfolio_tag": tag_label,
+                "portfolio_recovery": 312.5,
+                "portfolio_n": 96,
+                "portfolio_hit_rate": 36.5,
+                "portfolio_note": "10年検証で年別150%以上。ただし年別Nは薄いので強監視。",
+                "tetsuban_score": 5,
+                "tetsuban_label": "強監視 5★",
+            }
+
+        def _apply_l4_portfolio_strong(base, portfolio):
+            if not portfolio:
+                return base
+            if base is None:
+                return portfolio
+            base["is_portfolio_strong"] = True
+            base["portfolio_tag"] = portfolio["portfolio_tag"]
+            base["portfolio_recovery"] = portfolio["portfolio_recovery"]
+            base["portfolio_n"] = portfolio["portfolio_n"]
+            base["portfolio_hit_rate"] = portfolio["portfolio_hit_rate"]
+            base["portfolio_note"] = portfolio["portfolio_note"]
+            base["portfolio_label"] = portfolio["label"]
+            base["is_reference"] = False
+            if (base.get("tetsuban_score") or 0) < 5:
+                base["tetsuban_score"] = 5
+                base["tetsuban_label"] = "強監視 5★"
+            return base
 
         def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
                          race_id=None, avg_st=None, age=None, ex_st=None,
@@ -2329,7 +2448,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             weather = info.get("weather")
             race_closed_at = info.get("race_closed_at")
             boat2_top2 = info.get("boat2_top2")
+            boat2_motor_top2 = info.get("boat2_motor_top2")
             boat3_natl_1 = info.get("boat3_natl_1")
+            wind_speed = info.get("wind_speed")
             n_female = info.get("n_female", 0) or 0
             is_rain = (weather == 3)
             rain_exclusion_active = _rain_exclusion_active(race_closed_at)
@@ -2361,6 +2482,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                   avg_st=avg_st, age=age, ex_st=ex_st,
                                   boat2_top2=boat2_top2, race_number=race_no_info,
                                   boat3_natl_1=boat3_natl_1)
+                l4_portfolio = _evaluate_l4_portfolio_strong(
+                    stadium, grade, cls, natl_1=natl_1,
+                    avg_st=avg_st, age=age,
+                    boat2_motor_top2=boat2_motor_top2,
+                    race_number=race_no_info, wind_speed=wind_speed,
+                    n_female=n_female, target_date_iso=target_date,
+                )
+                l4 = _apply_l4_portfolio_strong(l4, l4_portfolio)
 
                 if l4 is not None:
                     prob_first = morning_pred.get(rid)
@@ -2398,6 +2527,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             f"{morning_l4['label']} (確定¥{mp})"
                         )
                         l4 = morning_l4
+                        l4 = _apply_l4_portfolio_strong(l4, l4_portfolio)
 
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
@@ -2464,6 +2594,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                                    avg_st=avg_st, age=age, ex_st=ex_st,
                                                    boat2_top2=boat2_top2,
                                                    race_number=race_no_info)
+                l4_portfolio = _evaluate_l4_portfolio_strong(
+                    stadium, grade, cls, natl_1=natl_1,
+                    avg_st=avg_st, age=age,
+                    boat2_motor_top2=boat2_motor_top2,
+                    race_number=race_no_info, wind_speed=wind_speed,
+                    n_female=n_female, target_date_iso=target_date,
+                )
+                morning_l4 = _apply_l4_portfolio_strong(morning_l4, l4_portfolio)
                 if morning_l4:
                     if is_rain_excluded:
                         morning_l4["is_rain"] = True
@@ -3161,6 +3299,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e2.national_top_2_percent AS boat2_top2,
                     pp.min_pay AS fav_pay,
                     oo.min_odds AS fav_odds,
+                    oo.any_in_l4 AS any_in_l4,
+                    oo.l4_odds AS l4_odds,
                     pr.prob_first AS prob_first,
                     res1.boat_number AS w1,
                     res2.boat_number AS w2,
@@ -3183,7 +3323,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 ) fem ON fem.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, MIN(payout) AS min_pay FROM race_payouts
                            WHERE bet_type='trifecta' GROUP BY race_id) pp ON pp.race_id = r.race_id
-                LEFT JOIN (SELECT race_id, MIN(odds) AS min_odds FROM odds_trifecta
+                LEFT JOIN (SELECT race_id,
+                                  MIN(odds) AS min_odds,
+                                  MAX(CASE WHEN odds >= 5 AND odds < 10 THEN 1 ELSE 0 END) AS any_in_l4,
+                                  COALESCE(
+                                      MAX(CASE WHEN snapshot_label='T-5min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-4min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-3min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-15min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-1min' AND odds >= 5 AND odds < 10 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='final' AND odds >= 5 AND odds < 10 THEN odds END)
+                                  ) AS l4_odds
+                             FROM odds_trifecta
                            WHERE combination='1-2-3'
                              AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
                            GROUP BY race_id) oo ON oo.race_id = r.race_id
@@ -3203,7 +3354,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         out = []
         for row in cur:
             (rid, rno, closed, stadium, grade, cls, racer_name,
-             natl_1, local_1, boat2_top2, fav_pay, fav_odds, prob_first, w1, w2, w3,
+             natl_1, local_1, boat2_top2, fav_pay, fav_odds, any_in_l4, l4_odds,
+             prob_first, w1, w2, w3,
              win_pay, exa_pay, tri_pay, weather, n_female) = row
             if cls != 1:
                 continue  # A1 のみ (A2 派生は対象外)
@@ -3234,8 +3386,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # 結果 (1-2-3 hit/miss) は L4 候補性に影響しない。
             fav = None
             fav_source = None
-            if fav_odds is not None:
-                # T-X 1-2-3 オッズ × 100 が 500-1000 → L4 候補 (結果と無関係)
+            if any_in_l4 is not None and any_in_l4 == 1:
+                # T-X のいずれかで 1-2-3 オッズ × 100 が 500-1000 → L4 候補。
+                # 日別集計と同じORロジック。表示値は T-5min 優先の代表 odds。
+                fav_int = int(float(l4_odds if l4_odds is not None else fav_odds) * 100)
+                fav = fav_int
+                fav_source = "odds"
+            elif fav_odds is not None:
+                # any_in_l4 が取得不能な旧DB用フォールバック。
                 fav_int = int(float(fav_odds) * 100)
                 if 500 <= fav_int < 1000:
                     fav = fav_int

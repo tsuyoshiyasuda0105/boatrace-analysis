@@ -123,6 +123,26 @@ def test_l4_races_for_date_includes_general_f1():
     assert 'rank = "L4 G++"' in block
 
 
+def test_l4_races_for_date_uses_any_snapshot_l4_window_like_daily_stats():
+    """日別詳細も、日別集計と同じT-X ORロジックでL4帯を判定すること。
+
+    バグ: _l4_daily_stats は any_in_l4 で「どれかのsnapshotが5-10倍」を
+    採用する一方、_l4_races_for_date は MIN(odds) だけを見ていた。
+    そのため T-5でL4帯、T-1で5倍未満に人気化したレースが詳細から漏れ、
+    日別9件/詳細8件の不整合が起きた。
+    """
+    src = _read("src/web/app.py")
+    idx = src.find("def _l4_races_for_date(")
+    assert idx >= 0, "_l4_races_for_date 関数が見つかりません"
+    block = src[idx: idx + 9500]
+    assert "oo.any_in_l4 AS any_in_l4" in block
+    assert "oo.l4_odds AS l4_odds" in block
+    assert "MAX(CASE WHEN odds >= 5 AND odds < 10 THEN 1 ELSE 0 END) AS any_in_l4" in block
+    assert "snapshot_label='T-5min' AND odds >= 5 AND odds < 10" in block
+    assert "if any_in_l4 is not None and any_in_l4 == 1:" in block
+    assert "l4_odds if l4_odds is not None else fav_odds" in block
+
+
 def test_morning_watch_covers_near_l4_before_exhibition():
     """展示前に本採用へ少し届かないSG/G1/G2/G3を監視候補として出すこと。
 
@@ -185,6 +205,30 @@ def test_morning_watch_badge_is_prominent_in_today_picks():
     assert ".l4-badge.l4-morning_watch_st_G1" in css
     assert ".todays-picks-table tbody tr.is-watch" in css
     assert "@keyframes morning-watch-pulse" in css
+
+
+def test_portfolio_strong_badge_is_prominent_in_today_picks():
+    """10年検証ポートフォリオを強監視バッジとして目立たせること。"""
+    src = _read("src/web/app.py")
+    assert "def _evaluate_l4_portfolio_strong(" in src
+    assert '"is_portfolio_strong": True' in src
+    assert '"portfolio_recovery": 312.5' in src
+    assert '"portfolio_n": 96' in src
+    assert "tag_a_venues = {1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23}" in src
+    assert "tag_b_venues = {5, 12, 13}" in src
+    assert "tag_b_months = {2, 5, 6, 11, 12}" in src
+    assert "cls == 1 and highgrade_or_f1" not in src
+
+    index = _read("src/web/templates/index.html")
+    assert "portfolio-strong-badge" in index
+    assert "sig.l4.is_portfolio_strong" in index
+    assert "rowClass += ' is-portfolio-strong'" in index
+    assert "強監視" in index
+
+    css = _read("src/web/static/style.css")
+    assert ".portfolio-strong-badge" in css
+    assert ".todays-picks-table tbody tr.is-portfolio-strong" in css
+    assert "@keyframes portfolio-strong-pulse" in css
 
 
 def test_today_high_roi_hides_female_mixed_and_general_references():
