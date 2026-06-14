@@ -10,7 +10,7 @@
 <div class="strategy-dashboard">
   <h2>📈 月別 ROI 推移 <span class="live-indicator" title="3 分毎に自動更新">🔴 LIVE</span></h2>
   <p class="dashboard-hint">
-    <strong>採用戦略 4 種 + 観察戦略 3 種を月別に長期推移で可視化。</strong><br>
+    <strong>採用戦略 4 種 + 観察戦略 4 種を月別に長期推移で可視化。</strong><br>
     集計範囲: {{ monthly_from }} 〜 {{ monthly_to }} / 当月は完了レース分のみの暫定値<br>
     <small>
       <span class="monthly-quality-badge is-actual">実運用</span>
@@ -20,9 +20,9 @@
     </small>
   </p>
 
-  <!-- グラフ: 月別 ROI 推移 (3連単 / L4 G++ F1 / 一般戦×12R) — 棒グラフ -->
+  <!-- グラフ: 月別 ROI 推移 (3連単 / L4 G++ F1 / Tier A / 一般戦×12R) — 棒グラフ -->
   <section class="chart-section">
-    <h3>📊 月別 ROI 推移グラフ <small class="section-hint">3連単 1-2-3 / L4 G++ F1 / 一般戦×12R の比較</small></h3>
+    <h3>📊 月別 ROI 推移グラフ <small class="section-hint">3連単 1-2-3 / L4 G++ F1 / Tier A / 一般戦×12R の比較</small></h3>
     <div class="chart-legend" id="monthlyChartLegend"></div>
     <canvas id="monthlyChart" width="980" height="380"></canvas>
     <p class="dashboard-hint" style="margin-top:8px;">
@@ -36,7 +36,7 @@
     <h3>📋 月別 ROI テーブル</h3>
     <p class="dashboard-hint">
       <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / ⭐ L4 G++ F1 ／
-      観察: L4-prime / L4-12R / 🟢 一般戦×12R</small>
+      観察: 🟦 Tier A / L4-prime / L4-12R / 🟢 一般戦×12R</small>
     </p>
     <div class="table-wrap">
       <table class="daily-table monthly-roi-table">
@@ -48,6 +48,7 @@
             <th colspan="2">2連単 (1-2)</th>
             <th colspan="2">3連単 (1-2-3)</th>
             <th colspan="2">⭐ L4 G++ F1</th>
+            <th colspan="2" class="obs-col">🟦 Tier A</th>
             <th colspan="2" class="obs-col">🟢 L4-prime</th>
             <th colspan="2" class="obs-col">🟢 L4-12R</th>
             <th colspan="2" class="obs-col">🟢 一般戦×12R</th>
@@ -91,6 +92,10 @@
             <td class="num {% if m.gen_f1_tri_roi is not none and m.gen_f1_tri_roi >= 0 %}pos{% elif m.gen_f1_tri_roi is not none %}neg{% endif %}">
               {% if m.gen_f1_tri_roi is not none %}{{ '%+.0f' | format(m.gen_f1_tri_roi) }}%{% else %}-{% endif %}
             </td>
+            <td class="num obs-col">{{ m.mid_132_tier_a_tri_hits }}/{{ m.mid_132_tier_a_tri_bets }}</td>
+            <td class="num obs-col {% if m.mid_132_tier_a_tri_roi is not none and m.mid_132_tier_a_tri_roi >= 0 %}pos{% elif m.mid_132_tier_a_tri_roi is not none %}neg{% endif %}">
+              {% if m.mid_132_tier_a_tri_roi is not none %}{{ '%+.0f' | format(m.mid_132_tier_a_tri_roi) }}%{% else %}-{% endif %}
+            </td>
             <td class="num obs-col">{{ m.prime_tri_hits }}/{{ m.prime_tri_bets }}</td>
             <td class="num obs-col {% if m.prime_tri_roi is not none and m.prime_tri_roi >= 0 %}pos{% elif m.prime_tri_roi is not none %}neg{% endif %}">
               {% if m.prime_tri_roi is not none %}{{ '%+.0f' | format(m.prime_tri_roi) }}%{% else %}-{% endif %}
@@ -107,7 +112,7 @@
           {% endfor %}
           {% if not monthly_rows %}
           <tr class="is-empty">
-            <td colspan="16" class="num muted">月別 ROI データなし</td>
+            <td colspan="18" class="num muted">月別 ROI データなし</td>
           </tr>
           {% endif %}
         </tbody>
@@ -129,6 +134,7 @@
       exa:    {{ ('null' if m.exa_roi is none         else '%.1f' | format(m.exa_roi))         }},
       tri:    {{ ('null' if m.tri_roi is none         else '%.1f' | format(m.tri_roi))         }},
       f1:     {{ ('null' if m.gen_f1_tri_roi is none  else '%.1f' | format(m.gen_f1_tri_roi))  }},
+      tiera:  {{ ('null' if m.mid_132_tier_a_tri_roi is none else '%.1f' | format(m.mid_132_tier_a_tri_roi)) }},
       prime:  {{ ('null' if m.prime_tri_roi is none   else '%.1f' | format(m.prime_tri_roi))   }},
       r12:    {{ ('null' if m.r12_tri_roi is none     else '%.1f' | format(m.r12_tri_roi))     }},
       gr12:   {{ ('null' if m.gen_r12_tri_roi is none else '%.1f' | format(m.gen_r12_tri_roi)) }},
@@ -136,11 +142,12 @@
     {% endfor %}
   ];
 
-  // グラフは主要 3 戦略のみ表示 (backlog item 19):
-  //   3連単 1-2-3 (本流採用) / L4 G++ F1 (採用ベース) / 一般戦×12R (観察候補)
+  // グラフは主要戦略のみ表示:
+  //   3連単 1-2-3 / L4 G++ F1 / Tier A / 一般戦×12R
   const SERIES = [
     {key:'tri',   label:'3連単 (1-2-3)',  color:'#ff006e', adopted:true},
     {key:'f1',    label:'L4 G++ F1',      color:'#ffd700', adopted:true},
+    {key:'tiera', label:'Tier A',          color:'#38bdf8', adopted:false},
     {key:'gr12',  label:'🟢 一般戦×12R',  color:'#16a34a', adopted:false},
   ];
 

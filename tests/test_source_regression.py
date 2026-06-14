@@ -258,6 +258,9 @@ def test_monthly_roi_uses_two_year_window_with_quality_labels():
     tpl = _read("src/web/templates/member_monthly.html")
     assert "{{ monthly_from }} 〜 {{ monthly_to }}" in tpl
     assert "monthly-quality-badge" in tpl
+    assert "mid_132_tier_a_tri_roi" in tpl
+    assert "key:'tiera'" in tpl
+    assert "Tier A" in tpl
     assert "参考検証" in tpl
     assert "実運用" in tpl
 
