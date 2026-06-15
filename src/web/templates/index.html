@@ -156,7 +156,7 @@
         ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 🌟 L4 G++ (一般戦 F1) を時刻順に表示<br>
         <small>条件: 1号艇A1 + 本命500-1000円 + B除外会場 + SG/G1/G2/G3 または 一般戦 F1 (国1%≥7 ∧ 2号 国2連率≥40)<br>
         右側「1-2-3 推移」: <b>2h</b>=締切2時間前オッズ / T-5〜T-1=締切直前推移 (青=20倍未満, 赤=上昇, 黄=下落, 末尾%=2h→直近の変動)<br>
-        🌸=Venus全女子戦 (ROI 175.5%)</small>
+        </small>
       </p>
       <table class="todays-picks-table">
         <thead>
@@ -689,6 +689,7 @@
           items.forEach(el => {
             const l4 = el.querySelector('.l4-badge');
             if (!l4) return;
+            if (l4.classList.contains('l4-venus')) return;
             // --- L4 の reference/除外判定 (L4 バッジがある時のみ) ---
             let isRef = false, isOddsMismatch = false, isRainExclusion = false,
                 isFemaleExclusion = false, isMorningBadge = false,
