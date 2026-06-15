@@ -148,6 +148,19 @@ def _ensure_live_column(conn) -> None:
                 conn.rollback()
             except Exception:
                 pass
+    try:
+        conn.execute("SELECT stable_plate FROM race_previews LIMIT 1")
+    except Exception:
+        try:
+            conn.execute("ALTER TABLE race_previews ADD COLUMN stable_plate INTEGER")
+            conn.commit()
+            logger.info("added race_previews.stable_plate column")
+        except Exception as e:
+            logger.debug("stable_plate ALTER failed (likely already exists): %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
 
 def _update_volatile(conn, race_id: str, page_data: dict, now_iso: str) -> int:
@@ -161,6 +174,7 @@ def _update_volatile(conn, race_id: str, page_data: dict, now_iso: str) -> int:
     wave = page_data.get("wave_height")
     temp = page_data.get("temperature")
     wtemp = page_data.get("water_temperature")
+    stable_plate = page_data.get("stable_plate")
 
     # COALESCE(?, col): 新値が NULL なら旧値を保持。直前情報パーサーが
     # weather_number を取り逃がしても Open API 朝値を消さない安全策。
@@ -173,10 +187,11 @@ def _update_volatile(conn, race_id: str, page_data: dict, now_iso: str) -> int:
                wave_height           = COALESCE(?, wave_height),
                temperature           = COALESCE(?, temperature),
                water_temperature     = COALESCE(?, water_temperature),
+               stable_plate          = COALESCE(?, stable_plate),
                live_updated_at       = ?
          WHERE race_id = ?
         """,
-        (weather, wind, wind_dir, wave, temp, wtemp, now_iso, race_id),
+        (weather, wind, wind_dir, wave, temp, wtemp, stable_plate, now_iso, race_id),
     )
     try:
         updated = cur.rowcount or 0

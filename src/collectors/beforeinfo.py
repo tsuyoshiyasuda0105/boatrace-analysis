@@ -22,6 +22,23 @@ from src.parsers.beforeinfo import parse_beforeinfo
 logger = logging.getLogger(__name__)
 
 
+def _ensure_stable_plate_column(conn: sqlite3.Connection) -> None:
+    """Add race_previews.stable_plate for existing DBs."""
+    try:
+        conn.execute("SELECT stable_plate FROM race_previews LIMIT 1")
+    except Exception:
+        try:
+            conn.execute("ALTER TABLE race_previews ADD COLUMN stable_plate INTEGER")
+            conn.commit()
+            logger.info("added race_previews.stable_plate column")
+        except Exception as e:
+            logger.debug("stable_plate ALTER failed (likely already exists): %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+
 def _save_raw_html(target_date: date, stadium: int, race_no: int, html: str) -> None:
     out_dir = config.BEFOREINFO_DIR / target_date.isoformat()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -96,10 +113,10 @@ def _supplement_preview(
             INSERT INTO race_previews (
                 race_id, boat_number,
                 weather_number, wind_speed, wind_direction_number,
-                wave_height, temperature, water_temperature,
+                wave_height, temperature, water_temperature, stable_plate,
                 course_number, exhibition_time, start_timing_exhibition,
                 weight_adjustment, tilt_adjustment
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 race_id, boat_number,
@@ -109,6 +126,7 @@ def _supplement_preview(
                 page_data.get("wave_height"),
                 page_data.get("temperature"),
                 page_data.get("water_temperature"),
+                page_data.get("stable_plate"),
                 boat_data.get("course_number"),
                 boat_data.get("exhibition_time"),
                 boat_data.get("start_timing_exhibition"),
@@ -126,6 +144,7 @@ def _supplement_preview(
                wave_height             = COALESCE(wave_height, ?),
                temperature             = COALESCE(temperature, ?),
                water_temperature       = COALESCE(water_temperature, ?),
+               stable_plate            = COALESCE(?, stable_plate),
                course_number           = COALESCE(course_number, ?),
                exhibition_time         = COALESCE(NULLIF(exhibition_time, 0), ?),
                start_timing_exhibition = COALESCE(start_timing_exhibition, ?),
@@ -138,6 +157,7 @@ def _supplement_preview(
             page_data.get("wave_height"),
             page_data.get("temperature"),
             page_data.get("water_temperature"),
+            page_data.get("stable_plate"),
             boat_data.get("course_number"),
             boat_data.get("exhibition_time"),
             boat_data.get("start_timing_exhibition"),
@@ -169,6 +189,7 @@ def collect_for_date(
     """
     config.ensure_dirs()
     conn = db_connect(db_path)
+    _ensure_stable_plate_column(conn)
 
     summary = {
         "date": target_date.isoformat(),

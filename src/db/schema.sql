@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS race_previews (
   wave_height              INTEGER,             -- cm
   temperature              REAL,
   water_temperature        REAL,
+  stable_plate             INTEGER,             -- 0/1: 安定板使用
   -- 艇単位
   course_number            INTEGER,             -- 進入コース (枠なり崩れ検出に重要)
   exhibition_time          REAL,                -- 展示タイム

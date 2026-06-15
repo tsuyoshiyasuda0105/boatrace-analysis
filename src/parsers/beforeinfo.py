@@ -67,6 +67,7 @@ class BeforeInfoBoat(TypedDict, total=False):
 
 class BeforeInfoPage(TypedDict, total=False):
     boats: list[BeforeInfoBoat]
+    stable_plate: Optional[int]
     weather_number: Optional[int]
     wind_speed: Optional[int]
     wind_direction_number: Optional[int]
@@ -151,6 +152,7 @@ def parse_beforeinfo(html: str) -> BeforeInfoPage:
 
     page: BeforeInfoPage = {
         "boats": [],
+        "stable_plate": 1 if "安定板使用" in html else 0,
         "weather_number": None,
         "wind_speed": None,
         "wind_direction_number": None,
