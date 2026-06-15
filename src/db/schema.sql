@@ -163,6 +163,27 @@ CREATE TABLE IF NOT EXISTS race_parts (
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
 
+CREATE TABLE IF NOT EXISTS race_original_exhibitions (
+  -- 会場独自サイトのオリジナル展示データ。取れる会場・取れる項目だけ保存する。
+  race_id            TEXT NOT NULL,
+  boat_number        INTEGER NOT NULL,
+  source_name        TEXT NOT NULL,
+  stadium_number     INTEGER,
+  race_date          TEXT,
+  race_number        INTEGER,
+  lap_time           REAL,     -- 1周タイム
+  turn_time          REAL,     -- まわり足/回り足タイム
+  straight_time      REAL,     -- 直線タイム
+  original_rank      INTEGER,
+  raw_text           TEXT,
+  source_url         TEXT,
+  collected_at       TEXT,
+  PRIMARY KEY (race_id, boat_number, source_name),
+  FOREIGN KEY (race_id) REFERENCES races(race_id)
+);
+CREATE INDEX IF NOT EXISTS idx_original_exhibitions_race
+  ON race_original_exhibitions(race_id);
+
 CREATE TABLE IF NOT EXISTS race_results (
   -- レース結果。1レース×6艇。
   race_id              TEXT NOT NULL,

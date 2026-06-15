@@ -101,11 +101,28 @@ def run_beforeinfo(now: datetime) -> bool:
         scrape_one_race,
         write_updates,
     )
+    from src.collectors import original_exhibition as original_exhibition_collector
 
     due = find_due_races(now, window_min=5, window_max=30, cooldown_min=8)
     print(f"[beforeinfo] due={len(due)}", flush=True)
     if not due:
         return True
+
+    try:
+        s = original_exhibition_collector.collect_for_races(
+            now.date(),
+            [(race_id, stadium, race_no) for race_id, stadium, race_no, _close in due],
+            force=False,
+            save_html=False,
+        )
+        print(
+            "[original-exhibition] "
+            f"targeted={s['races_targeted']} fetched={s['pages_fetched']} "
+            f"found={s['races_found']} rows={s['rows_inserted']}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[original-exhibition] failed: {type(exc).__name__}: {exc}", flush=True)
 
     updates = []
     for race_id, stadium, race_no, close in due:

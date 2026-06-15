@@ -70,6 +70,7 @@ _TABLE_PRIMARY_KEYS = {
     "race_entries": ["race_id", "boat_number"],
     "race_previews": ["race_id", "boat_number"],
     "race_parts": ["race_id", "boat_number", "part_code"],
+    "race_original_exhibitions": ["race_id", "boat_number", "source_name"],
     "race_results": ["race_id", "boat_number"],
     "race_payouts": ["race_id", "bet_type", "combination"],
     "odds_trifecta": ["race_id", "combination", "recorded_at"],
