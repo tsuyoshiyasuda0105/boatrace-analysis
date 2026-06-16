@@ -341,6 +341,18 @@ def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
                 if place is None:
                     continue
                 is_winner = (place == 1 or place == "1")
+                kimarite_to_save = race_kimarite if is_winner else None
+                if is_winner and not kimarite_to_save:
+                    existing = conn.execute(
+                        """
+                        SELECT kimarite
+                          FROM race_results
+                         WHERE race_id = ? AND boat_number = ?
+                        """,
+                        (rid, r.get("racer_boat_number")),
+                    ).fetchone()
+                    if existing and existing[0]:
+                        kimarite_to_save = existing[0]
                 conn.execute("""
                     INSERT OR REPLACE INTO race_results (
                         race_id, boat_number, finishing_position,
@@ -355,7 +367,7 @@ def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
                     r.get("racer_start_timing"),
                     r.get("racer_race_time"),
                     r.get("racer_remarks"),
-                    race_kimarite if is_winner else None,
+                    kimarite_to_save,
                 ))
                 n_results += 1
 

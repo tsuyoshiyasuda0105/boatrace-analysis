@@ -197,6 +197,46 @@ def scrape_results_for_pending_races(target_date: date, conn,
             continue
         pending.append(race_id)
 
+    cur = conn.execute(
+        """
+        SELECT r.race_id, r.race_closed_at
+          FROM races r
+         WHERE r.race_date = ?
+           AND r.race_closed_at IS NOT NULL
+           AND r.race_id IN (
+               SELECT DISTINCT race_id FROM race_payouts WHERE bet_type = 'trifecta'
+           )
+           AND r.race_id IN (
+               SELECT race_id
+                 FROM race_results
+                GROUP BY race_id
+               HAVING SUM(CASE WHEN kimarite IS NOT NULL AND TRIM(kimarite) <> ''
+                               THEN 1 ELSE 0 END) = 0
+           )
+         ORDER BY r.race_closed_at
+        """,
+        (target_date.isoformat(),),
+    )
+    seen = set(pending)
+    for race_id, closed_at in cur.fetchall():
+        if race_id in seen:
+            continue
+        if l4_only and race_id not in l4_candidate_ids:
+            continue
+        if isinstance(closed_at, datetime):
+            close_dt = closed_at
+        else:
+            try:
+                close_dt = datetime.fromisoformat(str(closed_at))
+            except (ValueError, TypeError):
+                continue
+        if now < close_dt + timedelta(minutes=5):
+            continue
+        if now > close_dt + timedelta(hours=24):
+            continue
+        pending.append(race_id)
+        seen.add(race_id)
+
     results = []
     for race_id in pending:
         try:

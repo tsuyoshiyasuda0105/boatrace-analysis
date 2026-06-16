@@ -59,6 +59,13 @@ ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / "logs"
 NOW = datetime.now()
 TODAY = NOW.date()
+PC_SCHEDULE_PAUSED = (
+    (ROOT / ".pc_schedule_paused").exists()
+    or bool(os.getenv("RENDER", "").strip())
+    or os.getenv("BOATRACE_PC_SCHEDULE_PAUSED", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+PC_PAUSED_MSG = "PC-local checks skipped; Render cron is primary"
 
 # 期待スケジュール (task_runs ベース)
 #   ok_h    : この時間以内なら ok
@@ -97,6 +104,8 @@ def _in_active(active):
 
 
 def check_task(task: dict):
+    if PC_SCHEDULE_PAUSED:
+        return "ok", PC_PAUSED_MSG
     if not _in_active(task["active"]):
         return "ok", f"稼働時間外 (現在 {_hour_now():.1f}h)"
     last = task_log.last_success_at(task["name"], run_date=TODAY.isoformat())
@@ -116,6 +125,8 @@ def check_task(task: dict):
 
 
 def check_log(spec: dict):
+    if PC_SCHEDULE_PAUSED:
+        return "ok", PC_PAUSED_MSG
     if not _in_active(spec["active"]):
         return "ok", f"稼働時間外 (現在 {_hour_now():.1f}h)"
     pat = spec["glob"]
@@ -177,6 +188,12 @@ def _local_conn():
     return sqlite3.connect(config.DB_PATH)
 
 
+def _local_checks_paused():
+    if PC_SCHEDULE_PAUSED:
+        return True
+    return False
+
+
 def _supabase_conn():
     if not os.getenv("DATABASE_URL", "").strip():
         return None
@@ -188,6 +205,8 @@ def work_daily_collect():
     """daily_collect が「今日のレース」を実際に取り込んでいるか。
     成功記録あっても races が 0 件ならサボリ。"""
     today = TODAY.isoformat()
+    if _local_checks_paused():
+        return "ok", PC_PAUSED_MSG
     try:
         c = _local_conn()
         n_races = c.execute("SELECT COUNT(*) FROM races WHERE race_date=?",
@@ -217,6 +236,8 @@ def work_morning_predict():
     """morning が「今日の予測」を実際に生成しているか。
     成功記録ありで predictions が極端に少ないならサボリ。"""
     today = TODAY.isoformat()
+    if _local_checks_paused():
+        return "ok", PC_PAUSED_MSG
     try:
         c = _local_conn()
         n = c.execute(
@@ -268,7 +289,7 @@ def work_odds_scheduler():
     except Exception as e:  # noqa: BLE001
         return "error", f"クエリ失敗: {e}"
     if n == 0:
-        return "error", "直近10分のオッズ取得 0 件 (サボリ?)"
+        return "warning", "直近10分のオッズ取得 0 件 (対象レースなしの可能性)"
     if n < 20:
         return "warning", f"直近10分 {n} 件 (少ない)"
     return "ok", f"直近10分 {n} スナップ"
@@ -280,6 +301,8 @@ def work_beforeinfo_live():
     そのレースに live_updated_at が無ければサボリ。"""
     if not (8 <= _hour_now() <= 22):
         return "ok", "稼働時間外"
+    if _local_checks_paused():
+        return "ok", PC_PAUSED_MSG
     today = TODAY.isoformat()
     now_s = NOW.strftime("%Y-%m-%d %H:%M:%S")
     later_s = (NOW + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")

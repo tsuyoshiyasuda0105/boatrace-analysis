@@ -1326,7 +1326,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/race/<race_id>/motor-history/<int:boat_number>")
     @member_only_api
-    @cached(ttl=300, past_ttl=3600)
+    @cached(ttl=1800, past_ttl=86400)
     def race_motor_history(race_id: str, boat_number: int):
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
@@ -1379,30 +1379,52 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         with db_connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT r.race_id, r.race_date, r.race_number,
-                       e.boat_number, e.racer_name, e.racer_number,
-                       e.assigned_motor_top_2_percent,
-                       e.assigned_motor_top_3_percent,
-                       NULLIF(pv.exhibition_time, 0), pv.start_timing_exhibition,
-                       rr.finishing_position, rr.course_number,
-                       rr.start_timing, rr.kimarite
-                  FROM races r
-                  JOIN race_entries e
-                    ON e.race_id = r.race_id
-                  JOIN race_results rr
-                    ON rr.race_id = e.race_id
-                   AND rr.boat_number = e.boat_number
-                  LEFT JOIN race_previews pv
-                    ON pv.race_id = e.race_id
-                   AND pv.boat_number = e.boat_number
-                 WHERE r.stadium_number = ?
-                   AND e.assigned_motor_number = ?
-                   AND r.race_id <> ?
-                   AND r.race_date <= ?
-                   {cycle_filter_sql}
-                   AND rr.finishing_position IS NOT NULL
-                 ORDER BY r.race_date DESC, r.race_number DESC
-                 LIMIT 10
+                WITH hist AS (
+                    SELECT r.race_id, r.race_date, r.race_number,
+                           e.boat_number, e.racer_name, e.racer_number,
+                           e.assigned_motor_top_2_percent,
+                           e.assigned_motor_top_3_percent,
+                           NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                           pv.start_timing_exhibition,
+                           rr.finishing_position, rr.course_number,
+                           rr.start_timing, NULLIF(rr.kimarite, '') AS boat_kimarite
+                      FROM races r
+                      JOIN race_entries e
+                        ON e.race_id = r.race_id
+                      JOIN race_results rr
+                        ON rr.race_id = e.race_id
+                       AND rr.boat_number = e.boat_number
+                      LEFT JOIN race_previews pv
+                        ON pv.race_id = e.race_id
+                       AND pv.boat_number = e.boat_number
+                     WHERE r.stadium_number = ?
+                       AND e.assigned_motor_number = ?
+                       AND r.race_id <> ?
+                       AND r.race_date <= ?
+                       {cycle_filter_sql}
+                       AND rr.finishing_position IS NOT NULL
+                     ORDER BY r.race_date DESC, r.race_number DESC
+                     LIMIT 10
+                )
+                SELECT h.race_id, h.race_date, h.race_number,
+                       h.boat_number, h.racer_name, h.racer_number,
+                       h.assigned_motor_top_2_percent,
+                       h.assigned_motor_top_3_percent,
+                       h.exhibition_time, h.start_timing_exhibition,
+                       h.finishing_position, h.course_number,
+                       h.start_timing,
+                       COALESCE(
+                           h.boat_kimarite,
+                           (
+                               SELECT MAX(NULLIF(kimarite, ''))
+                                 FROM race_results kr
+                                WHERE kr.race_id = h.race_id
+                                  AND kr.kimarite IS NOT NULL
+                                  AND kr.kimarite <> ''
+                           )
+                       ) AS kimarite
+                  FROM hist h
+                 ORDER BY h.race_date DESC, h.race_number DESC
                 """,
                 tuple(params),
             ).fetchall()

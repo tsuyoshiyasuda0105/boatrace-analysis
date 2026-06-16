@@ -467,6 +467,17 @@
           }
         });
       });
+
+      const warmAllMotorHistories = () => {
+        document.querySelectorAll(".motor-history-btn").forEach((button, idx) => {
+          window.setTimeout(() => { fetchHistory(button).catch(() => {}); }, 180 * idx);
+        });
+      };
+      if ("requestIdleCallback" in window) {
+        window.requestIdleCallback(warmAllMotorHistories, { timeout: 1800 });
+      } else {
+        window.setTimeout(warmAllMotorHistories, 800);
+      }
     })();
   </script>
 {% endblock %}
