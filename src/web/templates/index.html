@@ -282,6 +282,8 @@
                   l4Badge.className = `l4-badge l4-${sig.l4.level} l4-rank-${rank}`;
                   if (sig.l4.is_1c80) l4Badge.className += ' l4-1c80';
                   if (sig.l4.is_l4_pro) l4Badge.className += ' l4-pro';
+                  if (sig.l4.is_exacta_niche) l4Badge.className += ' l4-exacta-niche';
+                  if (sig.l4.is_win_niche) l4Badge.className += ' l4-win-niche';
                   // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
                   if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
                   // ♀ 案A: 女性混入レースは専用クラスで視覚的に区別
@@ -294,6 +296,21 @@
                   let title = `${sig.l4.label} | 検証回収率 ${l4Rec}% (n=${l4N}) | `
                             + `1号艇 国1%=${natl} 局1%=${local} | `
                             + `買い目: ${sig.l4.bet || ''} 100円 | ランク: ${rankLabel}`;
+                  if (sig.l4.is_exacta_niche) {
+                    title = `${sig.l4.label} | 2連単ニッチ | 検証回収率 ${l4Rec}% (n=${l4N})`
+                          + ` | 的中率 ${sig.l4.exacta_niche_hit_rate}%`
+                          + ` | 買い目: ${sig.l4.bet || ''} 100円`
+                          + ` | 条件: ${sig.l4.exacta_niche_tag || ''}`
+                          + ` | 相性: ${sig.l4.exacta_niche_ahead}/${sig.l4.exacta_niche_meetings}`;
+                  }
+                  if (sig.l4.is_win_niche) {
+                    title = `${sig.l4.label} | 単勝ニッチ | 検証回収率 ${l4Rec}% (n=${l4N})`
+                          + ` | 的中率 ${sig.l4.win_niche_hit_rate}%`
+                          + ` | 買い目: ${sig.l4.bet || ''} 100円`
+                          + ` | 買い: 単勝2 ${sig.l4.win_niche_buy_odds}倍以上`
+                          + ` | 監視: ${sig.l4.win_niche_watch_odds}倍以上`
+                          + ` | 条件: ${sig.l4.win_niche_tag || ''}`;
+                  }
                   if (sig.l4.is_1c80) {
                     const cwr = (sig.l4.course1_winrate * 100).toFixed(0);
                     const cst = sig.l4.course1_starts;
@@ -314,7 +331,9 @@
                   const onec80 = sig.l4.is_1c80 ? ' 🚀' : '';
                   const pro = sig.l4.is_l4_pro ? ' 🔥' : '';
                   const portfolio = sig.l4.is_portfolio_strong ? ' 🔥強' : '';
-                  l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}${portfolio}`;
+                  const exacta = sig.l4.is_exacta_niche ? ' 🎯2連単' : '';
+                  const winNiche = sig.l4.is_win_niche ? ' 🎯単勝' : '';
+                  l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}${portfolio}${exacta}${winNiche}`;
                   item.appendChild(l4Badge);
                   if (sig.l4.is_portfolio_strong) {
                     const ps = document.createElement('span');
@@ -428,7 +447,7 @@
                     let txt = '🟢観察';
                     let tt = '';
                     // L4-Mid 1-3-2 (オッズ 10-20倍、別 universe) を最優先表示
-                    // Tier A (3号艇国1%≥7): 検証 ROI 175.5% Tier 1 認定 → 強調
+                    // Tier A (3号艇国1%≥7): 1-3-2実オッズ10-20倍で観察中
                     if (sig.l4.is_venus) {
                       cls += ' l4-venus';
                       txt = '🌸 Venus L4';
@@ -436,11 +455,11 @@
                     } else if (sig.l4.is_obs_mid_132_tier_a) {
                       cls += ' obs-mid-132 obs-mid-132-tier-a';
                       txt = '🟦 T-A L4-Mid 1-3-2';
-                      tt = '観察 ★Tier A (T-A): 3号艇 国1%≥7 絞り (検証 ROI 175.5%, n=1312, CI[151,200], Tier 1認定)';
+                      tt = '観察 Tier A (T-A): 1-3-2事前オッズ10-20倍 + 3号艇 国1%≥7 (実オッズ検証 回収率293.3%, n=9、少数観察)';
                     } else if (sig.l4.is_obs_mid_132) {
                       cls += ' obs-mid-132';
                       txt = '🟦L4-Mid 1-3-2';
-                      tt = '観察 Tier B: L4-Mid 全体 (オッズ10-20倍、1-3-2単点、検証 ROI 148.1%, n=10,690)';
+                      tt = '観察 Tier B: L4-Mid 全体 (1-3-2事前オッズ10-20倍、1-3-2単点、実オッズ検証 回収率76.5%, n=198)';
                     } else if (sig.l4.is_obs_toda_7r) {
                       cls += ' obs-toda-7r';
                       txt = '🟢戸田7R';
@@ -781,6 +800,7 @@
               const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
               const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
               const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
+              const isExactaNiche = l4Badge && l4Badge.classList.contains('l4-exacta-niche');
               // 鉄板度バッジから score 取り出し
               const tbEl = u.el.querySelector('.tetsuban-badge');
               const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
@@ -789,15 +809,20 @@
               let rankLabel = l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
                             : l4Cls === 'l4-rank-plus' ? '🥈 L4+'
                             : '⭐ L4';
-              if (is1c80) rankLabel = '🚀 ' + rankLabel + ' 1c80';
-              if (isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';
-              if (u.isPortfolioStrong) rankLabel = '🔥 強監視 ' + rankLabel;
+              if (isExactaNiche) rankLabel = '🎯 2連単';
+              if (!isExactaNiche && is1c80) rankLabel = '🚀 ' + rankLabel + ' 1c80';
+              if (!isExactaNiche && isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';
+              if (!isExactaNiche && u.isPortfolioStrong) rankLabel = '🔥 強監視 ' + rankLabel;
               if (tbStars) rankLabel = tbStars + rankLabel;
               const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
               const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
               recovery = recMatch ? recMatch[1] : '-';
               const racerMatch = l4Title.match(/1号艇\s*([^|]+)/);
               racerInfo = racerMatch ? racerMatch[1].trim() : '';
+              if (isExactaNiche) {
+                const conditionMatch = l4Title.match(/条件:\s*([^|]+)/);
+                racerInfo = conditionMatch ? conditionMatch[1].trim() : '';
+              }
               pickType = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
               // 除外系 (帯外/雨/女性混合) はすべて既存の is-odds-mismatch
               // styling でグレー表示 (完全消滅させない、2026-05-28 修正)。

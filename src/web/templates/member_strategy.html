@@ -191,7 +191,7 @@
         </span>
       </div>
       <div class="summary-card obs-prime"
-           title="観察。L4-Mid: オッズ10-20倍帯で1-3-2単点 (全体)。検証 ROI 148.1% (n=10,690)">
+           title="観察。L4-Mid: 1-3-2の事前オッズ10-20倍で1-3-2単点。実オッズ検証 回収率76.5% (n=198)">
         <span class="card-label">🟦 L4-Mid 1-3-2 (Tier B)</span>
         <span class="card-value">
           {% if totals.mid_132_tri_roi is not none %}{{ '%+.1f' | format(totals.mid_132_tri_roi) }}%{% else %}-{% endif %}
@@ -201,11 +201,11 @@
           {% if totals.mid_132_tri_bets > 0 %}
           / 損益 {{ totals.mid_132_tri_profit | signed_comma }}円
           {% endif %}
-          <br><small>観察 (検証 148.1%, n=10,690、Tier 2)</small>
+          <br><small>観察 (実オッズ検証 76.5%, n=198)</small>
         </span>
       </div>
       <div class="summary-card obs-prime"
-           title="観察 Tier A。3号艇 国1%≥7 絞り。検証 ROI 175.5% (n=1,312, CI[150.8, 200.3], Tier 1認定)">
+           title="観察 Tier A。1-3-2の事前オッズ10-20倍 + 3号艇 国1%≥7。実オッズ検証 回収率293.3% (n=9、少数観察)">
         <span class="card-label">🟦+ L4-Mid+ 1-3-2 (Tier A)</span>
         <span class="card-value">
           {% if totals.mid_132_tier_a_tri_roi is not none %}{{ '%+.1f' | format(totals.mid_132_tier_a_tri_roi) }}%{% else %}-{% endif %}
@@ -215,7 +215,7 @@
           {% if totals.mid_132_tier_a_tri_bets > 0 %}
           / 損益 {{ totals.mid_132_tier_a_tri_profit | signed_comma }}円
           {% endif %}
-          <br><small>★Tier 1 観察 (検証 175.5%, n=1,312、CI 下限 150.8%)</small>
+          <br><small>観察 (実オッズ検証 293.3%, n=9、少数)</small>
         </span>
       </div>
       <div class="summary-card obs-prime"
@@ -230,6 +230,34 @@
           / 損益 {{ totals.venus_tri_profit | signed_comma }}円
           {% endif %}
           <br><small>独立 universe (案A除外から分離、検証 175.5%, n=502)</small>
+        </span>
+      </div>
+      <div class="summary-card obs-prime"
+           title="監視。尼崎 + 2号艇モーター2連率55%以上で2連単1-4。検証 回収率180.7% / 的中率22.2% / n=99">
+        <span class="card-label">🎯 尼崎M 2連単1-4</span>
+        <span class="card-value">
+          {% if totals.amagasaki_motor_exa_roi is not none %}{{ '%+.1f' | format(totals.amagasaki_motor_exa_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.amagasaki_motor_exa_bets }} HIT={{ totals.amagasaki_motor_exa_hits }}
+          {% if totals.amagasaki_motor_exa_bets > 0 %}
+          / 損益 {{ totals.amagasaki_motor_exa_profit | signed_comma }}円
+          {% endif %}
+          <br><small>監視 (検証 回収率180.7%, 的中22.2%, n=99)</small>
+        </span>
+      </div>
+      <div class="summary-card obs-prime"
+           title="監視。桐生 + 3号艇2着内予測が1号艇より8pt以上 + 4号艇より5pt以上で単勝2。検証 回収率181.0% / 的中率24.9% / n=209。買い目安は単勝2が6.0倍以上。">
+        <span class="card-label">🎯 桐生 単勝2</span>
+        <span class="card-value">
+          {% if totals.kiryu_win2_roi is not none %}{{ '%+.1f' | format(totals.kiryu_win2_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.kiryu_win2_bets }} HIT={{ totals.kiryu_win2_hits }}
+          {% if totals.kiryu_win2_bets > 0 %}
+          / 損益 {{ totals.kiryu_win2_profit | signed_comma }}円
+          {% endif %}
+          <br><small>監視 (検証 回収率181.0%, 的中24.9%, n=209 / 買い6倍以上)</small>
         </span>
       </div>
     </div>
@@ -607,8 +635,8 @@
       💡 <strong>🟢 戸田 7R / 🟦 L4-Mid 1-3-2 (Tier A/B) / 🌸 Venus 観察中。</strong><br>
       <small>
         🟢 戸田 7R (B除外内だが 7R 限定で +EV、検証 ROI 171.5%, n=106) ／
-        🟦 L4-Mid Tier B (オッズ 10-20倍帯 + 1-3-2 単点 全体、検証 ROI 148.1%, n=10,690) ／
-        🟦+ <strong>L4-Mid Tier A</strong> (+3号艇 国1%≥7 絞り、検証 ROI <strong>175.5%</strong>, n=1,312, CI[151,200], <strong>Tier 1</strong>) ／
+        🟦 L4-Mid Tier B (1-3-2事前オッズ10-20倍 + 1-3-2単点、実オッズ検証 回収率76.5%, n=198) ／
+        🟦+ <strong>L4-Mid Tier A</strong> (+3号艇 国1%≥7 絞り、実オッズ検証 回収率<strong>293.3%</strong>, n=9、少数観察) ／
         🌸 <strong>Venus L4</strong> (全女子戦 n_female=6、A1+B除外+雨除外、検証 ROI <strong>175.5%</strong>, n=502)<br>
         実運用 (本日候補リスト + メール通知) はまだ無効。3 ヶ月実績で採用判断します。
       </small>
@@ -623,8 +651,12 @@
             <th colspan="3">🟦 Tier B (全)</th>
             <th colspan="3">🟦+ Tier A (★)</th>
             <th colspan="3">🌸 Venus L4</th>
+            <th colspan="3">🎯 尼崎M 1-4</th>
+            <th colspan="3">🎯 桐生 単勝2</th>
           </tr>
           <tr>
+            <th>HIT</th><th>回収</th><th>損益</th>
+            <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
@@ -633,7 +665,7 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
+          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0) or (r.kiryu_win2_bets and r.kiryu_win2_bets > 0) %}
           {% if has_planned %}
           <tr class="has-l4-observe">
             <td class="date-cell">
@@ -676,18 +708,36 @@
             <td class="num {% if r.venus_tri_profit and r.venus_tri_profit > 0 %}pos{% elif r.venus_tri_profit and r.venus_tri_profit < 0 %}neg{% endif %}">
               {% if r.venus_tri_bets and r.venus_tri_bets > 0 %}{{ r.venus_tri_profit | signed_comma }}{% else %}-{% endif %}
             </td>
+
+            {# 尼崎M 2連単1-4 列 #}
+            <td class="num">{{ r.amagasaki_motor_exa_hits or 0 }}/{{ r.amagasaki_motor_exa_bets or 0 }}</td>
+            <td class="num {% if r.amagasaki_motor_exa_recovery and r.amagasaki_motor_exa_recovery >= 100 %}pos{% elif r.amagasaki_motor_exa_recovery %}neg{% endif %}">
+              {% if r.amagasaki_motor_exa_recovery is not none %}{{ '%.0f' | format(r.amagasaki_motor_exa_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.amagasaki_motor_exa_profit and r.amagasaki_motor_exa_profit > 0 %}pos{% elif r.amagasaki_motor_exa_profit and r.amagasaki_motor_exa_profit < 0 %}neg{% endif %}">
+              {% if r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0 %}{{ r.amagasaki_motor_exa_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
+
+            {# 桐生 単勝2 列 #}
+            <td class="num">{{ r.kiryu_win2_hits or 0 }}/{{ r.kiryu_win2_bets or 0 }}</td>
+            <td class="num {% if r.kiryu_win2_recovery and r.kiryu_win2_recovery >= 100 %}pos{% elif r.kiryu_win2_recovery %}neg{% endif %}">
+              {% if r.kiryu_win2_recovery is not none %}{{ '%.0f' | format(r.kiryu_win2_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.kiryu_win2_profit and r.kiryu_win2_profit > 0 %}pos{% elif r.kiryu_win2_profit and r.kiryu_win2_profit < 0 %}neg{% endif %}">
+              {% if r.kiryu_win2_bets and r.kiryu_win2_bets > 0 %}{{ r.kiryu_win2_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
           </tr>
           {% endif %}
           {% endfor %}
           {% set planned_total = namespace(n=0) %}
           {% for r in rows %}
-            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) %}
+            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0) or (r.kiryu_win2_bets and r.kiryu_win2_bets > 0) %}
               {% set planned_total.n = planned_total.n + 1 %}
             {% endif %}
           {% endfor %}
           {% if planned_total.n == 0 %}
           <tr class="is-empty">
-            <td colspan="14" class="num muted">企画レース観察データなし</td>
+            <td colspan="20" class="num muted">企画レース観察データなし</td>
           </tr>
           {% endif %}
         </tbody>
@@ -734,6 +784,26 @@
             </td>
             <td class="num {% if totals.venus_tri_profit and totals.venus_tri_profit > 0 %}pos{% elif totals.venus_tri_profit and totals.venus_tri_profit < 0 %}neg{% endif %}">
               {% if totals.venus_tri_bets > 0 %}<strong>{{ totals.venus_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# 尼崎M 2連単1-4 合計 #}
+            <td class="num"><strong>{{ totals.amagasaki_motor_exa_hits }}/{{ totals.amagasaki_motor_exa_bets }}</strong>
+              {% if totals.amagasaki_motor_exa_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.amagasaki_motor_exa_hits / totals.amagasaki_motor_exa_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.amagasaki_motor_exa_recovery and totals.amagasaki_motor_exa_recovery >= 100 %}pos{% elif totals.amagasaki_motor_exa_recovery %}neg{% endif %}">
+              {% if totals.amagasaki_motor_exa_recovery is not none %}<strong>{{ '%.0f' | format(totals.amagasaki_motor_exa_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.amagasaki_motor_exa_profit and totals.amagasaki_motor_exa_profit > 0 %}pos{% elif totals.amagasaki_motor_exa_profit and totals.amagasaki_motor_exa_profit < 0 %}neg{% endif %}">
+              {% if totals.amagasaki_motor_exa_bets > 0 %}<strong>{{ totals.amagasaki_motor_exa_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            {# 桐生 単勝2 合計 #}
+            <td class="num"><strong>{{ totals.kiryu_win2_hits }}/{{ totals.kiryu_win2_bets }}</strong>
+              {% if totals.kiryu_win2_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.kiryu_win2_hits / totals.kiryu_win2_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.kiryu_win2_recovery and totals.kiryu_win2_recovery >= 100 %}pos{% elif totals.kiryu_win2_recovery %}neg{% endif %}">
+              {% if totals.kiryu_win2_recovery is not none %}<strong>{{ '%.0f' | format(totals.kiryu_win2_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.kiryu_win2_profit and totals.kiryu_win2_profit > 0 %}pos{% elif totals.kiryu_win2_profit and totals.kiryu_win2_profit < 0 %}neg{% endif %}">
+              {% if totals.kiryu_win2_bets > 0 %}<strong>{{ totals.kiryu_win2_profit | signed_comma }}</strong>{% else %}-{% endif %}
             </td>
           </tr>
         </tfoot>

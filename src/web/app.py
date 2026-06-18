@@ -270,6 +270,72 @@ def _racer_names(race_id: str) -> dict[int, str]:
     return {bn: name for bn, name in rows}
 
 
+def _kimarite_skill_tags_for_race(race_id: str) -> dict[int, dict]:
+    """Return pre-race kimarite skill tags by boat number."""
+    info = _race_basic_info(race_id)
+    if not info:
+        return {}
+    with db_connect() as conn:
+        rows = conn.execute("""
+            WITH current_entries AS (
+                SELECT boat_number, racer_number
+                  FROM race_entries
+                 WHERE race_id = ?
+            )
+            SELECT c.boat_number, rr.kimarite, COUNT(*) AS wins
+              FROM current_entries c
+              JOIN race_entries e
+                ON e.racer_number = c.racer_number
+               AND e.boat_number = c.boat_number
+              JOIN races r
+                ON r.race_id = e.race_id
+               AND r.race_date < ?
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+             WHERE rr.finishing_position = 1
+               AND rr.kimarite IS NOT NULL
+               AND rr.kimarite <> ''
+             GROUP BY c.boat_number, rr.kimarite
+             ORDER BY c.boat_number, wins DESC, rr.kimarite
+        """, (race_id, info["race_date"])).fetchall()
+
+    grouped: dict[int, list[tuple[str, int]]] = {}
+    for boat_number, kimarite, wins in rows:
+        grouped.setdefault(int(boat_number), []).append((str(kimarite), int(wins or 0)))
+
+    tags: dict[int, dict] = {}
+    for boat_number, items in grouped.items():
+        top_kimarite, top_wins = items[0]
+        threshold = 8 if boat_number == 1 and top_kimarite == "逃げ" else 3
+        if top_wins < threshold:
+            continue
+        label = f"{top_kimarite}{top_wins}勝"
+        if boat_number == 1 and top_kimarite == "逃げ" and top_wins >= 8:
+            label = f"逃げ{top_wins}勝+"
+        tags[boat_number] = {
+            "kimarite": top_kimarite,
+            "wins": top_wins,
+            "label": label,
+            "is_strong_escape": boat_number == 1 and top_kimarite == "逃げ" and top_wins >= 8,
+        }
+    return tags
+
+
+def _attach_kimarite_skill_tags(race_id: str, preds: list[dict]) -> None:
+    tags = _kimarite_skill_tags_for_race(race_id)
+    if not tags:
+        return
+    for p in preds:
+        try:
+            boat_number = int(p.get("boat_number"))
+        except (TypeError, ValueError):
+            continue
+        tag = tags.get(boat_number)
+        if tag:
+            p["kimarite_skill"] = tag
+
+
 # Bootstrap CI で確実マイナスと検証された会場 (v0.2 検証)
 _LOSING_VENUES = {2: "戸田", 7: "蒲郡", 10: "三国", 21: "芦屋"}
 _QUESTIONABLE_VENUES = {4: "平和島", 8: "常滑", 19: "下関", 24: "大村"}
@@ -1172,6 +1238,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         try:
             preds = _race_predictions(predictor, race_id)
+            _attach_kimarite_skill_tags(race_id, preds)
         except Exception as e:
             logger.exception("prediction failed: %s", race_id)
             # エラーをユーザー向けメッセージに変換
@@ -1320,6 +1387,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return jsonify({"error": "not found"}), 404
         try:
             preds = _race_predictions(predictor, race_id)
+            _attach_kimarite_skill_tags(race_id, preds)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
         return jsonify({"info": info, "predictions": preds})
@@ -1553,9 +1621,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             cutoff_date_iso = "1900-01-01"
 
         results: dict[str, dict] = {}
+        mid132_results: dict[str, int] = {}
         all_race_info: dict[str, dict] = {}
         morning_pred: dict[str, float] = {}
         course1_stats: dict[str, tuple[float, int]] = {}
+        exacta_pair_affinity: dict[str, dict] = {}
 
         # T-X snapshot の優先度 (小さいほど優先)
         # T-5min を最優先 (実運用での投票タイミング = レース 5 分前)
@@ -1617,6 +1687,34 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     else:
                         raise
 
+                # Tier A/B is a 1-3-2 strategy, so keep its odds separate from
+                # the 1-2-3 favorite odds used by the core L4 strategy.
+                try:
+                    cur = conn.execute("""
+                        SELECT r.race_id, o.snapshot_label, o.odds * 100 AS payout_132
+                          FROM races r
+                          JOIN odds_trifecta o ON r.race_id = o.race_id
+                         WHERE r.race_date = ?
+                           AND o.combination = '1-3-2'
+                           AND o.snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min')
+                    """, (target_date,))
+                    rid_snaps_132: dict[str, list[tuple[str, int]]] = {}
+                    for rid, label, mp in cur.fetchall():
+                        if not mp:
+                            continue
+                        rid_snaps_132.setdefault(rid, []).append((label, int(mp)))
+                    for rid, snaps in rid_snaps_132.items():
+                        mid_snaps = [(lbl, mp) for lbl, mp in snaps if 1000 <= mp < 2000]
+                        if mid_snaps:
+                            label, mp = sorted(mid_snaps, key=lambda x: _SNAP_PRIORITY.get(x[0], 99))[0]
+                            mid132_results[rid] = mp
+                except Exception as e:
+                    logger.warning("1-3-2 odds query failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
                 # === 2. final 払戻 (T-X 無い過去日フォールバック) ===
                 try:
                     cur = conn.execute("""
@@ -1645,17 +1743,30 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e.class_number,
                                e.national_top_1_percent, e.local_top_1_percent,
                                e.avg_start_timing, e.age,
+                               e.racer_number AS boat1_racer,
+                               e.assigned_motor_top_2_percent AS boat1_motor_top2,
                                pv.weather_number, pv.start_timing_exhibition,
                                pv.wind_speed,
+                               e2.racer_number AS boat2_racer,
                                e2.national_top_2_percent AS boat2_top2,
                                e2.assigned_motor_top_2_percent AS boat2_motor_top2,
                                e3.national_top_1_percent AS boat3_natl_1,
-                               COALESCE(fem.n_female, 0) AS n_female
+                               p1.prob_top_2 AS boat1_pred_top2,
+                               p3.prob_top_2 AS boat3_pred_top2,
+                               p4.prob_top_2 AS boat4_pred_top2,
+                               COALESCE(fem.n_female, 0) AS n_female,
+                               COALESCE(pt.program_type, '') AS program_type,
+                               COALESCE(pt.program_name, '') AS program_name,
+                               COALESCE(pt.is_fixed_entry, 0) AS is_fixed_entry
                         FROM races r
                         LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                         LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                         LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
+                        LEFT JOIN predictions p1 ON p1.race_id = r.race_id AND p1.boat_number = 1
+                        LEFT JOIN predictions p3 ON p3.race_id = r.race_id AND p3.boat_number = 3
+                        LEFT JOIN predictions p4 ON p4.race_id = r.race_id AND p4.boat_number = 4
                         LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+                        LEFT JOIN race_program_tags pt ON pt.race_id = r.race_id
                         LEFT JOIN (
                             SELECT ef.race_id, COUNT(*) AS n_female
                               FROM race_entries ef
@@ -1666,9 +1777,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         WHERE r.race_date = ?
                     """, (target_date,))
                     for (rid, stadium, grade, race_no, race_closed_at, cls, natl1, loc1,
-                         avg_st, age, weather, ex_st, wind_speed,
-                         boat2_top2, boat2_motor_top2, boat3_natl_1,
-                         n_female) in cur.fetchall():
+                         avg_st, age, boat1_racer, boat1_motor_top2,
+                         weather, ex_st, wind_speed,
+                         boat2_racer, boat2_top2, boat2_motor_top2, boat3_natl_1,
+                         boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
+                         n_female, program_type, program_name, is_fixed_entry) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade,
                             "race_number": race_no,
@@ -1676,12 +1789,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "class": cls,
                             "natl_1": natl1, "local_1": loc1,
                             "avg_st": avg_st, "age": age,
+                            "boat1_racer": boat1_racer,
+                            "boat1_motor_top2": boat1_motor_top2,
                             "weather": weather, "ex_st": ex_st,
                             "wind_speed": wind_speed,
+                            "boat2_racer": boat2_racer,
                             "boat2_top2": boat2_top2,
                             "boat2_motor_top2": boat2_motor_top2,
                             "boat3_natl_1": boat3_natl_1,
+                            "boat1_pred_top2": boat1_pred_top2,
+                            "boat3_pred_top2": boat3_pred_top2,
+                            "boat4_pred_top2": boat4_pred_top2,
                             "n_female": n_female,
+                            "program_type": program_type,
+                            "program_name": program_name,
+                            "is_fixed_entry": is_fixed_entry,
                         }
                 except Exception as e:
                     logger.warning("all_race_info query failed: %s", e)
@@ -1766,6 +1888,66 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             conn.rollback()
                         except Exception:
                             pass
+
+
+                # === 6. exacta niche pair affinity (current boat1 racer vs boat2 racer) ===
+                try:
+                    target_pairs = {
+                        (info.get("boat1_racer"), info.get("boat2_racer"))
+                        for info in all_race_info.values()
+                        if info.get("boat1_racer") and info.get("boat2_racer")
+                    }
+                    if target_pairs:
+                        r1s = sorted({p[0] for p in target_pairs})
+                        r2s = sorted({p[1] for p in target_pairs})
+                        q1 = ",".join("?" for _ in r1s)
+                        q2 = ",".join("?" for _ in r2s)
+                        cur = conn.execute(f"""
+                            SELECT e1.racer_number AS r1, e2.racer_number AS r2,
+                                   rr1.finishing_position AS p1,
+                                   rr2.finishing_position AS p2
+                              FROM race_entries e1
+                              JOIN race_entries e2
+                                ON e2.race_id = e1.race_id
+                               AND e2.racer_number <> e1.racer_number
+                              JOIN races rh ON rh.race_id = e1.race_id
+                              JOIN race_results rr1
+                                ON rr1.race_id = e1.race_id
+                               AND rr1.boat_number = e1.boat_number
+                              JOIN race_results rr2
+                                ON rr2.race_id = e2.race_id
+                               AND rr2.boat_number = e2.boat_number
+                             WHERE rh.race_date < ?
+                               AND e1.racer_number IN ({q1})
+                               AND e2.racer_number IN ({q2})
+                               AND rr1.finishing_position IS NOT NULL
+                               AND rr2.finishing_position IS NOT NULL
+                        """, [target_date, *r1s, *r2s])
+                        pair_stats: dict[tuple[int, int], list[int]] = {}
+                        for r1, r2, p1, p2 in cur.fetchall():
+                            key = (r1, r2)
+                            if key not in target_pairs:
+                                continue
+                            rec = pair_stats.setdefault(key, [0, 0])
+                            rec[0] += 1
+                            if p1 < p2:
+                                rec[1] += 1
+                        for rid, info in all_race_info.items():
+                            key = (info.get("boat1_racer"), info.get("boat2_racer"))
+                            meetings, ahead = pair_stats.get(key, [0, 0])
+                            rate = (ahead / meetings) if meetings else None
+                            exacta_pair_affinity[rid] = {
+                                "meetings": meetings,
+                                "ahead": ahead,
+                                "rate": rate,
+                                "is_boat1_over_boat2": bool(meetings >= 2 and rate is not None and rate >= 0.60),
+                            }
+                except Exception as e:
+                    logger.warning("exacta pair affinity fetch failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
         except Exception as e:
             logger.exception("market-signals setup failed: %s", e)
 
@@ -1959,9 +2141,140 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["tetsuban_label"] = "強監視 5★"
             return base
 
+
+        def _evaluate_exacta_niche(stadium, race_number, boat1_motor_top2=None,
+                                   boat2_motor_top2=None, program_type=None,
+                                   pair_affinity=None):
+            """Evaluate verified exacta niche strategies."""
+            try:
+                rn = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
+            try:
+                m1 = float(boat1_motor_top2) if boat1_motor_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                m1 = 0.0
+            try:
+                m2 = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                m2 = 0.0
+
+            if stadium == 13 and m2 >= 55.0:
+                return {
+                    "level": "exacta_niche_amagasaki_motor",
+                    "label": "尼崎M 2連単1-4",
+                    "recovery": 180.7,
+                    "n": 99,
+                    "bet": "2連単 1-4",
+                    "rank": "exacta_niche",
+                    "rank_label": "2連単ニッチ",
+                    "rank_emoji": "2R",
+                    "natl_1": None,
+                    "local_1": None,
+                    "is_exacta_niche": True,
+                    "exacta_niche_tag": "尼崎 + 2号艇モーター2連率55%以上",
+                    "exacta_niche_hit_rate": 22.2,
+                    "exacta_niche_recovery": 180.7,
+                    "exacta_niche_meetings": None,
+                    "exacta_niche_ahead": None,
+                    "exacta_niche_rate": None,
+                    "tetsuban_score": 5,
+                    "tetsuban_label": "2連単 5★",
+                }
+            pair = pair_affinity or {}
+            if not pair.get("is_boat1_over_boat2"):
+                return None
+            meetings = pair.get("meetings") or 0
+            ahead = pair.get("ahead") or 0
+            rate = pair.get("rate")
+            rate_pct = round(rate * 100, 1) if rate is not None else None
+
+            if stadium == 19 and rn == 7 and m1 >= 45.0 and meetings >= 5:
+                return {
+                    "level": "exacta_niche_shimonoseki7",
+                    "label": "下関7R 2連単1-4",
+                    "recovery": 195.3,
+                    "n": 34,
+                    "bet": "2連単 1-4",
+                    "rank": "exacta_niche",
+                    "rank_label": "2連単ニッチ",
+                    "rank_emoji": "2R",
+                    "natl_1": None,
+                    "local_1": None,
+                    "is_exacta_niche": True,
+                    "exacta_niche_tag": "下関7R + 1号艇モーター2連率45%以上 + 1号艇が2号艇に相性優位",
+                    "exacta_niche_hit_rate": 32.4,
+                    "exacta_niche_recovery": 195.3,
+                    "exacta_niche_meetings": meetings,
+                    "exacta_niche_ahead": ahead,
+                    "exacta_niche_rate": rate_pct,
+                    "tetsuban_score": 5,
+                    "tetsuban_label": "2連単 5★",
+                }
+
+            if program_type == "fixed_B1A" and m1 >= 40.0:
+                return {
+                    "level": "exacta_niche_fixed_b1a",
+                    "label": "進入固定B1A 2連単1-2",
+                    "recovery": 140.1,
+                    "n": 93,
+                    "bet": "2連単 1-2",
+                    "rank": "exacta_niche",
+                    "rank_label": "2連単ニッチ",
+                    "rank_emoji": "2R",
+                    "natl_1": None,
+                    "local_1": None,
+                    "is_exacta_niche": True,
+                    "exacta_niche_tag": "進入固定B1A + 1号艇モーター2連率40%以上 + 1号艇が2号艇に相性優位",
+                    "exacta_niche_hit_rate": 29.0,
+                    "exacta_niche_recovery": 140.1,
+                    "exacta_niche_meetings": meetings,
+                    "exacta_niche_ahead": ahead,
+                    "exacta_niche_rate": rate_pct,
+                    "tetsuban_score": 4,
+                    "tetsuban_label": "2連単 4★",
+                }
+            return None
+
+        def _evaluate_win_niche(stadium, boat1_top2=None, boat3_top2=None, boat4_top2=None):
+            """Evaluate verified win-bet niche strategies."""
+            try:
+                b1 = float(boat1_top2) if boat1_top2 is not None else 0.0
+                b3 = float(boat3_top2) if boat3_top2 is not None else 0.0
+                b4 = float(boat4_top2) if boat4_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                return None
+            if stadium == 1 and (b3 - b1) >= 0.08 and (b3 - b4) >= 0.05:
+                return {
+                    "level": "win_niche_kiryu_win2",
+                    "label": "桐生 単勝2",
+                    "recovery": 181.0,
+                    "n": 209,
+                    "bet": "単勝 2",
+                    "rank": "win_niche",
+                    "rank_label": "単勝ニッチ",
+                    "rank_emoji": "W2",
+                    "natl_1": None,
+                    "local_1": None,
+                    "is_win_niche": True,
+                    "win_niche_tag": "桐生 + 3号艇2着内予測が1号艇より8pt以上 + 4号艇より5pt以上",
+                    "win_niche_hit_rate": 24.9,
+                    "win_niche_recovery": 181.0,
+                    "win_niche_buy_odds": 6.0,
+                    "win_niche_watch_odds": 4.0,
+                    "boat1_top2": b1,
+                    "boat3_top2": b3,
+                    "boat4_top2": b4,
+                    "is_reference": False,
+                    "tetsuban_score": 5,
+                    "tetsuban_label": "単勝2 5★",
+                }
+            return None
+
         def _evaluate_l4(stadium, grade, cls, mp_int, natl_1=None, local_1=None,
                          race_id=None, avg_st=None, age=None, ex_st=None,
-                         boat2_top2=None, race_number=None, boat3_natl_1=None):
+                         boat2_top2=None, race_number=None, boat3_natl_1=None,
+                         mid132_mp_int=None):
             """確定オッズベース L4 マーク判定 (L4+ / L4++ ランク付き)
 
             一般戦 (grade=5) は F1 条件
@@ -1972,8 +2285,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """
             in_500_1000 = mp_int is not None and 500 <= mp_int < 1000
             # L4-Mid (2026-05-19 追加): オッズ 10-20倍帯で 1-3-2 単点。
-            # 検証 ROI 148.1% (n=10,690)、L4 帯と別 universe (排他)。
+            # 検証 ???76.5% (n=198)、L4 帯と別 universe (排他)。
             in_1000_2000 = mp_int is not None and 1000 <= mp_int < 2000
+            mid132_in_1000_2000 = mid132_mp_int is not None and 1000 <= mid132_mp_int < 2000
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
             # 企画レース観察 (2026-05-19 追加): 戸田 7R は B除外を無視して
             # L4 帯 + A1 のみで観察対象とする (3 ヶ月実績で採用判断)
@@ -1987,13 +2301,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             )
             # L4-Mid 観察対象: A1 + B除外 + 10-20倍帯
             is_obs_mid_132 = (
-                in_1000_2000 and cls == 1 and b_excluded
+                mid132_in_1000_2000 and cls == 1 and b_excluded
             )
             if not (in_500_1000 and b_excluded):
                 # L4-Mid (10-20倍 + B除外 + A1) を最優先で判定
                 if is_obs_mid_132:
                     # Tier A 判定 (2026-05-19): 3号艇 国1% ≥ 7%
-                    # 4 年検証 ROI 175.5% / CI [150.8, 200.3] / Tier 1 認定
+                    # 4 年検証 ???293.3% / n=9 ???? 認定
                     try:
                         n1_3 = float(boat3_natl_1) if boat3_natl_1 is not None else 0.0
                     except (TypeError, ValueError):
@@ -2002,9 +2316,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     return {
                         "level": "obs_mid_132_tier_a" if is_tier_a else "obs_mid_132",
                         "label": "🟦 T-A L4-Mid 1-3-2 (3号艇強)" if is_tier_a else "🟦L4-Mid 1-3-2",
-                        "recovery": 175.5 if is_tier_a else 148.1,
+                        "recovery": 293.3 if is_tier_a else 76.5,
                         "bet": "3連単 1-3-2",
-                        "n": 1312 if is_tier_a else 10690,
+                        "n": 9 if is_tier_a else 198,
                         "is_reference": True,
                         "is_obs_mid_132": True,
                         "is_obs_mid_132_tier_a": is_tier_a,
@@ -2469,9 +2783,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ex_st = info.get("ex_st")
             weather = info.get("weather")
             race_closed_at = info.get("race_closed_at")
+            boat1_motor_top2 = info.get("boat1_motor_top2")
             boat2_top2 = info.get("boat2_top2")
             boat2_motor_top2 = info.get("boat2_motor_top2")
             boat3_natl_1 = info.get("boat3_natl_1")
+            boat1_pred_top2 = info.get("boat1_pred_top2")
+            boat3_pred_top2 = info.get("boat3_pred_top2")
+            boat4_pred_top2 = info.get("boat4_pred_top2")
+            program_type = info.get("program_type")
             wind_speed = info.get("wind_speed")
             n_female = info.get("n_female", 0) or 0
             is_rain = (weather == 3)
@@ -2482,6 +2801,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # 若手女性混入で 96.3% (analyze_female_deep.py 分析4) に崩落。
             is_female_present = (n_female > 0)
             data = results.get(rid)
+            if data is None and rid in mid132_results:
+                data = {"min_payout": mid132_results[rid], "source": "1-3-2"}
 
             if data:
                 # === 確定オッズあり (L4 マーク) ===
@@ -2503,7 +2824,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 l4 = _evaluate_l4(stadium, grade, cls, mp, natl_1, local_1, race_id=rid,
                                   avg_st=avg_st, age=age, ex_st=ex_st,
                                   boat2_top2=boat2_top2, race_number=race_no_info,
-                                  boat3_natl_1=boat3_natl_1)
+                                  boat3_natl_1=boat3_natl_1,
+                                  mid132_mp_int=mid132_results.get(rid))
                 l4_portfolio = _evaluate_l4_portfolio_strong(
                     stadium, grade, cls, natl_1=natl_1,
                     avg_st=avg_st, age=age,
@@ -2512,8 +2834,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     n_female=n_female, target_date_iso=target_date,
                 )
                 l4 = _apply_l4_portfolio_strong(l4, l4_portfolio)
+                exacta_niche = _evaluate_exacta_niche(
+                    stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
+                    boat2_motor_top2=boat2_motor_top2,
+                    program_type=program_type,
+                    pair_affinity=exacta_pair_affinity.get(rid),
+                )
+                if exacta_niche:
+                    l4 = exacta_niche
+                win_niche = _evaluate_win_niche(
+                    stadium,
+                    boat1_top2=boat1_pred_top2,
+                    boat3_top2=boat3_pred_top2,
+                    boat4_top2=boat4_pred_top2,
+                )
+                if win_niche:
+                    l4 = win_niche
 
-                if l4 is not None:
+                if l4 is not None and not l4.get("is_exacta_niche") and not l4.get("is_win_niche"):
                     prob_first = morning_pred.get(rid)
                     morning_l4 = _evaluate_morning_l4(
                         stadium, grade, cls, prob_first,
@@ -2554,7 +2892,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
                 # バッジは出すが is_rain=True で本日候補リストから除外
-                if l4 and is_rain_excluded:
+                if l4 and not l4.get("is_exacta_niche") and not l4.get("is_win_niche") and is_rain_excluded:
                     l4["is_rain"] = True
                     l4["rain_exclusion_active"] = True
                     l4["is_reference"] = True  # 候補リスト除外フラグ
@@ -2562,7 +2900,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
                 # 🌸 Venus パス: 全女子戦 (n_female=6) は案A除外対象外 (ROI 175.5%, n=502)
                 # 混合レース (n_female=1-5) は ROI 低下のため案A除外継続。
-                if l4 and is_female_present:
+                if l4 and not l4.get("is_exacta_niche") and not l4.get("is_win_niche") and is_female_present:
                     if n_female == 6:
                         l4["is_venus"] = True
                         l4["is_female_present"] = True
@@ -2624,13 +2962,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     n_female=n_female, target_date_iso=target_date,
                 )
                 morning_l4 = _apply_l4_portfolio_strong(morning_l4, l4_portfolio)
+                exacta_niche = _evaluate_exacta_niche(
+                    stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
+                    boat2_motor_top2=boat2_motor_top2,
+                    program_type=program_type,
+                    pair_affinity=exacta_pair_affinity.get(rid),
+                )
+                if exacta_niche:
+                    morning_l4 = exacta_niche
+                win_niche = _evaluate_win_niche(
+                    stadium,
+                    boat1_top2=boat1_pred_top2,
+                    boat3_top2=boat3_pred_top2,
+                    boat4_top2=boat4_pred_top2,
+                )
+                if win_niche:
+                    morning_l4 = win_niche
                 if morning_l4:
-                    if is_rain_excluded:
+                    if is_rain_excluded and not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche"):
                         morning_l4["is_rain"] = True
                         morning_l4["rain_exclusion_active"] = True
                         morning_l4["is_reference"] = True
                         morning_l4["label"] = f"☔{morning_l4['label']} (雨除外)"
-                    if is_female_present:
+                    if is_female_present and not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche"):
                         if n_female == 6:
                             morning_l4["is_venus"] = True
                             morning_l4["is_female_present"] = True
@@ -2674,6 +3028,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
     STRICT_ODDS_DAILY_START = "2026-05-30"
+    MID132_ODDS_CACHE_VERSION = "mid132_1-3-2_odds_v2"
+    AMAGASAKI_MOTOR_EXA_CACHE_VERSION = "amagasaki_motor_exa_v1"
+    KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
 
     def _l4_daily_stats(from_date: str, to_date: str) -> list[dict]:
         """日別の L4 戦略統計を集計。
@@ -2704,6 +3061,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         # ベースで再計算した cache のみ使う。古い cache は確定払戻
                         # 代理を含み、実際に買えた案件とズレる。
                         if rdate >= STRICT_ODDS_DAILY_START and not day_d.get("_strict_odds_only"):
+                            continue
+                        if day_d.get("_mid132_odds_version") != MID132_ODDS_CACHE_VERSION:
+                            continue
+                        if day_d.get("_amagasaki_motor_exa_version") != AMAGASAKI_MOTOR_EXA_CACHE_VERSION:
+                            continue
+                        if day_d.get("_kiryu_win2_version") != KIRYU_WIN2_CACHE_VERSION:
                             continue
                         cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
@@ -2760,17 +3123,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e.class_number,
                     e.national_top_1_percent AS natl_1,
                     e2.national_top_2_percent AS boat2_top2,
+                    e2.assigned_motor_top_2_percent AS boat2_motor_top2,
                     e3.national_top_1_percent AS boat3_natl_1,
+                    p1t2.prob_top_2 AS boat1_pred_top2,
+                    p3t2.prob_top_2 AS boat3_pred_top2,
+                    p4t2.prob_top_2 AS boat4_pred_top2,
                     pp.min_pay AS fav_pay,
                     oo.min_odds AS fav_odds,
                     oo.any_in_l4 AS any_in_l4,
                     oo.l4_odds AS l4_odds,
+                    oo132.mid_odds AS mid_132_odds,
                     pr.prob_first AS prob_first,
                     res1.boat_number AS w1,
                     res2.boat_number AS w2,
                     res3.boat_number AS w3,
                     pw.payout AS win_pay,
+                    pw2.payout AS win2_pay,
                     pe.payout AS exacta_pay,
+                    pe14.payout AS exacta_14_pay,
                     pt.payout AS tri_pay,
                     pt_132.payout AS pay_132,
                     pv.weather_number AS weather,
@@ -2779,6 +3149,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                 LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                 LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
+                LEFT JOIN predictions p1t2 ON p1t2.race_id = r.race_id AND p1t2.boat_number = 1
+                LEFT JOIN predictions p3t2 ON p3t2.race_id = r.race_id AND p3t2.boat_number = 3
+                LEFT JOIN predictions p4t2 ON p4t2.race_id = r.race_id AND p4t2.boat_number = 4
                 LEFT JOIN (
                     SELECT ef.race_id, COUNT(*) AS n_female
                       FROM race_entries ef
@@ -2808,6 +3181,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                            WHERE combination='1-2-3'
                              AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
                            GROUP BY race_id) oo ON oo.race_id = r.race_id
+                LEFT JOIN (SELECT race_id,
+                                  COALESCE(
+                                      MAX(CASE WHEN snapshot_label='T-5min' AND odds >= 10 AND odds < 20 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-4min' AND odds >= 10 AND odds < 20 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-3min' AND odds >= 10 AND odds < 20 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-15min' AND odds >= 10 AND odds < 20 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='T-1min' AND odds >= 10 AND odds < 20 THEN odds END),
+                                      MAX(CASE WHEN snapshot_label='final' AND odds >= 10 AND odds < 20 THEN odds END)
+                                  ) AS mid_odds
+                             FROM odds_trifecta
+                           WHERE combination='1-3-2'
+                             AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
+                           GROUP BY race_id) oo132 ON oo132.race_id = r.race_id
                 LEFT JOIN (SELECT race_id, prob_first FROM predictions
                            WHERE boat_number=1) pr ON pr.race_id = r.race_id
                 LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
@@ -2815,7 +3201,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
                 LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
                 LEFT JOIN race_payouts pw ON pw.race_id = r.race_id AND pw.bet_type='win' AND pw.combination='1'
+                LEFT JOIN race_payouts pw2 ON pw2.race_id = r.race_id AND pw2.bet_type='win' AND pw2.combination='2'
                 LEFT JOIN race_payouts pe ON pe.race_id = r.race_id AND pe.bet_type='exacta' AND pe.combination='1-2'
+                LEFT JOIN race_payouts pe14 ON pe14.race_id = r.race_id AND pe14.bet_type='exacta' AND pe14.combination='1-4'
                 LEFT JOIN race_payouts pt ON pt.race_id = r.race_id AND pt.bet_type='trifecta' AND pt.combination='1-2-3'
                 LEFT JOIN race_payouts pt_132 ON pt_132.race_id = r.race_id AND pt_132.bet_type='trifecta' AND pt_132.combination='1-3-2'
                 WHERE r.race_date BETWEEN ? AND ?
@@ -2858,13 +3246,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # Tier A: 3号艇国1%≥7 絞り (ROI 175.5% Tier 1)
                 "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
+                "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
+                "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "grade_breakdown": {},
             }
 
         for row in cur:
-            (rdate, stadium, grade, race_no, cls, natl_1, boat2_top2, boat3_natl_1,
-             fav_pay, fav_odds, any_in_l4, l4_odds, prob_first,
-             w1, w2, w3, win_pay, ex_pay, tri_pay, pay_132, weather, n_female) = row
+            (rdate, stadium, grade, race_no, cls, natl_1, boat2_top2, boat2_motor_top2, boat3_natl_1,
+             boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
+             fav_pay, fav_odds, any_in_l4, l4_odds, mid_132_odds, prob_first,
+             w1, w2, w3, win_pay, win2_pay, ex_pay, ex14_pay, tri_pay, pay_132, weather, n_female) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
             # weather NULL (= 直前情報未取得 or 古いデータ) は通常通り集計。
@@ -2903,15 +3294,39 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
                 # L4-Mid + 1-3-2 観察 (2026-05-19): オッズ10-20倍帯で1-3-2単点 (ROI 148%)
                 "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
-                # Tier A: 3号艇国1%≥7 絞り (ROI 175.5%, n=1312, CI[151,200], Tier 1)
+                # Tier A: 3号艇国1%≥7 絞り (???293.3%, n=9 ????)
                 "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
+                "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
+                "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
             is_done = w1 is not None and w2 is not None and w3 is not None
             if is_done:
                 d["n_done"] += 1
+
+            try:
+                b2_motor = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                b2_motor = 0.0
+            if is_done and stadium == 13 and b2_motor >= 55.0:
+                d["amagasaki_motor_exa_bets"] += 1
+                if w1 == 1 and w2 == 4:
+                    d["amagasaki_motor_exa_hits"] += 1
+                    d["amagasaki_motor_exa_pay"] += (ex14_pay or 0)
+
+            try:
+                b1_t2 = float(boat1_pred_top2) if boat1_pred_top2 is not None else 0.0
+                b3_t2 = float(boat3_pred_top2) if boat3_pred_top2 is not None else 0.0
+                b4_t2 = float(boat4_pred_top2) if boat4_pred_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                b1_t2 = b3_t2 = b4_t2 = 0.0
+            if is_done and stadium == 1 and (b3_t2 - b1_t2) >= 0.08 and (b3_t2 - b4_t2) >= 0.05:
+                d["kiryu_win2_bets"] += 1
+                if w1 == 2:
+                    d["kiryu_win2_hits"] += 1
+                    d["kiryu_win2_pay"] += (win2_pay or 0)
 
             # === L4 候補判定 (T-X オッズ優先、race_payouts MIN フォールバック) ===
             # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
@@ -2940,15 +3355,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     is_l4_base = True
 
             # L4-Mid 判定 (2026-05-19 追加): オッズ 10-20倍帯 (排他 universe)
-            # 検証 ROI 148.1% (n=10,690) - 1-3-2 単点で観察
+            # 検証 ???76.5% (n=198) - 1-3-2 単点で観察
             is_l4_mid = False
-            if fav_odds is not None:
-                fav_int = int(float(fav_odds) * 100)
-                if 1000 <= fav_int < 2000:
-                    is_l4_mid = True
-            elif fav_pay is not None:
-                pay_int = int(fav_pay)
-                if 1000 <= pay_int < 2000:
+            if mid_132_odds is not None:
+                mid_132_int = int(float(mid_132_odds) * 100)
+                if 1000 <= mid_132_int < 2000:
                     is_l4_mid = True
 
             tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
@@ -2974,7 +3385,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     d["mid_132_tri_hits"] += 1
                     d["mid_132_tri_pay"] += pay_132_v
                 # Tier A 判定 (2026-05-19): 3号艇 国1% ≥ 7%
-                # 4年検証 ROI 175.5% / CI[151, 200] / Tier 1 認定
+                # 4年検証 ???293.3% / n=9 ???? 認定
                 try:
                     _b3_n1 = float(boat3_natl_1) if boat3_natl_1 is not None else 0.0
                 except (TypeError, ValueError):
@@ -3216,6 +3627,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         # Recent live-operation stats must come from raw odds snapshots.
                         # Legacy summaries may include final-payout proxy rows.
                         continue
+                    # Tier A/B now requires 1-3-2 pre-race odds. Legacy summaries
+                    # used a different odds proxy, so do not reuse their Tier values.
+                    m132b = m132h = m132p = 0
+                    m132ab = m132ah = m132ap = 0
                     if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
                         # 既に raw データから集計済 → スキップ (raw が「正」)
                         continue
@@ -3257,7 +3672,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "gen_tri", "gen_plus_tri", "gen_f1_tri",
                         "prime_tri", "r12_tri", "gen_r12_tri",
                         "toda_7r_tri", "mid_132_tri",
-                        "mid_132_tier_a_tri", "venus_tri"):
+                        "mid_132_tier_a_tri", "venus_tri",
+                        "amagasaki_motor_exa", "kiryu_win2"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 d[f"{bet}_roi"] = (pay - 100 * n) / (100 * n) * 100 if n else None
@@ -3277,6 +3693,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         continue  # cache に既にあったものは再 save 不要
                     try:
                         day_d["_strict_odds_only"] = rdate >= STRICT_ODDS_DAILY_START
+                        day_d["_mid132_odds_version"] = MID132_ODDS_CACHE_VERSION
+                        day_d["_amagasaki_motor_exa_version"] = AMAGASAKI_MOTOR_EXA_CACHE_VERSION
+                        day_d["_kiryu_win2_version"] = KIRYU_WIN2_CACHE_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
                             "INSERT OR REPLACE INTO l4_daily_stats_cache "
@@ -3573,7 +3992,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "gen_tri", "gen_plus_tri", "gen_f1_tri",
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri", "venus_tri")
+                    "mid_132_tier_a_tri", "venus_tri",
+                    "amagasaki_motor_exa", "kiryu_win2")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
@@ -3607,7 +4027,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "gen_tri", "gen_plus_tri", "gen_f1_tri",
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri", "venus_tri")
+                    "mid_132_tier_a_tri", "venus_tri",
+                    "amagasaki_motor_exa", "kiryu_win2")
         try:
             monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
         except Exception as e:
