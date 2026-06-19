@@ -1737,6 +1737,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # === 3. all_race_info (races + race_entries + race_previews) ===
                 # 2号艇の national_top_2_percent も取得 (一般戦 F1 判定用)
                 try:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS race_program_tags (
+                          race_id TEXT PRIMARY KEY,
+                          program_type TEXT,
+                          program_name TEXT,
+                          is_fixed_entry INTEGER DEFAULT 0
+                        )
+                    """)
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
                                r.race_number, r.race_closed_at,

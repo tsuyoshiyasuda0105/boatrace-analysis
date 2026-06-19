@@ -408,6 +408,13 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
 -- システム状態 (データ品質チェック / バッチ死活監視 / エラーログ)
 -- backlog item 3: 朝のバッチ後に整合性チェック → Web 上で warning 表示
 -- ============================================================
+CREATE TABLE IF NOT EXISTS race_program_tags (
+  race_id        TEXT PRIMARY KEY,
+  program_type   TEXT,
+  program_name   TEXT,
+  is_fixed_entry INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS system_status (
   check_name   TEXT NOT NULL,     -- 'morning_data_complete' / 'races_count' / 'predictions_count' 等
   check_date   TEXT NOT NULL,     -- YYYY-MM-DD
