@@ -157,8 +157,15 @@ def check_render():
         )
         with urllib.request.urlopen(req, timeout=15) as r:
             body = r.read().decode("utf-8", errors="replace")
-            if r.status == 200 and '"status":"ok"' in body:
-                return "ok", "healthz 200 (status:ok)"
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = {}
+            checks = payload.get("checks") if isinstance(payload, dict) else {}
+            if r.status == 200 and isinstance(checks, dict) and checks.get("db") == "ok":
+                return "ok", "healthz 200 (db:ok)"
+            if r.status == 200 and payload.get("status") in {"ok", "warning", "degraded"}:
+                return "ok", f"healthz 200 (status:{payload.get('status')})"
             return "warning", f"status={r.status} body={body[:80]}"
     except (urllib.error.URLError, TimeoutError) as e:
         return "error", f"unreachable: {type(e).__name__}: {e}"
@@ -265,6 +272,8 @@ def work_odds_scheduler():
     """odds_scheduler が直近実際にスナップを書いているか。
     Supabase にしか書かないので Supabase をチェック。
     レース時間中に直近 10 分のスナップが 0 件 = サボリ。"""
+    if _local_checks_paused():
+        return "ok", PC_PAUSED_MSG
     if not (8.5 <= _hour_now() <= 22.5):
         return "ok", "稼働時間外"
     pg = _supabase_conn()
