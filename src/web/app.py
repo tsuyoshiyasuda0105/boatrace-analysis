@@ -2135,7 +2135,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["portfolio_hit_rate"] = portfolio["portfolio_hit_rate"]
             base["portfolio_note"] = portfolio["portfolio_note"]
             base["portfolio_label"] = portfolio["label"]
-            base["is_reference"] = False
+            if not base.get("is_exhibition_st_out"):
+                base["is_reference"] = False
             if (base.get("tetsuban_score") or 0) < 5:
                 base["tetsuban_score"] = 5
                 base["tetsuban_label"] = "強監視 5★"
@@ -2559,6 +2560,30 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """
             if prob_first is None:
                 return None
+
+            def _apply_exhibition_st_out(base):
+                """Mark morning ST candidates as out-of-range after exhibition ST."""
+                if not base or ex_st is None:
+                    return base
+                try:
+                    ex = float(ex_st)
+                except (TypeError, ValueError):
+                    return base
+                if ex < 0.18:
+                    return base
+
+                pre_ex_pro = is_l4_pro(avg_st, age, None)
+                if not (base.get("is_morning_watch_st") or pre_ex_pro):
+                    return base
+
+                base["is_reference"] = True
+                base["is_exhibition_st_out"] = True
+                base["exhibition_st"] = ex
+                base["exhibition_st_threshold"] = 0.18
+                base["label"] = f"{base['label']} (展示ST圏外)"
+                base["st_out_reason"] = "朝時点ではST系候補でしたが、展示STが0.18未満を満たさないため購入対象外"
+                return base
+
             b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
             # 企画レース観察 (2026-05-19): 戸田7R は B除外を無視
             try:
@@ -2756,7 +2781,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             # 鉄板度スコア (朝判定も同じロジック)
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
-            return base
+            return _apply_exhibition_st_out(base)
 
         signals = []
         # 当日全レースを走査 (確定済 → L4、未確定 → 朝L4候補)

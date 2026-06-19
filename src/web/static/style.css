@@ -2804,6 +2804,24 @@ main h2 {
   opacity: 1 !important;
 }
 
+.l4-badge.l4-exhibition-st-out,
+.l4-badge.l4-exhibition-st-out.l4-reference,
+.l4-badge.l4-exhibition-st-out.l4-morning_watch_SG,
+.l4-badge.l4-exhibition-st-out.l4-morning_watch_G1,
+.l4-badge.l4-exhibition-st-out.l4-morning_watch_G2,
+.l4-badge.l4-exhibition-st-out.l4-morning_watch_G3,
+.l4-badge.l4-exhibition-st-out.l4-morning_watch_st_SG,
+.l4-badge.l4-exhibition-st-out.l4-morning_watch_st_G1,
+.l4-badge.l4-exhibition-st-out.l4-morning_watch_st_G2 {
+  background: rgba(148, 163, 184, 0.18) !important;
+  color: #cbd5e1 !important;
+  border: 1px solid rgba(148, 163, 184, 0.55) !important;
+  box-shadow: none !important;
+  animation: none !important;
+  text-shadow: none !important;
+  opacity: 0.78 !important;
+}
+
 @keyframes morning-watch-pulse {
   0%, 100% {
     box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.22),

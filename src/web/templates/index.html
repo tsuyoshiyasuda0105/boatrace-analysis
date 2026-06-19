@@ -284,6 +284,7 @@
                   if (sig.l4.is_l4_pro) l4Badge.className += ' l4-pro';
                   if (sig.l4.is_exacta_niche) l4Badge.className += ' l4-exacta-niche';
                   if (sig.l4.is_win_niche) l4Badge.className += ' l4-win-niche';
+                  if (sig.l4.is_exhibition_st_out) l4Badge.className += ' l4-exhibition-st-out';
                   // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
                   if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
                   // ♀ 案A: 女性混入レースは専用クラスで視覚的に区別
@@ -326,6 +327,9 @@
                   }
                   if (sig.l4.promoted_from_morning_watch_st) {
                     title += ' | 朝監視STからT-5本採用へ昇格';
+                  }
+                  if (sig.l4.is_exhibition_st_out) {
+                    title += ` | 展示ST圏外: 展示ST=${Number(sig.l4.exhibition_st).toFixed(2)} / 条件<${sig.l4.exhibition_st_threshold || 0.18}`;
                   }
                   l4Badge.title = title;
                   const onec80 = sig.l4.is_1c80 ? ' 🚀' : '';
@@ -713,7 +717,7 @@
             let isRef = false, isOddsMismatch = false, isRainExclusion = false,
                 isFemaleExclusion = false, isMorningBadge = false,
                 isMorningWatch = false, isPortfolioStrong = false,
-                isMorningOutOfRange = false, isAnyExclusion = false,
+                isMorningOutOfRange = false, isExhibitionStOut = false, isAnyExclusion = false,
                 l4Actionable = false;
             if (l4) {
               isRef = l4.classList.contains('l4-reference');
@@ -725,6 +729,9 @@
               isMorningBadge = Array.from(l4.classList).some(c => c.startsWith('l4-morning_'));
               isMorningWatch = Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'))
                 || /朝監視/.test(labelText);
+              isExhibitionStOut = l4.classList.contains('l4-exhibition-st-out')
+                || /展示ST圏外/.test(labelText);
+              if (isExhibitionStOut) isMorningWatch = false;
               isPortfolioStrong = l4.classList.contains('l4-portfolio_strong')
                 || Boolean(el.querySelector('.portfolio-strong-badge'))
                 || /強バッジ|強監視/.test(labelText);
@@ -742,7 +749,7 @@
                   || l4.classList.contains('l4-morning_default')
                   || /L4参考|一般/.test(labelText));
               if (isFemaleExclusion || isGeneralReference) return;
-              isAnyExclusion = isOddsMismatch || isRainExclusion
+              isAnyExclusion = isOddsMismatch || isRainExclusion || isExhibitionStOut
                 || isMorningOutOfRange || isMorningWatch;
               // L4 行として出すのは「非reference」or「除外マーク付き(グレー残し)」。
               // 完全除外するのは「何の除外マークも付いていない reference」
@@ -761,7 +768,7 @@
             picks.push({ el, closedAt, minutesUntil, isClosed, isDone,
                          isOddsMismatch, isRainExclusion, isFemaleExclusion,
                          isMorningWatch, isPortfolioStrong,
-                         isMorningOutOfRange, isAnyExclusion });
+                         isMorningOutOfRange, isExhibitionStOut, isAnyExclusion });
           });
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
@@ -837,6 +844,9 @@
               if (u.isMorningWatch) {
                 excEmoji = '👀'; excShort = '朝監視';
                 excTitle = '展示前の監視候補。直前条件やオッズで本採用に入る可能性があるため、見逃し防止で表示しています。';
+              } else if (u.isExhibitionStOut) {
+                excEmoji = '圏外'; excShort = '展示ST';
+                excTitle = '朝時点ではST系候補でしたが、展示STが基準未達のため購入対象外です。履歴確認用に表示しています。';
               } else if (u.isRainExclusion) {
                 excEmoji = '☔'; excShort = '雨除外';
                 excTitle = '雨レースは ROI 約100% (break-even) のため L4 戦略では除外。確定オッズと結果は表示で確認可';
