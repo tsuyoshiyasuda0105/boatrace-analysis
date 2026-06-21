@@ -1,29 +1,11 @@
-# Render Blueprint (無料プラン構成)
-# https://render.com/docs/blueprint-spec
-#
-# 構成: Render Free Web Service + Supabase Free Postgres
-# 月額コスト: 0円 (制約: 15分アクセス無しで Sleep / コールドスタート 30-60秒)
-#
-# 事前準備:
-#   1. https://supabase.com にサインアップ
-#   2. New project 作成 (Region: Tokyo or Singapore)
-#   3. Settings → Database → Connection string → URI 形式をコピー
-#      例: postgresql://postgres:[YOUR-PASSWORD]@db.xxxxx.supabase.co:5432/postgres
-#
-# Render デプロイ手順:
-#   1. New + → Blueprint → このリポジトリを選択
-#   2. 環境変数を入力:
-#      - DATABASE_URL: 上記 Supabase URI を貼り付け
-#      - BOATRACE_MEMBER_PASSWORD: 任意
-#      - BOATRACE_PRO_PASSWORD: 任意
-#   3. Apply → 5-10 分でデプロイ完了
-#
-# データ投入は別途ローカルから (例: pg_dump → psql, or pandas で CSV → INSERT)
+# Render Blueprint
+# Render side is Supabase-direct only.
+# Historical bulk backfill remains a local-PC workflow.
 services:
   - type: web
     name: boatrace-web
     runtime: python
-    plan: free            # 無料プラン (15分Sleep, RAM 512MB)
+    plan: free
     branch: main
     region: singapore
     autoDeploy: true
@@ -31,24 +13,21 @@ services:
       pip install --upgrade pip
       pip install -r requirements.txt
       pip install gunicorn
-    # --worker-class gthread --threads 4:
-    #   重い predict_date 処理中も /healthz を別スレッドで応答可能にする
-    #   (sync ワーカーだとブロックして 5 秒ヘルスチェック失敗→Render が再起動)
-    # --max-requests: 200 リクエストごとにワーカー再起動 (メモリリーク防止)
-    # --max-requests-jitter: 再起動タイミングを分散 (~150-250 で揺らぐ)
     startCommand: gunicorn -w 1 --worker-class gthread --threads 4 -b 0.0.0.0:$PORT --timeout 120 --max-requests 200 --max-requests-jitter 50 'src.web.app:create_app()'
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: DATABASE_URL
-        sync: false                  # ダッシュボードで Supabase URI を入力
+        sync: false
+      - key: BOATRACE_SUPABASE_ONLY
+        value: "1"
       - key: BOATRACE_WEB_SECRET
-        generateValue: true          # Render が自動生成
+        generateValue: true
       - key: BOATRACE_MEMBER_PASSWORD
-        sync: false                  # ダッシュボードで手動入力
+        sync: false
       - key: BOATRACE_PRO_PASSWORD
-        sync: false                  # ダッシュボードで手動入力
+        sync: false
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
 
@@ -68,6 +47,8 @@ services:
         value: 3.12.0
       - key: DATABASE_URL
         sync: false
+      - key: BOATRACE_SUPABASE_ONLY
+        value: "1"
       - key: BOATRACE_HISTORY_DAYS
         value: "30"
       - key: BOATRACE_USER_AGENT
@@ -89,9 +70,9 @@ services:
         value: 3.12.0
       - key: DATABASE_URL
         sync: false
+      - key: BOATRACE_SUPABASE_ONLY
+        value: "1"
       - key: BOATRACE_HISTORY_DAYS
         value: "30"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
-    # 注: Render Free プランは disk:対応外 のため、SQLite は使えない。
-    # 必ず DATABASE_URL に Supabase / Neon 等の外部 Postgres を指定すること。

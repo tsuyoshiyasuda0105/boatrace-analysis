@@ -292,14 +292,28 @@ def write_updates(updates: list[tuple[str, dict]], now_iso: str,
     return summary
 
 
-def run_repredict_and_sync() -> dict:
-    """cache_predictions_for_date(today) + sync_predictions_to_supabase。
-    Returns: {"races": int, "synced": int}
+def run_repredict_and_sync(supabase_only: bool = False) -> dict:
+    """展示更新後の再予測。
+
+    local/backtest 併用時:
+      cache_predictions_for_date(today) + sync_predictions_to_supabase
+    Supabase 直保存時(Render clone 想定):
+      render_cache_predictions 側の Supabase 直書き経路を使う
     """
+    today = date.today().isoformat()
+
+    if supabase_only:
+        from scripts.render_cache_predictions import cache_predictions_for_date as render_cache_predictions_for_date
+
+        t0 = _time.time()
+        n_races = render_cache_predictions_for_date(today)
+        t_predict = _time.time() - t0
+        print(f"[re-predict:pg] {n_races} races in {t_predict:.1f}s")
+        return {"races": n_races, "synced": n_races}
+
     from scripts.cache_predictions import (
         cache_predictions_for_date, sync_predictions_to_supabase,
     )
-    today = date.today().isoformat()
     t0 = _time.time()
     n_races = cache_predictions_for_date(today)
     t_predict = _time.time() - t0
@@ -325,8 +339,14 @@ def main():
                    help="同じレースを再取得する最短間隔 (分、デフォルト 8)")
     p.add_argument("--force-all", action="store_true",
                    help="ウィンドウ外も含め本日全レースを取得 (テスト用)")
+    p.add_argument("--supabase-only", action="store_true",
+                   help="local SQLite へのミラー書込を行わず、DATABASE_URL 側だけを更新する")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
+
+    supabase_only = args.supabase_only or os.getenv("BOATRACE_SUPABASE_ONLY", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
@@ -383,7 +403,7 @@ def main():
         return
 
     now_iso = datetime.now().isoformat(timespec="seconds")
-    s = write_updates(updates, now_iso)
+    s = write_updates(updates, now_iso, also_local=not supabase_only)
     print(f"  written: supabase_rows={s['supabase_rows']} "
           f"local_rows={s['local_rows']} races_updated={s['races']}")
 
@@ -395,7 +415,7 @@ def main():
         print("  no race actually changed, skip re-predict")
         return
 
-    run_repredict_and_sync()
+    run_repredict_and_sync(supabase_only=supabase_only)
 
 
 if __name__ == "__main__":
