@@ -352,14 +352,32 @@
       const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
       const posClass = (value) => value ? `f-${Number(value)}` : "";
       const historyCache = new Map();
+      const meter = (label, value) => {
+        const safeValue = value == null ? null : Math.max(0, Math.min(100, Number(value)));
+        return `
+          <div class="motor-meter">
+            <div class="motor-meter-head">
+              <span>${esc(label)}</span>
+              <b>${safeValue == null ? "-" : `${safeValue.toFixed(1)}pt`}</b>
+            </div>
+            <div class="motor-meter-track"><div class="motor-meter-fill" style="width:${safeValue == null ? 0 : safeValue}%;"></div></div>
+          </div>
+        `;
+      };
+      const trendToneClass = (label) => {
+        if (label === "上向き") return "is-up";
+        if (label === "弱め") return "is-down";
+        return "is-flat";
+      };
       const renderHistory = (data) => {
         const current = data.current || {};
         const summary = data.summary || {};
+        const profile = data.profile || {};
         const rows = data.history || [];
         const title = `M${esc(current.motor_number ?? "-")} 現行期の直近履歴`;
         const cycleNote = current.motor_cycle_start
           ? `現行モーター期: ${esc(current.motor_cycle_start)}以降`
-          : "現行モーター期のみ";
+          : "現行モーター期: 取得中";
         const summaryHtml = `
           <div class="motor-history-summary">
             <div><span>出走</span><b>${summary.starts ?? 0}</b></div>
@@ -369,6 +387,34 @@
             <div><span>平均ST</span><b>${num(summary.avg_start_timing)}</b></div>
             <div><span>平均展示</span><b>${num(summary.avg_exhibition_time)}</b></div>
           </div>`;
+        const profileHtml = `
+          <div class="motor-profile">
+            <div class="motor-profile-head">
+              <div class="motor-profile-title">
+                <strong>推定モーター気配</strong>
+                <span>${esc(profile.note || "展示タイム・展示ST・着順効率からの推定です。")}</span>
+              </div>
+              <div class="motor-profile-badges">
+                <span class="motor-condition-badge ${profile.condition_tone === "up" ? "is-up" : profile.condition_tone === "down" ? "is-down" : "is-flat"}">${esc(profile.condition_label || "判定保留")}</span>
+                <span class="motor-style-chip">${esc(profile.style_label || "判定保留")}</span>
+                <span class="motor-style-chip is-score">総合 ${profile.condition_score == null ? "-" : `${Number(profile.condition_score).toFixed(1)}pt`}</span>
+              </div>
+            </div>
+            <div class="motor-profile-meters">
+              ${meter("出足", profile.dash_score)}
+              ${meter("行き足・伸び", profile.stretch_score)}
+              ${meter("回り足", profile.turn_score)}
+            </div>
+            <div class="motor-trend-strip">
+              ${(profile.recent_scores || []).map((item) => `
+                <div class="motor-trend-card ${trendToneClass(item.label)}">
+                  <span>${esc(item.race_date || "")} ${esc(item.race_number || "")}R</span>
+                  <b>${item.score == null ? "-" : `${Number(item.score).toFixed(1)}pt`}</b>
+                  <small>${esc(item.label || "")}</small>
+                </div>
+              `).join("")}
+            </div>
+          </div>`;
 
         if (!rows.length) {
           return `
@@ -377,6 +423,7 @@
               <span>${esc(current.stadium_name)} / ${esc(current.racer_name)} / ${cycleNote}</span>
             </div>
             ${summaryHtml}
+            ${profileHtml}
             <div class="motor-history-empty">この会場で同じモーターの過去結果がまだ見つかりません。</div>
           `;
         }
@@ -402,6 +449,7 @@
             <span>${esc(current.stadium_name)} / 今回 ${esc(current.boat_number)}号艇 ${esc(current.racer_name)} / ${cycleNote}</span>
           </div>
           ${summaryHtml}
+          ${profileHtml}
           <div class="motor-history-table-wrap">
             <table class="motor-history-table">
               <thead>
@@ -415,6 +463,7 @@
           </div>
         `;
       };
+
 
       const fetchHistory = (button) => {
         const boatNumber = button.dataset.boatNumber;

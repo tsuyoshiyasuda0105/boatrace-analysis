@@ -1787,6 +1787,159 @@ main h2 {
   }
 }
 
+
+.motor-profile {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid rgba(0, 212, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(6, 18, 34, 0.72);
+}
+.motor-profile-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.motor-profile-title strong {
+  display: block;
+  color: var(--accent);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.motor-profile-title span {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.motor-profile-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.motor-condition-badge,
+.motor-style-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.motor-condition-badge {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+.motor-condition-badge.is-up {
+  border-color: rgba(52, 232, 144, 0.45);
+  background: rgba(52, 232, 144, 0.14);
+  color: #84f4ba;
+}
+.motor-condition-badge.is-down {
+  border-color: rgba(255, 107, 107, 0.42);
+  background: rgba(255, 107, 107, 0.14);
+  color: #ffb0b0;
+}
+.motor-condition-badge.is-flat {
+  border-color: rgba(255, 214, 10, 0.35);
+  background: rgba(255, 214, 10, 0.10);
+  color: #ffe27a;
+}
+.motor-style-chip {
+  border: 1px solid rgba(0, 212, 255, 0.24);
+  background: rgba(0, 212, 255, 0.08);
+  color: var(--accent);
+}
+.motor-style-chip.is-score {
+  color: var(--text);
+}
+.motor-profile-meters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.motor-meter {
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.motor-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.motor-meter-head span {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.motor-meter-head b {
+  color: var(--text);
+  font-size: 12px;
+}
+.motor-meter-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.motor-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(0, 212, 255, 0.72), rgba(255, 94, 145, 0.92));
+}
+.motor-trend-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.motor-trend-card {
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.motor-trend-card span,
+.motor-trend-card small {
+  display: block;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.motor-trend-card b {
+  display: block;
+  margin: 3px 0 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+.motor-trend-card.is-up {
+  border-color: rgba(52, 232, 144, 0.35);
+}
+.motor-trend-card.is-down {
+  border-color: rgba(255, 107, 107, 0.32);
+}
+
+@media (max-width: 720px) {
+  .motor-profile-head {
+    flex-direction: column;
+  }
+  .motor-profile-badges {
+    justify-content: flex-start;
+  }
+  .motor-profile-meters,
+  .motor-trend-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
 /* Strategy banners (venue warning + sweet spot) */
 .venue-warning {
   display: flex;

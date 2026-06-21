@@ -366,6 +366,161 @@ def _motor_cycle_start(race_date_iso: str, stadium_number: int) -> Optional[str]
     return f"{year:04d}-{replacement_month:02d}-01"
 
 
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _mean_or_none(values: list[float]) -> Optional[float]:
+    return (sum(values) / len(values)) if values else None
+
+
+def _finish_score(position: Optional[int]) -> Optional[float]:
+    if position is None:
+        return None
+    table = {1: 100.0, 2: 82.0, 3: 66.0, 4: 44.0, 5: 24.0, 6: 10.0}
+    return table.get(int(position), 0.0)
+
+
+def _motor_profile_from_history(history: list[dict[str, Any]]) -> dict[str, Any]:
+    if not history:
+        return {
+            "condition_label": "データ不足",
+            "condition_tone": "flat",
+            "condition_score": None,
+            "style_label": "判定保留",
+            "dash_score": None,
+            "stretch_score": None,
+            "turn_score": None,
+            "recent_scores": [],
+            "note": "展示タイム・展示ST・着順効率からの推定です。",
+        }
+
+    ex_vals = [float(r["exhibition_time"]) for r in history if r.get("exhibition_time") is not None]
+    ex_st_vals = [float(r["start_timing_exhibition"]) for r in history if r.get("start_timing_exhibition") is not None]
+    st_vals = [float(r["start_timing"]) for r in history if r.get("start_timing") is not None]
+    avg_ex = _mean_or_none(ex_vals)
+    avg_ex_st = _mean_or_none(ex_st_vals)
+    avg_st = _mean_or_none(st_vals)
+
+    turn_kimarite = {"差し", "まくり差し", "抜き", "恵まれ"}
+    recent_scores: list[dict[str, Any]] = []
+    dash_values: list[float] = []
+    stretch_values: list[float] = []
+    turn_values: list[float] = []
+    overall_values: list[float] = []
+
+    for row in reversed(history[:5]):
+        stretch = 50.0
+        if row.get("exhibition_time") is not None and avg_ex is not None:
+            stretch += _clamp((avg_ex - float(row["exhibition_time"])) / 0.10 * 28.0, -22.0, 22.0)
+        pos = row.get("finishing_position")
+        if pos == 1:
+            stretch += 10.0
+        elif pos == 2:
+            stretch += 5.0
+        elif pos and pos >= 5:
+            stretch -= 8.0
+        stretch = _clamp(stretch, 0.0, 100.0)
+
+        dash = 50.0
+        if row.get("start_timing_exhibition") is not None and avg_ex_st is not None:
+            dash += _clamp((avg_ex_st - float(row["start_timing_exhibition"])) / 0.08 * 18.0, -18.0, 18.0)
+        if row.get("start_timing") is not None and avg_st is not None:
+            dash += _clamp((avg_st - float(row["start_timing"])) / 0.08 * 18.0, -18.0, 18.0)
+        if pos == 1:
+            dash += 6.0
+        dash = _clamp(dash, 0.0, 100.0)
+
+        turn = 46.0
+        finish_score = _finish_score(pos)
+        if finish_score is not None:
+            turn += (finish_score - 50.0) * 0.22
+        course = row.get("course_number")
+        if course is not None and pos is not None:
+            turn += _clamp((float(course) - float(pos)) * 6.0, -18.0, 18.0)
+        kimarite = str(row.get("kimarite") or "")
+        if kimarite in turn_kimarite:
+            turn += 10.0
+        elif kimarite == "まくり":
+            turn += 7.0
+        elif kimarite == "逃げ":
+            turn += 4.0
+        turn = _clamp(turn, 0.0, 100.0)
+
+        overall = _clamp(dash * 0.30 + stretch * 0.35 + turn * 0.35, 0.0, 100.0)
+        dash_values.append(dash)
+        stretch_values.append(stretch)
+        turn_values.append(turn)
+        overall_values.append(overall)
+
+        if overall >= 62:
+            trend_label = "上向き"
+        elif overall <= 44:
+            trend_label = "弱め"
+        else:
+            trend_label = "普通"
+
+        recent_scores.append(
+            {
+                "race_date": row.get("race_date"),
+                "race_number": row.get("race_number"),
+                "score": round(overall, 1),
+                "label": trend_label,
+            }
+        )
+
+    dash_score = round(_mean_or_none(dash_values) or 0.0, 1) if dash_values else None
+    stretch_score = round(_mean_or_none(stretch_values) or 0.0, 1) if stretch_values else None
+    turn_score = round(_mean_or_none(turn_values) or 0.0, 1) if turn_values else None
+    condition_score = round(_mean_or_none(overall_values) or 0.0, 1) if overall_values else None
+
+    score_items = []
+    if dash_score is not None:
+        score_items.append(("出足", dash_score))
+    if stretch_score is not None:
+        score_items.append(("行き足・伸び", stretch_score))
+    if turn_score is not None:
+        score_items.append(("回り足", turn_score))
+    score_items.sort(key=lambda item: item[1], reverse=True)
+
+    if len(score_items) >= 2 and (score_items[0][1] - score_items[1][1]) < 6.0:
+        style_label = "バランス型"
+    else:
+        style_map = {
+            "出足": "出足型",
+            "行き足・伸び": "行き足・伸び型",
+            "回り足": "回り足型",
+        }
+        style_label = style_map.get(score_items[0][0], "判定保留") if score_items else "判定保留"
+
+    if condition_score is None:
+        condition_label = "判定保留"
+        condition_tone = "flat"
+    elif condition_score >= 62:
+        condition_label = "上向き"
+        condition_tone = "up"
+    elif condition_score <= 44:
+        condition_label = "弱め"
+        condition_tone = "down"
+    else:
+        condition_label = "普通"
+        condition_tone = "flat"
+
+    return {
+        "condition_label": condition_label,
+        "condition_tone": condition_tone,
+        "condition_score": condition_score,
+        "style_label": style_label,
+        "dash_score": dash_score,
+        "stretch_score": stretch_score,
+        "turn_score": turn_score,
+        "recent_scores": recent_scores,
+        "note": "展示タイム・展示ST・着順効率からの推定です。",
+    }
+
+
 def _detect_market_inefficiency(
     race_id: str,
     preds: list[dict],
@@ -1432,7 +1587,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "motor_replacement_month": _MOTOR_REPLACEMENT_MONTH.get(info["stadium_number"]),
         }
         if motor_no is None:
-            return jsonify({"current": current, "summary": {}, "history": []})
+            return jsonify({"current": current, "summary": {}, "profile": _motor_profile_from_history([]), "history": []})
 
         cycle_filter_sql = "AND r.race_date >= ?" if cycle_start else ""
         params = [
@@ -1522,9 +1677,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "top3_rate": (top3 / starts * 100) if starts else None,
             "avg_start_timing": (sum(st_vals) / len(st_vals)) if st_vals else None,
             "avg_exhibition_time": (sum(ex_vals) / len(ex_vals)) if ex_vals else None,
+            "avg_start_timing_exhibition": (
+                sum(r["start_timing_exhibition"] for r in history if r.get("start_timing_exhibition") is not None)
+                / len([r for r in history if r.get("start_timing_exhibition") is not None])
+            ) if any(r.get("start_timing_exhibition") is not None for r in history) else None,
         }
 
-        return jsonify({"current": current, "summary": summary, "history": history})
+        profile = _motor_profile_from_history(history)
+
+        return jsonify({"current": current, "summary": summary, "profile": profile, "history": history})
 
     @app.route("/api/odds-123-timeline")
     @member_only_api
