@@ -268,6 +268,14 @@
                 <span style="display: inline-block; vertical-align: middle;">
                   <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
+                  {% if p.kimarite_skill is defined %}
+                    <div class="kimarite-skill-row">
+                      <span class="kimarite-skill-tag {% if p.kimarite_skill.is_strong_escape %}is-strong{% endif %}"
+                            title="同じ枠番での過去1着決まり手。現在のレース結果は含めません。">
+                        {{ p.kimarite_skill.label }}
+                      </span>
+                    </div>
+                  {% endif %}
                 </span>
               </td>
               <td>
@@ -278,22 +286,25 @@
               <td>{{ '%.2f' | format(p.local_top_2_percent) if p.local_top_2_percent is not none else '—' }}</td>
               <td>
                 {% if p.assigned_motor_top_2_percent is not none %}
-                  <button
-                    type="button"
-                    class="motor-history-btn"
-                    data-race-id="{{ info.race_id }}"
-                    data-boat-number="{{ p.boat_number }}"
-                    aria-expanded="false"
-                    aria-controls="motor-history-row-{{ p.boat_number }}"
-                    title="このモーターの直近履歴を表示"
-                  >
-                    <span class="motor-rate">{{ '%.2f' | format(p.assigned_motor_top_2_percent) }}</span>
-                    {% if p.assigned_motor_number is defined and p.assigned_motor_number is not none %}
-                      <span class="motor-no">M{{ p.assigned_motor_number }}</span>
-                    {% endif %}
-                  </button>
+                  <div class="motor-history-cell">
+                    <button
+                      type="button"
+                      class="motor-history-btn"
+                      data-race-id="{{ info.race_id }}"
+                      data-boat-number="{{ p.boat_number }}"
+                      aria-expanded="false"
+                      aria-controls="motor-history-row-{{ p.boat_number }}"
+                      title="このモーターの直近履歴を表示"
+                    >
+                      <span class="motor-rate">{{ '%.2f' | format(p.assigned_motor_top_2_percent) }}</span>
+                      {% if p.assigned_motor_number is defined and p.assigned_motor_number is not none %}
+                        <span class="motor-no">M{{ p.assigned_motor_number }}</span>
+                      {% endif %}
+                    </button>
+                    <div class="motor-inline-signals" data-motor-inline-signals="{{ p.boat_number }}"></div>
+                  </div>
                 {% else %}
-                  —
+                  -
                 {% endif %}
               </td>
               <td>{{ '%.2f' | format(p.exhibition_time) if p.exhibition_time is not none else '—' }}</td>
@@ -352,6 +363,8 @@
       const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
       const posClass = (value) => value ? `f-${Number(value)}` : "";
       const historyCache = new Map();
+      const signed = (value, digits = 2) => value == null ? "-" : `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(digits)}`;
+      const toneClass = (tone) => tone === "up" ? "is-up" : tone === "down" ? "is-down" : "is-flat";
       const meter = (label, value) => {
         const safeValue = value == null ? null : Math.max(0, Math.min(100, Number(value)));
         return `
@@ -369,10 +382,23 @@
         if (label === "弱め") return "is-down";
         return "is-flat";
       };
+      const signalLabel = (signal) => {
+        const tone = signal?.trend_tone || "flat";
+        const value = signal?.trend_value;
+        if (tone === "up") return `↑ 上昇${value == null ? "" : ` ${signed(value)}`}`;
+        if (tone === "down") return `↓ 下降${value == null ? "" : ` ${signed(value)}`}`;
+        return "→ 横ばい";
+      };
+      const liftLabel = (signal) => {
+        const label = signal?.lift_label || "C";
+        const value = signal?.lift_value;
+        return `引き出し${label}${value == null ? "" : ` ${signed(value)}`}`;
+      };
       const renderHistory = (data) => {
         const current = data.current || {};
         const summary = data.summary || {};
         const profile = data.profile || {};
+        const liveSignal = data.live_signal || {};
         const rows = data.history || [];
         const title = `M${esc(current.motor_number ?? "-")} 現行期の直近履歴`;
         const cycleNote = current.motor_cycle_start
@@ -386,6 +412,35 @@
             <div><span>3連率</span><b>${pct(summary.top3_rate)}</b></div>
             <div><span>平均ST</span><b>${num(summary.avg_start_timing)}</b></div>
             <div><span>平均展示</span><b>${num(summary.avg_exhibition_time)}</b></div>
+          </div>`;
+
+        const lift = data.lift || {};
+        const liftHtml = `
+          <div class="racer-lift-panel">
+            <div class="racer-lift-head">
+              <div class="racer-lift-title">
+                <strong>選手の引き出し力</strong>
+                <span>${esc(lift.note || "選手の過去平均との差で、今のモーターをどれだけ引き出せているかを見ます。")}</span>
+              </div>
+              <div class="motor-profile-badges">
+                <span class="motor-condition-badge ${toneClass(lift.tone)}">${esc(lift.label || "判定保留")} ${lift.value == null ? "" : signed(lift.value)}</span>
+                <span class="motor-style-chip is-score">比較 ${lift.sample_size ?? 0}走</span>
+                <span class="motor-style-chip is-score">${lift.score == null ? "-" : `${Number(lift.score).toFixed(1)}pt`}</span>
+              </div>
+            </div>
+            <div class="racer-lift-grid">
+              <div><span>展示差</span><b>${signed(lift.exhibition_delta)}</b></div>
+              <div><span>展示ST差</span><b>${signed(lift.exhibition_st_delta)}</b></div>
+              <div><span>本番ST差</span><b>${signed(lift.start_delta)}</b></div>
+              <div><span>着順差</span><b>${signed(lift.finish_delta)}</b></div>
+            </div>
+          </div>`;
+        const liveSummaryHtml = `
+          <div class="motor-live-summary">
+            <div class="motor-live-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</div>
+            <div class="motor-live-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</div>
+            <div class="motor-live-chip is-neutral">展示T ${num(current.exhibition_time)}</div>
+            <div class="motor-live-chip is-neutral">展示ST ${num(current.start_timing_exhibition)}</div>
           </div>`;
         const profileHtml = `
           <div class="motor-profile">
@@ -423,6 +478,8 @@
               <span>${esc(current.stadium_name)} / ${esc(current.racer_name)} / ${cycleNote}</span>
             </div>
             ${summaryHtml}
+            ${liveSummaryHtml}
+            ${liftHtml}
             ${profileHtml}
             <div class="motor-history-empty">この会場で同じモーターの過去結果がまだ見つかりません。</div>
           `;
@@ -442,6 +499,20 @@
             <td class="left">${esc(r.kimarite || "-")}</td>
           </tr>
         `).join("");
+        const currentRowHtml = `
+          <tr class="motor-history-current-row">
+            <td>${esc(current.race_date || "")}</td>
+            <td>${esc(current.race_number || "")}R</td>
+            <td><span class="lane lane-${esc(current.boat_number)} motor-mini-lane">${esc(current.boat_number)}</span></td>
+            <td class="left">${esc(current.racer_name || "")}<div class="racer-meta">No. ${esc(current.racer_number || "")}</div></td>
+            <td>-</td>
+            <td>-</td>
+            <td>${num(current.exhibition_time)}</td>
+            <td>${num(current.start_timing_exhibition)}</td>
+            <td><span class="motor-history-inline ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span></td>
+            <td class="left">-</td>
+          </tr>
+        `;
 
         return `
           <div class="motor-history-head">
@@ -449,6 +520,8 @@
             <span>${esc(current.stadium_name)} / 今回 ${esc(current.boat_number)}号艇 ${esc(current.racer_name)} / ${cycleNote}</span>
           </div>
           ${summaryHtml}
+          ${liveSummaryHtml}
+          ${liftHtml}
           ${profileHtml}
           <div class="motor-history-table-wrap">
             <table class="motor-history-table">
@@ -458,12 +531,21 @@
                   <th>進入</th><th>ST</th><th>展示T</th><th>展示ST</th><th>着</th><th class="left">決まり手</th>
                 </tr>
               </thead>
-              <tbody>${body}</tbody>
+              <tbody>${currentRowHtml}${body}</tbody>
             </table>
           </div>
         `;
       };
 
+
+      const renderInlineSignals = (container, data) => {
+        if (!container) return;
+        const liveSignal = data.live_signal || {};
+        container.innerHTML = `
+          <span class="motor-inline-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span>
+          <span class="motor-inline-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</span>
+        `;
+      };
 
       const fetchHistory = (button) => {
         const boatNumber = button.dataset.boatNumber;
@@ -510,6 +592,7 @@
           try {
             const data = await fetchHistory(button);
             panel.innerHTML = renderHistory(data);
+            renderInlineSignals(document.querySelector(`[data-motor-inline-signals="${boatNumber}"]`), data);
             panel.dataset.loaded = "1";
           } catch (err) {
             panel.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました。${esc(err.message || "")}</div>`;
@@ -519,7 +602,12 @@
 
       const warmAllMotorHistories = () => {
         document.querySelectorAll(".motor-history-btn").forEach((button, idx) => {
-          window.setTimeout(() => { fetchHistory(button).catch(() => {}); }, 180 * idx);
+          window.setTimeout(async () => {
+            try {
+              const data = await fetchHistory(button);
+              renderInlineSignals(document.querySelector(`[data-motor-inline-signals="${button.dataset.boatNumber}"]`), data);
+            } catch (_) {}
+          }, 180 * idx);
         });
       };
       if ("requestIdleCallback" in window) {

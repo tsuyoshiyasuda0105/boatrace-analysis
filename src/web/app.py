@@ -521,6 +521,138 @@ def _motor_profile_from_history(history: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
+def _racer_lift_profile(history: list[dict[str, Any]], racer_baseline: dict[str, Any]) -> dict[str, Any]:
+    default = {
+        "label": "判定保留",
+        "tone": "flat",
+        "value": None,
+        "score": None,
+        "sample_size": int(racer_baseline.get("starts") or 0),
+        "exhibition_delta": None,
+        "exhibition_st_delta": None,
+        "start_delta": None,
+        "finish_delta": None,
+        "note": "選手の過去平均との差から、モーターをどれだけ引き出しているかを見ます。",
+    }
+    if not history:
+        return default
+
+    avg_ex = _mean_or_none([float(r["exhibition_time"]) for r in history if r.get("exhibition_time") is not None])
+    avg_ex_st = _mean_or_none([float(r["start_timing_exhibition"]) for r in history if r.get("start_timing_exhibition") is not None])
+    avg_st = _mean_or_none([float(r["start_timing"]) for r in history if r.get("start_timing") is not None])
+    avg_finish = _mean_or_none([float(r["finishing_position"]) for r in history if r.get("finishing_position") is not None])
+
+    base_ex = racer_baseline.get("avg_exhibition_time")
+    base_ex_st = racer_baseline.get("avg_start_timing_exhibition")
+    base_st = racer_baseline.get("avg_start_timing")
+    base_finish = racer_baseline.get("avg_finish_position")
+
+    ex_delta = (base_ex - avg_ex) if (base_ex is not None and avg_ex is not None) else None
+    ex_st_delta = (base_ex_st - avg_ex_st) if (base_ex_st is not None and avg_ex_st is not None) else None
+    st_delta = (base_st - avg_st) if (base_st is not None and avg_st is not None) else None
+    finish_delta = (base_finish - avg_finish) if (base_finish is not None and avg_finish is not None) else None
+
+    lift_value = (
+        (ex_delta or 0.0) * 0.55
+        + (ex_st_delta or 0.0) * 0.20
+        + (st_delta or 0.0) * 0.15
+        + ((finish_delta or 0.0) * 0.02) * 0.10
+    )
+
+    if lift_value >= 0.03:
+        label = "上振れ"
+        tone = "up"
+    elif lift_value <= -0.03:
+        label = "下振れ"
+        tone = "down"
+    else:
+        label = "平均並み"
+        tone = "flat"
+
+    default.update(
+        {
+            "label": label,
+            "tone": tone,
+            "value": round(lift_value, 2),
+            "score": round(_clamp(50.0 + lift_value * 400.0, 0.0, 100.0), 1),
+            "exhibition_delta": round(ex_delta, 2) if ex_delta is not None else None,
+            "exhibition_st_delta": round(ex_st_delta, 2) if ex_st_delta is not None else None,
+            "start_delta": round(st_delta, 2) if st_delta is not None else None,
+            "finish_delta": round(finish_delta, 2) if finish_delta is not None else None,
+        }
+    )
+    return default
+
+
+def _motor_history_live_signal(
+    current_preview: dict[str, Any],
+    history: list[dict[str, Any]],
+    racer_baseline: dict[str, Any],
+) -> dict[str, Any]:
+    signal = {
+        "trend_label": "flat",
+        "trend_tone": "flat",
+        "trend_value": None,
+        "trend_score": None,
+        "lift_label": "standard",
+        "lift_tone": "flat",
+        "lift_value": None,
+        "lift_score": None,
+    }
+    if not history:
+        return signal
+
+    current_ex = current_preview.get("exhibition_time")
+    current_ex_st = current_preview.get("start_timing_exhibition")
+    if current_ex is None:
+        return signal
+
+    motor_avg_ex = _mean_or_none([float(r["exhibition_time"]) for r in history if r.get("exhibition_time") is not None])
+    motor_avg_ex_st = _mean_or_none([float(r["start_timing_exhibition"]) for r in history if r.get("start_timing_exhibition") is not None])
+    racer_avg_ex = racer_baseline.get("avg_exhibition_time")
+    racer_avg_ex_st = racer_baseline.get("avg_start_timing_exhibition")
+
+    trend_value = (motor_avg_ex - float(current_ex)) if motor_avg_ex is not None else None
+    if trend_value is not None:
+        if trend_value >= 0.08:
+            signal["trend_label"] = "rise_strong"
+            signal["trend_tone"] = "up"
+        elif trend_value >= 0.03:
+            signal["trend_label"] = "rise"
+            signal["trend_tone"] = "up"
+        elif trend_value <= -0.05:
+            signal["trend_label"] = "down"
+            signal["trend_tone"] = "down"
+        else:
+            signal["trend_label"] = "flat"
+            signal["trend_tone"] = "flat"
+        signal["trend_value"] = round(trend_value, 2)
+        signal["trend_score"] = round(_clamp(50.0 + trend_value * 320.0, 0.0, 100.0), 1)
+
+    lift_value = None
+    if racer_avg_ex is not None:
+        lift_value = (racer_avg_ex - float(current_ex)) * 0.75
+    if current_ex_st is not None and racer_avg_ex_st is not None:
+        lift_value = (lift_value or 0.0) + ((racer_avg_ex_st - float(current_ex_st)) * 0.25)
+    if lift_value is not None:
+        if lift_value >= 0.08:
+            signal["lift_label"] = "A"
+            signal["lift_tone"] = "up"
+        elif lift_value >= 0.03:
+            signal["lift_label"] = "B"
+            signal["lift_tone"] = "up"
+        elif lift_value <= -0.04:
+            signal["lift_label"] = "D"
+            signal["lift_tone"] = "down"
+        else:
+            signal["lift_label"] = "C"
+            signal["lift_tone"] = "flat"
+        signal["lift_value"] = round(lift_value, 2)
+        signal["lift_score"] = round(_clamp(50.0 + lift_value * 360.0, 0.0, 100.0), 1)
+
+    return signal
+
+
 def _detect_market_inefficiency(
     race_id: str,
     preds: list[dict],
@@ -1562,9 +1694,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             current_row = conn.execute(
                 """
                 SELECT assigned_motor_number, assigned_motor_top_2_percent,
-                       assigned_motor_top_3_percent, racer_name
+                       assigned_motor_top_3_percent, racer_name, racer_number,
+                       NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                       pv.start_timing_exhibition
                   FROM race_entries
-                 WHERE race_id = ? AND boat_number = ?
+                  LEFT JOIN race_previews pv
+                    ON pv.race_id = race_entries.race_id
+                   AND pv.boat_number = race_entries.boat_number
+                 WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
                 """,
                 (race_id, boat_number),
             ).fetchone()
@@ -1572,12 +1709,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not current_row:
             return jsonify({"error": "entry not found"}), 404
 
-        motor_no, motor_top2, motor_top3, current_racer = current_row
+        motor_no, motor_top2, motor_top3, current_racer, current_racer_number, current_ex_time, current_ex_st = current_row
         cycle_start = _motor_cycle_start(info["race_date"], info["stadium_number"])
         current = {
             "race_id": race_id,
+            "race_date": info["race_date"],
+            "race_number": info["race_number"],
             "boat_number": boat_number,
             "racer_name": current_racer,
+            "racer_number": current_racer_number,
             "stadium_number": info["stadium_number"],
             "stadium_name": info.get("stadium_name", ""),
             "motor_number": motor_no,
@@ -1585,16 +1725,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "motor_top_3_percent": motor_top3,
             "motor_cycle_start": cycle_start,
             "motor_replacement_month": _MOTOR_REPLACEMENT_MONTH.get(info["stadium_number"]),
+            "exhibition_time": current_ex_time,
+            "start_timing_exhibition": current_ex_st,
         }
         if motor_no is None:
-            return jsonify({"current": current, "summary": {}, "profile": _motor_profile_from_history([]), "history": []})
+            return jsonify({"current": current, "summary": {}, "profile": _motor_profile_from_history([]), "lift": _racer_lift_profile([], {}), "history": []})
 
         cycle_filter_sql = "AND r.race_date >= ?" if cycle_start else ""
         params = [
             info["stadium_number"],
             motor_no,
-            race_id,
             info["race_date"],
+            info["race_date"],
+            info["race_number"],
         ]
         if cycle_start:
             params.append(cycle_start)
@@ -1622,8 +1765,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                        AND pv.boat_number = e.boat_number
                      WHERE r.stadium_number = ?
                        AND e.assigned_motor_number = ?
-                       AND r.race_id <> ?
-                       AND r.race_date <= ?
+                       AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
                        {cycle_filter_sql}
                        AND rr.finishing_position IS NOT NULL
                      ORDER BY r.race_date DESC, r.race_number DESC
@@ -1683,9 +1825,53 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ) if any(r.get("start_timing_exhibition") is not None for r in history) else None,
         }
 
-        profile = _motor_profile_from_history(history)
+        with db_connect() as conn:
+            racer_rows = conn.execute(
+                """
+                SELECT NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                       pv.start_timing_exhibition,
+                       rr.start_timing,
+                       rr.finishing_position
+                  FROM races r
+                  JOIN race_entries e
+                    ON e.race_id = r.race_id
+                  JOIN race_results rr
+                    ON rr.race_id = e.race_id
+                   AND rr.boat_number = e.boat_number
+                  LEFT JOIN race_previews pv
+                    ON pv.race_id = e.race_id
+                   AND pv.boat_number = e.boat_number
+                 WHERE e.racer_number = ?
+                   AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+                   AND rr.finishing_position IS NOT NULL
+                 ORDER BY r.race_date DESC, r.race_number DESC
+                 LIMIT 20
+                """,
+                (current_racer_number, info["race_date"], info["race_date"], info["race_number"]),
+            ).fetchall()
 
-        return jsonify({"current": current, "summary": summary, "profile": profile, "history": history})
+        racer_baseline = {
+            "starts": len(racer_rows),
+            "avg_exhibition_time": _mean_or_none([float(r[0]) for r in racer_rows if r[0] is not None]),
+            "avg_start_timing_exhibition": _mean_or_none([float(r[1]) for r in racer_rows if r[1] is not None]),
+            "avg_start_timing": _mean_or_none([float(r[2]) for r in racer_rows if r[2] is not None]),
+            "avg_finish_position": _mean_or_none([float(r[3]) for r in racer_rows if r[3] is not None]),
+        }
+
+        profile = _motor_profile_from_history(history)
+        lift = _racer_lift_profile(history, racer_baseline)
+        live_signal = _motor_history_live_signal(current, history, racer_baseline)
+
+        return jsonify(
+            {
+                "current": current,
+                "summary": summary,
+                "profile": profile,
+                "lift": lift,
+                "live_signal": live_signal,
+                "history": history,
+            }
+        )
 
     @app.route("/api/odds-123-timeline")
     @member_only_api
@@ -1787,6 +1973,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         morning_pred: dict[str, float] = {}
         course1_stats: dict[str, tuple[float, int]] = {}
         exacta_pair_affinity: dict[str, dict] = {}
+        ashiya_boat4_lift: dict[str, dict] = {}
 
         # T-X snapshot の優先度 (小さいほど優先)
         # T-5min を最優先 (実運用での投票タイミング = レース 5 分前)
@@ -1923,6 +2110,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                p1.prob_top_2 AS boat1_pred_top2,
                                p3.prob_top_2 AS boat3_pred_top2,
                                p4.prob_top_2 AS boat4_pred_top2,
+                               e4.racer_number AS boat4_racer,
+                               e4.assigned_motor_number AS boat4_motor_number,
+                               e4.assigned_motor_top_2_percent AS boat4_motor_top2,
+                               pv4.course_number AS boat4_ex_course,
+                               NULLIF(pv4.exhibition_time, 0) AS boat4_exhibition_time,
+                               pv4.start_timing_exhibition AS boat4_ex_st,
+                               exall.best_exhibition_time,
+                               exall.n_exhibition_times,
                                COALESCE(fem.n_female, 0) AS n_female,
                                COALESCE(pt.program_type, '') AS program_type,
                                COALESCE(pt.program_name, '') AS program_name,
@@ -1931,11 +2126,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                         LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                         LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
+                        LEFT JOIN race_entries e4 ON e4.race_id = r.race_id AND e4.boat_number = 4
                         LEFT JOIN predictions p1 ON p1.race_id = r.race_id AND p1.boat_number = 1
                         LEFT JOIN predictions p3 ON p3.race_id = r.race_id AND p3.boat_number = 3
                         LEFT JOIN predictions p4 ON p4.race_id = r.race_id AND p4.boat_number = 4
                         LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+                        LEFT JOIN race_previews pv4 ON pv4.race_id = r.race_id AND pv4.boat_number = 4
                         LEFT JOIN race_program_tags pt ON pt.race_id = r.race_id
+                        LEFT JOIN (
+                            SELECT race_id,
+                                   MIN(NULLIF(exhibition_time, 0)) AS best_exhibition_time,
+                                   COUNT(NULLIF(exhibition_time, 0)) AS n_exhibition_times
+                              FROM race_previews
+                             GROUP BY race_id
+                        ) exall ON exall.race_id = r.race_id
                         LEFT JOIN (
                             SELECT ef.race_id, COUNT(*) AS n_female
                               FROM race_entries ef
@@ -1950,6 +2154,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          weather, ex_st, wind_speed,
                          boat2_racer, boat2_top2, boat2_motor_top2, boat3_natl_1,
                          boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
+                         boat4_racer, boat4_motor_number, boat4_motor_top2,
+                         boat4_ex_course, boat4_exhibition_time, boat4_ex_st,
+                         best_exhibition_time, n_exhibition_times,
                          n_female, program_type, program_name, is_fixed_entry) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade,
@@ -1969,6 +2176,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat1_pred_top2": boat1_pred_top2,
                             "boat3_pred_top2": boat3_pred_top2,
                             "boat4_pred_top2": boat4_pred_top2,
+                            "boat4_racer": boat4_racer,
+                            "boat4_motor_number": boat4_motor_number,
+                            "boat4_motor_top2": boat4_motor_top2,
+                            "boat4_ex_course": boat4_ex_course,
+                            "boat4_exhibition_time": boat4_exhibition_time,
+                            "boat4_ex_st": boat4_ex_st,
+                            "best_exhibition_time": best_exhibition_time,
+                            "n_exhibition_times": n_exhibition_times,
                             "n_female": n_female,
                             "program_type": program_type,
                             "program_name": program_name,
@@ -2060,6 +2275,137 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
 
                 # === 6. exacta niche pair affinity (current boat1 racer vs boat2 racer) ===
+                # === 6a. Ashiya exacta 4-1 lift context (future-free, before target date only) ===
+                try:
+                    ashiya_targets = {
+                        rid: info for rid, info in all_race_info.items()
+                        if info.get("stadium") == 21
+                           and info.get("boat4_racer")
+                           and info.get("boat4_motor_number") is not None
+                    }
+                    if ashiya_targets:
+                        try:
+                            ashiya_cutoff_iso = (
+                                _dt.fromisoformat(target_date).date() - _td(days=730)
+                            ).isoformat()
+                        except Exception:
+                            ashiya_cutoff_iso = "1900-01-01"
+
+                        target_racers = sorted({info.get("boat4_racer") for info in ashiya_targets.values()})
+                        racer_placeholders = ",".join("?" for _ in target_racers)
+
+                        racer_course4: dict[int, dict] = {}
+                        cur = conn.execute(f"""
+                            SELECT e.racer_number,
+                                   rr.start_timing,
+                                   rr.finishing_position
+                              FROM race_entries e
+                              JOIN races rh ON rh.race_id = e.race_id
+                              JOIN race_results rr
+                                ON rr.race_id = e.race_id
+                               AND rr.boat_number = e.boat_number
+                             WHERE rh.race_date < ?
+                               AND rh.race_date >= ?
+                               AND e.racer_number IN ({racer_placeholders})
+                               AND rr.course_number = 4
+                               AND rr.start_timing IS NOT NULL
+                               AND rr.finishing_position IS NOT NULL
+                        """, [target_date, ashiya_cutoff_iso, *target_racers])
+                        for racer, st, pos in cur.fetchall():
+                            rec = racer_course4.setdefault(racer, {"n": 0, "st_sum": 0.0, "wins": 0})
+                            rec["n"] += 1
+                            rec["st_sum"] += float(st)
+                            if int(pos) == 1:
+                                rec["wins"] += 1
+
+                        racer_ex_rows: dict[int, list[float]] = {}
+                        cur = conn.execute(f"""
+                            SELECT e.racer_number,
+                                   pv.exhibition_time
+                              FROM race_entries e
+                              JOIN races rh ON rh.race_id = e.race_id
+                              JOIN race_previews pv
+                                ON pv.race_id = e.race_id
+                               AND pv.boat_number = e.boat_number
+                             WHERE rh.race_date < ?
+                               AND rh.race_date >= ?
+                               AND e.racer_number IN ({racer_placeholders})
+                               AND pv.exhibition_time IS NOT NULL
+                               AND pv.exhibition_time > 0
+                             ORDER BY e.racer_number, rh.race_date DESC, rh.race_number DESC
+                        """, [target_date, ashiya_cutoff_iso, *target_racers])
+                        for racer, ex_time in cur.fetchall():
+                            rows = racer_ex_rows.setdefault(racer, [])
+                            if len(rows) < 20:
+                                rows.append(float(ex_time))
+
+                        target_motor_pairs = {
+                            (str(info.get("stadium")), str(info.get("boat4_motor_number")))
+                            for info in ashiya_targets.values()
+                        }
+                        target_motors = sorted({pair[1] for pair in target_motor_pairs})
+                        motor_placeholders = ",".join("?" for _ in target_motors)
+                        motor_ex_rows: dict[tuple[str, str], list[float]] = {}
+                        cur = conn.execute(f"""
+                            SELECT rh.stadium_number,
+                                   e.assigned_motor_number,
+                                   pv.exhibition_time
+                              FROM race_entries e
+                              JOIN races rh ON rh.race_id = e.race_id
+                              JOIN race_previews pv
+                                ON pv.race_id = e.race_id
+                               AND pv.boat_number = e.boat_number
+                             WHERE rh.race_date < ?
+                               AND rh.race_date >= ?
+                               AND rh.stadium_number = 21
+                               AND e.assigned_motor_number IN ({motor_placeholders})
+                               AND pv.exhibition_time IS NOT NULL
+                               AND pv.exhibition_time > 0
+                             ORDER BY rh.stadium_number, e.assigned_motor_number,
+                                      rh.race_date DESC, rh.race_number DESC
+                        """, [target_date, ashiya_cutoff_iso, *target_motors])
+                        for stadium_no, motor_no, ex_time in cur.fetchall():
+                            key = (str(stadium_no), str(motor_no))
+                            if key not in target_motor_pairs:
+                                continue
+                            rows = motor_ex_rows.setdefault(key, [])
+                            if len(rows) < 12:
+                                rows.append(float(ex_time))
+
+                        for rid, info in ashiya_targets.items():
+                            racer = info.get("boat4_racer")
+                            racer_stats = racer_course4.get(racer, {})
+                            racer_ex = racer_ex_rows.get(racer, [])
+                            motor_key = (str(info.get("stadium")), str(info.get("boat4_motor_number")))
+                            motor_ex = motor_ex_rows.get(motor_key, [])
+                            r4_n = int(racer_stats.get("n") or 0)
+                            r4_avg_st = (
+                                float(racer_stats["st_sum"]) / r4_n
+                                if r4_n else None
+                            )
+                            r4_win_rate = (
+                                float(racer_stats["wins"]) / r4_n
+                                if r4_n else None
+                            )
+                            racer_avg_ex = (sum(racer_ex) / len(racer_ex)) if racer_ex else None
+                            motor_avg_ex = (sum(motor_ex) / len(motor_ex)) if motor_ex else None
+                            ashiya_boat4_lift[rid] = {
+                                **info,
+                                "boat4_course4_n": r4_n,
+                                "boat4_course4_avg_st": r4_avg_st,
+                                "boat4_course4_win_rate": r4_win_rate,
+                                "boat4_racer_ex_n": len(racer_ex),
+                                "boat4_racer_avg_ex": racer_avg_ex,
+                                "boat4_motor_ex_n": len(motor_ex),
+                                "boat4_motor_avg_ex": motor_avg_ex,
+                            }
+                except Exception as e:
+                    logger.warning("ashiya boat4 lift context failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
                 try:
                     target_pairs = {
                         (info.get("boat1_racer"), info.get("boat2_racer"))
@@ -2405,6 +2751,92 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_label": "2連単 4★",
                 }
             return None
+
+        def _evaluate_ashiya_boat4_lift(ctx: dict | None):
+            """Evaluate verified Ashiya exacta 4-1 exhibition lift strategy."""
+            if not ctx:
+                return None
+
+            def _to_float(value):
+                try:
+                    return float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _to_int(value):
+                try:
+                    return int(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            stadium = _to_int(ctx.get("stadium"))
+            ex_course = _to_int(ctx.get("boat4_ex_course"))
+            r4_n = _to_int(ctx.get("boat4_course4_n")) or 0
+            racer_ex_n = _to_int(ctx.get("boat4_racer_ex_n")) or 0
+            motor_ex_n = _to_int(ctx.get("boat4_motor_ex_n")) or 0
+            r4_avg_st = _to_float(ctx.get("boat4_course4_avg_st"))
+            r4_win_rate = _to_float(ctx.get("boat4_course4_win_rate"))
+            boat4_ex_time = _to_float(ctx.get("boat4_exhibition_time"))
+            best_ex_time = _to_float(ctx.get("best_exhibition_time"))
+            racer_avg_ex = _to_float(ctx.get("boat4_racer_avg_ex"))
+            motor_avg_ex = _to_float(ctx.get("boat4_motor_avg_ex"))
+            boat4_ex_st = _to_float(ctx.get("boat4_ex_st"))
+            n_exhibition_times = _to_int(ctx.get("n_exhibition_times")) or 0
+
+            if None in (r4_avg_st, r4_win_rate, boat4_ex_time, best_ex_time,
+                        racer_avg_ex, motor_avg_ex, boat4_ex_st):
+                return None
+
+            best_diff = boat4_ex_time - best_ex_time
+            racer_gain = racer_avg_ex - boat4_ex_time
+            motor_gain = motor_avg_ex - boat4_ex_time
+
+            if not (
+                stadium == 21
+                and ex_course == 4
+                and r4_n >= 8
+                and r4_avg_st <= 0.16
+                and r4_win_rate >= 0.08
+                and n_exhibition_times >= 6
+                and best_diff <= 0.08
+                and racer_ex_n >= 8
+                and racer_gain >= 0.08
+                and motor_ex_n >= 5
+                and motor_gain >= 0.05
+                and boat4_ex_st <= 0.10
+            ):
+                return None
+
+            return {
+                "level": "exacta_niche_ashiya_boat4_lift",
+                "label": "芦屋 4号艇展示上振れ",
+                "recovery": 311.5,
+                "n": 54,
+                "bet": "2連単 4-1",
+                "rank": "exacta_niche",
+                "rank_label": "2連単ニッチ",
+                "rank_emoji": "2R",
+                "natl_1": None,
+                "local_1": None,
+                "is_exacta_niche": True,
+                "is_ashiya_boat4_lift": True,
+                "exacta_niche_tag": (
+                    "芦屋 + 4号艇展示進入4C + 4C平均ST0.16以下 "
+                    "+ 展示タイム上振れ + 展示ST0.10以下"
+                ),
+                "exacta_niche_hit_rate": 20.4,
+                "exacta_niche_recovery": 311.5,
+                "exacta_niche_meetings": None,
+                "exacta_niche_ahead": None,
+                "exacta_niche_rate": None,
+                "ashiya_boat4_best_diff": round(best_diff, 3),
+                "ashiya_boat4_racer_gain": round(racer_gain, 3),
+                "ashiya_boat4_motor_gain": round(motor_gain, 3),
+                "ashiya_boat4_course4_n": r4_n,
+                "ashiya_boat4_course4_win_rate": round(r4_win_rate * 100, 1),
+                "tetsuban_score": 6,
+                "tetsuban_label": "芦屋4C 6★",
+            }
 
         def _evaluate_win_niche(stadium, boat1_top2=None, boat3_top2=None, boat4_top2=None):
             """Evaluate verified win-bet niche strategies."""
@@ -3036,6 +3468,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 if exacta_niche:
                     l4 = exacta_niche
+                ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
+                if ashiya_exacta:
+                    l4 = ashiya_exacta
                 win_niche = _evaluate_win_niche(
                     stadium,
                     boat1_top2=boat1_pred_top2,
@@ -3164,6 +3599,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 if exacta_niche:
                     morning_l4 = exacta_niche
+                ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
+                if ashiya_exacta:
+                    morning_l4 = ashiya_exacta
                 win_niche = _evaluate_win_niche(
                     stadium,
                     boat1_top2=boat1_pred_top2,
