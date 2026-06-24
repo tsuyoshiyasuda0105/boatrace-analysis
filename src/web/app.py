@@ -2106,7 +2106,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e2.racer_number AS boat2_racer,
                                e2.national_top_2_percent AS boat2_top2,
                                e2.assigned_motor_top_2_percent AS boat2_motor_top2,
+                               NULLIF(pv2.exhibition_time, 0) AS boat2_exhibition_time,
                                e3.national_top_1_percent AS boat3_natl_1,
+                               NULLIF(pv3.exhibition_time, 0) AS boat3_exhibition_time,
                                p1.prob_top_2 AS boat1_pred_top2,
                                p3.prob_top_2 AS boat3_pred_top2,
                                p4.prob_top_2 AS boat4_pred_top2,
@@ -2131,6 +2133,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         LEFT JOIN predictions p3 ON p3.race_id = r.race_id AND p3.boat_number = 3
                         LEFT JOIN predictions p4 ON p4.race_id = r.race_id AND p4.boat_number = 4
                         LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+                        LEFT JOIN race_previews pv2 ON pv2.race_id = r.race_id AND pv2.boat_number = 2
+                        LEFT JOIN race_previews pv3 ON pv3.race_id = r.race_id AND pv3.boat_number = 3
                         LEFT JOIN race_previews pv4 ON pv4.race_id = r.race_id AND pv4.boat_number = 4
                         LEFT JOIN race_program_tags pt ON pt.race_id = r.race_id
                         LEFT JOIN (
@@ -2152,7 +2156,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     for (rid, stadium, grade, race_no, race_closed_at, cls, natl1, loc1,
                          avg_st, age, boat1_racer, boat1_motor_top2,
                          weather, ex_st, wind_speed,
-                         boat2_racer, boat2_top2, boat2_motor_top2, boat3_natl_1,
+                         boat2_racer, boat2_top2, boat2_motor_top2, boat2_exhibition_time,
+                         boat3_natl_1, boat3_exhibition_time,
                          boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
                          boat4_racer, boat4_motor_number, boat4_motor_top2,
                          boat4_ex_course, boat4_exhibition_time, boat4_ex_st,
@@ -2172,7 +2177,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat2_racer": boat2_racer,
                             "boat2_top2": boat2_top2,
                             "boat2_motor_top2": boat2_motor_top2,
+                            "boat2_exhibition_time": boat2_exhibition_time,
                             "boat3_natl_1": boat3_natl_1,
+                            "boat3_exhibition_time": boat3_exhibition_time,
                             "boat1_pred_top2": boat1_pred_top2,
                             "boat3_pred_top2": boat3_pred_top2,
                             "boat4_pred_top2": boat4_pred_top2,
@@ -2658,6 +2665,114 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return base
 
 
+        def _evaluate_l4_general_200(stadium, grade, cls, natl_1=None,
+                                     boat2_top2=None, boat2_exhibition_time=None,
+                                     boat3_exhibition_time=None, ex_st=None):
+            """L4 general-race strengthened watch.
+
+            Backtest memo (2025-02-01 to 2026-06-24):
+              general + B-excluded + boat1 A1 + 1-2-3 payout 500-999
+              + boat1 national win >= 7% + boat2 top2 >= 40%
+              + boat2 exhibition time faster than boat3
+              => n=164, hit=36.0%, recovery=251.6%.
+              + boat1 exhibition ST < 0.18 => n=150, hit=37.3%, recovery=259.3%.
+            """
+            b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
+            if not (grade == 5 and cls == 1 and b_excluded):
+                return None
+            try:
+                n1 = float(natl_1) if natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = 0.0
+            try:
+                b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                b2 = 0.0
+            if n1 < 7.0 or b2 < 40.0:
+                return None
+
+            b2_ex = None
+            b3_ex = None
+            try:
+                if boat2_exhibition_time is not None:
+                    b2_ex = float(boat2_exhibition_time)
+                if boat3_exhibition_time is not None:
+                    b3_ex = float(boat3_exhibition_time)
+            except (TypeError, ValueError):
+                b2_ex = b3_ex = None
+            has_exhibition = b2_ex is not None and b3_ex is not None
+            b2_faster = bool(has_exhibition and b2_ex < b3_ex)
+            try:
+                ex_st_f = float(ex_st) if ex_st is not None else None
+            except (TypeError, ValueError):
+                ex_st_f = None
+            ex_st_good = ex_st_f is not None and ex_st_f < 0.18
+
+            if has_exhibition and not b2_faster:
+                return None
+
+            active = b2_faster
+            recovery = 259.3 if ex_st_good else 251.6
+            n = 150 if ex_st_good else 164
+            hit_rate = 37.3 if ex_st_good else 36.0
+            level = "l4_general_200" if active else "morning_watch_l4_general_200"
+            label = "L4一般200" if active else "朝監視 L4一般200"
+            return {
+                "level": level,
+                "label": label,
+                "recovery": recovery,
+                "bet": "3連単 1-2-3",
+                "n": n,
+                "rank": "general200",
+                "rank_label": "一般200",
+                "rank_emoji": "強",
+                "natl_1": natl_1,
+                "local_1": None,
+                "is_l4_general_200": True,
+                "is_morning": not active,
+                "is_morning_watch": not active,
+                "is_reference": False,
+                "general200_hit_rate": hit_rate,
+                "general200_recovery": recovery,
+                "general200_n": n,
+                "general200_boat2_top2": b2,
+                "general200_boat2_exhibition_time": b2_ex,
+                "general200_boat3_exhibition_time": b3_ex,
+                "general200_boat2_faster": b2_faster,
+                "general200_ex_st": ex_st_f,
+                "general200_ex_st_good": ex_st_good,
+                "tetsuban_score": 5 if active else 4,
+                "tetsuban_label": "一般200 強" if active else "一般200 監視",
+            }
+
+        def _apply_l4_general_200(base, general200):
+            if not general200:
+                return base
+            if base is None:
+                return general200
+            base["is_l4_general_200"] = True
+            base["general200_hit_rate"] = general200["general200_hit_rate"]
+            base["general200_recovery"] = general200["general200_recovery"]
+            base["general200_n"] = general200["general200_n"]
+            base["general200_boat2_top2"] = general200["general200_boat2_top2"]
+            base["general200_boat2_exhibition_time"] = general200["general200_boat2_exhibition_time"]
+            base["general200_boat3_exhibition_time"] = general200["general200_boat3_exhibition_time"]
+            base["general200_boat2_faster"] = general200["general200_boat2_faster"]
+            base["general200_ex_st"] = general200["general200_ex_st"]
+            base["general200_ex_st_good"] = general200["general200_ex_st_good"]
+            base["recovery"] = general200["recovery"]
+            base["n"] = general200["n"]
+            base["level"] = general200["level"]
+            base["label"] = general200["label"]
+            base["rank"] = general200["rank"]
+            base["rank_label"] = general200["rank_label"]
+            base["is_reference"] = False
+            base["is_morning_watch"] = general200["is_morning_watch"]
+            if (base.get("tetsuban_score") or 0) < general200["tetsuban_score"]:
+                base["tetsuban_score"] = general200["tetsuban_score"]
+                base["tetsuban_label"] = general200["tetsuban_label"]
+            return base
+
         def _evaluate_exacta_niche(stadium, race_number, boat1_motor_top2=None,
                                    boat2_motor_top2=None, program_type=None,
                                    pair_affinity=None):
@@ -2836,6 +2951,121 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "ashiya_boat4_course4_win_rate": round(r4_win_rate * 100, 1),
                 "tetsuban_score": 6,
                 "tetsuban_label": "芦屋4C 6★",
+            }
+
+        def _evaluate_ashiya_boat4_watch(ctx: dict | None):
+            """Evaluate pre-exhibition Ashiya 4C monitor state for the exacta 4-1 setup."""
+            if not ctx:
+                return None
+
+            def _to_float(value):
+                try:
+                    return float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _to_int(value):
+                try:
+                    return int(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            stadium = _to_int(ctx.get("stadium"))
+            if stadium != 21:
+                return None
+
+            r4_n = _to_int(ctx.get("boat4_course4_n")) or 0
+            racer_ex_n = _to_int(ctx.get("boat4_racer_ex_n")) or 0
+            motor_ex_n = _to_int(ctx.get("boat4_motor_ex_n")) or 0
+            r4_avg_st = _to_float(ctx.get("boat4_course4_avg_st"))
+            r4_win_rate = _to_float(ctx.get("boat4_course4_win_rate"))
+            racer_avg_ex = _to_float(ctx.get("boat4_racer_avg_ex"))
+            motor_avg_ex = _to_float(ctx.get("boat4_motor_avg_ex"))
+            ex_course = _to_int(ctx.get("boat4_ex_course"))
+            boat4_ex_time = _to_float(ctx.get("boat4_exhibition_time"))
+            best_ex_time = _to_float(ctx.get("best_exhibition_time"))
+            boat4_ex_st = _to_float(ctx.get("boat4_ex_st"))
+
+            if None in (r4_avg_st, r4_win_rate, racer_avg_ex, motor_avg_ex):
+                return None
+
+            if not (
+                r4_n >= 8
+                and r4_avg_st <= 0.16
+                and r4_win_rate >= 0.08
+                and racer_ex_n >= 8
+                and motor_ex_n >= 5
+            ):
+                return None
+
+            best_diff = None
+            racer_gain = None
+            motor_gain = None
+            ready_count = 0
+            ready_total = 5
+
+            if ex_course == 4:
+                ready_count += 1
+            if boat4_ex_time is not None and best_ex_time is not None:
+                best_diff = boat4_ex_time - best_ex_time
+                if best_diff <= 0.08:
+                    ready_count += 1
+                racer_gain = racer_avg_ex - boat4_ex_time
+                motor_gain = motor_avg_ex - boat4_ex_time
+                if racer_gain >= 0.08:
+                    ready_count += 1
+                if motor_gain >= 0.05:
+                    ready_count += 1
+            if boat4_ex_st is not None and boat4_ex_st <= 0.10:
+                ready_count += 1
+
+            ready_now = (
+                ex_course == 4
+                and best_diff is not None and best_diff <= 0.08
+                and racer_gain is not None and racer_gain >= 0.08
+                and motor_gain is not None and motor_gain >= 0.05
+                and boat4_ex_st is not None and boat4_ex_st <= 0.10
+            )
+
+            return {
+                "level": "morning_watch_ashiya_boat4_lift",
+                "label": "朝監視 芦屋4C",
+                "recovery": 311.5,
+                "n": 54,
+                "bet": "2連単 4-1",
+                "rank": "exacta_niche",
+                "rank_label": "2連単ニッチ",
+                "rank_emoji": "2R",
+                "natl_1": None,
+                "local_1": None,
+                "is_exacta_niche": True,
+                "is_reference": True,
+                "is_morning": True,
+                "is_morning_watch": True,
+                "is_ashiya_boat4_watch": True,
+                "exacta_niche_tag": "芦屋4C朝監視 / 展示後に4-1へ絞り込み",
+                "exacta_niche_hit_rate": 20.4,
+                "exacta_niche_recovery": 311.5,
+                "exacta_niche_meetings": None,
+                "exacta_niche_ahead": None,
+                "exacta_niche_rate": None,
+                "ashiya_boat4_course4_n": r4_n,
+                "ashiya_boat4_course4_avg_st": round(r4_avg_st, 3),
+                "ashiya_boat4_course4_win_rate": round(r4_win_rate * 100, 1),
+                "ashiya_boat4_racer_ex_n": racer_ex_n,
+                "ashiya_boat4_racer_avg_ex": round(racer_avg_ex, 3),
+                "ashiya_boat4_motor_ex_n": motor_ex_n,
+                "ashiya_boat4_motor_avg_ex": round(motor_avg_ex, 3),
+                "ashiya_boat4_best_diff": round(best_diff, 3) if best_diff is not None else None,
+                "ashiya_boat4_racer_gain": round(racer_gain, 3) if racer_gain is not None else None,
+                "ashiya_boat4_motor_gain": round(motor_gain, 3) if motor_gain is not None else None,
+                "ashiya_boat4_ex_course": ex_course,
+                "ashiya_boat4_ex_st": round(boat4_ex_st, 3) if boat4_ex_st is not None else None,
+                "ashiya_watch_ready_count": ready_count,
+                "ashiya_watch_ready_total": ready_total,
+                "ashiya_watch_ready": ready_now,
+                "tetsuban_score": 5 if ready_now else 4,
+                "tetsuban_label": "芦屋4C 点灯" if ready_now else "芦屋4C 朝監視",
             }
 
         def _evaluate_win_niche(stadium, boat1_top2=None, boat3_top2=None, boat4_top2=None):
@@ -3412,7 +3642,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             boat1_motor_top2 = info.get("boat1_motor_top2")
             boat2_top2 = info.get("boat2_top2")
             boat2_motor_top2 = info.get("boat2_motor_top2")
+            boat2_exhibition_time = info.get("boat2_exhibition_time")
             boat3_natl_1 = info.get("boat3_natl_1")
+            boat3_exhibition_time = info.get("boat3_exhibition_time")
             boat1_pred_top2 = info.get("boat1_pred_top2")
             boat3_pred_top2 = info.get("boat3_pred_top2")
             boat4_pred_top2 = info.get("boat4_pred_top2")
@@ -3460,6 +3692,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     n_female=n_female, target_date_iso=target_date,
                 )
                 l4 = _apply_l4_portfolio_strong(l4, l4_portfolio)
+                l4_general_200 = _evaluate_l4_general_200(
+                    stadium, grade, cls, natl_1=natl_1,
+                    boat2_top2=boat2_top2,
+                    boat2_exhibition_time=boat2_exhibition_time,
+                    boat3_exhibition_time=boat3_exhibition_time,
+                    ex_st=ex_st,
+                )
+                l4 = _apply_l4_general_200(l4, l4_general_200)
                 exacta_niche = _evaluate_exacta_niche(
                     stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
                     boat2_motor_top2=boat2_motor_top2,
@@ -3517,6 +3757,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         )
                         l4 = morning_l4
                         l4 = _apply_l4_portfolio_strong(l4, l4_portfolio)
+                        l4_general_200 = _evaluate_l4_general_200(
+                            stadium, grade, cls, natl_1=natl_1,
+                            boat2_top2=boat2_top2,
+                            boat2_exhibition_time=boat2_exhibition_time,
+                            boat3_exhibition_time=boat3_exhibition_time,
+                            ex_st=ex_st,
+                        )
+                        l4 = _apply_l4_general_200(l4, l4_general_200)
 
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
@@ -3591,6 +3839,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     n_female=n_female, target_date_iso=target_date,
                 )
                 morning_l4 = _apply_l4_portfolio_strong(morning_l4, l4_portfolio)
+                l4_general_200 = _evaluate_l4_general_200(
+                    stadium, grade, cls, natl_1=natl_1,
+                    boat2_top2=boat2_top2,
+                    boat2_exhibition_time=None,
+                    boat3_exhibition_time=None,
+                    ex_st=None,
+                )
+                morning_l4 = _apply_l4_general_200(morning_l4, l4_general_200)
                 exacta_niche = _evaluate_exacta_niche(
                     stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
                     boat2_motor_top2=boat2_motor_top2,
@@ -3599,6 +3855,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 if exacta_niche:
                     morning_l4 = exacta_niche
+                ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
+                if ashiya_watch:
+                    morning_l4 = ashiya_watch
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                 if ashiya_exacta:
                     morning_l4 = ashiya_exacta

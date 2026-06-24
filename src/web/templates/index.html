@@ -285,6 +285,8 @@
                   if (sig.l4.is_exacta_niche) l4Badge.className += ' l4-exacta-niche';
                   if (sig.l4.is_win_niche) l4Badge.className += ' l4-win-niche';
                   if (sig.l4.is_exhibition_st_out) l4Badge.className += ' l4-exhibition-st-out';
+                  if (sig.l4.is_ashiya_boat4_watch) l4Badge.className += ' l4-ashiya-watch';
+                  if (sig.l4.ashiya_watch_ready) l4Badge.className += ' l4-ashiya-watch-ready';
                   // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
                   if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
                   // ♀ 案A: 女性混入レースは専用クラスで視覚的に区別
@@ -312,6 +314,28 @@
                           + ` | 監視: ${sig.l4.win_niche_watch_odds}倍以上`
                           + ` | 条件: ${sig.l4.win_niche_tag || ''}`;
                   }
+                  if (sig.l4.is_ashiya_boat4_watch || sig.l4.is_ashiya_boat4_lift) {
+                    title += ` | 4C平均ST ${Number(sig.l4.ashiya_boat4_course4_avg_st || 0).toFixed(2)}`
+                          + ` (${sig.l4.ashiya_boat4_course4_n || '-'})`
+                          + ` | 4C1着率 ${Number(sig.l4.ashiya_boat4_course4_win_rate || 0).toFixed(1)}%`
+                          + ` | 選手平均展示 ${Number(sig.l4.ashiya_boat4_racer_avg_ex || 0).toFixed(2)}`
+                          + ` | 同モーター平均展示 ${Number(sig.l4.ashiya_boat4_motor_avg_ex || 0).toFixed(2)}`;
+                    if (sig.l4.ashiya_watch_ready_count != null) {
+                      title += ` | 展示点灯 ${sig.l4.ashiya_watch_ready_count}/${sig.l4.ashiya_watch_ready_total || 5}`;
+                    }
+                    if (sig.l4.ashiya_boat4_best_diff != null) {
+                      title += ` | 最速差 ${Number(sig.l4.ashiya_boat4_best_diff).toFixed(2)}`;
+                    }
+                    if (sig.l4.ashiya_boat4_racer_gain != null) {
+                      title += ` | 選手平均との差 ${Number(sig.l4.ashiya_boat4_racer_gain).toFixed(2)}`;
+                    }
+                    if (sig.l4.ashiya_boat4_motor_gain != null) {
+                      title += ` | モーター平均との差 ${Number(sig.l4.ashiya_boat4_motor_gain).toFixed(2)}`;
+                    }
+                    if (sig.l4.ashiya_boat4_ex_st != null) {
+                      title += ` | 展示ST ${Number(sig.l4.ashiya_boat4_ex_st).toFixed(2)}`;
+                    }
+                  }
                   if (sig.l4.is_1c80) {
                     const cwr = (sig.l4.course1_winrate * 100).toFixed(0);
                     const cst = sig.l4.course1_starts;
@@ -319,6 +343,23 @@
                   }
                   if (sig.l4.is_l4_pro) {
                     title += ` | 🔥L4 PRO: ${sig.l4.label_l4_pro}、検証ROI ${sig.l4.recovery_l4_pro}% → ベテラン×スタート好調`;
+                  }
+                  if (sig.l4.is_l4_general_200) {
+                    title += ` | L4一般200: 回収率 ${sig.l4.general200_recovery}%`
+                          + ` / 的中率 ${sig.l4.general200_hit_rate}% / n=${sig.l4.general200_n}`
+                          + ` | 条件: 一般戦+B除外+1号艇A1+全国1着率7%以上+2号艇2連率40%以上`;
+                    if (sig.l4.general200_boat2_exhibition_time != null) {
+                      title += ` | 2号艇展示T ${Number(sig.l4.general200_boat2_exhibition_time).toFixed(2)}`;
+                    }
+                    if (sig.l4.general200_boat3_exhibition_time != null) {
+                      title += ` | 3号艇展示T ${Number(sig.l4.general200_boat3_exhibition_time).toFixed(2)}`;
+                    }
+                    title += sig.l4.general200_boat2_faster
+                      ? ' | 展示条件OK: 2号艇が3号艇より速い'
+                      : ' | 朝監視: 展示条件待ち';
+                    if (sig.l4.general200_ex_st != null) {
+                      title += ` | 1号艇展示ST ${Number(sig.l4.general200_ex_st).toFixed(2)}`;
+                    }
                   }
                   if (sig.l4.is_portfolio_strong) {
                     title += ` | 🔥強バッジ: 10年検証 回収率 ${sig.l4.portfolio_recovery}%`
@@ -337,7 +378,11 @@
                   const portfolio = sig.l4.is_portfolio_strong ? ' 🔥強' : '';
                   const exacta = sig.l4.is_exacta_niche ? ' 🎯2連単' : '';
                   const winNiche = sig.l4.is_win_niche ? ' 🎯単勝' : '';
-                  l4Badge.textContent = `${sig.l4.label} ${l4Rec}%${onec80}${pro}${portfolio}${exacta}${winNiche}`;
+                  const ashiyaWatchSuffix = sig.l4.is_ashiya_boat4_watch
+                    ? ` ST${Number(sig.l4.ashiya_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.ashiya_boat4_course4_win_rate || 0).toFixed(1)}%`
+                    : '';
+                  const general200 = sig.l4.is_l4_general_200 ? ' 一般200' : '';
+                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix} ${l4Rec}%${onec80}${pro}${portfolio}${general200}${exacta}${winNiche}`;
                   item.appendChild(l4Badge);
                   if (sig.l4.is_portfolio_strong) {
                     const ps = document.createElement('span');
@@ -808,6 +853,10 @@
               const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
               const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
               const isExactaNiche = l4Badge && l4Badge.classList.contains('l4-exacta-niche');
+              const isGeneral200 = l4Badge && (
+                l4Badge.classList.contains('l4-l4_general_200')
+                || l4Badge.classList.contains('l4-morning_watch_l4_general_200')
+              );
               // 鉄板度バッジから score 取り出し
               const tbEl = u.el.querySelector('.tetsuban-badge');
               const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
@@ -821,6 +870,7 @@
               if (!isExactaNiche && isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';
               if (!isExactaNiche && u.isPortfolioStrong) rankLabel = '🔥 強監視 ' + rankLabel;
               if (tbStars) rankLabel = tbStars + rankLabel;
+              if (isGeneral200) rankLabel = '強 一般200';
               const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
               const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
               recovery = recMatch ? recMatch[1] : '-';
@@ -829,6 +879,16 @@
               if (isExactaNiche) {
                 const conditionMatch = l4Title.match(/条件:\s*([^|]+)/);
                 racerInfo = conditionMatch ? conditionMatch[1].trim() : '';
+                if (/芦屋4C/.test(pickType) || /芦屋4C/.test(l4Title)) {
+                  const stMatch = l4Title.match(/4C平均ST\s*([\d.]+)/);
+                  const winMatch = l4Title.match(/4C1着率\s*([\d.]+%)/);
+                  const readyMatch = l4Title.match(/展示点灯\s*(\d+\/\d+)/);
+                  const parts = [];
+                  if (stMatch) parts.push(`ST ${stMatch[1]}`);
+                  if (winMatch) parts.push(`勝 ${winMatch[1]}`);
+                  if (readyMatch) parts.push(`展示 ${readyMatch[1]}`);
+                  if (parts.length) racerInfo = parts.join(' / ');
+                }
               }
               pickType = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
               // 除外系 (帯外/雨/女性混合) はすべて既存の is-odds-mismatch
