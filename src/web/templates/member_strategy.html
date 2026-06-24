@@ -73,10 +73,10 @@
       </div>
     </div>
 
-    <h4 class="sub-strategy-header observe-only-header">📋 一般戦 (観察 2 + ⭐採用 1)</h4>
+    <h4 class="sub-strategy-header observe-only-header">📋 一般戦 (観察 2 + ⭐採用 2)</h4>
     <p class="dashboard-hint">
-      左 2 カードは<strong>観察用ベンチ</strong> (運用対象外)、右の <strong>⭐ L4 G++ F1 が採用ベース</strong>
-      (本日候補リスト + メール通知の対象、検証 ROI 204% / OOS Tier 1)。<br>
+      左 2 カードは<strong>観察用ベンチ</strong> (運用対象外)、右 2 カードは <strong>採用ベース</strong>
+      (⭐ L4 G++ F1 と 朝監視 L4一般200 を本日候補リスト側で管理)。<br>
       <small>共通条件: 一般戦 / 1号艇A1 / 本命3連単1-2-3 オッズ 500-1000円 / 雨除外 /
       <strong>B除外会場 (戸田・平和島・蒲郡・常滑・三国・下関・芦屋・大村) 除外</strong></small>
     </p>
@@ -121,6 +121,20 @@
           / 損益 {{ totals.gen_f1_tri_profit | signed_comma }}円
           {% endif %}
           <br><small>★採用ベース (検証 204%, n=1189, 4年通算 OOS Tier 1)</small>
+        </span>
+      </div>
+      <div class="summary-card f1-adopt"
+           title="一般戦200: 一般戦 + 全国1着率7%以上 + 2号艇2連率40%以上 + 展示で2号艇が3号艇より上。">
+        <span class="card-label">朝監視 L4一般200</span>
+        <span class="card-value">
+          {% if totals.gen_200_tri_roi is not none %}{{ '%+.1f' | format(totals.gen_200_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.gen_200_tri_bets }} HIT={{ totals.gen_200_tri_hits }}
+          {% if totals.gen_200_tri_bets > 0 %}
+          / 損益 {{ totals.gen_200_tri_profit | signed_comma }}円
+          {% endif %}
+          <br><small>一般戦とは別集計 / 展示条件込み</small>
         </span>
       </div>
     </div>
@@ -258,6 +272,19 @@
           / 損益 {{ totals.kiryu_win2_profit | signed_comma }}円
           {% endif %}
           <br><small>監視 (検証 回収率181.0%, 的中24.9%, n=209 / 買い6倍以上)</small>
+        </span>
+      </div>
+      <div class="summary-card obs-prime"
+           title="監視。宮島 + 4号艇A1 + モーター2連率40%以上 + 1号艇全国1着率8%以下 + 1号艇モーター2連率35%以下 + 4コース平均ST0.15以下 + 4コース1着率8%以上 + 同会場同モーターn12以上/1着率8%以上。3連単4頭流し20点。検証 回収率147.1% / 的中率23.1% / n=121。">
+        <span class="card-label">🎯 宮島 4コースまくり</span>
+        <span class="card-value">
+          {% if totals.miyajima_boat4_tri_roi is not none %}{{ '%+.1f' | format(totals.miyajima_boat4_tri_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.miyajima_boat4_tri_bets }} HIT={{ totals.miyajima_boat4_tri_hits }}
+          {% if totals.miyajima_boat4_tri_bets > 0 %}
+          / 損益 {{ totals.miyajima_boat4_tri_profit | signed_comma }}円          {% endif %}
+          <br><small>観察 (想定 回収率147.1%, 的中率23.1%, n=121 / 3連単4頭流し20点)</small>
         </span>
       </div>
     </div>
@@ -409,8 +436,10 @@
             <th colspan="3">🔍 L4 一般戦 (観察)</th>
             <th colspan="3">🌟 L4 G+ (観察)</th>
             <th colspan="3">⭐ L4 G++ F1 (採用)</th>
+            <th colspan="3">🟨 L4一般200</th>
           </tr>
           <tr>
+            <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
@@ -418,7 +447,7 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set has_obs = (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) or (r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0) %}
+          {% set has_obs = (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) or (r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0) or (r.gen_200_tri_bets and r.gen_200_tri_bets > 0) %}
           {% if has_obs %}
           <tr class="has-l4-observe">
             <td class="date-cell">
@@ -452,19 +481,26 @@
             <td class="num {% if r.gen_f1_tri_profit and r.gen_f1_tri_profit > 0 %}pos{% elif r.gen_f1_tri_profit and r.gen_f1_tri_profit < 0 %}neg{% endif %}">
               {% if r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0 %}{{ r.gen_f1_tri_profit | signed_comma }}{% else %}-{% endif %}
             </td>
+            <td class="num">{{ r.gen_200_tri_hits or 0 }}/{{ r.gen_200_tri_bets or 0 }}</td>
+            <td class="num {% if r.gen_200_tri_recovery and r.gen_200_tri_recovery >= 100 %}pos{% elif r.gen_200_tri_recovery %}neg{% endif %}">
+              {% if r.gen_200_tri_recovery is not none %}{{ '%.0f' | format(r.gen_200_tri_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.gen_200_tri_profit and r.gen_200_tri_profit > 0 %}pos{% elif r.gen_200_tri_profit and r.gen_200_tri_profit < 0 %}neg{% endif %}">
+              {% if r.gen_200_tri_bets and r.gen_200_tri_bets > 0 %}{{ r.gen_200_tri_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
           </tr>
           {% endif %}
           {% endfor %}
           {# 1行も無い場合 #}
           {% set obs_total = namespace(n=0) %}
           {% for r in rows %}
-            {% if (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) or (r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0) %}
+            {% if (r.gen_tri_bets and r.gen_tri_bets > 0) or (r.gen_plus_tri_bets and r.gen_plus_tri_bets > 0) or (r.gen_f1_tri_bets and r.gen_f1_tri_bets > 0) or (r.gen_200_tri_bets and r.gen_200_tri_bets > 0) %}
               {% set obs_total.n = obs_total.n + 1 %}
             {% endif %}
           {% endfor %}
           {% if obs_total.n == 0 %}
           <tr class="is-empty">
-            <td colspan="11" class="num muted">一般戦データなし (バックフィル未実行 or 該当レース無し)</td>
+            <td colspan="14" class="num muted">一般戦データなし (バックフィル未実行 or 該当レース無し)</td>
           </tr>
           {% endif %}
         </tbody>
@@ -501,6 +537,15 @@
             </td>
             <td class="num {% if totals.gen_f1_tri_profit and totals.gen_f1_tri_profit > 0 %}pos{% elif totals.gen_f1_tri_profit and totals.gen_f1_tri_profit < 0 %}neg{% endif %}">
               {% if totals.gen_f1_tri_bets > 0 %}<strong>{{ totals.gen_f1_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num"><strong>{{ totals.gen_200_tri_hits }}/{{ totals.gen_200_tri_bets }}</strong>
+              {% if totals.gen_200_tri_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.gen_200_tri_hits / totals.gen_200_tri_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.gen_200_tri_recovery and totals.gen_200_tri_recovery >= 100 %}pos{% elif totals.gen_200_tri_recovery %}neg{% endif %}">
+              {% if totals.gen_200_tri_recovery is not none %}<strong>{{ '%.0f' | format(totals.gen_200_tri_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.gen_200_tri_profit and totals.gen_200_tri_profit > 0 %}pos{% elif totals.gen_200_tri_profit and totals.gen_200_tri_profit < 0 %}neg{% endif %}">
+              {% if totals.gen_200_tri_bets > 0 %}<strong>{{ totals.gen_200_tri_profit | signed_comma }}</strong>{% else %}-{% endif %}
             </td>
           </tr>
         </tfoot>

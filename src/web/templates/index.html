@@ -284,6 +284,7 @@
                   if (sig.l4.is_l4_pro) l4Badge.className += ' l4-pro';
                   if (sig.l4.is_exacta_niche) l4Badge.className += ' l4-exacta-niche';
                   if (sig.l4.is_win_niche) l4Badge.className += ' l4-win-niche';
+                  if (sig.l4.is_miyajima_boat4_watch) l4Badge.className += ' l4-miyajima-boat4-watch';
                   if (sig.l4.is_exhibition_st_out) l4Badge.className += ' l4-exhibition-st-out';
                   if (sig.l4.is_ashiya_boat4_watch) l4Badge.className += ' l4-ashiya-watch';
                   if (sig.l4.ashiya_watch_ready) l4Badge.className += ' l4-ashiya-watch-ready';
@@ -336,6 +337,24 @@
                       title += ` | 展示ST ${Number(sig.l4.ashiya_boat4_ex_st).toFixed(2)}`;
                     }
                   }
+                  if (sig.l4.is_miyajima_boat4_watch) {
+                    title = `${sig.l4.label} | 宮島4コースまくり型 | 想定回収率 ${l4Rec}% (n=${l4N})`
+                          + ` | 的中率 ${sig.l4.miyajima_boat4_hit_rate}%`
+                          + ` | 買い目: ${sig.l4.bet || ''}`
+                          + ` | 4C平均ST ${Number(sig.l4.miyajima_boat4_course4_avg_st || 0).toFixed(2)}`
+                          + ` (${sig.l4.miyajima_boat4_course4_n || '-'})`
+                          + ` | 4C1着率 ${Number(sig.l4.miyajima_boat4_course4_win_rate || 0).toFixed(1)}%`
+                          + ` | モーターn ${sig.l4.miyajima_boat4_motor_n || '-'}`
+                          + ` | モーター1着率 ${Number(sig.l4.miyajima_boat4_motor_win_rate || 0).toFixed(1)}%`;
+                    if (sig.l4.miyajima_boat4_ex_course != null) {
+                      title += ` | 展示進入 ${sig.l4.miyajima_boat4_ex_course}`;
+                    } else {
+                      title += ' | 展示前: 枠4を仮採用';
+                    }
+                    if (sig.l4.miyajima_watch_ready_count != null) {
+                      title += ` | 監視条件 ${sig.l4.miyajima_watch_ready_count}/${sig.l4.miyajima_watch_ready_total || 6}`;
+                    }
+                  }
                   if (sig.l4.is_1c80) {
                     const cwr = (sig.l4.course1_winrate * 100).toFixed(0);
                     const cst = sig.l4.course1_starts;
@@ -381,8 +400,11 @@
                   const ashiyaWatchSuffix = sig.l4.is_ashiya_boat4_watch
                     ? ` ST${Number(sig.l4.ashiya_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.ashiya_boat4_course4_win_rate || 0).toFixed(1)}%`
                     : '';
+                  const miyajimaWatchSuffix = sig.l4.is_miyajima_boat4_watch
+                    ? ` ST${Number(sig.l4.miyajima_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.miyajima_boat4_course4_win_rate || 0).toFixed(1)}%`
+                    : '';
                   const general200 = sig.l4.is_l4_general_200 ? ' 一般200' : '';
-                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix} ${l4Rec}%${onec80}${pro}${portfolio}${general200}${exacta}${winNiche}`;
+                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${pro}${portfolio}${general200}${exacta}${winNiche}`;
                   item.appendChild(l4Badge);
                   if (sig.l4.is_portfolio_strong) {
                     const ps = document.createElement('span');
@@ -853,6 +875,7 @@
               const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
               const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
               const isExactaNiche = l4Badge && l4Badge.classList.contains('l4-exacta-niche');
+              const isMiyajimaBoat4 = l4Badge && l4Badge.classList.contains('l4-miyajima-boat4-watch');
               const isGeneral200 = l4Badge && (
                 l4Badge.classList.contains('l4-l4_general_200')
                 || l4Badge.classList.contains('l4-morning_watch_l4_general_200')
