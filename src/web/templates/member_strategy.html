@@ -261,6 +261,20 @@
         </span>
       </div>
       <div class="summary-card obs-prime"
+           title="芦屋 + 4号艇展示進入4コース + 4コース平均ST0.16以下 + 4コース1着率8%以上 + 展示タイムが最速差0.08以内 + 選手平均より0.08秒以上上振れ + 同モーター平均より0.05秒以上上振れ + 展示ST0.10以下。検証 回収率311.5% / 的中率20.4% / n=54。">
+        <span class="card-label">🎯 芦屋 2連単 4-1</span>
+        <span class="card-value">
+          {% if totals.ashiya_boat4_exa_roi is not none %}{{ '%+.1f' | format(totals.ashiya_boat4_exa_roi) }}%{% else %}-{% endif %}
+        </span>
+        <span class="card-sub">
+          n={{ totals.ashiya_boat4_exa_bets }} HIT={{ totals.ashiya_boat4_exa_hits }}
+          {% if totals.ashiya_boat4_exa_bets > 0 %}
+          / 損益 {{ totals.ashiya_boat4_exa_profit | signed_comma }}円
+          {% endif %}
+          <br><small>実戦版 (想定 回収率311.5%, 的中率20.4%, n=54 / 2連単4-1)</small>
+        </span>
+      </div>
+      <div class="summary-card obs-prime"
            title="監視。桐生 + 3号艇2着内予測が1号艇より8pt以上 + 4号艇より5pt以上で単勝2。検証 回収率181.0% / 的中率24.9% / n=209。買い目安は単勝2が6.0倍以上。">
         <span class="card-label">🎯 桐生 単勝2</span>
         <span class="card-value">
@@ -275,7 +289,7 @@
         </span>
       </div>
       <div class="summary-card obs-prime"
-           title="監視。宮島 + 4号艇A1 + モーター2連率40%以上 + 1号艇全国1着率8%以下 + 1号艇モーター2連率35%以下 + 4コース平均ST0.15以下 + 4コース1着率8%以上 + 同会場同モーターn12以上/1着率8%以上。3連単4頭流し20点。検証 回収率147.1% / 的中率23.1% / n=121。">
+           title="宮島 + 4号艇A1 + モーター2連率40%以上 + 1号艇全国1着率8%以下 + 1号艇モーター2連率35%以下 + 4コース平均ST0.15以下 + 4コース1着率8%以上 + 同会場同モーターn12以上/1着率8%以上。展示進入4コース・展示ST0.12以下・展示タイム最速差0.10以内・選手平均展示より上振れで実戦昇格。検証 回収率285.1% / 的中率47.6% / n=21。">
         <span class="card-label">🎯 宮島 4コースまくり</span>
         <span class="card-value">
           {% if totals.miyajima_boat4_tri_roi is not none %}{{ '%+.1f' | format(totals.miyajima_boat4_tri_roi) }}%{% else %}-{% endif %}
@@ -284,7 +298,7 @@
           n={{ totals.miyajima_boat4_tri_bets }} HIT={{ totals.miyajima_boat4_tri_hits }}
           {% if totals.miyajima_boat4_tri_bets > 0 %}
           / 損益 {{ totals.miyajima_boat4_tri_profit | signed_comma }}円          {% endif %}
-          <br><small>観察 (想定 回収率147.1%, 的中率23.1%, n=121 / 3連単4頭流し20点)</small>
+          <br><small>実戦版 (想定 回収率285.1%, 的中率47.6%, n=21 / 3連単4頭流し20点)</small>
         </span>
       </div>
     </div>
@@ -697,9 +711,11 @@
             <th colspan="3">🟦+ Tier A (★)</th>
             <th colspan="3">🌸 Venus L4</th>
             <th colspan="3">🎯 尼崎M 1-4</th>
+            <th colspan="3">🎯 芦屋 4-1</th>
             <th colspan="3">🎯 桐生 単勝2</th>
           </tr>
           <tr>
+            <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
             <th>HIT</th><th>回収</th><th>損益</th>
@@ -710,7 +726,7 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0) or (r.kiryu_win2_bets and r.kiryu_win2_bets > 0) %}
+          {% set has_planned = (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0) or (r.ashiya_boat4_exa_bets and r.ashiya_boat4_exa_bets > 0) or (r.kiryu_win2_bets and r.kiryu_win2_bets > 0) %}
           {% if has_planned %}
           <tr class="has-l4-observe">
             <td class="date-cell">
@@ -763,6 +779,15 @@
               {% if r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0 %}{{ r.amagasaki_motor_exa_profit | signed_comma }}{% else %}-{% endif %}
             </td>
 
+            {# 芦屋 2連単 4-1 列 #}
+            <td class="num">{{ r.ashiya_boat4_exa_hits or 0 }}/{{ r.ashiya_boat4_exa_bets or 0 }}</td>
+            <td class="num {% if r.ashiya_boat4_exa_recovery and r.ashiya_boat4_exa_recovery >= 100 %}pos{% elif r.ashiya_boat4_exa_recovery %}neg{% endif %}">
+              {% if r.ashiya_boat4_exa_recovery is not none %}{{ '%.0f' | format(r.ashiya_boat4_exa_recovery) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num {% if r.ashiya_boat4_exa_profit and r.ashiya_boat4_exa_profit > 0 %}pos{% elif r.ashiya_boat4_exa_profit and r.ashiya_boat4_exa_profit < 0 %}neg{% endif %}">
+              {% if r.ashiya_boat4_exa_bets and r.ashiya_boat4_exa_bets > 0 %}{{ r.ashiya_boat4_exa_profit | signed_comma }}{% else %}-{% endif %}
+            </td>
+
             {# 桐生 単勝2 列 #}
             <td class="num">{{ r.kiryu_win2_hits or 0 }}/{{ r.kiryu_win2_bets or 0 }}</td>
             <td class="num {% if r.kiryu_win2_recovery and r.kiryu_win2_recovery >= 100 %}pos{% elif r.kiryu_win2_recovery %}neg{% endif %}">
@@ -776,13 +801,13 @@
           {% endfor %}
           {% set planned_total = namespace(n=0) %}
           {% for r in rows %}
-            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0) or (r.kiryu_win2_bets and r.kiryu_win2_bets > 0) %}
+            {% if (r.toda_7r_tri_bets and r.toda_7r_tri_bets > 0) or (r.mid_132_tri_bets and r.mid_132_tri_bets > 0) or (r.venus_tri_bets and r.venus_tri_bets > 0) or (r.amagasaki_motor_exa_bets and r.amagasaki_motor_exa_bets > 0) or (r.ashiya_boat4_exa_bets and r.ashiya_boat4_exa_bets > 0) or (r.kiryu_win2_bets and r.kiryu_win2_bets > 0) %}
               {% set planned_total.n = planned_total.n + 1 %}
             {% endif %}
           {% endfor %}
           {% if planned_total.n == 0 %}
           <tr class="is-empty">
-            <td colspan="20" class="num muted">企画レース観察データなし</td>
+            <td colspan="23" class="num muted">企画レース観察データなし</td>
           </tr>
           {% endif %}
         </tbody>
@@ -840,7 +865,16 @@
             <td class="num {% if totals.amagasaki_motor_exa_profit and totals.amagasaki_motor_exa_profit > 0 %}pos{% elif totals.amagasaki_motor_exa_profit and totals.amagasaki_motor_exa_profit < 0 %}neg{% endif %}">
               {% if totals.amagasaki_motor_exa_bets > 0 %}<strong>{{ totals.amagasaki_motor_exa_profit | signed_comma }}</strong>{% else %}-{% endif %}
             </td>
-            {# 桐生 単勝2 合計 #}
+            {# 芦屋 2連単 4-1 合計 #}
+            <td class="num"><strong>{{ totals.ashiya_boat4_exa_hits }}/{{ totals.ashiya_boat4_exa_bets }}</strong>
+              {% if totals.ashiya_boat4_exa_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.ashiya_boat4_exa_hits / totals.ashiya_boat4_exa_bets * 100) }}%</small>{% endif %}
+            </td>
+            <td class="num {% if totals.ashiya_boat4_exa_recovery and totals.ashiya_boat4_exa_recovery >= 100 %}pos{% elif totals.ashiya_boat4_exa_recovery %}neg{% endif %}">
+              {% if totals.ashiya_boat4_exa_recovery is not none %}<strong>{{ '%.0f' | format(totals.ashiya_boat4_exa_recovery) }}%</strong>{% else %}-{% endif %}
+            </td>
+            <td class="num {% if totals.ashiya_boat4_exa_profit and totals.ashiya_boat4_exa_profit > 0 %}pos{% elif totals.ashiya_boat4_exa_profit and totals.ashiya_boat4_exa_profit < 0 %}neg{% endif %}">
+              {% if totals.ashiya_boat4_exa_bets > 0 %}<strong>{{ totals.ashiya_boat4_exa_profit | signed_comma }}</strong>{% else %}-{% endif %}
+            </td>
             <td class="num"><strong>{{ totals.kiryu_win2_hits }}/{{ totals.kiryu_win2_bets }}</strong>
               {% if totals.kiryu_win2_bets > 0 %}<br><small>勝率 {{ '%.1f' | format(totals.kiryu_win2_hits / totals.kiryu_win2_bets * 100) }}%</small>{% endif %}
             </td>
