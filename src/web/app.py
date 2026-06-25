@@ -4088,7 +4088,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
                 # バッジは出すが is_rain=True で本日候補リストから除外
-                if l4 and not l4.get("is_exacta_niche") and not l4.get("is_win_niche") and is_rain_excluded:
+                if l4 and is_rain_excluded and (
+                    (not l4.get("is_exacta_niche") and not l4.get("is_win_niche"))
+                    or l4.get("is_ashiya_boat4_lift")
+                    or l4.get("is_ashiya_boat4_watch")
+                ):
                     l4["is_rain"] = True
                     l4["rain_exclusion_active"] = True
                     l4["is_reference"] = True  # 候補リスト除外フラグ
@@ -4192,7 +4196,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if win_niche:
                     morning_l4 = win_niche
                 if morning_l4:
-                    if is_rain_excluded and not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche"):
+                    if is_rain_excluded and (
+                        (not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche"))
+                        or morning_l4.get("is_ashiya_boat4_lift")
+                        or morning_l4.get("is_ashiya_boat4_watch")
+                    ):
                         morning_l4["is_rain"] = True
                         morning_l4["rain_exclusion_active"] = True
                         morning_l4["is_reference"] = True
