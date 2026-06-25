@@ -5744,7 +5744,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 表示用は新しい順
         monthly_rows = list(reversed(monthly_rows_asc))
         monthly_totals = {}
-        for k in ("gen_200_tri", "ashiya_boat4_exa", "miyajima_boat4_tri"):
+        monthly_total_keys = (
+            "win", "exa", "tri", "gen_f1_tri", "gen_200_tri",
+            "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa",
+            "kiryu_win2", "miyajima_boat4_tri", "prime_tri", "r12_tri", "gen_r12_tri",
+        )
+        for k in monthly_total_keys:
             bets = sum((m.get(f"{k}_bets", 0) or 0) for m in monthly_rows_asc)
             hits = sum((m.get(f"{k}_hits", 0) or 0) for m in monthly_rows_asc)
             pay = sum((m.get(f"{k}_pay", 0) or 0) for m in monthly_rows_asc)

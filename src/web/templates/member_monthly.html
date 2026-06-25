@@ -1,27 +1,47 @@
-﻿{% extends "base.html" %}
-{% block title %}譛亥挨 ROI 謗ｨ遘ｻ{% endblock %}
+{% extends "base.html" %}
+{% block title %}月別 ROI 推移{% endblock %}
 
 {% block head_extra %}
-  {# 蠖捺怦縺ｯ螳御ｺ・Ξ繝ｼ繧ｹ蛻・′蠅励∴縺ｦ縺・￥縺ｮ縺ｧ 3 蛻・ｯ弱↓閾ｪ蜍輔Μ繝ｭ繝ｼ繝・#}
   <meta http-equiv="refresh" content="180">
 {% endblock %}
 
 {% block content %}
 <div class="strategy-dashboard">
-  <h2>嶋 譛亥挨 ROI 謗ｨ遘ｻ <span class="live-indicator" title="3 蛻・ｯ弱↓閾ｪ蜍墓峩譁ｰ">閥 LIVE</span></h2>
+  <h2>📅 月別 ROI 推移 <span class="live-indicator" title="3分ごとに自動更新">LIVE</span></h2>
   <p class="dashboard-hint">
-    <strong>謗｡逕ｨ謌ｦ逡･ 5 遞ｮ + 隕ｳ蟇滓姶逡･ 7 遞ｮ繧呈怦蛻･縺ｫ髟ｷ譛滓耳遘ｻ縺ｧ蜿ｯ隕門喧縲・/strong><br>
-    髮・ｨ育ｯ・峇: {{ monthly_from }} 縲・{{ monthly_to }} / 蠖捺怦縺ｯ螳御ｺ・Ξ繝ｼ繧ｹ蛻・・縺ｿ縺ｮ證ｫ螳壼､<br>
+    <strong>採用戦略と観察戦略を、月別の収支とROIで長期比較します。</strong><br>
+    集計期間: {{ monthly_from }} 〜 {{ monthly_to }} / 当月は完了レース分のみの暫定値<br>
     <small>
-      <span class="monthly-quality-badge is-actual">螳滄°逕ｨ</span>
-      {{ strict_odds_daily_start }} 莉･髯阪・逶ｴ蜑阪が繝・ぜ繝吶・繧ｹ /
-      <span class="monthly-quality-badge is-reference">蜿り・､懆ｨｼ</span>
-      縺昴ｌ莉･蜑阪・繝舌ャ繧ｯ繝・せ繝亥渕貅・    </small>
+      <span class="monthly-quality-badge is-actual">実運用</span>
+      {{ strict_odds_daily_start }} 以降の直前オッズベース /
+      <span class="monthly-quality-badge is-reference">参考検証</span>
+      それ以前のバックテスト基準
+    </small>
   </p>
 
   <section class="summary-grid" style="margin-bottom:16px;">
     <article class="summary-card">
-      <div class="summary-label">一般戦200</div>
+      <div class="summary-label">L4 3連単 1-2-3</div>
+      <div class="summary-roi">
+        {% if monthly_totals.tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.tri.roi) }}%{% else %}-{% endif %}
+      </div>
+      <div class="summary-sub">
+        n={{ monthly_totals.tri.bets }} HIT={{ monthly_totals.tri.hits }}
+        {% if monthly_totals.tri.bets > 0 %}/ 損益 {{ monthly_totals.tri.profit | signed_comma }}円{% endif %}
+      </div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">L4 G++ F1</div>
+      <div class="summary-roi">
+        {% if monthly_totals.gen_f1_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.gen_f1_tri.roi) }}%{% else %}-{% endif %}
+      </div>
+      <div class="summary-sub">
+        n={{ monthly_totals.gen_f1_tri.bets }} HIT={{ monthly_totals.gen_f1_tri.hits }}
+        {% if monthly_totals.gen_f1_tri.bets > 0 %}/ 損益 {{ monthly_totals.gen_f1_tri.profit | signed_comma }}円{% endif %}
+      </div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">一般戦×200</div>
       <div class="summary-roi">
         {% if monthly_totals.gen_200_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.gen_200_tri.roi) }}%{% else %}-{% endif %}
       </div>
@@ -31,7 +51,17 @@
       </div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">宮島4コースまくり</div>
+      <div class="summary-label">Tier A</div>
+      <div class="summary-roi">
+        {% if monthly_totals.mid_132_tier_a_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.mid_132_tier_a_tri.roi) }}%{% else %}-{% endif %}
+      </div>
+      <div class="summary-sub">
+        n={{ monthly_totals.mid_132_tier_a_tri.bets }} HIT={{ monthly_totals.mid_132_tier_a_tri.hits }}
+        {% if monthly_totals.mid_132_tier_a_tri.bets > 0 %}/ 損益 {{ monthly_totals.mid_132_tier_a_tri.profit | signed_comma }}円{% endif %}
+      </div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">宮島 4コースまくり</div>
       <div class="summary-roi">
         {% if monthly_totals.miyajima_boat4_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.miyajima_boat4_tri.roi) }}%{% else %}-{% endif %}
       </div>
@@ -40,42 +70,51 @@
         {% if monthly_totals.miyajima_boat4_tri.bets > 0 %}/ 損益 {{ monthly_totals.miyajima_boat4_tri.profit | signed_comma }}円{% endif %}
       </div>
     </article>
+    <article class="summary-card">
+      <div class="summary-label">芦屋 2連単 4-1</div>
+      <div class="summary-roi">
+        {% if monthly_totals.ashiya_boat4_exa.roi is not none %}{{ '%+.1f' | format(monthly_totals.ashiya_boat4_exa.roi) }}%{% else %}-{% endif %}
+      </div>
+      <div class="summary-sub">
+        n={{ monthly_totals.ashiya_boat4_exa.bets }} HIT={{ monthly_totals.ashiya_boat4_exa.hits }}
+        {% if monthly_totals.ashiya_boat4_exa.bets > 0 %}/ 損益 {{ monthly_totals.ashiya_boat4_exa.profit | signed_comma }}円{% endif %}
+      </div>
+    </article>
   </section>
 
-  <!-- 繧ｰ繝ｩ繝・ 譛亥挨 ROI 謗ｨ遘ｻ (3騾｣蜊・/ L4 G++ F1 / Tier A / 蟆ｼ蟠皿 / 譯千函蜊伜享2 / 螳ｮ蟲ｶ4縺ｾ縺上ｊ / 荳闊ｬ謌ｦﾃ・2R) 窶・譽偵げ繝ｩ繝・-->
   <section class="chart-section">
-    <h3>投 譛亥挨 ROI 謗ｨ遘ｻ繧ｰ繝ｩ繝・<small class="section-hint">3騾｣蜊・1-2-3 / L4 G++ F1 / L4荳闊ｬ200 / Tier A / 蟆ｼ蟠皿 / 譯千函蜊伜享2 / 螳ｮ蟲ｶ4縺ｾ縺上ｊ / 荳闊ｬ謌ｦﾃ・2R 縺ｮ豈碑ｼ・/small></h3>
+    <h3>📊 月別 ROI 推移グラフ <small class="section-hint">主要手法の月次比較</small></h3>
     <div class="chart-legend" id="monthlyChartLegend"></div>
     <canvas id="monthlyChart" width="980" height="380"></canvas>
     <p class="dashboard-hint" style="margin-top:8px;">
-      <small>讓ｪ霆ｸ: 蟷ｴ譛・/ 邵ｦ霆ｸ: ROI (%). <strong>螟ｪ縺・ｻ・牡邱・= 0% (謳咲寢蛻・ｲ・</strong>縲・      0% 繧医ｊ荳翫′蛻ｩ逶翫∽ｸ九′謳榊､ｱ縲ょｽ捺怦縺ｯ蜊企乗・ (騾ｲ陦御ｸｭ)縲・/small>
+      <small>横軸: 年月 / 縦軸: ROI (%). 太い黄色線 = 0% 損益分岐。0%より上が利益、下が損失です。</small>
     </p>
   </section>
 
-  <!-- 譛亥挨繝・・繧ｿ繝・・繝悶Ν -->
   <section class="daily-table-section monthly-roi-section">
-    <h3>搭 譛亥挨 ROI 繝・・繝悶Ν</h3>
+    <h3>🧾 月別 ROI テーブル</h3>
     <p class="dashboard-hint">
-      <small>謗｡逕ｨ: 蜊伜享 / 2騾｣蜊・1-2 / 3騾｣蜊・1-2-3 / 箝・L4 G++ F1 / 洽 L4荳闊ｬ200 ・・      隕ｳ蟇・ 洶 Tier A / 識 蟆ｼ蟠皿 / 識 譯千函蜊伜享2 / 識 螳ｮ蟲ｶ4縺ｾ縺上ｊ / L4-prime / L4-12R / 泙 荳闊ｬ謌ｦﾃ・2R</small>
+      <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / L4 G++ F1 / 一般戦×200 ・ 観察: Tier A / 尼崎 / 芦屋 / 桐生 / 宮島 / L4-prime / L4-12R / 一般戦×12R</small>
     </p>
     <div class="table-wrap">
       <table class="daily-table monthly-roi-table">
         <thead>
           <tr>
-            <th rowspan="2">蟷ｴ譛・/th>
-            <th rowspan="2">L4隧ｲ蠖・/th>
-            <th colspan="2">蜊伜享 (1)</th>
-            <th colspan="2">2騾｣蜊・(1-2)</th>
-            <th colspan="2">3騾｣蜊・(1-2-3)</th>
-            <th colspan="2">箝・L4 G++ F1</th>
-            <th colspan="2">洽 L4荳闊ｬ200</th>
-            <th colspan="2" class="obs-col">洶 Tier A</th>
-            <th colspan="2" class="obs-col">識 蟆ｼ蟠皿</th>
-            <th colspan="2" class="obs-col">識 譯千函蜊伜享2</th>
-            <th colspan="2" class="obs-col">識 螳ｮ蟲ｶ4縺ｾ縺上ｊ</th>
-            <th colspan="2" class="obs-col">泙 L4-prime</th>
-            <th colspan="2" class="obs-col">泙 L4-12R</th>
-            <th colspan="2" class="obs-col">泙 荳闊ｬ謌ｦﾃ・2R</th>
+            <th rowspan="2">年月</th>
+            <th rowspan="2">L4該当</th>
+            <th colspan="2">単勝 (1)</th>
+            <th colspan="2">2連単 (1-2)</th>
+            <th colspan="2">3連単 (1-2-3)</th>
+            <th colspan="2">L4 G++ F1</th>
+            <th colspan="2">一般戦×200</th>
+            <th colspan="2" class="obs-col">Tier A</th>
+            <th colspan="2" class="obs-col">尼崎 1-4</th>
+            <th colspan="2" class="obs-col">芦屋 4-1</th>
+            <th colspan="2" class="obs-col">桐生 単勝2</th>
+            <th colspan="2" class="obs-col">宮島 4コースまくり</th>
+            <th colspan="2" class="obs-col">L4-prime</th>
+            <th colspan="2" class="obs-col">L4-12R</th>
+            <th colspan="2" class="obs-col">一般戦×12R</th>
           </tr>
           <tr>
             <th>HIT/n</th><th>ROI</th>
@@ -83,6 +122,7 @@
             <th>HIT/n</th><th>ROI</th>
             <th>HIT/n</th><th>ROI</th>
             <th>HIT/n</th><th>ROI</th>
+            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
             <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
             <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
             <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
@@ -98,66 +138,70 @@
             <td class="date-cell">
               <span class="date-text">{{ m.ym }}</span>
               <span class="monthly-quality-badge is-{{ m.quality }}"
-                    title="{% if m.quality == 'actual' %}逶ｴ蜑阪が繝・ぜ繝吶・繧ｹ縺ｮ螳滄°逕ｨROI{% elif m.quality == 'mixed' %}螳滄°逕ｨROI縺ｨ蜿り・､懆ｨｼ縺悟酔譛亥・縺ｧ豺ｷ蝨ｨ{% else %}驕主悉繝・・繧ｿ縺ｫ繧医ｋ蜿り・ヰ繝・け繝・せ繝・{% endif %}\">
+                    title="{% if m.quality == 'actual' %}直前オッズベースの実運用集計{% elif m.quality == 'mixed' %}実運用と参考検証が混在{% else %}過去バックテスト基準{% endif %}">
                 {{ m.quality_label }}
               </span>
-              {% if m.is_current %}<span class="in-progress-badge">騾ｲ陦御ｸｭ</span>{% endif %}
+              {% if m.is_current %}<span class="in-progress-badge">進行中</span>{% endif %}
             </td>
             <td class="num">{{ m.n_l4 + (m.gen_f1_tri_bets or 0) }}</td>
 
             <td class="num">{{ m.win_hits }}/{{ m.win_bets }}</td>
-            <td class="num {% if m.win_roi is not none and m.win_roi >= 0 %}pos{% elif m.win_roi is not none %}neg{% endif %}\">
+            <td class="num {% if m.win_roi is not none and m.win_roi >= 0 %}pos{% elif m.win_roi is not none %}neg{% endif %}">
               {% if m.win_roi is not none %}{{ '%+.0f' | format(m.win_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num">{{ m.exa_hits }}/{{ m.exa_bets }}</td>
-            <td class="num {% if m.exa_roi is not none and m.exa_roi >= 0 %}pos{% elif m.exa_roi is not none %}neg{% endif %}\">
+            <td class="num {% if m.exa_roi is not none and m.exa_roi >= 0 %}pos{% elif m.exa_roi is not none %}neg{% endif %}">
               {% if m.exa_roi is not none %}{{ '%+.0f' | format(m.exa_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num">{{ m.tri_hits }}/{{ m.tri_bets }}</td>
-            <td class="num {% if m.tri_roi is not none and m.tri_roi >= 0 %}pos{% elif m.tri_roi is not none %}neg{% endif %}\">
+            <td class="num {% if m.tri_roi is not none and m.tri_roi >= 0 %}pos{% elif m.tri_roi is not none %}neg{% endif %}">
               {% if m.tri_roi is not none %}{{ '%+.0f' | format(m.tri_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num">{{ m.gen_f1_tri_hits }}/{{ m.gen_f1_tri_bets }}</td>
-            <td class="num {% if m.gen_f1_tri_roi is not none and m.gen_f1_tri_roi >= 0 %}pos{% elif m.gen_f1_tri_roi is not none %}neg{% endif %}\">
+            <td class="num {% if m.gen_f1_tri_roi is not none and m.gen_f1_tri_roi >= 0 %}pos{% elif m.gen_f1_tri_roi is not none %}neg{% endif %}">
               {% if m.gen_f1_tri_roi is not none %}{{ '%+.0f' | format(m.gen_f1_tri_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num">{{ m.gen_200_tri_hits }}/{{ m.gen_200_tri_bets }}</td>
-            <td class="num {% if m.gen_200_tri_roi is not none and m.gen_200_tri_roi >= 0 %}pos{% elif m.gen_200_tri_roi is not none %}neg{% endif %}\">
+            <td class="num {% if m.gen_200_tri_roi is not none and m.gen_200_tri_roi >= 0 %}pos{% elif m.gen_200_tri_roi is not none %}neg{% endif %}">
               {% if m.gen_200_tri_roi is not none %}{{ '%+.0f' | format(m.gen_200_tri_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num obs-col">{{ m.mid_132_tier_a_tri_hits }}/{{ m.mid_132_tier_a_tri_bets }}</td>
-            <td class="num obs-col {% if m.mid_132_tier_a_tri_roi is not none and m.mid_132_tier_a_tri_roi >= 0 %}pos{% elif m.mid_132_tier_a_tri_roi is not none %}neg{% endif %}\">
+            <td class="num obs-col {% if m.mid_132_tier_a_tri_roi is not none and m.mid_132_tier_a_tri_roi >= 0 %}pos{% elif m.mid_132_tier_a_tri_roi is not none %}neg{% endif %}">
               {% if m.mid_132_tier_a_tri_roi is not none %}{{ '%+.0f' | format(m.mid_132_tier_a_tri_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num obs-col">{{ m.amagasaki_motor_exa_hits }}/{{ m.amagasaki_motor_exa_bets }}</td>
-            <td class="num obs-col {% if m.amagasaki_motor_exa_roi is not none and m.amagasaki_motor_exa_roi >= 0 %}pos{% elif m.amagasaki_motor_exa_roi is not none %}neg{% endif %}\">
+            <td class="num obs-col {% if m.amagasaki_motor_exa_roi is not none and m.amagasaki_motor_exa_roi >= 0 %}pos{% elif m.amagasaki_motor_exa_roi is not none %}neg{% endif %}">
               {% if m.amagasaki_motor_exa_roi is not none %}{{ '%+.0f' | format(m.amagasaki_motor_exa_roi) }}%{% else %}-{% endif %}
             </td>
+            <td class="num obs-col">{{ m.ashiya_boat4_exa_hits }}/{{ m.ashiya_boat4_exa_bets }}</td>
+            <td class="num obs-col {% if m.ashiya_boat4_exa_roi is not none and m.ashiya_boat4_exa_roi >= 0 %}pos{% elif m.ashiya_boat4_exa_roi is not none %}neg{% endif %}">
+              {% if m.ashiya_boat4_exa_roi is not none %}{{ '%+.0f' | format(m.ashiya_boat4_exa_roi) }}%{% else %}-{% endif %}
+            </td>
             <td class="num obs-col">{{ m.kiryu_win2_hits }}/{{ m.kiryu_win2_bets }}</td>
-            <td class="num obs-col {% if m.kiryu_win2_roi is not none and m.kiryu_win2_roi >= 0 %}pos{% elif m.kiryu_win2_roi is not none %}neg{% endif %}\">
+            <td class="num obs-col {% if m.kiryu_win2_roi is not none and m.kiryu_win2_roi >= 0 %}pos{% elif m.kiryu_win2_roi is not none %}neg{% endif %}">
               {% if m.kiryu_win2_roi is not none %}{{ '%+.0f' | format(m.kiryu_win2_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num obs-col">{{ m.miyajima_boat4_tri_hits }}/{{ m.miyajima_boat4_tri_bets }}</td>
-            <td class="num obs-col {% if m.miyajima_boat4_tri_roi is not none and m.miyajima_boat4_tri_roi >= 0 %}pos{% elif m.miyajima_boat4_tri_roi is not none %}neg{% endif %}\">
+            <td class="num obs-col {% if m.miyajima_boat4_tri_roi is not none and m.miyajima_boat4_tri_roi >= 0 %}pos{% elif m.miyajima_boat4_tri_roi is not none %}neg{% endif %}">
               {% if m.miyajima_boat4_tri_roi is not none %}{{ '%+.0f' | format(m.miyajima_boat4_tri_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num obs-col">{{ m.prime_tri_hits }}/{{ m.prime_tri_bets }}</td>
-            <td class="num obs-col {% if m.prime_tri_roi is not none and m.prime_tri_roi >= 0 %}pos{% elif m.prime_tri_roi is not none %}neg{% endif %}\">
+            <td class="num obs-col {% if m.prime_tri_roi is not none and m.prime_tri_roi >= 0 %}pos{% elif m.prime_tri_roi is not none %}neg{% endif %}">
               {% if m.prime_tri_roi is not none %}{{ '%+.0f' | format(m.prime_tri_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num obs-col">{{ m.r12_tri_hits }}/{{ m.r12_tri_bets }}</td>
-            <td class="num obs-col {% if m.r12_tri_roi is not none and m.r12_tri_roi >= 0 %}pos{% elif m.r12_tri_roi is not none %}neg{% endif %}\">
+            <td class="num obs-col {% if m.r12_tri_roi is not none and m.r12_tri_roi >= 0 %}pos{% elif m.r12_tri_roi is not none %}neg{% endif %}">
               {% if m.r12_tri_roi is not none %}{{ '%+.0f' | format(m.r12_tri_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num obs-col">{{ m.gen_r12_tri_hits }}/{{ m.gen_r12_tri_bets }}</td>
-            <td class="num obs-col {% if m.gen_r12_tri_roi is not none and m.gen_r12_tri_roi >= 0 %}pos{% elif m.gen_r12_tri_roi is not none %}neg{% endif %}\">
+            <td class="num obs-col {% if m.gen_r12_tri_roi is not none and m.gen_r12_tri_roi >= 0 %}pos{% elif m.gen_r12_tri_roi is not none %}neg{% endif %}">
               {% if m.gen_r12_tri_roi is not none %}{{ '%+.0f' | format(m.gen_r12_tri_roi) }}%{% else %}-{% endif %}
             </td>
           </tr>
           {% endfor %}
           {% if not monthly_rows %}
           <tr class="is-empty">
-            <td colspan="26" class="num muted">譛亥挨 ROI 繝・・繧ｿ縺ｪ縺・/td>
+            <td colspan="28" class="num muted">月別 ROI データがありません</td>
           </tr>
           {% endif %}
         </tbody>
@@ -168,200 +212,162 @@
 
 <script>
 (function() {
-  // 繝・・繧ｿ繧・Jinja 竊・JS (譎らｳｻ蛻玲・鬆・
   const data = [
     {% for m in monthly_rows_asc %}
     {
       ym: "{{ m.ym }}",
       is_current: {{ 'true' if m.is_current else 'false' }},
-      quality: "{{ m.quality }}",
-      win:    {{ ('null' if m.win_roi is none         else '%.1f' | format(m.win_roi))         }},
-      exa:    {{ ('null' if m.exa_roi is none         else '%.1f' | format(m.exa_roi))         }},
-      tri:    {{ ('null' if m.tri_roi is none         else '%.1f' | format(m.tri_roi))         }},
-      f1:     {{ ('null' if m.gen_f1_tri_roi is none  else '%.1f' | format(m.gen_f1_tri_roi))  }},
-      g200:   {{ ('null' if m.gen_200_tri_roi is none else '%.1f' | format(m.gen_200_tri_roi)) }},
-      tiera:  {{ ('null' if m.mid_132_tier_a_tri_roi is none else '%.1f' | format(m.mid_132_tier_a_tri_roi)) }},
-      amaga:  {{ ('null' if m.amagasaki_motor_exa_roi is none else '%.1f' | format(m.amagasaki_motor_exa_roi)) }},
+      tri: {{ ('null' if m.tri_roi is none else '%.1f' | format(m.tri_roi)) }},
+      f1: {{ ('null' if m.gen_f1_tri_roi is none else '%.1f' | format(m.gen_f1_tri_roi)) }},
+      g200: {{ ('null' if m.gen_200_tri_roi is none else '%.1f' | format(m.gen_200_tri_roi)) }},
+      tiera: {{ ('null' if m.mid_132_tier_a_tri_roi is none else '%.1f' | format(m.mid_132_tier_a_tri_roi)) }},
+      amaga: {{ ('null' if m.amagasaki_motor_exa_roi is none else '%.1f' | format(m.amagasaki_motor_exa_roi)) }},
+      ashiya41: {{ ('null' if m.ashiya_boat4_exa_roi is none else '%.1f' | format(m.ashiya_boat4_exa_roi)) }},
       kiryu2: {{ ('null' if m.kiryu_win2_roi is none else '%.1f' | format(m.kiryu_win2_roi)) }},
       miyajima4: {{ ('null' if m.miyajima_boat4_tri_roi is none else '%.1f' | format(m.miyajima_boat4_tri_roi)) }},
-      prime:  {{ ('null' if m.prime_tri_roi is none   else '%.1f' | format(m.prime_tri_roi))   }},
-      r12:    {{ ('null' if m.r12_tri_roi is none     else '%.1f' | format(m.r12_tri_roi))     }},
-      gr12:   {{ ('null' if m.gen_r12_tri_roi is none else '%.1f' | format(m.gen_r12_tri_roi)) }},
+      prime: {{ ('null' if m.prime_tri_roi is none else '%.1f' | format(m.prime_tri_roi)) }},
+      r12: {{ ('null' if m.r12_tri_roi is none else '%.1f' | format(m.r12_tri_roi)) }},
+      gr12: {{ ('null' if m.gen_r12_tri_roi is none else '%.1f' | format(m.gen_r12_tri_roi)) }}
     },
     {% endfor %}
   ];
 
-  // 繧ｰ繝ｩ繝輔・荳ｻ隕∵姶逡･縺ｮ縺ｿ陦ｨ遉ｺ:
-  //   3騾｣蜊・1-2-3 / L4 G++ F1 / Tier A / 蟆ｼ蟠皿 / 譯千函蜊伜享2 / 荳闊ｬ謌ｦﾃ・2R
   const SERIES = [
-    {key:'tri',   label:'3騾｣蜊・(1-2-3)',  color:'#ff006e', adopted:true},
-    {key:'f1',    label:'L4 G++ F1',      color:'#ffd700', adopted:true},
-    {key:'g200',  label:'L4荳闊ｬ200',      color:'#22c55e', adopted:true},
-    {key:'tiera', label:'Tier A',          color:'#38bdf8', adopted:false},
-    {key:'amaga', label:'識 蟆ｼ蟠皿',        color:'#f59e0b', adopted:false},
-    {key:'kiryu2', label:'識 譯千函蜊伜享2',   color:'#a78bfa', adopted:false},
-    {key:'miyajima4', label:'識 螳ｮ蟲ｶ4縺ｾ縺上ｊ', color:'#f97316', adopted:false},
-    {key:'gr12',  label:'泙 荳闊ｬ謌ｦﾃ・2R',  color:'#16a34a', adopted:false},
+    {key:'tri', label:'3連単 (1-2-3)', color:'#ff006e'},
+    {key:'f1', label:'L4 G++ F1', color:'#ffd700'},
+    {key:'g200', label:'一般戦×200', color:'#22c55e'},
+    {key:'tiera', label:'Tier A', color:'#38bdf8'},
+    {key:'amaga', label:'尼崎 1-4', color:'#f59e0b'},
+    {key:'ashiya41', label:'芦屋 4-1', color:'#ef4444'},
+    {key:'kiryu2', label:'桐生 単勝2', color:'#a78bfa'},
+    {key:'miyajima4', label:'宮島 4コースまくり', color:'#f97316'},
+    {key:'prime', label:'L4-prime', color:'#10b981'},
+    {key:'r12', label:'L4-12R', color:'#06b6d4'},
+    {key:'gr12', label:'一般戦×12R', color:'#84cc16'}
   ];
 
-  // 陦ｨ遉ｺ荳ｭ縺ｮ繧ｷ繝ｪ繝ｼ繧ｺ key Set縲ょ・譛溘・蜈ｨ驛ｨ陦ｨ遉ｺ縲・  // 繧ｯ繝ｪ繝・け縺ｧ縲後◎縺ｮ邉ｻ蛻励・縺ｿ陦ｨ遉ｺ縲・isolate)縲√ｂ縺・ｸ蠎ｦ繧ｯ繝ｪ繝・け縺ｧ蜈ｨ陦ｨ遉ｺ縺ｫ謌ｻ繧九・  let activeKeys = new Set(SERIES.map(s => s.key));
-
-  // 蜃｡萓・  const legendEl = document.getElementById('monthlyChartLegend');
-  if (legendEl) {
-    function renderLegend() {
-      legendEl.innerHTML = SERIES.map(s => {
-        const active = activeKeys.has(s.key);
-        return `<button type="button"
-                 class="legend-item ${active ? 'is-active' : 'is-dim'}"
-                 data-key="${s.key}"
-                 title="繧ｯ繝ｪ繝・け: 縺薙・謌ｦ逡･縺ｮ縺ｿ陦ｨ遉ｺ / 繧ゅ≧荳蠎ｦ: 蜈ｨ陦ｨ遉ｺ縺ｫ謌ｻ繧・>
-          <span class="legend-swatch" style="background:${s.color}"></span>
-          <span class="legend-label">${s.label}</span>
-        </button>`;
-      }).join('');
-      legendEl.querySelectorAll('.legend-item').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const key = btn.dataset.key;
-          const isolated = activeKeys.size === 1 && activeKeys.has(key);
-          if (isolated) {
-            // 譌｢縺ｫ縺薙・邉ｻ蛻励・縺ｿ陦ｨ遉ｺ 竊・蜈ｨ陦ｨ遉ｺ縺ｫ謌ｻ縺・            activeKeys = new Set(SERIES.map(s => s.key));
-          } else {
-            // 縺薙・邉ｻ蛻励□縺代↓邨槭ｋ
-            activeKeys = new Set([key]);
-          }
-          renderLegend();
-          draw();
-        });
-      });
-    }
-    renderLegend();
-  }
-
+  let activeKeys = new Set(['tri', 'f1', 'g200']);
+  const legendEl = document.getElementById('monthlyChartLegend');
   const canvas = document.getElementById('monthlyChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   const padL = 56, padR = 20, padT = 18, padB = 44;
 
+  function rgba(hex, alpha) {
+    const r = parseInt(hex.slice(1,3), 16);
+    const g = parseInt(hex.slice(3,5), 16);
+    const b = parseInt(hex.slice(5,7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function renderLegend() {
+    if (!legendEl) return;
+    legendEl.innerHTML = SERIES.map(s => {
+      const active = activeKeys.has(s.key);
+      return `<button type="button" class="legend-item ${active ? 'is-active' : 'is-dim'}" data-key="${s.key}">
+        <span class="legend-swatch" style="background:${s.color}"></span>
+        <span class="legend-label">${s.label}</span>
+      </button>`;
+    }).join('');
+    legendEl.querySelectorAll('.legend-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.key;
+        if (activeKeys.size === 1 && activeKeys.has(key)) {
+          activeKeys = new Set(SERIES.map(s => s.key));
+        } else {
+          activeKeys = new Set([key]);
+        }
+        renderLegend();
+        draw();
+      });
+    });
+  }
+
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    if (data.length === 0) {
-      ctx.fillStyle = '#888';
-      ctx.font = '14px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('繝・・繧ｿ縺ｪ縺・, W/2, H/2);
-      return;
-    }
-    // 陦ｨ遉ｺ荳ｭ繧ｷ繝ｪ繝ｼ繧ｺ縺ｮ縺ｿ謠冗判 (activeKeys 縺ｧ繝輔ぅ繝ｫ繧ｿ)
-    const visibleSeries = SERIES.filter(s => activeKeys.has(s.key));
-    if (visibleSeries.length === 0) return;
+    if (!data.length) return;
+    const visible = SERIES.filter(s => activeKeys.has(s.key));
+    const values = [];
+    visible.forEach(s => data.forEach(d => { if (d[s.key] !== null) values.push(d[s.key]); }));
+    if (!values.length) return;
 
-    // Y 遽・峇縺ｯ陦ｨ遉ｺ荳ｭ繧ｷ繝ｪ繝ｼ繧ｺ縺ｮ螳溷､縺九ｉ豎ｺ螳壹・ 繧貞ｿ・★蜷ｫ繧繧医≧縺ｫ
-    let allVals = [];
-    visibleSeries.forEach(s => {
-      data.forEach(d => { if (d[s.key] !== null) allVals.push(d[s.key]); });
-    });
-    if (allVals.length === 0) return;
-    let yMax = Math.max(...allVals, 0);
-    let yMin = Math.min(...allVals, 0);
-    // 菴咏區
+    let yMax = Math.max(...values, 0);
+    let yMin = Math.min(...values, 0);
     const pad = (yMax - yMin) * 0.12 || 20;
     yMax += pad;
     yMin -= pad;
-    // 蠢・★ 0 繧貞性繧
     if (yMin > 0) yMin = -10;
     if (yMax < 0) yMax = 10;
 
-    // Y/X 蠎ｧ讓吝､画鋤
     const ys = (v) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin));
     const zeroY = ys(0);
 
-    // 譛医げ繝ｫ繝ｼ繝励・蠎ｧ讓・(譽貞ｹ・・ visibleSeries 謨ｰ縺ｫ蠢懊§縺ｦ蜍慕噪隱ｿ謨ｴ)
-    const chartW = W - padL - padR;
-    const groupW = chartW / data.length;       // 譛医≠縺溘ｊ縺ｮ蟷・    const innerGap = 6;                          // 譛磯俣縺ｮ菴咏區
-    const barAreaW = groupW - innerGap;          // 陦ｨ遉ｺ繧ｷ繝ｪ繝ｼ繧ｺ謨ｰ縺ｮ譛ｬ謨ｰ縺悟・繧九お繝ｪ繧｢
-    const nVis = visibleSeries.length;
-    const barW = Math.max(4, barAreaW / Math.max(1, nVis) - 1);
-    // 蜊倡峡陦ｨ遉ｺ譎ゅ・螟ｪ繧√↓縺励※隕九ｄ縺吶￥
-    const barWidth = nVis === 1 ? Math.min(barW, barAreaW * 0.6) : barW;
-
-    // === 1. 繧ｰ繝ｪ繝・ラ縺ｨ Y 霆ｸ繝ｩ繝吶Ν ===
-    ctx.fillStyle = '#aaa';
-    ctx.font = '11px monospace';
-    ctx.textAlign = 'right';
-    // 逶ｮ逶帙ｊ髢馴囈繧偵後＞縺・─縺倥阪↓
     const range = yMax - yMin;
     let step = 50;
     if (range > 400) step = 100;
     else if (range > 200) step = 50;
-    else if (range > 80)  step = 25;
-    else                  step = 10;
-    // 0 繧定ｵｷ轤ｹ縺ｫ荳贋ｸ九↓逶ｮ逶帙ｊ
+    else if (range > 80) step = 25;
+    else step = 10;
+
     const firstTick = Math.ceil(yMin / step) * step;
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'right';
     for (let v = firstTick; v <= yMax; v += step) {
       const y = ys(v);
-      ctx.strokeStyle = (v === 0)
-        ? 'rgba(0, 0, 0, 0)'  // 0 縺ｯ蠕後〒螟ｪ邱壹〒謠上￥
-        : 'rgba(255,255,255,0.06)';
-      ctx.beginPath();
-      ctx.moveTo(padL, y);
-      ctx.lineTo(W - padR, y);
-      ctx.stroke();
-      ctx.fillStyle = (v === 0) ? '#ffd700' : '#999';
+      if (v !== 0) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(W - padR, y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = v === 0 ? '#ffd700' : '#999';
       ctx.fillText((v > 0 ? '+' : '') + v + '%', padL - 8, y + 3);
     }
 
-    // === 2. 譽偵げ繝ｩ繝墓悽菴・(visibleSeries 縺ｮ縺ｿ) ===
+    const chartW = W - padL - padR;
+    const groupW = chartW / data.length;
+    const innerGap = 6;
+    const barAreaW = groupW - innerGap;
+    const nVis = visible.length;
+    const barW = Math.max(4, barAreaW / Math.max(1, nVis) - 1);
+    const barWidth = nVis === 1 ? Math.min(barW, barAreaW * 0.6) : barW;
+
     data.forEach((d, mi) => {
       const groupX = padL + groupW * mi + innerGap / 2;
-      // 蜊倡峡陦ｨ遉ｺ譎ゅ・荳ｭ螟ｮ蟇・○縲∬､・焚縺ｯ蟾ｦ蟇・○縺ｧ讓ｪ荳ｦ縺ｳ
-      const groupCenterOffset = nVis === 1
-        ? (barAreaW - barWidth) / 2
-        : 0;
-      visibleSeries.forEach((s, si) => {
+      const centerOffset = nVis === 1 ? (barAreaW - barWidth) / 2 : 0;
+      visible.forEach((s, si) => {
         const v = d[s.key];
         if (v === null || v === undefined) return;
-        const x = groupX + groupCenterOffset + si * (barWidth + 1);
+        const x = groupX + centerOffset + si * (barWidth + 1);
         const top = ys(Math.max(v, 0));
         const bot = ys(Math.min(v, 0));
         const h = bot - top;
-        // 蠖捺怦縺ｯ蜊企乗・
         const alpha = d.is_current ? 0.55 : 1.0;
-        // 譽偵・繧ｰ繝ｩ繝・・繧ｷ繝ｧ繝ｳ
         const grad = ctx.createLinearGradient(0, top, 0, bot);
         if (v >= 0) {
-          grad.addColorStop(0, applyAlpha(s.color, alpha));
-          grad.addColorStop(1, applyAlpha(s.color, alpha * 0.55));
+          grad.addColorStop(0, rgba(s.color, alpha));
+          grad.addColorStop(1, rgba(s.color, alpha * 0.55));
         } else {
-          // 繝槭う繝翫せ縺ｯ濶ｲ繧貞渚霆｢豌怜袖縺ｫ
-          grad.addColorStop(0, applyAlpha(s.color, alpha * 0.55));
-          grad.addColorStop(1, applyAlpha(s.color, alpha));
+          grad.addColorStop(0, rgba(s.color, alpha * 0.55));
+          grad.addColorStop(1, rgba(s.color, alpha));
         }
         ctx.fillStyle = grad;
         ctx.fillRect(x, top, barWidth, Math.max(1, h));
-        // 邵∝叙繧・        ctx.strokeStyle = applyAlpha(s.color, alpha * 0.85);
+        ctx.strokeStyle = rgba(s.color, alpha * 0.85);
         ctx.lineWidth = 1;
         ctx.strokeRect(x + 0.5, top + 0.5, barWidth - 1, Math.max(1, h - 1));
       });
     });
 
-    // === 3. 0 繝ｩ繧､繝ｳ (譛蠕後↓蠑ｷ隱ｿ謠冗判) ===
     ctx.strokeStyle = '#ffd700';
     ctx.lineWidth = 2.5;
-    ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
-    ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.moveTo(padL, zeroY);
     ctx.lineTo(W - padR, zeroY);
     ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 0 繝ｩ繝吶Ν (螟ｪ蟄・
-    ctx.fillStyle = '#ffd700';
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText('0% (謳咲寢蛻・ｲ・', padL - 8, zeroY + 3);
 
-    // === 4. 螟匁棧 (蟾ｦ + 荳玖ｻｸ) ===
     ctx.strokeStyle = '#444';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -370,34 +376,21 @@
     ctx.lineTo(W - padR, H - padB);
     ctx.stroke();
 
-    // === 5. X 霆ｸ繝ｩ繝吶Ν (蟷ｴ譛・ ===
-    ctx.fillStyle = '#bbb';
     ctx.font = '11px monospace';
     ctx.textAlign = 'center';
     data.forEach((d, mi) => {
       const cx = padL + groupW * mi + groupW / 2;
       ctx.fillStyle = d.is_current ? '#ffd700' : '#bbb';
-      ctx.fillText(d.ym.slice(2), cx, H - padB + 16);  // YY-MM
+      ctx.fillText(d.ym.slice(2), cx, H - padB + 16);
       if (d.is_current) {
         ctx.font = '9px monospace';
-        ctx.fillStyle = '#ffd700';
-        ctx.fillText('(騾ｲ陦御ｸｭ)', cx, H - padB + 28);
+        ctx.fillText('(進行中)', cx, H - padB + 28);
         ctx.font = '11px monospace';
       }
     });
   }
 
-  // #RRGGBB or rgb(...) 竊・rgba with alpha
-  function applyAlpha(color, alpha) {
-    if (color.startsWith('#')) {
-      const r = parseInt(color.slice(1,3), 16);
-      const g = parseInt(color.slice(3,5), 16);
-      const b = parseInt(color.slice(5,7), 16);
-      return `rgba(${r},${g},${b},${alpha})`;
-    }
-    return color;
-  }
-
+  renderLegend();
   draw();
 })();
 </script>
