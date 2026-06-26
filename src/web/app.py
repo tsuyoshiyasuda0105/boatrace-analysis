@@ -4308,6 +4308,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # cache テーブル無い (= migration 前) → 既存 SQL で全部計算
             pass
 
+        def _finalize_l4_daily_rows(stats_by_date: dict[str, dict]) -> list[dict]:
+            for d in stats_by_date.values():
+                for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
+                            "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
+                            "prime_tri", "r12_tri", "gen_r12_tri",
+                            "toda_7r_tri", "mid_132_tri",
+                            "mid_132_tier_a_tri", "venus_tri",
+                            "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
+                            "karatsu_rain_exa", "miyajima_boat4_tri"):
+                    n = d.get(f"{bet}_bets", 0)
+                    pay = d.get(f"{bet}_pay", 0)
+                    unit = BET_UNIT_MAP.get(bet, 100)
+                    d[f"{bet}_roi"] = (pay - unit * n) / (unit * n) * 100 if n else None
+                    d[f"{bet}_recovery"] = pay / (unit * n) * 100 if n else None
+                    d[f"{bet}_profit"] = pay - unit * n if n else 0
+            return [stats_by_date[d] for d in sorted(stats_by_date)]
+
         # === B. cache に無い日付を識別 ===
         today_iso = _date.today().isoformat()
         try:
@@ -4326,8 +4343,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 当日分は常に再計算 (cache に保存しない、 リアルタイム性確保)
         # 過去日でも cache に無いものは今回 SQL で取得
         if not missing_dates:
-            # 完全 cache hit → 早期 return
-            return [cached_by_date[d] for d in sorted(cached_by_date)]
+            # 完全 cache hit でも派生指標を補完して返す
+            return _finalize_l4_daily_rows(cached_by_date)
 
         # missing_dates の範囲で SQL 実行 (連続範囲を想定、 非連続は filter で対応)
         sql_from = missing_dates[0]
