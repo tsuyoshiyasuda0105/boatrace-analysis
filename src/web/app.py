@@ -5208,14 +5208,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 planned_cols = ("toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay, "
                                 "mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay, "
                                 "mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay")
+                niche_cols = ("amagasaki_motor_exa_bets, amagasaki_motor_exa_hits, amagasaki_motor_exa_pay, "
+                              "ashiya_boat4_exa_bets, ashiya_boat4_exa_hits, ashiya_boat4_exa_pay, "
+                              "kiryu_win2_bets, kiryu_win2_hits, kiryu_win2_pay, "
+                              "karatsu_rain_exa_bets, karatsu_rain_exa_hits, karatsu_rain_exa_pay, "
+                              "miyajima_boat4_tri_bets, miyajima_boat4_tri_hits, miyajima_boat4_tri_pay")
                 has_obs_cols = True
                 has_planned_cols = True
+                has_niche_cols = True
                 # 注: base_cols/obs_cols は上で定義したハードコード定数のみで構成
                 # (ユーザー入力非依存)。動的部分は SQL placeholder (?) のみで、
                 # SQL injection リスクなし。f-string を避け、通常文字列連結で記述
                 # することでリグレッションガード (将来 cols が変数化されても
                 # SQLi にならない)。
                 sql_full = (
+                    "SELECT " + base_cols + ", " + obs_cols + ", " + planned_cols + ", " + niche_cols
+                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                )
+                sql_with_planned = (
                     "SELECT " + base_cols + ", " + obs_cols + ", " + planned_cols
                     + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
                 )
@@ -5231,26 +5241,51 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     cur = conn.execute(sql_full, (from_date, to_date))
                     rows = cur.fetchall()
                 except Exception:
-                    # planned_cols 未存在 (旧 DB)
-                    has_planned_cols = False
                     try:
                         conn.rollback()
                     except Exception:
                         pass
                     try:
-                        cur = conn.execute(sql_with_obs, (from_date, to_date))
+                        has_niche_cols = False
+                        cur = conn.execute(sql_with_planned, (from_date, to_date))
                         rows = cur.fetchall()
                     except Exception:
-                        has_obs_cols = False
                         try:
                             conn.rollback()
                         except Exception:
                             pass
-                        cur = conn.execute(sql_legacy, (from_date, to_date))
-                        rows = cur.fetchall()
+                        try:
+                            has_planned_cols = False
+                            cur = conn.execute(sql_with_obs, (from_date, to_date))
+                            rows = cur.fetchall()
+                        except Exception:
+                            has_obs_cols = False
+                            try:
+                                conn.rollback()
+                            except Exception:
+                                pass
+                            cur = conn.execute(sql_legacy, (from_date, to_date))
+                            rows = cur.fetchall()
                 for row in rows:
                     # planned_cols (戸田7R/L4-Mid 1-3-2) → obs_cols (prime/r12) → 基本のみ
-                    if has_planned_cols:
+                    if has_planned_cols and has_niche_cols:
+                        (sdate, n_tot, n_l4,
+                         wb, wh, wp, eb, eh, ep, tb, th, tp,
+                         c80b, c80h, c80p, prob, proh, prop,
+                         sgb, sgh, sgp,
+                         gtb, gth, gtp, gptb, gpth, gptp,
+                         gfb, gfh, gfp,
+                         prb, prh, prp, r12b, r12h, r12p,
+                         gr12b, gr12h, gr12p,
+                         td7b, td7h, td7p,
+                         m132b, m132h, m132p,
+                         m132ab, m132ah, m132ap,
+                         amagab, amaga_h, amaga_p,
+                         ashib, ashih, aship,
+                         kiryub, kiryuh, kiryup,
+                         karab, karah, karap,
+                         miyab, miyah, miyap) = row
+                    elif has_planned_cols:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
                          c80b, c80h, c80p, prob, proh, prop,
@@ -5262,6 +5297,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          td7b, td7h, td7p,
                          m132b, m132h, m132p,
                          m132ab, m132ah, m132ap) = row
+                        amagab = amaga_h = amaga_p = 0
+                        ashib = ashih = aship = 0
+                        kiryub = kiryuh = kiryup = 0
+                        karab = karah = karap = 0
+                        miyab = miyah = miyap = 0
                     elif has_obs_cols:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -5274,6 +5314,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         td7b = td7h = td7p = 0
                         m132b = m132h = m132p = 0
                         m132ab = m132ah = m132ap = 0
+                        amagab = amaga_h = amaga_p = 0
+                        ashib = ashih = aship = 0
+                        kiryub = kiryuh = kiryup = 0
+                        karab = karah = karap = 0
+                        miyab = miyah = miyap = 0
                     else:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -5287,6 +5332,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         td7b = td7h = td7p = 0
                         m132b = m132h = m132p = 0
                         m132ab = m132ah = m132ap = 0
+                        amagab = amaga_h = amaga_p = 0
+                        ashib = ashih = aship = 0
+                        kiryub = kiryuh = kiryup = 0
+                        karab = karah = karap = 0
+                        miyab = miyah = miyap = 0
                     if sdate >= STRICT_ODDS_DAILY_START:
                         # Recent live-operation stats must come from raw odds snapshots.
                         # Legacy summaries may include final-payout proxy rows.
@@ -5323,7 +5373,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         # L4-Mid 1-3-2 観察 (2026-05-19)
                         "mid_132_tri_bets": m132b or 0, "mid_132_tri_hits": m132h or 0, "mid_132_tri_pay": m132p or 0,
                         "mid_132_tier_a_tri_bets": m132ab or 0, "mid_132_tier_a_tri_hits": m132ah or 0, "mid_132_tier_a_tri_pay": m132ap or 0,
-                        "miyajima_boat4_tri_bets": 0, "miyajima_boat4_tri_hits": 0, "miyajima_boat4_tri_pay": 0,
+                        "amagasaki_motor_exa_bets": amagab or 0, "amagasaki_motor_exa_hits": amaga_h or 0, "amagasaki_motor_exa_pay": amaga_p or 0,
+                        "ashiya_boat4_exa_bets": ashib or 0, "ashiya_boat4_exa_hits": ashih or 0, "ashiya_boat4_exa_pay": aship or 0,
+                        "kiryu_win2_bets": kiryub or 0, "kiryu_win2_hits": kiryuh or 0, "kiryu_win2_pay": kiryup or 0,
+                        "karatsu_rain_exa_bets": karab or 0, "karatsu_rain_exa_hits": karah or 0, "karatsu_rain_exa_pay": karap or 0,
+                        "miyajima_boat4_tri_bets": miyab or 0, "miyajima_boat4_tri_hits": miyah or 0, "miyajima_boat4_tri_pay": miyap or 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }

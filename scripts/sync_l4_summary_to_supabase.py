@@ -157,6 +157,33 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             return False
 
     by_date: dict[str, dict] = {}
+
+    def _empty_summary_day(rdate: str) -> dict:
+        return {
+            "date": rdate,
+            "n_total": n_total_by_date.get(rdate, 0),
+            "n_l4": 0,
+            "win_bets": 0, "win_hits": 0, "win_pay": 0,
+            "exa_bets": 0, "exa_hits": 0, "exa_pay": 0,
+            "tri_bets": 0, "tri_hits": 0, "tri_pay": 0,
+            "c80_bets": 0, "c80_hits": 0, "c80_pay": 0,
+            "pro_bets": 0, "pro_hits": 0, "pro_pay": 0,
+            "sgg12_bets": 0, "sgg12_hits": 0, "sgg12_pay": 0,
+            "gen_tri_bets": 0, "gen_tri_hits": 0, "gen_tri_pay": 0,
+            "gen_plus_tri_bets": 0, "gen_plus_tri_hits": 0, "gen_plus_tri_pay": 0,
+            "gen_f1_tri_bets": 0, "gen_f1_tri_hits": 0, "gen_f1_tri_pay": 0,
+            "prime_tri_bets": 0, "prime_tri_hits": 0, "prime_tri_pay": 0,
+            "r12_tri_bets": 0, "r12_tri_hits": 0, "r12_tri_pay": 0,
+            "gen_r12_tri_bets": 0, "gen_r12_tri_hits": 0, "gen_r12_tri_pay": 0,
+            "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
+            "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
+            "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
+            "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
+            "ashiya_boat4_exa_bets": 0, "ashiya_boat4_exa_hits": 0, "ashiya_boat4_exa_pay": 0,
+            "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
+            "karatsu_rain_exa_bets": 0, "karatsu_rain_exa_hits": 0, "karatsu_rain_exa_pay": 0,
+            "miyajima_boat4_tri_bets": 0, "miyajima_boat4_tri_hits": 0, "miyajima_boat4_tri_pay": 0,
+        }
     for row in cur.fetchall():
         (rdate, rid, grade, race_no, stadium_no, racer, avg_st, age, natl_1, ex_st,
          fav_pay, fav_odds, any_in_l4, w1, w2, w3, wp, ep, tp, boat2_top2) = row
@@ -433,6 +460,66 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             d["toda_7r_tri_hits"] += 1
             d["toda_7r_tri_pay"] += tp_v
 
+    # ?????? raw ????? l4_daily_stats_cache ?? SSOT?
+    # ??? summary ??????????? fallback ??????????
+    cache_keys = (
+        "amagasaki_motor_exa_bets", "amagasaki_motor_exa_hits", "amagasaki_motor_exa_pay",
+        "ashiya_boat4_exa_bets", "ashiya_boat4_exa_hits", "ashiya_boat4_exa_pay",
+        "kiryu_win2_bets", "kiryu_win2_hits", "kiryu_win2_pay",
+        "karatsu_rain_exa_bets", "karatsu_rain_exa_hits", "karatsu_rain_exa_pay",
+        "miyajima_boat4_tri_bets", "miyajima_boat4_tri_hits", "miyajima_boat4_tri_pay",
+    )
+    try:
+        if isinstance(src, sqlite3.Connection):
+            cache_sql = """
+                SELECT race_date,
+                       COALESCE(CAST(json_extract(stats_json, '$.amagasaki_motor_exa_bets') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.amagasaki_motor_exa_hits') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.amagasaki_motor_exa_pay') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.ashiya_boat4_exa_bets') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.ashiya_boat4_exa_hits') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.ashiya_boat4_exa_pay') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.kiryu_win2_bets') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.kiryu_win2_hits') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.kiryu_win2_pay') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.karatsu_rain_exa_bets') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.karatsu_rain_exa_hits') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.karatsu_rain_exa_pay') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.miyajima_boat4_tri_bets') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.miyajima_boat4_tri_hits') AS INTEGER), 0),
+                       COALESCE(CAST(json_extract(stats_json, '$.miyajima_boat4_tri_pay') AS INTEGER), 0)
+                  FROM l4_daily_stats_cache
+                 WHERE race_date BETWEEN ? AND ?
+            """
+        else:
+            cache_sql = """
+                SELECT race_date,
+                       COALESCE(((stats_json::jsonb)->>'amagasaki_motor_exa_bets')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'amagasaki_motor_exa_hits')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'amagasaki_motor_exa_pay')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'ashiya_boat4_exa_bets')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'ashiya_boat4_exa_hits')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'ashiya_boat4_exa_pay')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'kiryu_win2_bets')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'kiryu_win2_hits')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'kiryu_win2_pay')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'karatsu_rain_exa_bets')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'karatsu_rain_exa_hits')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'karatsu_rain_exa_pay')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'miyajima_boat4_tri_bets')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'miyajima_boat4_tri_hits')::INTEGER, 0),
+                       COALESCE(((stats_json::jsonb)->>'miyajima_boat4_tri_pay')::INTEGER, 0)
+                  FROM l4_daily_stats_cache
+                 WHERE race_date BETWEEN ? AND ?
+            """
+        for row in src.execute(cache_sql, (start, end)).fetchall():
+            rdate = row[0]
+            d = by_date.setdefault(rdate, _empty_summary_day(rdate))
+            for key, value in zip(cache_keys, row[1:]):
+                d[key] = int(value or 0)
+    except Exception as e:
+        print(f"  niche cache merge skip: {e}")
+
     return list(by_date.values())
 
 
@@ -511,8 +598,13 @@ def main():
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
                mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
                mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay,
+               amagasaki_motor_exa_bets, amagasaki_motor_exa_hits, amagasaki_motor_exa_pay,
+               ashiya_boat4_exa_bets, ashiya_boat4_exa_hits, ashiya_boat4_exa_pay,
+               kiryu_win2_bets, kiryu_win2_hits, kiryu_win2_pay,
+               karatsu_rain_exa_bets, karatsu_rain_exa_hits, karatsu_rain_exa_pay,
+               miyajima_boat4_tri_bets, miyajima_boat4_tri_hits, miyajima_boat4_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (date) DO UPDATE SET
               n_total = EXCLUDED.n_total,
               n_l4    = EXCLUDED.n_l4,
@@ -549,6 +641,21 @@ def main():
               mid_132_tier_a_tri_bets = EXCLUDED.mid_132_tier_a_tri_bets,
               mid_132_tier_a_tri_hits = EXCLUDED.mid_132_tier_a_tri_hits,
               mid_132_tier_a_tri_pay  = EXCLUDED.mid_132_tier_a_tri_pay,
+              amagasaki_motor_exa_bets = EXCLUDED.amagasaki_motor_exa_bets,
+              amagasaki_motor_exa_hits = EXCLUDED.amagasaki_motor_exa_hits,
+              amagasaki_motor_exa_pay  = EXCLUDED.amagasaki_motor_exa_pay,
+              ashiya_boat4_exa_bets = EXCLUDED.ashiya_boat4_exa_bets,
+              ashiya_boat4_exa_hits = EXCLUDED.ashiya_boat4_exa_hits,
+              ashiya_boat4_exa_pay  = EXCLUDED.ashiya_boat4_exa_pay,
+              kiryu_win2_bets = EXCLUDED.kiryu_win2_bets,
+              kiryu_win2_hits = EXCLUDED.kiryu_win2_hits,
+              kiryu_win2_pay  = EXCLUDED.kiryu_win2_pay,
+              karatsu_rain_exa_bets = EXCLUDED.karatsu_rain_exa_bets,
+              karatsu_rain_exa_hits = EXCLUDED.karatsu_rain_exa_hits,
+              karatsu_rain_exa_pay  = EXCLUDED.karatsu_rain_exa_pay,
+              miyajima_boat4_tri_bets = EXCLUDED.miyajima_boat4_tri_bets,
+              miyajima_boat4_tri_hits = EXCLUDED.miyajima_boat4_tri_hits,
+              miyajima_boat4_tri_pay  = EXCLUDED.miyajima_boat4_tri_pay,
               updated_at = EXCLUDED.updated_at
         """
     else:
@@ -570,8 +677,13 @@ def main():
                toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay,
                mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay,
                mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay,
+               amagasaki_motor_exa_bets, amagasaki_motor_exa_hits, amagasaki_motor_exa_pay,
+               ashiya_boat4_exa_bets, ashiya_boat4_exa_hits, ashiya_boat4_exa_pay,
+               kiryu_win2_bets, kiryu_win2_hits, kiryu_win2_pay,
+               karatsu_rain_exa_bets, karatsu_rain_exa_hits, karatsu_rain_exa_pay,
+               miyajima_boat4_tri_bets, miyajima_boat4_tri_hits, miyajima_boat4_tri_pay,
                updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     for s in summaries:
         batch.append((
@@ -591,6 +703,11 @@ def main():
             s.get("toda_7r_tri_bets",0), s.get("toda_7r_tri_hits",0), s.get("toda_7r_tri_pay",0),
             s.get("mid_132_tri_bets",0), s.get("mid_132_tri_hits",0), s.get("mid_132_tri_pay",0),
             s.get("mid_132_tier_a_tri_bets",0), s.get("mid_132_tier_a_tri_hits",0), s.get("mid_132_tier_a_tri_pay",0),
+            s.get("amagasaki_motor_exa_bets",0), s.get("amagasaki_motor_exa_hits",0), s.get("amagasaki_motor_exa_pay",0),
+            s.get("ashiya_boat4_exa_bets",0), s.get("ashiya_boat4_exa_hits",0), s.get("ashiya_boat4_exa_pay",0),
+            s.get("kiryu_win2_bets",0), s.get("kiryu_win2_hits",0), s.get("kiryu_win2_pay",0),
+            s.get("karatsu_rain_exa_bets",0), s.get("karatsu_rain_exa_hits",0), s.get("karatsu_rain_exa_pay",0),
+            s.get("miyajima_boat4_tri_bets",0), s.get("miyajima_boat4_tri_hits",0), s.get("miyajima_boat4_tri_pay",0),
             now_iso,
         ))
         if len(batch) >= BATCH:

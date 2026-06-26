@@ -374,6 +374,22 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
   mid_132_tier_a_tri_bets INTEGER,
   mid_132_tier_a_tri_hits INTEGER,
   mid_132_tier_a_tri_pay  INTEGER,
+  -- ??? exacta / trifecta ?? (?? fallback ?)
+  amagasaki_motor_exa_bets INTEGER,
+  amagasaki_motor_exa_hits INTEGER,
+  amagasaki_motor_exa_pay  INTEGER,
+  ashiya_boat4_exa_bets    INTEGER,
+  ashiya_boat4_exa_hits    INTEGER,
+  ashiya_boat4_exa_pay     INTEGER,
+  kiryu_win2_bets          INTEGER,
+  kiryu_win2_hits          INTEGER,
+  kiryu_win2_pay           INTEGER,
+  karatsu_rain_exa_bets    INTEGER,
+  karatsu_rain_exa_hits    INTEGER,
+  karatsu_rain_exa_pay     INTEGER,
+  miyajima_boat4_tri_bets  INTEGER,
+  miyajima_boat4_tri_hits  INTEGER,
+  miyajima_boat4_tri_pay   INTEGER,
   updated_at        TEXT NOT NULL
 );
 
@@ -403,6 +419,21 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
 -- ALTER TABLE l4_daily_summary ADD COLUMN toda_7r_tri_bets  INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN toda_7r_tri_hits  INTEGER;
 -- ALTER TABLE l4_daily_summary ADD COLUMN toda_7r_tri_pay   INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN amagasaki_motor_exa_bets INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN amagasaki_motor_exa_hits INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN amagasaki_motor_exa_pay  INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN ashiya_boat4_exa_bets    INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN ashiya_boat4_exa_hits    INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN ashiya_boat4_exa_pay     INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN kiryu_win2_bets          INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN kiryu_win2_hits          INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN kiryu_win2_pay           INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN karatsu_rain_exa_bets    INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN karatsu_rain_exa_hits    INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN karatsu_rain_exa_pay     INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN miyajima_boat4_tri_bets  INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN miyajima_boat4_tri_hits  INTEGER;
+-- ALTER TABLE l4_daily_summary ADD COLUMN miyajima_boat4_tri_pay   INTEGER;
 
 -- ============================================================
 -- システム状態 (データ品質チェック / バッチ死活監視 / エラーログ)
