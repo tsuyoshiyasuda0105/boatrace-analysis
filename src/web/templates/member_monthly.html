@@ -19,19 +19,43 @@
     </small>
   </p>
 
+  {% if health_results %}
+  <section class="strategy-health-board">
+    <div class="section-header-row">
+      <h3>健全度</h3>
+      <a href="/member/health" class="health-board-link">詳細</a>
+    </div>
+    <div class="strategy-health-grid">
+      {% for r in health_results %}
+      <article class="strategy-health-chip status-{{ r.status }}">
+        <div class="strategy-health-chip-head">
+          <span class="strategy-health-name">{{ r.name }}</span>
+          <span class="health-status-pill status-{{ r.status }}">{{ r.status }}</span>
+        </div>
+        <div class="strategy-health-chip-body">
+          <span>30日 {% if r.roi_30d is not none %}{{ '%.1f' | format(r.roi_30d) }}%{% else %}-{% endif %}</span>
+          <span>n={{ r.n_bets_30d }}</span>
+          <span>{% if r.baseline_recovery is not none %}基準 {{ '%.1f' | format(r.baseline_recovery) }}%{% else %}基準 -{% endif %}</span>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <section class="summary-grid" style="margin-bottom:16px;">
     <article class="summary-card">
-      <div class="summary-label">L4 3連単 1-2-3</div>
+      <div class="summary-label">候補1・3・4 合算</div>
       <div class="summary-roi">
-        {% if monthly_totals.tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.tri.roi) }}%{% else %}-{% endif %}
+        {% if monthly_totals.tri_core.roi is not none %}{{ '%+.1f' | format(monthly_totals.tri_core.roi) }}%{% else %}-{% endif %}
       </div>
       <div class="summary-sub">
-        n={{ monthly_totals.tri.bets }} HIT={{ monthly_totals.tri.hits }}
-        {% if monthly_totals.tri.bets > 0 %}/ 損益 {{ monthly_totals.tri.profit | signed_comma }}円{% endif %}
+        n={{ monthly_totals.tri_core.bets }} HIT={{ monthly_totals.tri_core.hits }}
+        {% if monthly_totals.tri_core.bets > 0 %}/ 損益 {{ monthly_totals.tri_core.profit | signed_comma }}円{% endif %}
       </div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">L4 G++ F1</div>
+      <div class="summary-label">候補1</div>
       <div class="summary-roi">
         {% if monthly_totals.gen_f1_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.gen_f1_tri.roi) }}%{% else %}-{% endif %}
       </div>
@@ -41,7 +65,7 @@
       </div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">一般戦×200</div>
+      <div class="summary-label">候補3</div>
       <div class="summary-roi">
         {% if monthly_totals.gen_200_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.gen_200_tri.roi) }}%{% else %}-{% endif %}
       </div>
@@ -51,7 +75,7 @@
       </div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">Tier A</div>
+      <div class="summary-label">候補4</div>
       <div class="summary-roi">
         {% if monthly_totals.mid_132_tier_a_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.mid_132_tier_a_tri.roi) }}%{% else %}-{% endif %}
       </div>
@@ -80,6 +104,16 @@
         {% if monthly_totals.ashiya_boat4_exa.bets > 0 %}/ 損益 {{ monthly_totals.ashiya_boat4_exa.profit | signed_comma }}円{% endif %}
       </div>
     </article>
+    <article class="summary-card">
+      <div class="summary-label">Karatsu Rain Exacta 1-2</div>
+      <div class="summary-roi">
+        {% if monthly_totals.karatsu_rain_exa.roi is not none %}{{ '%+.1f' | format(monthly_totals.karatsu_rain_exa.roi) }}%{% else %}-{% endif %}
+      </div>
+      <div class="summary-sub">
+        n={{ monthly_totals.karatsu_rain_exa.bets }} HIT={{ monthly_totals.karatsu_rain_exa.hits }}
+        {% if monthly_totals.karatsu_rain_exa.bets > 0 %}/ Profit {{ monthly_totals.karatsu_rain_exa.profit | signed_comma }} JPY{% endif %}
+      </div>
+    </article>
   </section>
 
   <section class="chart-section">
@@ -94,7 +128,7 @@
   <section class="daily-table-section monthly-roi-section">
     <h3>🧾 月別 ROI テーブル</h3>
     <p class="dashboard-hint">
-      <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / L4 G++ F1 / 一般戦×200 ・ 観察: Tier A / 尼崎 / 芦屋 / 桐生 / 宮島 / L4-prime / L4-12R / 一般戦×12R</small>
+      <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / 候補1 / 候補3 / 候補4 ・ 観察: 尼崎 / 芦屋 / 桐生 / 宮島 / L4-prime / L4-12R / 一般戦×12R</small>
     </p>
     <div class="table-wrap">
       <table class="daily-table monthly-roi-table">
@@ -105,13 +139,14 @@
             <th colspan="2">単勝 (1)</th>
             <th colspan="2">2連単 (1-2)</th>
             <th colspan="2">3連単 (1-2-3)</th>
-            <th colspan="2">L4 G++ F1</th>
-            <th colspan="2">一般戦×200</th>
-            <th colspan="2" class="obs-col">Tier A</th>
+            <th colspan="2">候補1</th>
+            <th colspan="2">候補3</th>
+            <th colspan="2" class="obs-col">候補4</th>
             <th colspan="2" class="obs-col">尼崎 1-4</th>
             <th colspan="2" class="obs-col">芦屋 4-1</th>
             <th colspan="2" class="obs-col">桐生 単勝2</th>
-            <th colspan="2" class="obs-col">宮島 4コースまくり</th>
+            <th colspan="2" class="obs-col">Karatsu Rain 1-2</th>
+            <th colspan="2" class="obs-col">Miyajima 4-course</th>
             <th colspan="2" class="obs-col">L4-prime</th>
             <th colspan="2" class="obs-col">L4-12R</th>
             <th colspan="2" class="obs-col">一般戦×12R</th>
@@ -122,6 +157,7 @@
             <th>HIT/n</th><th>ROI</th>
             <th>HIT/n</th><th>ROI</th>
             <th>HIT/n</th><th>ROI</th>
+            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
             <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
             <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
             <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
@@ -143,7 +179,7 @@
               </span>
               {% if m.is_current %}<span class="in-progress-badge">進行中</span>{% endif %}
             </td>
-            <td class="num">{{ m.n_l4 + (m.gen_f1_tri_bets or 0) }}</td>
+            <td class="num">{{ m.n_l4_display }}</td>
 
             <td class="num">{{ m.win_hits }}/{{ m.win_bets }}</td>
             <td class="num {% if m.win_roi is not none and m.win_roi >= 0 %}pos{% elif m.win_roi is not none %}neg{% endif %}">
@@ -153,9 +189,9 @@
             <td class="num {% if m.exa_roi is not none and m.exa_roi >= 0 %}pos{% elif m.exa_roi is not none %}neg{% endif %}">
               {% if m.exa_roi is not none %}{{ '%+.0f' | format(m.exa_roi) }}%{% else %}-{% endif %}
             </td>
-            <td class="num">{{ m.tri_hits }}/{{ m.tri_bets }}</td>
-            <td class="num {% if m.tri_roi is not none and m.tri_roi >= 0 %}pos{% elif m.tri_roi is not none %}neg{% endif %}">
-              {% if m.tri_roi is not none %}{{ '%+.0f' | format(m.tri_roi) }}%{% else %}-{% endif %}
+            <td class="num">{{ m.tri_core_hits }}/{{ m.tri_core_bets }}</td>
+            <td class="num {% if m.tri_core_roi is not none and m.tri_core_roi >= 0 %}pos{% elif m.tri_core_roi is not none %}neg{% endif %}">
+              {% if m.tri_core_roi is not none %}{{ '%+.0f' | format(m.tri_core_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num">{{ m.gen_f1_tri_hits }}/{{ m.gen_f1_tri_bets }}</td>
             <td class="num {% if m.gen_f1_tri_roi is not none and m.gen_f1_tri_roi >= 0 %}pos{% elif m.gen_f1_tri_roi is not none %}neg{% endif %}">
@@ -180,6 +216,10 @@
             <td class="num obs-col">{{ m.kiryu_win2_hits }}/{{ m.kiryu_win2_bets }}</td>
             <td class="num obs-col {% if m.kiryu_win2_roi is not none and m.kiryu_win2_roi >= 0 %}pos{% elif m.kiryu_win2_roi is not none %}neg{% endif %}">
               {% if m.kiryu_win2_roi is not none %}{{ '%+.0f' | format(m.kiryu_win2_roi) }}%{% else %}-{% endif %}
+            </td>
+            <td class="num obs-col">{{ m.karatsu_rain_exa_hits }}/{{ m.karatsu_rain_exa_bets }}</td>
+            <td class="num obs-col {% if m.karatsu_rain_exa_roi is not none and m.karatsu_rain_exa_roi >= 0 %}pos{% elif m.karatsu_rain_exa_roi is not none %}neg{% endif %}">
+              {% if m.karatsu_rain_exa_roi is not none %}{{ '%+.0f' | format(m.karatsu_rain_exa_roi) }}%{% else %}-{% endif %}
             </td>
             <td class="num obs-col">{{ m.miyajima_boat4_tri_hits }}/{{ m.miyajima_boat4_tri_bets }}</td>
             <td class="num obs-col {% if m.miyajima_boat4_tri_roi is not none and m.miyajima_boat4_tri_roi >= 0 %}pos{% elif m.miyajima_boat4_tri_roi is not none %}neg{% endif %}">
@@ -217,13 +257,14 @@
     {
       ym: "{{ m.ym }}",
       is_current: {{ 'true' if m.is_current else 'false' }},
-      tri: {{ ('null' if m.tri_roi is none else '%.1f' | format(m.tri_roi)) }},
+      tri: {{ ('null' if m.tri_core_roi is none else '%.1f' | format(m.tri_core_roi)) }},
       f1: {{ ('null' if m.gen_f1_tri_roi is none else '%.1f' | format(m.gen_f1_tri_roi)) }},
       g200: {{ ('null' if m.gen_200_tri_roi is none else '%.1f' | format(m.gen_200_tri_roi)) }},
       tiera: {{ ('null' if m.mid_132_tier_a_tri_roi is none else '%.1f' | format(m.mid_132_tier_a_tri_roi)) }},
       amaga: {{ ('null' if m.amagasaki_motor_exa_roi is none else '%.1f' | format(m.amagasaki_motor_exa_roi)) }},
       ashiya41: {{ ('null' if m.ashiya_boat4_exa_roi is none else '%.1f' | format(m.ashiya_boat4_exa_roi)) }},
       kiryu2: {{ ('null' if m.kiryu_win2_roi is none else '%.1f' | format(m.kiryu_win2_roi)) }},
+      karatsu12: {{ ('null' if m.karatsu_rain_exa_roi is none else '%.1f' | format(m.karatsu_rain_exa_roi)) }},
       miyajima4: {{ ('null' if m.miyajima_boat4_tri_roi is none else '%.1f' | format(m.miyajima_boat4_tri_roi)) }},
       prime: {{ ('null' if m.prime_tri_roi is none else '%.1f' | format(m.prime_tri_roi)) }},
       r12: {{ ('null' if m.r12_tri_roi is none else '%.1f' | format(m.r12_tri_roi)) }},
@@ -234,12 +275,13 @@
 
   const SERIES = [
     {key:'tri', label:'3連単 (1-2-3)', color:'#ff006e'},
-    {key:'f1', label:'L4 G++ F1', color:'#ffd700'},
+    {key:'f1', label:'候補1', color:'#ffd700'},
     {key:'g200', label:'一般戦×200', color:'#22c55e'},
-    {key:'tiera', label:'Tier A', color:'#38bdf8'},
+    {key:'tiera', label:'候補4', color:'#38bdf8'},
     {key:'amaga', label:'尼崎 1-4', color:'#f59e0b'},
     {key:'ashiya41', label:'芦屋 4-1', color:'#ef4444'},
     {key:'kiryu2', label:'桐生 単勝2', color:'#a78bfa'},
+    {key:'karatsu12', label:'Karatsu Rain 1-2', color:'#14b8a6'},
     {key:'miyajima4', label:'宮島 4コースまくり', color:'#f97316'},
     {key:'prime', label:'L4-prime', color:'#10b981'},
     {key:'r12', label:'L4-12R', color:'#06b6d4'},

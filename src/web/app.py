@@ -1013,7 +1013,7 @@ def _race_current_conditions(race_id: str) -> dict:
     out = {
         "wind_speed": None, "wave_height": None, "temperature": None, "water_temperature": None,
         "wind_direction_number": None, "weather_number": None,
-        "boats": {},   # {boat_number: {exhibition_time, start_timing_exhibition, course_number, tilt_adjustment, weight_adjustment}}
+        "boats": {},   # {boat_number: {exhibition_time, start_timing_exhibition, course_number, tilt_adjustment, weight_adjustment, lap_time, turn_time, straight_time, original_rank}}
     }
     with db_connect() as conn:
         rows = conn.execute("""
@@ -1025,8 +1025,6 @@ def _race_current_conditions(race_id: str) -> dict:
              WHERE race_id = ?
              ORDER BY boat_number
         """, (race_id,)).fetchall()
-    if not rows:
-        return out
     keys = ["boat_number", "weather_number", "wind_speed", "wind_direction_number",
             "wave_height", "temperature", "water_temperature",
             "course_number", "exhibition_time", "start_timing_exhibition",
@@ -1046,6 +1044,30 @@ def _race_current_conditions(race_id: str) -> dict:
             "weight_adjustment": d.get("weight_adjustment"),
             "tilt_adjustment": d.get("tilt_adjustment"),
         }
+    try:
+        with db_connect() as conn:
+            original_rows = conn.execute(
+                """
+                SELECT boat_number, lap_time, turn_time, straight_time, original_rank
+                  FROM race_original_exhibitions
+                 WHERE race_id = ?
+                 ORDER BY boat_number, collected_at DESC, source_name
+                """,
+                (race_id,),
+            ).fetchall()
+    except Exception:
+        original_rows = []
+    seen_original: set[int] = set()
+    for boat_number, lap_time, turn_time, straight_time, original_rank in original_rows:
+        bn = int(boat_number)
+        if bn in seen_original:
+            continue
+        seen_original.add(bn)
+        boat = out["boats"].setdefault(bn, {})
+        boat["lap_time"] = lap_time
+        boat["turn_time"] = turn_time
+        boat["straight_time"] = straight_time
+        boat["original_rank"] = original_rank
     return out
 
 
@@ -1678,7 +1700,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             _attach_kimarite_skill_tags(race_id, preds)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-        return jsonify({"info": info, "predictions": preds})
+        return jsonify({
+            "info": info,
+            "predictions": preds,
+            "conditions": _race_current_conditions(race_id),
+        })
 
     @app.route("/api/race/<race_id>/motor-history/<int:boat_number>")
     @member_only_api
@@ -2947,7 +2973,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         def _evaluate_exacta_niche(stadium, race_number, boat1_motor_top2=None,
                                    boat2_motor_top2=None, program_type=None,
-                                   pair_affinity=None):
+                                   pair_affinity=None, grade=None, weather=None):
             """Evaluate verified exacta niche strategies."""
             try:
                 rn = int(race_number) if race_number is not None else 0
@@ -2983,6 +3009,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "exacta_niche_rate": None,
                     "tetsuban_score": 5,
                     "tetsuban_label": "2連単 5★",
+                }
+            if stadium == 23 and grade == 5 and weather == 3 and m1 >= 35.0:
+                return {
+                    "level": "exacta_niche_karatsu_rain",
+                    "label": "唐津 雨 2連単 1-2",
+                    "recovery": 208.1,
+                    "n": 27,
+                    "bet": "2連単 1-2",
+                    "rank": "exacta_niche",
+                    "rank_label": "2連単ニッチ",
+                    "rank_emoji": "2R",
+                    "natl_1": None,
+                    "local_1": None,
+                    "is_exacta_niche": True,
+                    "exacta_niche_tag": "唐津 + 雨 + 一般戦 + 1号艇A1 + 1号艇モーター2連率35%以上",
+                    "exacta_niche_hit_rate": 37.0,
+                    "exacta_niche_recovery": 208.1,
+                    "exacta_niche_meetings": None,
+                    "exacta_niche_ahead": None,
+                    "exacta_niche_rate": None,
+                    "tetsuban_score": 6,
+                    "tetsuban_label": "2連単 6点",
                 }
             pair = pair_affinity or {}
             if not pair.get("is_boat1_over_boat2"):
@@ -4021,6 +4069,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     boat2_motor_top2=boat2_motor_top2,
                     program_type=program_type,
                     pair_affinity=exacta_pair_affinity.get(rid),
+                    grade=grade, weather=weather,
                 )
                 if exacta_niche:
                     l4 = exacta_niche
@@ -4175,6 +4224,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     boat2_motor_top2=boat2_motor_top2,
                     program_type=program_type,
                     pair_affinity=exacta_pair_affinity.get(rid),
+                    grade=grade, weather=weather,
                 )
                 if exacta_niche:
                     morning_l4 = exacta_niche
@@ -4251,8 +4301,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     STRICT_ODDS_DAILY_START = "2026-05-30"
     MID132_ODDS_CACHE_VERSION = "mid132_1-3-2_odds_v2"
     AMAGASAKI_MOTOR_EXA_CACHE_VERSION = "amagasaki_motor_exa_v1"
-    ASHIYA_BOAT4_EXA_CACHE_VERSION = "ashiya_boat4_exa_v1"
+    # 芦屋 4-1 は差分調査後に再集計したいので、キャッシュを強制無効化する。
+    ASHIYA_BOAT4_EXA_CACHE_VERSION = "ashiya_boat4_exa_v2"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
+    KARATSU_RAIN_EXA_CACHE_VERSION = "karatsu_rain_exa_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
     MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION = "miyajima_boat4_makuri_v2"
     BET_UNIT_MAP = {
@@ -4297,6 +4349,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_kiryu_win2_version") != KIRYU_WIN2_CACHE_VERSION:
                             continue
+                        if day_d.get("_karatsu_rain_exa_version") != KARATSU_RAIN_EXA_CACHE_VERSION:
+                            continue
                         if day_d.get("_general200_version") != GENERAL200_CACHE_VERSION:
                             continue
                         if day_d.get("_miyajima_boat4_makuri_version") != MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION:
@@ -4309,6 +4363,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             pass
 
         def _finalize_l4_daily_rows(stats_by_date: dict[str, dict]) -> list[dict]:
+            niche_bet_keys = (
+                "amagasaki_motor_exa",
+                "ashiya_boat4_exa",
+                "kiryu_win2",
+                "karatsu_rain_exa",
+                "miyajima_boat4_tri",
+            )
+            for d in stats_by_date.values():
+                for bet in niche_bet_keys:
+                    d.setdefault(f"{bet}_bets", 0)
+                    d.setdefault(f"{bet}_hits", 0)
+                    d.setdefault(f"{bet}_pay", 0)
             for d in stats_by_date.values():
                 for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
                             "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
@@ -4508,6 +4574,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
                 "ashiya_boat4_exa_bets": 0, "ashiya_boat4_exa_hits": 0, "ashiya_boat4_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
+                "karatsu_rain_exa_bets": 0, "karatsu_rain_exa_hits": 0, "karatsu_rain_exa_pay": 0,
                 "miyajima_boat4_tri_bets": 0, "miyajima_boat4_tri_hits": 0, "miyajima_boat4_tri_pay": 0,
                 "grade_breakdown": {},
             }
@@ -4563,6 +4630,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
                 "ashiya_boat4_exa_bets": 0, "ashiya_boat4_exa_hits": 0, "ashiya_boat4_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
+                "karatsu_rain_exa_bets": 0, "karatsu_rain_exa_hits": 0, "karatsu_rain_exa_pay": 0,
                 "miyajima_boat4_tri_bets": 0, "miyajima_boat4_tri_hits": 0, "miyajima_boat4_tri_pay": 0,
                 "grade_breakdown": {},
             })
@@ -4580,6 +4648,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if w1 == 1 and w2 == 4:
                     d["amagasaki_motor_exa_hits"] += 1
                     d["amagasaki_motor_exa_pay"] += (ex14_pay or 0)
+
+            try:
+                b1_motor = float(boat1_motor_top2) if boat1_motor_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                b1_motor = 0.0
+            if is_done and stadium == 23 and grade == 5 and weather == 3 and cls == 1 and b1_motor >= 35.0:
+                d["karatsu_rain_exa_bets"] += 1
+                if w1 == 1 and w2 == 2:
+                    d["karatsu_rain_exa_hits"] += 1
+                    d["karatsu_rain_exa_pay"] += (exa_pay or 0)
 
             try:
                 b1_t2 = float(boat1_pred_top2) if boat1_pred_top2 is not None else 0.0
@@ -4800,8 +4878,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # Ashiya exacta 4-1 exhibition lift
         try:
             from collections import defaultdict
-
-            candidate_rows = conn.execute(
+            from datetime import datetime as _wf_dt, timedelta as _wf_td
+            with db_connect() as conn:
+                candidate_rows = conn.execute(
                 """
                 SELECT r.race_id,
                        r.race_date,
@@ -4809,7 +4888,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                        e4.assigned_motor_number,
                        COALESCE(pv4.course_number, 4) AS boat4_ex_course,
                        pv4.exhibition_time AS boat4_ex_time,
-                       pv4.start_timing AS boat4_ex_st,
+                       pv4.start_timing_exhibition AS boat4_ex_st,
                        COALESCE(pe41.payout, 0) AS ex41_pay
                   FROM races r
                   JOIN race_entries e4
@@ -4829,11 +4908,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                  ORDER BY r.race_date, r.race_id
                 """,
                 (from_date, to_date),
-            ).fetchall()
+                ).fetchall()
 
-            if candidate_rows:
-                hist_from = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=730)).isoformat()
-                racer_hist_rows = conn.execute(
+                if candidate_rows:
+                    hist_from = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=730)).isoformat()
+                    racer_hist_rows = conn.execute(
                     """
                     SELECT r.race_date,
                            e.racer_number,
@@ -4855,8 +4934,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      ORDER BY r.race_date, r.race_id
                     """,
                     (hist_from, to_date),
-                ).fetchall()
-                racer_ex_rows = conn.execute(
+                    ).fetchall()
+                    racer_ex_rows = conn.execute(
                     """
                     SELECT r.race_date,
                            e.racer_number,
@@ -4876,8 +4955,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      ORDER BY r.race_date, r.race_id
                     """,
                     (hist_from, to_date),
-                ).fetchall()
-                motor_ex_rows = conn.execute(
+                    ).fetchall()
+                    motor_ex_rows = conn.execute(
                     """
                     SELECT r.race_date,
                            e.assigned_motor_number,
@@ -4897,8 +4976,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      ORDER BY r.race_date, r.race_id
                     """,
                     (hist_from, to_date),
-                ).fetchall()
-                race_best_rows = conn.execute(
+                    ).fetchall()
+                    race_best_rows = conn.execute(
                     """
                     SELECT rp.race_id, MIN(rp.exhibition_time) AS best_ex
                       FROM race_previews rp
@@ -4910,79 +4989,79 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      GROUP BY rp.race_id
                     """,
                     (from_date, to_date),
-                ).fetchall()
-                race_best_map = {rid: float(best_ex) for rid, best_ex in race_best_rows if best_ex is not None}
+                    ).fetchall()
+                    race_best_map = {rid: float(best_ex) for rid, best_ex in race_best_rows if best_ex is not None}
 
-                racer_stats = defaultdict(lambda: {"n": 0, "st_sum": 0.0, "wins": 0})
-                racer_ex_hist = defaultdict(list)
-                motor_ex_hist = defaultdict(list)
-                racer_hist_idx = 0
-                racer_ex_idx = 0
-                motor_ex_idx = 0
+                    racer_stats = defaultdict(lambda: {"n": 0, "st_sum": 0.0, "wins": 0})
+                    racer_ex_hist = defaultdict(list)
+                    motor_ex_hist = defaultdict(list)
+                    racer_hist_idx = 0
+                    racer_ex_idx = 0
+                    motor_ex_idx = 0
 
-                for race_id, rdate, racer_no, motor_no, ex_course, boat4_ex_time, boat4_ex_st, ex41_pay in candidate_rows:
-                    while racer_hist_idx < len(racer_hist_rows) and racer_hist_rows[racer_hist_idx][0] < rdate:
-                        _d, hracer, hst, hpos = racer_hist_rows[racer_hist_idx]
-                        stat = racer_stats[hracer]
-                        stat["n"] += 1
-                        stat["st_sum"] += float(hst)
-                        if int(hpos) == 1:
-                            stat["wins"] += 1
-                        racer_hist_idx += 1
-                    while racer_ex_idx < len(racer_ex_rows) and racer_ex_rows[racer_ex_idx][0] < rdate:
-                        _d, hracer, hexv = racer_ex_rows[racer_ex_idx]
-                        hist = racer_ex_hist[hracer]
-                        if len(hist) < 20:
-                            hist.append(float(hexv))
-                        racer_ex_idx += 1
-                    while motor_ex_idx < len(motor_ex_rows) and motor_ex_rows[motor_ex_idx][0] < rdate:
-                        _d, hmotor, hexv = motor_ex_rows[motor_ex_idx]
-                        hist = motor_ex_hist[str(hmotor)]
-                        if len(hist) < 12:
-                            hist.append(float(hexv))
-                        motor_ex_idx += 1
+                    for race_id, rdate, racer_no, motor_no, ex_course, boat4_ex_time, boat4_ex_st, ex41_pay in candidate_rows:
+                        while racer_hist_idx < len(racer_hist_rows) and racer_hist_rows[racer_hist_idx][0] < rdate:
+                            _d, hracer, hst, hpos = racer_hist_rows[racer_hist_idx]
+                            stat = racer_stats[hracer]
+                            stat["n"] += 1
+                            stat["st_sum"] += float(hst)
+                            if int(hpos) == 1:
+                                stat["wins"] += 1
+                            racer_hist_idx += 1
+                        while racer_ex_idx < len(racer_ex_rows) and racer_ex_rows[racer_ex_idx][0] < rdate:
+                            _d, hracer, hexv = racer_ex_rows[racer_ex_idx]
+                            hist = racer_ex_hist[hracer]
+                            if len(hist) < 20:
+                                hist.append(float(hexv))
+                            racer_ex_idx += 1
+                        while motor_ex_idx < len(motor_ex_rows) and motor_ex_rows[motor_ex_idx][0] < rdate:
+                            _d, hmotor, hexv = motor_ex_rows[motor_ex_idx]
+                            hist = motor_ex_hist[str(hmotor)]
+                            if len(hist) < 12:
+                                hist.append(float(hexv))
+                            motor_ex_idx += 1
 
-                    stat = racer_stats[racer_no]
-                    r4_n = int(stat["n"] or 0)
-                    if r4_n < 8:
-                        continue
-                    r4_avg_st = stat["st_sum"] / r4_n
-                    r4_win_rate = stat["wins"] / r4_n
-                    r_ex_list = racer_ex_hist.get(racer_no, [])
-                    m_ex_list = motor_ex_hist.get(str(motor_no), [])
-                    if len(r_ex_list) < 8 or len(m_ex_list) < 5:
-                        continue
-                    if boat4_ex_time is None or boat4_ex_st is None:
-                        continue
-                    best_ex = race_best_map.get(race_id)
-                    if best_ex is None:
-                        continue
-                    boat4_ex_v = float(boat4_ex_time)
-                    boat4_ex_st_v = float(boat4_ex_st)
-                    racer_avg_ex = sum(r_ex_list) / len(r_ex_list)
-                    motor_avg_ex = sum(m_ex_list) / len(m_ex_list)
-                    best_diff = boat4_ex_v - best_ex
-                    racer_gain = racer_avg_ex - boat4_ex_v
-                    motor_gain = motor_avg_ex - boat4_ex_v
+                        stat = racer_stats[racer_no]
+                        r4_n = int(stat["n"] or 0)
+                        if r4_n < 8:
+                            continue
+                        r4_avg_st = stat["st_sum"] / r4_n
+                        r4_win_rate = stat["wins"] / r4_n
+                        r_ex_list = racer_ex_hist.get(racer_no, [])
+                        m_ex_list = motor_ex_hist.get(str(motor_no), [])
+                        if len(r_ex_list) < 8 or len(m_ex_list) < 5:
+                            continue
+                        if boat4_ex_time is None or boat4_ex_st is None:
+                            continue
+                        best_ex = race_best_map.get(race_id)
+                        if best_ex is None:
+                            continue
+                        boat4_ex_v = float(boat4_ex_time)
+                        boat4_ex_st_v = float(boat4_ex_st)
+                        racer_avg_ex = sum(r_ex_list) / len(r_ex_list)
+                        motor_avg_ex = sum(m_ex_list) / len(m_ex_list)
+                        best_diff = boat4_ex_v - best_ex
+                        racer_gain = racer_avg_ex - boat4_ex_v
+                        motor_gain = motor_avg_ex - boat4_ex_v
 
-                    if not (
-                        int(ex_course or 4) == 4
-                        and r4_avg_st <= 0.16
-                        and r4_win_rate >= 0.08
-                        and best_diff <= 0.08
-                        and racer_gain >= 0.08
-                        and motor_gain >= 0.05
-                        and boat4_ex_st_v <= 0.10
-                    ):
-                        continue
+                        if not (
+                            int(ex_course or 4) == 4
+                            and r4_avg_st <= 0.16
+                            and r4_win_rate >= 0.08
+                            and best_diff <= 0.08
+                            and racer_gain >= 0.08
+                            and motor_gain >= 0.05
+                            and boat4_ex_st_v <= 0.10
+                        ):
+                            continue
 
-                    d = by_date.get(rdate)
-                    if d is None:
-                        continue
-                    d["ashiya_boat4_exa_bets"] += 1
-                    if ex41_pay:
-                        d["ashiya_boat4_exa_hits"] += 1
-                        d["ashiya_boat4_exa_pay"] += int(ex41_pay or 0)
+                        d = by_date.get(rdate)
+                        if d is None:
+                            continue
+                        d["ashiya_boat4_exa_bets"] += 1
+                        if ex41_pay:
+                            d["ashiya_boat4_exa_hits"] += 1
+                            d["ashiya_boat4_exa_pay"] += int(ex41_pay or 0)
         except Exception as e:
             logger.warning("ashiya boat4 exacta daily stats failed: %s", e)
 
@@ -4990,8 +5069,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         try:
             from collections import defaultdict, deque
             from datetime import datetime as _wf_dt, timedelta as _wf_td
-
-            candidate_rows = conn.execute(
+            with db_connect() as conn:
+                candidate_rows = conn.execute(
                 """
                 SELECT r.race_id,
                        r.race_date,
@@ -5000,8 +5079,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                        e1.national_top_1_percent AS boat1_natl1,
                        e1.assigned_motor_top_2_percent AS boat1_motor_top2,
                        COALESCE(pv4.course_number, 4) AS boat4_ex_course,
-                       pv4.start_timing,
-                       pv4.start_timing_exhibition AS boat4_ex_time,
+                       pv4.start_timing_exhibition AS boat4_ex_st,
+                       pv4.exhibition_time AS boat4_ex_time,
                        COALESCE(pt4.payout, 0) AS tri4_pay
                   FROM races r
                   JOIN race_entries e4
@@ -5016,7 +5095,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                   LEFT JOIN race_payouts pt4
                     ON pt4.race_id = r.race_id
                    AND pt4.bet_type = 'trifecta'
-                   AND pt4.combination LIKE '4-%'
+                   AND pt4.combination LIKE '4-%%'
                  WHERE r.race_date BETWEEN ? AND ?
                    AND r.stadium_number = 17
                    AND e4.class_number = 1
@@ -5024,12 +5103,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                  ORDER BY r.race_date, r.race_id
                 """,
                 (from_date, to_date),
-            ).fetchall()
+                ).fetchall()
 
-            if candidate_rows:
-                hist_from = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=730)).isoformat()
-                motor_hist_from = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=180)).isoformat()
-                history_rows = conn.execute(
+                if candidate_rows:
+                    hist_from = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=730)).isoformat()
+                    motor_hist_from = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=180)).isoformat()
+                    history_rows = conn.execute(
                     """
                     SELECT r.race_date,
                            r.stadium_number,
@@ -5051,9 +5130,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      ORDER BY r.race_date, r.race_id
                     """,
                     (hist_from, to_date),
-                ).fetchall()
+                    ).fetchall()
 
-                ex_history_rows = conn.execute(
+                    ex_history_rows = conn.execute(
                     """
                     SELECT r.race_date,
                            e.racer_number,
@@ -5071,9 +5150,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      ORDER BY r.race_date, r.race_id
                     """,
                     (hist_from, to_date),
-                ).fetchall()
+                    ).fetchall()
 
-                race_best_rows = conn.execute(
+                    race_best_rows = conn.execute(
                     """
                     SELECT rp.race_id,
                            MIN(rp.start_timing_exhibition) AS best_ex
@@ -5085,121 +5164,122 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      GROUP BY rp.race_id
                     """,
                     (from_date, to_date),
-                ).fetchall()
-                race_best_map = {row[0]: float(row[1]) for row in race_best_rows if row[1] is not None}
+                    ).fetchall()
 
-                racer_q = defaultdict(deque)
-                racer_agg = defaultdict(lambda: {"n": 0, "st_sum": 0.0, "st_n": 0, "wins": 0})
-                motor_q = defaultdict(deque)
-                motor_agg = defaultdict(lambda: {"n": 0, "wins": 0})
-                racer_ex_q = defaultdict(deque)
-                racer_ex_agg = defaultdict(lambda: {"n": 0, "sum": 0.0})
+                    race_best_map = {row[0]: float(row[1]) for row in race_best_rows if row[1] is not None}
 
-                def _trim_roll(q_map, agg_map, key, cutoff_date, mode):
-                    q = q_map[key]
-                    agg = agg_map[key]
-                    while q and q[0][0] < cutoff_date:
-                        row = q.popleft()
-                        agg["n"] -= 1
-                        if mode == "racer":
-                            _old_date, old_st, old_win = row
-                            agg["wins"] -= int(old_win)
-                            if old_st is not None:
-                                agg["st_sum"] -= old_st
-                                agg["st_n"] -= 1
-                        elif mode == "motor":
-                            _old_date, old_win = row
-                            agg["wins"] -= int(old_win)
-                        elif mode == "ex":
-                            _old_date, old_ex = row
-                            agg["sum"] -= old_ex
+                    racer_q = defaultdict(deque)
+                    racer_agg = defaultdict(lambda: {"n": 0, "st_sum": 0.0, "st_n": 0, "wins": 0})
+                    motor_q = defaultdict(deque)
+                    motor_agg = defaultdict(lambda: {"n": 0, "wins": 0})
+                    racer_ex_q = defaultdict(deque)
+                    racer_ex_agg = defaultdict(lambda: {"n": 0, "sum": 0.0})
 
-                hist_idx = 0
-                ex_hist_idx = 0
-                for _rid, rdate, racer, motor_no, boat1_natl1, boat1_motor_top2, ex_course, ex_st, boat4_ex_time, tri4_pay in candidate_rows:
-                    cur_date = _wf_dt.fromisoformat(rdate).date()
-                    while hist_idx < len(history_rows) and history_rows[hist_idx][0] < rdate:
-                        hdstr, hstadium, hracer, hmotor, hst, hpos = history_rows[hist_idx]
-                        hd = _wf_dt.fromisoformat(hdstr).date()
-                        win = int(hpos or 0) == 1
-                        st = float(hst) if hst is not None else None
+                    def _trim_roll(q_map, agg_map, key, cutoff_date, mode):
+                        q = q_map[key]
+                        agg = agg_map[key]
+                        while q and q[0][0] < cutoff_date:
+                            row = q.popleft()
+                            agg["n"] -= 1
+                            if mode == "racer":
+                                _old_date, old_st, old_win = row
+                                agg["wins"] -= int(old_win)
+                                if old_st is not None:
+                                    agg["st_sum"] -= old_st
+                                    agg["st_n"] -= 1
+                            elif mode == "motor":
+                                _old_date, old_win = row
+                                agg["wins"] -= int(old_win)
+                            elif mode == "ex":
+                                _old_date, old_ex = row
+                                agg["sum"] -= old_ex
 
-                        rkey = (hracer, 4)
-                        racer_q[rkey].append((hd, st, win))
+                    hist_idx = 0
+                    ex_hist_idx = 0
+                    for _rid, rdate, racer, motor_no, boat1_natl1, boat1_motor_top2, ex_course, ex_st, boat4_ex_time, tri4_pay in candidate_rows:
+                        cur_date = _wf_dt.fromisoformat(rdate).date()
+                        while hist_idx < len(history_rows) and history_rows[hist_idx][0] < rdate:
+                            hdstr, hstadium, hracer, hmotor, hst, hpos = history_rows[hist_idx]
+                            hd = _wf_dt.fromisoformat(hdstr).date()
+                            win = int(hpos or 0) == 1
+                            st = float(hst) if hst is not None else None
+
+                            rkey = (hracer, 4)
+                            racer_q[rkey].append((hd, st, win))
+                            ragg = racer_agg[rkey]
+                            ragg["n"] += 1
+                            ragg["wins"] += int(win)
+                            if st is not None:
+                                ragg["st_sum"] += st
+                                ragg["st_n"] += 1
+
+                            mkey = (hstadium, hmotor, 4)
+                            motor_q[mkey].append((hd, win))
+                            magg = motor_agg[mkey]
+                            magg["n"] += 1
+                            magg["wins"] += int(win)
+                            hist_idx += 1
+
+                        while ex_hist_idx < len(ex_history_rows) and ex_history_rows[ex_hist_idx][0] < rdate:
+                            hdstr, hracer, hexv = ex_history_rows[ex_hist_idx]
+                            hd = _wf_dt.fromisoformat(hdstr).date()
+                            exv = float(hexv)
+                            ekey = hracer
+                            racer_ex_q[ekey].append((hd, exv))
+                            eagg = racer_ex_agg[ekey]
+                            eagg["n"] += 1
+                            eagg["sum"] += exv
+                            ex_hist_idx += 1
+
+                        rkey = (racer, 4)
+                        mkey = (17, motor_no, 4)
+                        ekey = racer
+                        _trim_roll(racer_q, racer_agg, rkey, cur_date - _wf_td(days=730), "racer")
+                        _trim_roll(motor_q, motor_agg, mkey, cur_date - _wf_td(days=180), "motor")
+                        _trim_roll(racer_ex_q, racer_ex_agg, ekey, cur_date - _wf_td(days=730), "ex")
+
                         ragg = racer_agg[rkey]
-                        ragg["n"] += 1
-                        ragg["wins"] += int(win)
-                        if st is not None:
-                            ragg["st_sum"] += st
-                            ragg["st_n"] += 1
-
-                        mkey = (hstadium, hmotor, 4)
-                        motor_q[mkey].append((hd, win))
                         magg = motor_agg[mkey]
-                        magg["n"] += 1
-                        magg["wins"] += int(win)
-                        hist_idx += 1
-
-                    while ex_hist_idx < len(ex_history_rows) and ex_history_rows[ex_hist_idx][0] < rdate:
-                        hdstr, hracer, hexv = ex_history_rows[ex_hist_idx]
-                        hd = _wf_dt.fromisoformat(hdstr).date()
-                        exv = float(hexv)
-                        ekey = hracer
-                        racer_ex_q[ekey].append((hd, exv))
                         eagg = racer_ex_agg[ekey]
-                        eagg["n"] += 1
-                        eagg["sum"] += exv
-                        ex_hist_idx += 1
+                        r_avg_st = (ragg["st_sum"] / ragg["st_n"]) if ragg["st_n"] else None
+                        r_win = (ragg["wins"] / ragg["n"]) if ragg["n"] else 0.0
+                        m_win = (magg["wins"] / magg["n"]) if magg["n"] else 0.0
+                        racer_avg_ex = (eagg["sum"] / eagg["n"]) if eagg["n"] else None
+                        best_ex = race_best_map.get(_rid)
 
-                    rkey = (racer, 4)
-                    mkey = (17, motor_no, 4)
-                    ekey = racer
-                    _trim_roll(racer_q, racer_agg, rkey, cur_date - _wf_td(days=730), "racer")
-                    _trim_roll(motor_q, motor_agg, mkey, cur_date - _wf_td(days=180), "motor")
-                    _trim_roll(racer_ex_q, racer_ex_agg, ekey, cur_date - _wf_td(days=730), "ex")
+                        ex_st_v = float(ex_st) if ex_st is not None else None
+                        ex_time_v = float(boat4_ex_time) if boat4_ex_time is not None else None
+                        best_diff = (
+                            ex_time_v - best_ex
+                            if ex_time_v is not None and best_ex is not None
+                            else None
+                        )
+                        racer_gain = (
+                            racer_avg_ex - ex_time_v
+                            if racer_avg_ex is not None and ex_time_v is not None
+                            else None
+                        )
 
-                    ragg = racer_agg[rkey]
-                    magg = motor_agg[mkey]
-                    eagg = racer_ex_agg[ekey]
-                    r_avg_st = (ragg["st_sum"] / ragg["st_n"]) if ragg["st_n"] else None
-                    r_win = (ragg["wins"] / ragg["n"]) if ragg["n"] else 0.0
-                    m_win = (magg["wins"] / magg["n"]) if magg["n"] else 0.0
-                    racer_avg_ex = (eagg["sum"] / eagg["n"]) if eagg["n"] else None
-                    best_ex = race_best_map.get(_rid)
-
-                    ex_st_v = float(ex_st) if ex_st is not None else None
-                    ex_time_v = float(boat4_ex_time) if boat4_ex_time is not None else None
-                    best_diff = (
-                        ex_time_v - best_ex
-                        if ex_time_v is not None and best_ex is not None
-                        else None
-                    )
-                    racer_gain = (
-                        racer_avg_ex - ex_time_v
-                        if racer_avg_ex is not None and ex_time_v is not None
-                        else None
-                    )
-
-                    if (
-                        int(ex_course or 4) == 4
-                        and ex_st_v is not None and ex_st_v <= 0.12
-                        and best_diff is not None and best_diff <= 0.10
-                        and racer_gain is not None and racer_gain > 0.0
-                        and r_avg_st is not None
-                        and float(boat1_natl1 or 0) <= 8.0
-                        and float(boat1_motor_top2 or 0) <= 35.0
-                        and r_avg_st <= 0.15
-                        and r_win >= 0.08
-                        and magg["n"] >= 12
-                        and m_win >= 0.08
-                    ):
-                        d = by_date.get(rdate)
-                        if d is None:
-                            continue
-                        d["miyajima_boat4_tri_bets"] += 1
-                        if tri4_pay:
-                            d["miyajima_boat4_tri_hits"] += 1
-                            d["miyajima_boat4_tri_pay"] += int(tri4_pay or 0)
+                        if (
+                            int(ex_course or 4) == 4
+                            and ex_st_v is not None and ex_st_v <= 0.12
+                            and best_diff is not None and best_diff <= 0.10
+                            and racer_gain is not None and racer_gain > 0.0
+                            and r_avg_st is not None
+                            and float(boat1_natl1 or 0) <= 8.0
+                            and float(boat1_motor_top2 or 0) <= 35.0
+                            and r_avg_st <= 0.15
+                            and r_win >= 0.08
+                            and magg["n"] >= 12
+                            and m_win >= 0.08
+                        ):
+                            d = by_date.get(rdate)
+                            if d is None:
+                                continue
+                            d["miyajima_boat4_tri_bets"] += 1
+                            if tri4_pay:
+                                d["miyajima_boat4_tri_hits"] += 1
+                                d["miyajima_boat4_tri_pay"] += int(tri4_pay or 0)
         except Exception as e:
             logger.warning("miyajima boat4 daily stats failed: %s", e)
         # === l4_daily_summary テーブルから過去データ集計を補完 ===
@@ -5411,7 +5491,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "prime_tri", "r12_tri", "gen_r12_tri",
                         "toda_7r_tri", "mid_132_tri",
                         "mid_132_tier_a_tri", "venus_tri",
-                        "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2", "miyajima_boat4_tri"):
+                        "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
+                        "karatsu_rain_exa", "miyajima_boat4_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 unit = BET_UNIT_MAP.get(bet, 100)
@@ -5436,6 +5517,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_amagasaki_motor_exa_version"] = AMAGASAKI_MOTOR_EXA_CACHE_VERSION
                         day_d["_ashiya_boat4_exa_version"] = ASHIYA_BOAT4_EXA_CACHE_VERSION
                         day_d["_kiryu_win2_version"] = KIRYU_WIN2_CACHE_VERSION
+                        day_d["_karatsu_rain_exa_version"] = KARATSU_RAIN_EXA_CACHE_VERSION
                         day_d["_general200_version"] = GENERAL200_CACHE_VERSION
                         day_d["_miyajima_boat4_makuri_version"] = MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
@@ -5710,12 +5792,198 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             tri_roi=tri_sum["roi"], tri_profit=tri_sum["profit"],
         )
 
+    def _candidate_134_daily_stats(from_date: str, to_date: str) -> list[dict]:
+        strategy_keys = ("tri", "cand1_tri", "cand3_tri", "cand4_tri")
+        with db_connect() as conn:
+            total_rows = conn.execute(
+                """
+                SELECT race_date, COUNT(*)
+                  FROM races
+                 WHERE race_date BETWEEN ? AND ?
+                 GROUP BY race_date
+                """,
+                (from_date, to_date),
+            ).fetchall()
+            race_rows = conn.execute(
+                """
+                WITH female AS (
+                    SELECT e.race_id,
+                           SUM(CASE WHEN rc.gender = 2 THEN 1 ELSE 0 END) AS female_count
+                      FROM race_entries e
+                      LEFT JOIN racers rc ON rc.racer_number = e.racer_number
+                     GROUP BY e.race_id
+                )
+                SELECT
+                    r.race_date,
+                    CAST(substr(r.race_date, 6, 2) AS INTEGER) AS month,
+                    r.stadium_number,
+                    r.race_number,
+                    r.race_grade_number,
+                    pv.wind_speed,
+                    pv.weather_number,
+                    e1.class_number AS c1,
+                    e1.age AS age1,
+                    e1.national_top_1_percent AS n1_1,
+                    e2.class_number AS c2,
+                    e2.national_top_2_percent AS n2_2,
+                    e2.assigned_motor_top_2_percent AS m2_2,
+                    ds1.derived_avg_start_timing_180d AS dst1,
+                    ds1.derived_start_count_180d AS dstn1,
+                    COALESCE(f.female_count, 0) AS female_count,
+                    COALESCE(pt.payout, 0) AS tri_pay
+                  FROM races r
+                  LEFT JOIN race_entries e1
+                    ON e1.race_id = r.race_id
+                   AND e1.boat_number = 1
+                  LEFT JOIN race_entries e2
+                    ON e2.race_id = r.race_id
+                   AND e2.boat_number = 2
+                  LEFT JOIN derived_start_stats ds1
+                    ON ds1.race_id = r.race_id
+                   AND ds1.boat_number = 1
+                  LEFT JOIN race_previews pv
+                    ON pv.race_id = r.race_id
+                   AND pv.boat_number = 1
+                  LEFT JOIN female f
+                    ON f.race_id = r.race_id
+                  LEFT JOIN race_payouts pt
+                    ON pt.race_id = r.race_id
+                   AND pt.bet_type = 'trifecta'
+                   AND pt.combination = '1-2-3'
+                 WHERE r.race_date BETWEEN ? AND ?
+                 ORDER BY r.race_date, r.race_id
+                """,
+                (from_date, to_date),
+            ).fetchall()
+
+        by_date: dict[str, dict] = {}
+        for rdate, n_total in total_rows:
+            d = {"date": rdate, "n_total": int(n_total or 0), "n_l4": 0}
+            for key in strategy_keys:
+                d[f"{key}_bets"] = 0
+                d[f"{key}_hits"] = 0
+                d[f"{key}_pay"] = 0
+            by_date[rdate] = d
+
+        for row in race_rows:
+            rdate = row[0]
+            d = by_date[rdate]
+            month = int(row[1] or 0)
+            stadium = int(row[2] or 0)
+            race_no = int(row[3] or 0)
+            grade = int(row[4] or 0)
+            weather = row[6]
+            c1 = int(row[7] or 0)
+            age1 = int(row[8] or 0) if row[8] is not None else None
+            n1_1 = float(row[9] or 0)
+            m2_2 = float(row[12] or 0)
+            dst1 = float(row[13]) if row[13] is not None else None
+            dstn1 = int(row[14] or 0)
+            female_count = int(row[15] or 0)
+            tri_pay = int(row[16] or 0)
+            tri_hit = tri_pay > 0
+
+            cand1 = (
+                female_count == 0
+                and c1 in (1, 2)
+                and stadium in (5, 12, 13)
+                and month in (2, 5, 6, 11, 12)
+                and 7.5 <= n1_1 < 8.5
+                and age1 is not None and 40 <= age1 <= 49
+            )
+            cand3 = (
+                female_count == 0
+                and c1 in (1, 2)
+                and stadium in (1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23)
+                and 10 <= race_no <= 12
+                and 7.5 <= n1_1 < 8.5
+                and age1 is not None and 40 <= age1 <= 49
+                and m2_2 >= 45.0
+            )
+            highgrade_or_f1 = grade in (1, 2, 3, 4) or (grade == 5 and n1_1 >= 7.0 and m2_2 >= 40.0)
+            cand4 = (
+                female_count == 0
+                and highgrade_or_f1
+                and 9 <= race_no <= 11
+                and dst1 is not None and dst1 < 0.160
+                and dstn1 >= 6
+                and age1 is not None and 40 <= age1 <= 49
+                and 7.5 <= n1_1 < 8.5
+                and m2_2 >= 50.0
+                and weather != 3
+                and stadium in (1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23)
+            )
+
+            for key, matched in (("cand1_tri", cand1), ("cand3_tri", cand3), ("cand4_tri", cand4)):
+                if matched:
+                    d[f"{key}_bets"] += 1
+                    if tri_hit:
+                        d[f"{key}_hits"] += 1
+                        d[f"{key}_pay"] += tri_pay
+
+            if cand1 or cand3 or cand4:
+                d["n_l4"] += 1
+                d["tri_bets"] += 1
+                if tri_hit:
+                    d["tri_hits"] += 1
+                    d["tri_pay"] += tri_pay
+
+        rows = [by_date[k] for k in sorted(by_date)]
+        for d in rows:
+            for key in strategy_keys:
+                bets = int(d.get(f"{key}_bets", 0) or 0)
+                hits = int(d.get(f"{key}_hits", 0) or 0)
+                pay = int(d.get(f"{key}_pay", 0) or 0)
+                d[f"{key}_roi"] = ((pay - 100 * bets) / (100 * bets) * 100) if bets else None
+                d[f"{key}_recovery"] = (pay / (100 * bets) * 100) if bets else None
+                d[f"{key}_profit"] = pay - 100 * bets if bets else 0
+            d["tri_core_bets"] = int(d.get("tri_bets", 0) or 0)
+            d["tri_core_hits"] = int(d.get("tri_hits", 0) or 0)
+            d["tri_core_pay"] = int(d.get("tri_pay", 0) or 0)
+            d["tri_core_roi"] = d.get("tri_roi")
+            d["tri_core_recovery"] = d.get("tri_recovery")
+            d["tri_core_profit"] = d.get("tri_profit", 0)
+            d["n_l4_display"] = int(d.get("n_l4", 0) or 0)
+            # Existing templates still reference these fields.
+            d["win_bets"] = int(d.get("cand1_tri_bets", 0) or 0)
+            d["win_hits"] = int(d.get("cand1_tri_hits", 0) or 0)
+            d["win_pay"] = int(d.get("cand1_tri_pay", 0) or 0)
+            d["win_roi"] = d.get("cand1_tri_roi")
+            d["win_recovery"] = d.get("cand1_tri_recovery")
+            d["win_profit"] = d.get("cand1_tri_profit", 0)
+            d["exa_bets"] = int(d.get("cand3_tri_bets", 0) or 0)
+            d["exa_hits"] = int(d.get("cand3_tri_hits", 0) or 0)
+            d["exa_pay"] = int(d.get("cand3_tri_pay", 0) or 0)
+            d["exa_roi"] = d.get("cand3_tri_roi")
+            d["exa_recovery"] = d.get("cand3_tri_recovery")
+            d["exa_profit"] = d.get("cand3_tri_profit", 0)
+            d["gen_f1_tri_bets"] = int(d.get("cand1_tri_bets", 0) or 0)
+            d["gen_f1_tri_hits"] = int(d.get("cand1_tri_hits", 0) or 0)
+            d["gen_f1_tri_pay"] = int(d.get("cand1_tri_pay", 0) or 0)
+            d["gen_f1_tri_roi"] = d.get("cand1_tri_roi")
+            d["gen_f1_tri_recovery"] = d.get("cand1_tri_recovery")
+            d["gen_f1_tri_profit"] = d.get("cand1_tri_profit", 0)
+            d["gen_200_tri_bets"] = int(d.get("cand3_tri_bets", 0) or 0)
+            d["gen_200_tri_hits"] = int(d.get("cand3_tri_hits", 0) or 0)
+            d["gen_200_tri_pay"] = int(d.get("cand3_tri_pay", 0) or 0)
+            d["gen_200_tri_roi"] = d.get("cand3_tri_roi")
+            d["gen_200_tri_recovery"] = d.get("cand3_tri_recovery")
+            d["gen_200_tri_profit"] = d.get("cand3_tri_profit", 0)
+            d["mid_132_tier_a_tri_bets"] = int(d.get("cand4_tri_bets", 0) or 0)
+            d["mid_132_tier_a_tri_hits"] = int(d.get("cand4_tri_hits", 0) or 0)
+            d["mid_132_tier_a_tri_pay"] = int(d.get("cand4_tri_pay", 0) or 0)
+            d["mid_132_tier_a_tri_roi"] = d.get("cand4_tri_roi")
+            d["mid_132_tier_a_tri_recovery"] = d.get("cand4_tri_recovery")
+            d["mid_132_tier_a_tri_profit"] = d.get("cand4_tri_profit", 0)
+        return rows
+
     @app.route("/member/strategy")
     @login_required
     @cached(ttl=180, past_ttl=3600)  # 当日3分/期間終端が過去なら1時間
     def member_strategy():
         """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
         from datetime import timedelta
+        from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
@@ -5724,7 +5992,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             return "Invalid date format", 400
 
-        rows = _l4_daily_stats(from_d, to_d)
+        rows = _candidate_134_daily_stats(from_d, to_d)
+
+        for r in rows:
+            tri_bets = int(r.get("tri_bets", 0) or 0)
+            tri_hits = int(r.get("tri_hits", 0) or 0)
+            tri_pay = int(r.get("tri_pay", 0) or 0)
+            # L4 表示・ROI・月別推移は同じ母集団
+            # 「三連単本命500-1000円 + B除外 + 1号艇A1」で統一する。
+            r["tri_core_bets"] = tri_bets
+            r["tri_core_hits"] = tri_hits
+            r["tri_core_pay"] = tri_pay
+            r["tri_core_roi"] = ((tri_pay - 100 * tri_bets) / (100 * tri_bets) * 100) if tri_bets else None
+            r["tri_core_recovery"] = (tri_pay / (100 * tri_bets) * 100) if tri_bets else None
+            r["tri_core_profit"] = tri_pay - 100 * tri_bets if tri_bets else 0
+            r["n_l4_display"] = int(r.get("n_l4", 0) or 0)
 
         # 通算集計 (L4 = A1 のみ + サブカテゴリ別 ROI)
         totals = {
@@ -5736,7 +6018,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2", "miyajima_boat4_tri")
+                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
+                    "karatsu_rain_exa", "miyajima_boat4_tri")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
@@ -5747,10 +6030,68 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             totals[f"{k}_recovery"] = pay/(unit*n)*100 if n else None
             totals[f"{k}_profit"] = pay - unit*n if n else 0
 
+        totals["n_l4_display"] = int(totals.get("n_l4", 0) or 0)
+        tri_bets = int(totals.get("tri_bets", 0) or 0)
+        tri_hits = int(totals.get("tri_hits", 0) or 0)
+        tri_pay = int(totals.get("tri_pay", 0) or 0)
+        totals["tri_core_bets"] = tri_bets
+        totals["tri_core_hits"] = tri_hits
+        totals["tri_core_pay"] = tri_pay
+        totals["tri_core_roi"] = ((tri_pay - 100 * tri_bets) / (100 * tri_bets) * 100) if tri_bets else None
+        totals["tri_core_recovery"] = (tri_pay / (100 * tri_bets) * 100) if tri_bets else None
+        totals["tri_core_profit"] = tri_pay - 100 * tri_bets if tri_bets else 0
+
+        for key in ("cand1_tri", "cand3_tri", "cand4_tri"):
+            totals[f"{key}_bets"] = sum(r.get(f"{key}_bets", 0) for r in rows)
+            totals[f"{key}_hits"] = sum(r.get(f"{key}_hits", 0) for r in rows)
+            totals[f"{key}_pay"] = sum(r.get(f"{key}_pay", 0) for r in rows)
+            bets = int(totals[f"{key}_bets"] or 0)
+            pay = int(totals[f"{key}_pay"] or 0)
+            totals[f"{key}_roi"] = ((pay - 100 * bets) / (100 * bets) * 100) if bets else None
+            totals[f"{key}_recovery"] = (pay / (100 * bets) * 100) if bets else None
+            totals[f"{key}_profit"] = pay - 100 * bets if bets else 0
+        totals["win_bets"] = totals.get("cand1_tri_bets", 0)
+        totals["win_hits"] = totals.get("cand1_tri_hits", 0)
+        totals["win_pay"] = totals.get("cand1_tri_pay", 0)
+        totals["win_roi"] = totals.get("cand1_tri_roi")
+        totals["win_recovery"] = totals.get("cand1_tri_recovery")
+        totals["win_profit"] = totals.get("cand1_tri_profit", 0)
+        totals["exa_bets"] = totals.get("cand3_tri_bets", 0)
+        totals["exa_hits"] = totals.get("cand3_tri_hits", 0)
+        totals["exa_pay"] = totals.get("cand3_tri_pay", 0)
+        totals["exa_roi"] = totals.get("cand3_tri_roi")
+        totals["exa_recovery"] = totals.get("cand3_tri_recovery")
+        totals["exa_profit"] = totals.get("cand3_tri_profit", 0)
+        totals["gen_f1_tri_bets"] = totals.get("cand1_tri_bets", 0)
+        totals["gen_f1_tri_hits"] = totals.get("cand1_tri_hits", 0)
+        totals["gen_f1_tri_pay"] = totals.get("cand1_tri_pay", 0)
+        totals["gen_f1_tri_roi"] = totals.get("cand1_tri_roi")
+        totals["gen_f1_tri_recovery"] = totals.get("cand1_tri_recovery")
+        totals["gen_f1_tri_profit"] = totals.get("cand1_tri_profit", 0)
+        totals["gen_200_tri_bets"] = totals.get("cand3_tri_bets", 0)
+        totals["gen_200_tri_hits"] = totals.get("cand3_tri_hits", 0)
+        totals["gen_200_tri_pay"] = totals.get("cand3_tri_pay", 0)
+        totals["gen_200_tri_roi"] = totals.get("cand3_tri_roi")
+        totals["gen_200_tri_recovery"] = totals.get("cand3_tri_recovery")
+        totals["gen_200_tri_profit"] = totals.get("cand3_tri_profit", 0)
+        totals["mid_132_tier_a_tri_bets"] = totals.get("cand4_tri_bets", 0)
+        totals["mid_132_tier_a_tri_hits"] = totals.get("cand4_tri_hits", 0)
+        totals["mid_132_tier_a_tri_pay"] = totals.get("cand4_tri_pay", 0)
+        totals["mid_132_tier_a_tri_roi"] = totals.get("cand4_tri_roi")
+        totals["mid_132_tier_a_tri_recovery"] = totals.get("cand4_tri_recovery")
+        totals["mid_132_tier_a_tri_profit"] = totals.get("cand4_tri_profit", 0)
+
+        try:
+            health_results = evaluate_all_strategies(from_d, to_d)
+        except Exception as e:
+            logger.warning("strategy health load failed: %s", e)
+            health_results = []
+
         return render_template(
             "member_strategy.html",
             rows=rows,
             totals=totals,
+            health_results=[],
             from_date=from_d,
             to_date=to_d,
             today_iso=date.today().isoformat(),
@@ -5763,6 +6104,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """月別 ROI (長期推移) 専用ページ — テーブル + 推移グラフ。
         backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
         """
+        from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         monthly_from = date(today.year - 2, today.month, 1).isoformat()
         monthly_to   = today.isoformat()
@@ -5774,9 +6116,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2", "miyajima_boat4_tri")
+                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
+                    "karatsu_rain_exa", "miyajima_boat4_tri")
         try:
-            monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
+            monthly_daily = _candidate_134_daily_stats(monthly_from, monthly_to)
         except Exception as e:
             logger.warning("monthly daily stats failed: %s", e)
             monthly_daily = []
@@ -5822,6 +6165,38 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 m[f"{k}_roi"] = (pay - unit*n)/(unit*n)*100 if n else None
                 m[f"{k}_recovery"] = pay/(unit*n)*100 if n else None
                 m[f"{k}_profit"] = pay - unit*n if n else 0
+            tri_bets = int(m.get("tri_bets", 0) or 0)
+            tri_hits = int(m.get("tri_hits", 0) or 0)
+            tri_pay = int(m.get("tri_pay", 0) or 0)
+            m["tri_core_bets"] = tri_bets
+            m["tri_core_hits"] = tri_hits
+            m["tri_core_pay"] = tri_pay
+            m["tri_core_roi"] = ((tri_pay - 100 * tri_bets) / (100 * tri_bets) * 100) if tri_bets else None
+            m["tri_core_recovery"] = (tri_pay / (100 * tri_bets) * 100) if tri_bets else None
+            m["tri_core_profit"] = tri_pay - 100 * tri_bets if tri_bets else 0
+            m["n_l4_display"] = int(m.get("n_l4", 0) or 0)
+            for key in ("cand1_tri", "cand3_tri", "cand4_tri"):
+                bets = int(m.get(f"{key}_bets", 0) or 0)
+                pay = int(m.get(f"{key}_pay", 0) or 0)
+                m[f"{key}_roi"] = ((pay - 100 * bets) / (100 * bets) * 100) if bets else None
+                m[f"{key}_recovery"] = (pay / (100 * bets) * 100) if bets else None
+                m[f"{key}_profit"] = pay - 100 * bets if bets else 0
+            m["win_bets"] = int(m.get("cand1_tri_bets", 0) or 0)
+            m["win_hits"] = int(m.get("cand1_tri_hits", 0) or 0)
+            m["win_roi"] = m.get("cand1_tri_roi")
+            m["exa_bets"] = int(m.get("cand3_tri_bets", 0) or 0)
+            m["exa_hits"] = int(m.get("cand3_tri_hits", 0) or 0)
+            m["exa_roi"] = m.get("cand3_tri_roi")
+            m["gen_f1_tri_bets"] = int(m.get("cand1_tri_bets", 0) or 0)
+            m["gen_f1_tri_hits"] = int(m.get("cand1_tri_hits", 0) or 0)
+            m["gen_f1_tri_roi"] = m.get("cand1_tri_roi")
+            m["gen_200_tri_bets"] = int(m.get("cand3_tri_bets", 0) or 0)
+            m["gen_200_tri_hits"] = int(m.get("cand3_tri_hits", 0) or 0)
+            m["gen_200_tri_roi"] = m.get("cand3_tri_roi")
+            m["mid_132_tier_a_tri_bets"] = int(m.get("cand4_tri_bets", 0) or 0)
+            m["mid_132_tier_a_tri_hits"] = int(m.get("cand4_tri_hits", 0) or 0)
+            m["mid_132_tier_a_tri_roi"] = m.get("cand4_tri_roi")
+
         # 古い順 (グラフ用に時系列順)
         monthly_rows_asc = sorted(monthly_map.values(), key=lambda x: x["ym"])
         # 表示用は新しい順
@@ -5830,7 +6205,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_total_keys = (
             "win", "exa", "tri", "gen_f1_tri", "gen_200_tri",
             "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa",
-            "kiryu_win2", "miyajima_boat4_tri", "prime_tri", "r12_tri", "gen_r12_tri",
+            "kiryu_win2", "karatsu_rain_exa", "miyajima_boat4_tri",
+            "prime_tri", "r12_tri", "gen_r12_tri",
         )
         for k in monthly_total_keys:
             bets = sum((m.get(f"{k}_bets", 0) or 0) for m in monthly_rows_asc)
@@ -5845,11 +6221,44 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "roi": ((pay - unit * bets) / (unit * bets) * 100) if bets else None,
             }
 
+        monthly_totals["n_l4_display"] = sum((m.get("n_l4_display", 0) or 0) for m in monthly_rows_asc)
+        tri_bets = int(monthly_totals.get("tri", {}).get("bets", 0) or 0)
+        tri_hits = int(monthly_totals.get("tri", {}).get("hits", 0) or 0)
+        tri_pay = int(monthly_totals.get("tri", {}).get("pay", 0) or 0)
+        monthly_totals["tri_core"] = {
+            "bets": tri_bets,
+            "hits": tri_hits,
+            "pay": tri_pay,
+            "profit": tri_pay - 100 * tri_bets if tri_bets else 0,
+            "roi": ((tri_pay - 100 * tri_bets) / (100 * tri_bets) * 100) if tri_bets else None,
+        }
+        for key in ("cand1_tri", "cand3_tri", "cand4_tri"):
+            bets = sum((m.get(f"{key}_bets", 0) or 0) for m in monthly_rows_asc)
+            hits = sum((m.get(f"{key}_hits", 0) or 0) for m in monthly_rows_asc)
+            pay = sum((m.get(f"{key}_pay", 0) or 0) for m in monthly_rows_asc)
+            monthly_totals[key] = {
+                "bets": bets,
+                "hits": hits,
+                "pay": pay,
+                "profit": pay - 100 * bets if bets else 0,
+                "roi": ((pay - 100 * bets) / (100 * bets) * 100) if bets else None,
+            }
+        monthly_totals["gen_f1_tri"] = monthly_totals.get("cand1_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
+        monthly_totals["gen_200_tri"] = monthly_totals.get("cand3_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
+        monthly_totals["mid_132_tier_a_tri"] = monthly_totals.get("cand4_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
+
+        try:
+            health_results = evaluate_all_strategies(monthly_from, monthly_to)
+        except Exception as e:
+            logger.warning("monthly strategy health load failed: %s", e)
+            health_results = []
+
         return render_template(
             "member_monthly.html",
             monthly_rows=monthly_rows,
             monthly_rows_asc=monthly_rows_asc,
             monthly_totals=monthly_totals,
+            health_results=[],
             monthly_from=monthly_from,
             monthly_to=monthly_to,
             strict_odds_daily_start=STRICT_ODDS_DAILY_START,
