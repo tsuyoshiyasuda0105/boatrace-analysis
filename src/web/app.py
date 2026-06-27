@@ -4372,6 +4372,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     r.race_number,
                     e.class_number,
                     e.national_top_1_percent AS natl_1,
+                    e.assigned_motor_top_2_percent AS boat1_motor_top2,
                     e2.national_top_2_percent AS boat2_top2,
                     e2.assigned_motor_top_2_percent AS boat2_motor_top2,
                     e3.national_top_1_percent AS boat3_natl_1,
@@ -4512,7 +4513,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
 
         for row in cur:
-            (rdate, stadium, grade, race_no, cls, natl_1, boat2_top2, boat2_motor_top2, boat3_natl_1,
+            (rdate, stadium, grade, race_no, cls, natl_1, boat1_motor_top2, boat2_top2, boat2_motor_top2, boat3_natl_1,
              boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
              fav_pay, fav_odds, any_in_l4, l4_odds, mid_132_odds, prob_first,
              w1, w2, w3, win_pay, win2_pay, ex_pay, ex14_pay, ex41_pay, tri_pay, pay_132, weather, ex_st,
