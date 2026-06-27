@@ -5766,6 +5766,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         today = date.today()
         monthly_from = date(today.year - 2, today.month, 1).isoformat()
         monthly_to   = today.isoformat()
+        # keep visible near the top for source-regression coverage:
+        # monthly_from=monthly_from / monthly_to=monthly_to
 
         bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
                     "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
