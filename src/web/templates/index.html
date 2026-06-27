@@ -4,7 +4,7 @@
   <h2>{{ target_date }} のレース</h2>
 
   <!-- マーク凡例 (折りたたみ) -->
-  <details class="badge-legend">
+  <details class="badge-legend" hidden>
     <summary>📖 マークの説明を見る</summary>
     <div class="legend-grid">
 
@@ -166,7 +166,7 @@
             <th>残り</th>
             <th>ランク</th>
             <th>会場 R</th>
-            <th>L4 タイプ</th>
+            <th>候補</th>
             <th>1号艇</th>
             <th>回収</th>
             <th class="pick-odds-head">1-2-3 推移 (T-5 → T-1)</th>
@@ -180,7 +180,7 @@
         <small>本サービスは投資助言ではありません。最終判断はご自身で。</small>
       </p>
       <!-- 強力サブ戦略マークの説明 (backlog item 15) -->
-      <div class="picks-marks-legend">
+      <div class="picks-marks-legend" hidden>
         <h4>🏅 強化マークの意味</h4>
         <ul>
           <li><span class="legend-mark crown">👑</span>
@@ -847,7 +847,7 @@
           if (picks.length === 0) {
             const tr = document.createElement('tr');
             tr.className = 'todays-pick-row is-empty';
-            tr.innerHTML = '<td colspan="11" class="pick-empty">該当候補なし (L4 条件を満たすレースがありません or バッジ読込中)</td>';
+            tr.innerHTML = '<td colspan="11" class="pick-empty">該当候補なし (候補1・3・4 条件を満たすレースがありません or バッジ読込中)</td>';
             tbody.appendChild(tr);
             return;
           }
@@ -885,9 +885,12 @@
               const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
                                   .find(c => c.startsWith('tetsuban-'))?.replace('tetsuban-','') || '0', 10) : 0;
               const tbStars = tbScore >= 3 ? `${tbScore}★ ` : '';
-              let rankLabel = l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
+              let rankLabel = l4Cls === 'l4-rank-cand4' ? '候補4'
+                            : l4Cls === 'l4-rank-cand3' ? '候補3'
+                            : l4Cls === 'l4-rank-cand1' ? '候補1'
+                            : l4Cls === 'l4-rank-plus_plus' ? '🥇 L4++'
                             : l4Cls === 'l4-rank-plus' ? '🥈 L4+'
-                            : '⭐ L4';
+                            : '候補';
               if (isExactaNiche) rankLabel = '🎯 2連単';
               if (!isExactaNiche && is1c80) rankLabel = '🚀 ' + rankLabel + ' 1c80';
               if (!isExactaNiche && isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';

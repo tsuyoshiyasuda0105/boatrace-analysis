@@ -2971,6 +2971,111 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["tetsuban_label"] = general200["tetsuban_label"]
             return base
 
+        def _evaluate_candidate_134_signal(
+            stadium,
+            grade,
+            race_number,
+            natl_1=None,
+            age=None,
+            course1=None,
+            boat2_motor_top2=None,
+            avg_st=None,
+            avg_st_n=None,
+            weather=None,
+            n_female=0,
+            target_date_iso=None,
+        ):
+            try:
+                month = int(str(target_date_iso)[5:7]) if target_date_iso else 0
+            except (TypeError, ValueError):
+                month = 0
+            try:
+                rn = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
+            try:
+                n1 = float(natl_1) if natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = 0.0
+            try:
+                a1 = int(age) if age is not None else None
+            except (TypeError, ValueError):
+                a1 = None
+            try:
+                c1 = int(course1) if course1 is not None else 0
+            except (TypeError, ValueError):
+                c1 = 0
+            try:
+                m2 = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                m2 = 0.0
+            try:
+                dst1 = float(avg_st) if avg_st is not None else None
+            except (TypeError, ValueError):
+                dst1 = None
+            try:
+                dstn1 = int(avg_st_n) if avg_st_n is not None else 0
+            except (TypeError, ValueError):
+                dstn1 = 0
+
+            female_count = int(n_female or 0)
+            cand1 = (
+                female_count == 0
+                and c1 in (1, 2)
+                and stadium in (5, 12, 13)
+                and month in (2, 5, 6, 11, 12)
+                and 7.5 <= n1 < 8.5
+                and a1 is not None and 40 <= a1 <= 49
+            )
+            cand3 = (
+                female_count == 0
+                and c1 in (1, 2)
+                and stadium in (1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23)
+                and 10 <= rn <= 12
+                and 7.5 <= n1 < 8.5
+                and a1 is not None and 40 <= a1 <= 49
+                and m2 >= 45.0
+            )
+            highgrade_or_f1 = grade in (1, 2, 3, 4) or (grade == 5 and n1 >= 7.0 and m2 >= 40.0)
+            cand4 = (
+                female_count == 0
+                and highgrade_or_f1
+                and 9 <= rn <= 11
+                and dst1 is not None and dst1 < 0.160
+                and dstn1 >= 6
+                and a1 is not None and 40 <= a1 <= 49
+                and 7.5 <= n1 < 8.5
+                and m2 >= 50.0
+                and weather != 3
+                and stadium in (1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23)
+            )
+            matched = []
+            if cand1:
+                matched.append(("cand1", "候補1", 204.0, 1189))
+            if cand3:
+                matched.append(("cand3", "候補3", 259.3, 150))
+            if cand4:
+                matched.append(("cand4", "候補4", 293.3, 9))
+            if not matched:
+                return None
+            primary = matched[-1]
+            return {
+                "level": primary[0],
+                "label": primary[1],
+                "recovery": primary[2],
+                "bet": "3連単 1-2-3",
+                "n": primary[3],
+                "rank": primary[0],
+                "rank_label": primary[1],
+                "natl_1": natl_1,
+                "local_1": None,
+                "is_reference": False,
+                "candidate_keys": [m[0] for m in matched],
+                "candidate_labels": [m[1] for m in matched],
+                "tetsuban_score": 5 if primary[0] == "cand4" else (4 if primary[0] == "cand3" else 3),
+                "tetsuban_label": primary[1],
+            }
+
         def _evaluate_exacta_niche(stadium, race_number, boat1_motor_top2=None,
                                    boat2_motor_top2=None, program_type=None,
                                    pair_affinity=None, grade=None, weather=None):
@@ -4022,6 +4127,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # 男性のみ ROI 180.8% / 女性混入 134-158% / ベテラン男1号艇でも
             # 若手女性混入で 96.3% (analyze_female_deep.py 分析4) に崩落。
             is_female_present = (n_female > 0)
+            candidate_l4 = _evaluate_candidate_134_signal(
+                stadium,
+                grade,
+                race_no_info,
+                natl_1=natl_1,
+                age=age,
+                course1=cls,
+                boat2_motor_top2=boat2_motor_top2,
+                avg_st=avg_st,
+                avg_st_n=info.get("avg_st_n"),
+                weather=weather,
+                n_female=n_female,
+                target_date_iso=target_date,
+            )
             data = results.get(rid)
             if data is None and rid in mid132_results:
                 data = {"min_payout": mid132_results[rid], "source": "1-3-2"}
@@ -4087,6 +4206,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 if win_niche:
                     l4 = win_niche
+                if candidate_l4 is not None:
+                    l4 = candidate_l4
+                else:
+                    l4 = None
 
                 if l4 is not None and not l4.get("is_exacta_niche") and not l4.get("is_win_niche"):
                     prob_first = morning_pred.get(rid)
@@ -4106,7 +4229,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 # 例: 若松 20-12 (prob_first=0.65、T-5 オッズ¥1680 で本命想定外)。
                 # → L4 評価が None でも morning_l4 を計算し、「朝候補だった
                 #   が本命想定外」として表示 (淡青 reference バッジ)。
-                if l4 is None:
+                if False and l4 is None:
                     prob_first = morning_pred.get(rid)
                     morning_l4 = _evaluate_morning_l4(
                         stadium, grade, cls, prob_first,
@@ -4245,6 +4368,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 if win_niche:
                     morning_l4 = win_niche
+                morning_l4 = candidate_l4
                 if morning_l4:
                     if is_rain_excluded and (
                         (not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche"))
@@ -6315,7 +6439,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
-        rows = _l4_daily_stats(from_d, to_d)
+        rows = _candidate_134_daily_stats(from_d, to_d)
         # 日付昇順 (グラフ用)
         rows = sorted(rows, key=lambda x: x["date"])
         # JSON 化用に整形 (grade_breakdown はキー文字列化)
