@@ -5456,7 +5456,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if rdate not in result_by_date:  # cache hit のみ (SQL 結果が優先)
                 result_by_date[rdate] = day_d
 
-        return sorted(result_by_date.values(), key=lambda x: x["date"], reverse=True)
+        finalized_rows = _finalize_l4_daily_rows(result_by_date)
+        return sorted(finalized_rows, key=lambda x: x["date"], reverse=True)
 
     def _l4_races_for_date(target_date: str) -> list[dict]:
         """指定日の L4 該当レース全件を取得 (1号艇A1 + A2派生)。
