@@ -4721,6 +4721,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from_date = sql_from
         to_date = sql_to
         with db_connect() as conn:
+            try:
+                conn.execute("SELECT 1 FROM derived_start_stats LIMIT 1").fetchone()
+                _has_derived_start_stats = True
+            except Exception:  # noqa: BLE001
+                _has_derived_start_stats = False
+            _avg_st_expr = (
+                "ds1.derived_avg_start_timing_180d"
+                if _has_derived_start_stats else
+                "e.avg_start_timing"
+            )
+            _derived_join = (
+                "LEFT JOIN derived_start_stats ds1 ON ds1.race_id = r.race_id AND ds1.boat_number = 1"
+                if _has_derived_start_stats else
+                ""
+            )
             # 別途、日別の総レース数を取得 (確定有無に関わらず)
             # _l4_daily_stats の n_total が「確定済のみ」だと
             # 当日朝のように 1 件しか確定してない時 156→1 と見えてしまう
@@ -4732,7 +4747,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             # 集計 SQL: race_payouts/odds_trifecta/predictions 全部 LEFT JOIN し、
             # confirmed / odds / morning_miss / morning の 4 ソースで L4 判定する
-            cur = conn.execute("""
+            cur = conn.execute(f"""
                 SELECT
                     r.race_date,
                     r.stadium_number,
@@ -4742,7 +4757,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e.national_top_1_percent AS natl_1,
                     e.local_top_1_percent AS local_1,
                     e.age AS age1,
-                    ds1.derived_avg_start_timing_180d AS avg_st_180,
+                    {_avg_st_expr} AS avg_st_180,
                     e.assigned_motor_top_2_percent AS boat1_motor_top2,
                     e2.national_top_2_percent AS boat2_top2,
                     e2.assigned_motor_top_2_percent AS boat2_motor_top2,
@@ -4776,7 +4791,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
                 LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
                 LEFT JOIN predictions p1t2 ON p1t2.race_id = r.race_id AND p1t2.boat_number = 1
-                LEFT JOIN derived_start_stats ds1 ON ds1.race_id = r.race_id AND ds1.boat_number = 1
+                {_derived_join}
                 LEFT JOIN predictions p3t2 ON p3t2.race_id = r.race_id AND p3t2.boat_number = 3
                 LEFT JOIN predictions p4t2 ON p4t2.race_id = r.race_id AND p4t2.boat_number = 4
                 LEFT JOIN (
@@ -6265,6 +6280,26 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 d[f"{alias}_profit"] = 0
 
         with db_connect() as conn:
+            try:
+                conn.execute("SELECT 1 FROM derived_start_stats LIMIT 1").fetchone()
+                _has_derived_start_stats = True
+            except Exception:  # noqa: BLE001
+                _has_derived_start_stats = False
+            _dst1_expr = (
+                "ds1.derived_avg_start_timing_180d"
+                if _has_derived_start_stats else
+                "NULL"
+            )
+            _dstn1_expr = (
+                "ds1.derived_start_count_180d"
+                if _has_derived_start_stats else
+                "0"
+            )
+            _derived_join = (
+                "LEFT JOIN derived_start_stats ds1\n                    ON ds1.race_id = r.race_id\n                   AND ds1.boat_number = 1"
+                if _has_derived_start_stats else
+                ""
+            )
             total_rows = conn.execute(
                 """
                 SELECT race_date, COUNT(*)
@@ -6275,7 +6310,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 (from_date, to_date),
             ).fetchall()
             race_rows = conn.execute(
-                """
+                f"""
                 WITH female AS (
                     SELECT e.race_id,
                            SUM(CASE WHEN rc.gender = 2 THEN 1 ELSE 0 END) AS female_count
@@ -6297,8 +6332,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e2.class_number AS c2,
                     e2.national_top_2_percent AS n2_2,
                     e2.assigned_motor_top_2_percent AS m2_2,
-                    ds1.derived_avg_start_timing_180d AS dst1,
-                    ds1.derived_start_count_180d AS dstn1,
+                    {_dst1_expr} AS dst1,
+                    {_dstn1_expr} AS dstn1,
                     COALESCE(f.female_count, 0) AS female_count,
                     COALESCE(pt.payout, 0) AS tri_pay
                   FROM races r
@@ -6308,9 +6343,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                   LEFT JOIN race_entries e2
                     ON e2.race_id = r.race_id
                    AND e2.boat_number = 2
-                  LEFT JOIN derived_start_stats ds1
-                    ON ds1.race_id = r.race_id
-                   AND ds1.boat_number = 1
+                  {_derived_join}
                   LEFT JOIN race_previews pv
                     ON pv.race_id = r.race_id
                    AND pv.boat_number = 1
