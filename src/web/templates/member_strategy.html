@@ -345,6 +345,27 @@
 
     {% endif %}
   <!-- ROI 推移グラフ -->
+  <section class="totals-summary">
+    <h3>正式採用 追加戦略</h3>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <span class="card-label">G2/G3 1-2-3</span>
+        <span class="card-value">{% if totals.g23_optb_tri_roi is not none %}{{ '%+.1f' | format(totals.g23_optb_tri_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.g23_optb_tri_bets }} HIT={{ totals.g23_optb_tri_hits }} / 損益 {{ totals.g23_optb_tri_profit | signed_comma }}円</span>
+      </div>
+      <div class="summary-card">
+        <span class="card-label">3号艇まくり型 3-2-1</span>
+        <span class="card-value">{% if totals.boat3_321_tri_roi is not none %}{{ '%+.1f' | format(totals.boat3_321_tri_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.boat3_321_tri_bets }} HIT={{ totals.boat3_321_tri_hits }} / 損益 {{ totals.boat3_321_tri_profit | signed_comma }}円</span>
+      </div>
+      <div class="summary-card">
+        <span class="card-label">3号艇まくり型 3-2-4</span>
+        <span class="card-value">{% if totals.boat3_324_tri_roi is not none %}{{ '%+.1f' | format(totals.boat3_324_tri_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.boat3_324_tri_bets }} HIT={{ totals.boat3_324_tri_hits }} / 損益 {{ totals.boat3_324_tri_profit | signed_comma }}円</span>
+      </div>
+    </div>
+  </section>
+
   <section class="chart-section">
     <h3>📉 日別 累積損益 (1点100円ベース)</h3>
     <canvas id="cumChart" width="800" height="280"></canvas>

@@ -7,165 +7,84 @@
 
 {% block content %}
 <div class="strategy-dashboard">
-  <h2>📅 月別 ROI 推移 <span class="live-indicator" title="3分ごとに自動更新">LIVE</span></h2>
+  <h2>月別 ROI 推移 <span class="live-indicator">LIVE</span></h2>
   <p class="dashboard-hint">
-    <strong>採用戦略と観察戦略を、月別の収支とROIで長期比較します。</strong><br>
-    集計期間: {{ monthly_from }} 〜 {{ monthly_to }} / 当月は完了レース分のみの暫定値<br>
-    <small>
-      <span class="monthly-quality-badge is-actual">実運用</span>
-      {{ strict_odds_daily_start }} 以降の直前オッズベース /
-      <span class="monthly-quality-badge is-reference">参考検証</span>
-      それ以前のバックテスト基準
-    </small>
+    採用手法と観察手法を月別で比較します。<br>
+    集計範囲: {{ monthly_from }} - {{ monthly_to }}
   </p>
-
-  {% if health_results %}
-  <section class="strategy-health-board">
-    <div class="section-header-row">
-      <h3>健全度</h3>
-      <a href="/member/health" class="health-board-link">詳細</a>
-    </div>
-    <div class="strategy-health-grid">
-      {% for r in health_results %}
-      <article class="strategy-health-chip status-{{ r.status }}">
-        <div class="strategy-health-chip-head">
-          <span class="strategy-health-name">{{ r.name }}</span>
-          <span class="health-status-pill status-{{ r.status }}">{{ r.status }}</span>
-        </div>
-        <div class="strategy-health-chip-body">
-          <span>30日 {% if r.roi_30d is not none %}{{ '%.1f' | format(r.roi_30d) }}%{% else %}-{% endif %}</span>
-          <span>n={{ r.n_bets_30d }}</span>
-          <span>{% if r.baseline_recovery is not none %}基準 {{ '%.1f' | format(r.baseline_recovery) }}%{% else %}基準 -{% endif %}</span>
-        </div>
-      </article>
-      {% endfor %}
-    </div>
-  </section>
-  {% endif %}
 
   <section class="summary-grid" style="margin-bottom:16px;">
     <article class="summary-card">
-      <div class="summary-label">候補1・3・4 合算</div>
-      <div class="summary-roi">
-        {% if monthly_totals.tri_core.roi is not none %}{{ '%+.1f' | format(monthly_totals.tri_core.roi) }}%{% else %}-{% endif %}
-      </div>
-      <div class="summary-sub">
-        n={{ monthly_totals.tri_core.bets }} HIT={{ monthly_totals.tri_core.hits }}
-        {% if monthly_totals.tri_core.bets > 0 %}/ 損益 {{ monthly_totals.tri_core.profit | signed_comma }}円{% endif %}
-      </div>
+      <div class="summary-label">3連単 1-2-3</div>
+      <div class="summary-roi">{% if monthly_totals.tri_core.roi is not none %}{{ '%+.1f' | format(monthly_totals.tri_core.roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals.tri_core.bets }} HIT={{ monthly_totals.tri_core.hits }}</div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">候補1</div>
-      <div class="summary-roi">
-        {% if monthly_totals.gen_f1_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.gen_f1_tri.roi) }}%{% else %}-{% endif %}
-      </div>
-      <div class="summary-sub">
-        n={{ monthly_totals.gen_f1_tri.bets }} HIT={{ monthly_totals.gen_f1_tri.hits }}
-        {% if monthly_totals.gen_f1_tri.bets > 0 %}/ 損益 {{ monthly_totals.gen_f1_tri.profit | signed_comma }}円{% endif %}
-      </div>
+      <div class="summary-label">G2/G3 123</div>
+      <div class="summary-roi">{% if monthly_totals.g23_optb_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.g23_optb_tri.roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals.g23_optb_tri.bets }} HIT={{ monthly_totals.g23_optb_tri.hits }}</div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">候補3</div>
-      <div class="summary-roi">
-        {% if monthly_totals.gen_200_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.gen_200_tri.roi) }}%{% else %}-{% endif %}
-      </div>
-      <div class="summary-sub">
-        n={{ monthly_totals.gen_200_tri.bets }} HIT={{ monthly_totals.gen_200_tri.hits }}
-        {% if monthly_totals.gen_200_tri.bets > 0 %}/ 損益 {{ monthly_totals.gen_200_tri.profit | signed_comma }}円{% endif %}
-      </div>
+      <div class="summary-label">3-2-1</div>
+      <div class="summary-roi">{% if monthly_totals.boat3_321_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.boat3_321_tri.roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals.boat3_321_tri.bets }} HIT={{ monthly_totals.boat3_321_tri.hits }}</div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">候補4</div>
-      <div class="summary-roi">
-        {% if monthly_totals.mid_132_tier_a_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.mid_132_tier_a_tri.roi) }}%{% else %}-{% endif %}
-      </div>
-      <div class="summary-sub">
-        n={{ monthly_totals.mid_132_tier_a_tri.bets }} HIT={{ monthly_totals.mid_132_tier_a_tri.hits }}
-        {% if monthly_totals.mid_132_tier_a_tri.bets > 0 %}/ 損益 {{ monthly_totals.mid_132_tier_a_tri.profit | signed_comma }}円{% endif %}
-      </div>
+      <div class="summary-label">3-2-4</div>
+      <div class="summary-roi">{% if monthly_totals.boat3_324_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.boat3_324_tri.roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals.boat3_324_tri.bets }} HIT={{ monthly_totals.boat3_324_tri.hits }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">芦屋 4-1</div>
+      <div class="summary-roi">{% if monthly_totals.ashiya_boat4_exa.roi is not none %}{{ '%+.1f' | format(monthly_totals.ashiya_boat4_exa.roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals.ashiya_boat4_exa.bets }} HIT={{ monthly_totals.ashiya_boat4_exa.hits }}</div>
     </article>
     <article class="summary-card">
       <div class="summary-label">宮島 4コースまくり</div>
-      <div class="summary-roi">
-        {% if monthly_totals.miyajima_boat4_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.miyajima_boat4_tri.roi) }}%{% else %}-{% endif %}
-      </div>
-      <div class="summary-sub">
-        n={{ monthly_totals.miyajima_boat4_tri.bets }} HIT={{ monthly_totals.miyajima_boat4_tri.hits }}
-        {% if monthly_totals.miyajima_boat4_tri.bets > 0 %}/ 損益 {{ monthly_totals.miyajima_boat4_tri.profit | signed_comma }}円{% endif %}
-      </div>
+      <div class="summary-roi">{% if monthly_totals.miyajima_boat4_tri.roi is not none %}{{ '%+.1f' | format(monthly_totals.miyajima_boat4_tri.roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals.miyajima_boat4_tri.bets }} HIT={{ monthly_totals.miyajima_boat4_tri.hits }}</div>
     </article>
     <article class="summary-card">
-      <div class="summary-label">芦屋 2連単 4-1</div>
-      <div class="summary-roi">
-        {% if monthly_totals.ashiya_boat4_exa.roi is not none %}{{ '%+.1f' | format(monthly_totals.ashiya_boat4_exa.roi) }}%{% else %}-{% endif %}
-      </div>
-      <div class="summary-sub">
-        n={{ monthly_totals.ashiya_boat4_exa.bets }} HIT={{ monthly_totals.ashiya_boat4_exa.hits }}
-        {% if monthly_totals.ashiya_boat4_exa.bets > 0 %}/ 損益 {{ monthly_totals.ashiya_boat4_exa.profit | signed_comma }}円{% endif %}
-      </div>
-    </article>
-    <article class="summary-card">
-      <div class="summary-label">Karatsu Rain Exacta 1-2</div>
-      <div class="summary-roi">
-        {% if monthly_totals.karatsu_rain_exa.roi is not none %}{{ '%+.1f' | format(monthly_totals.karatsu_rain_exa.roi) }}%{% else %}-{% endif %}
-      </div>
-      <div class="summary-sub">
-        n={{ monthly_totals.karatsu_rain_exa.bets }} HIT={{ monthly_totals.karatsu_rain_exa.hits }}
-        {% if monthly_totals.karatsu_rain_exa.bets > 0 %}/ Profit {{ monthly_totals.karatsu_rain_exa.profit | signed_comma }} JPY{% endif %}
-      </div>
+      <div class="summary-label">唐津 雨 1-2</div>
+      <div class="summary-roi">{% if monthly_totals.karatsu_rain_exa.roi is not none %}{{ '%+.1f' | format(monthly_totals.karatsu_rain_exa.roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals.karatsu_rain_exa.bets }} HIT={{ monthly_totals.karatsu_rain_exa.hits }}</div>
     </article>
   </section>
 
   <section class="chart-section">
-    <h3>📊 月別 ROI 推移グラフ <small class="section-hint">主要手法の月次比較</small></h3>
+    <h3>月別 ROI 推移グラフ</h3>
     <div class="chart-legend" id="monthlyChartLegend"></div>
     <canvas id="monthlyChart" width="980" height="380"></canvas>
     <p class="dashboard-hint" style="margin-top:8px;">
-      <small>横軸: 年月 / 縦軸: ROI (%). 太い黄色線 = 0% 損益分岐。0%より上が利益、下が損失です。</small>
+      <small>横軸: 年月 / 縦軸: ROI (%)</small>
     </p>
   </section>
 
   <section class="daily-table-section monthly-roi-section">
-    <h3>🧾 月別 ROI テーブル</h3>
-    <p class="dashboard-hint">
-      <small>採用: 単勝 / 2連単 1-2 / 3連単 1-2-3 / 候補1 / 候補3 / 候補4 ・ 観察: 尼崎 / 芦屋 / 桐生 / 宮島 / L4-prime / L4-12R / 一般戦×12R</small>
-    </p>
+    <h3>月別 ROI テーブル</h3>
     <div class="table-wrap">
       <table class="daily-table monthly-roi-table">
         <thead>
           <tr>
             <th rowspan="2">年月</th>
             <th rowspan="2">L4該当</th>
-            <th colspan="2">単勝 (1)</th>
-            <th colspan="2">2連単 (1-2)</th>
-            <th colspan="2">3連単 (1-2-3)</th>
-            <th colspan="2">候補1</th>
-            <th colspan="2">候補3</th>
-            <th colspan="2" class="obs-col">候補4</th>
-            <th colspan="2" class="obs-col">尼崎 1-4</th>
-            <th colspan="2" class="obs-col">芦屋 4-1</th>
-            <th colspan="2" class="obs-col">桐生 単勝2</th>
-            <th colspan="2" class="obs-col">Karatsu Rain 1-2</th>
-            <th colspan="2" class="obs-col">Miyajima 4-course</th>
-            <th colspan="2" class="obs-col">L4-prime</th>
-            <th colspan="2" class="obs-col">L4-12R</th>
-            <th colspan="2" class="obs-col">一般戦×12R</th>
+            <th colspan="2">3連単 1-2-3</th>
+            <th colspan="2">L4 G++ F1</th>
+            <th colspan="2">一般戦×200</th>
+            <th colspan="2">Tier A</th>
+            <th colspan="2">G2/G3 123</th>
+            <th colspan="2">3-2-1</th>
+            <th colspan="2">3-2-4</th>
+            <th colspan="2">芦屋 4-1</th>
+            <th colspan="2">宮島 4コースまくり</th>
+            <th colspan="2">唐津 雨 1-2</th>
+            <th colspan="2">桐生 単勝2</th>
+            <th colspan="2">L4-prime</th>
+            <th colspan="2">L4-12R</th>
+            <th colspan="2">一般戦×12R</th>
           </tr>
           <tr>
-            <th>HIT/n</th><th>ROI</th>
-            <th>HIT/n</th><th>ROI</th>
-            <th>HIT/n</th><th>ROI</th>
-            <th>HIT/n</th><th>ROI</th>
-            <th>HIT/n</th><th>ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
-            <th class="obs-col">HIT/n</th><th class="obs-col">ROI</th>
+            {% for _ in range(14) %}<th>HIT/n</th><th>ROI</th>{% endfor %}
           </tr>
         </thead>
         <tbody>
@@ -173,77 +92,26 @@
           <tr class="{% if m.is_current %}is-current-month{% endif %}">
             <td class="date-cell">
               <span class="date-text">{{ m.ym }}</span>
-              <span class="monthly-quality-badge is-{{ m.quality }}"
-                    title="{% if m.quality == 'actual' %}直前オッズベースの実運用集計{% elif m.quality == 'mixed' %}実運用と参考検証が混在{% else %}過去バックテスト基準{% endif %}">
-                {{ m.quality_label }}
-              </span>
+              <span class="monthly-quality-badge is-{{ m.quality }}">{{ m.quality_label }}</span>
               {% if m.is_current %}<span class="in-progress-badge">進行中</span>{% endif %}
             </td>
             <td class="num">{{ m.n_l4_display }}</td>
-
-            <td class="num">{{ m.win_hits }}/{{ m.win_bets }}</td>
-            <td class="num {% if m.win_roi is not none and m.win_roi >= 0 %}pos{% elif m.win_roi is not none %}neg{% endif %}">
-              {% if m.win_roi is not none %}{{ '%+.0f' | format(m.win_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num">{{ m.exa_hits }}/{{ m.exa_bets }}</td>
-            <td class="num {% if m.exa_roi is not none and m.exa_roi >= 0 %}pos{% elif m.exa_roi is not none %}neg{% endif %}">
-              {% if m.exa_roi is not none %}{{ '%+.0f' | format(m.exa_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num">{{ m.tri_core_hits }}/{{ m.tri_core_bets }}</td>
-            <td class="num {% if m.tri_core_roi is not none and m.tri_core_roi >= 0 %}pos{% elif m.tri_core_roi is not none %}neg{% endif %}">
-              {% if m.tri_core_roi is not none %}{{ '%+.0f' | format(m.tri_core_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num">{{ m.gen_f1_tri_hits }}/{{ m.gen_f1_tri_bets }}</td>
-            <td class="num {% if m.gen_f1_tri_roi is not none and m.gen_f1_tri_roi >= 0 %}pos{% elif m.gen_f1_tri_roi is not none %}neg{% endif %}">
-              {% if m.gen_f1_tri_roi is not none %}{{ '%+.0f' | format(m.gen_f1_tri_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num">{{ m.gen_200_tri_hits }}/{{ m.gen_200_tri_bets }}</td>
-            <td class="num {% if m.gen_200_tri_roi is not none and m.gen_200_tri_roi >= 0 %}pos{% elif m.gen_200_tri_roi is not none %}neg{% endif %}">
-              {% if m.gen_200_tri_roi is not none %}{{ '%+.0f' | format(m.gen_200_tri_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.mid_132_tier_a_tri_hits }}/{{ m.mid_132_tier_a_tri_bets }}</td>
-            <td class="num obs-col {% if m.mid_132_tier_a_tri_roi is not none and m.mid_132_tier_a_tri_roi >= 0 %}pos{% elif m.mid_132_tier_a_tri_roi is not none %}neg{% endif %}">
-              {% if m.mid_132_tier_a_tri_roi is not none %}{{ '%+.0f' | format(m.mid_132_tier_a_tri_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.amagasaki_motor_exa_hits }}/{{ m.amagasaki_motor_exa_bets }}</td>
-            <td class="num obs-col {% if m.amagasaki_motor_exa_roi is not none and m.amagasaki_motor_exa_roi >= 0 %}pos{% elif m.amagasaki_motor_exa_roi is not none %}neg{% endif %}">
-              {% if m.amagasaki_motor_exa_roi is not none %}{{ '%+.0f' | format(m.amagasaki_motor_exa_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.ashiya_boat4_exa_hits }}/{{ m.ashiya_boat4_exa_bets }}</td>
-            <td class="num obs-col {% if m.ashiya_boat4_exa_roi is not none and m.ashiya_boat4_exa_roi >= 0 %}pos{% elif m.ashiya_boat4_exa_roi is not none %}neg{% endif %}">
-              {% if m.ashiya_boat4_exa_roi is not none %}{{ '%+.0f' | format(m.ashiya_boat4_exa_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.kiryu_win2_hits }}/{{ m.kiryu_win2_bets }}</td>
-            <td class="num obs-col {% if m.kiryu_win2_roi is not none and m.kiryu_win2_roi >= 0 %}pos{% elif m.kiryu_win2_roi is not none %}neg{% endif %}">
-              {% if m.kiryu_win2_roi is not none %}{{ '%+.0f' | format(m.kiryu_win2_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.karatsu_rain_exa_hits }}/{{ m.karatsu_rain_exa_bets }}</td>
-            <td class="num obs-col {% if m.karatsu_rain_exa_roi is not none and m.karatsu_rain_exa_roi >= 0 %}pos{% elif m.karatsu_rain_exa_roi is not none %}neg{% endif %}">
-              {% if m.karatsu_rain_exa_roi is not none %}{{ '%+.0f' | format(m.karatsu_rain_exa_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.miyajima_boat4_tri_hits }}/{{ m.miyajima_boat4_tri_bets }}</td>
-            <td class="num obs-col {% if m.miyajima_boat4_tri_roi is not none and m.miyajima_boat4_tri_roi >= 0 %}pos{% elif m.miyajima_boat4_tri_roi is not none %}neg{% endif %}">
-              {% if m.miyajima_boat4_tri_roi is not none %}{{ '%+.0f' | format(m.miyajima_boat4_tri_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.prime_tri_hits }}/{{ m.prime_tri_bets }}</td>
-            <td class="num obs-col {% if m.prime_tri_roi is not none and m.prime_tri_roi >= 0 %}pos{% elif m.prime_tri_roi is not none %}neg{% endif %}">
-              {% if m.prime_tri_roi is not none %}{{ '%+.0f' | format(m.prime_tri_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.r12_tri_hits }}/{{ m.r12_tri_bets }}</td>
-            <td class="num obs-col {% if m.r12_tri_roi is not none and m.r12_tri_roi >= 0 %}pos{% elif m.r12_tri_roi is not none %}neg{% endif %}">
-              {% if m.r12_tri_roi is not none %}{{ '%+.0f' | format(m.r12_tri_roi) }}%{% else %}-{% endif %}
-            </td>
-            <td class="num obs-col">{{ m.gen_r12_tri_hits }}/{{ m.gen_r12_tri_bets }}</td>
-            <td class="num obs-col {% if m.gen_r12_tri_roi is not none and m.gen_r12_tri_roi >= 0 %}pos{% elif m.gen_r12_tri_roi is not none %}neg{% endif %}">
-              {% if m.gen_r12_tri_roi is not none %}{{ '%+.0f' | format(m.gen_r12_tri_roi) }}%{% else %}-{% endif %}
-            </td>
+            <td class="num">{{ m.tri_core_hits }}/{{ m.tri_core_bets }}</td><td class="num {% if m.tri_core_roi is not none and m.tri_core_roi >= 0 %}pos{% elif m.tri_core_roi is not none %}neg{% endif %}">{% if m.tri_core_roi is not none %}{{ '%+.0f' | format(m.tri_core_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.gen_f1_tri_hits }}/{{ m.gen_f1_tri_bets }}</td><td class="num {% if m.gen_f1_tri_roi is not none and m.gen_f1_tri_roi >= 0 %}pos{% elif m.gen_f1_tri_roi is not none %}neg{% endif %}">{% if m.gen_f1_tri_roi is not none %}{{ '%+.0f' | format(m.gen_f1_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.gen_200_tri_hits }}/{{ m.gen_200_tri_bets }}</td><td class="num {% if m.gen_200_tri_roi is not none and m.gen_200_tri_roi >= 0 %}pos{% elif m.gen_200_tri_roi is not none %}neg{% endif %}">{% if m.gen_200_tri_roi is not none %}{{ '%+.0f' | format(m.gen_200_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.mid_132_tier_a_tri_hits }}/{{ m.mid_132_tier_a_tri_bets }}</td><td class="num {% if m.mid_132_tier_a_tri_roi is not none and m.mid_132_tier_a_tri_roi >= 0 %}pos{% elif m.mid_132_tier_a_tri_roi is not none %}neg{% endif %}">{% if m.mid_132_tier_a_tri_roi is not none %}{{ '%+.0f' | format(m.mid_132_tier_a_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.g23_optb_tri_hits }}/{{ m.g23_optb_tri_bets }}</td><td class="num {% if m.g23_optb_tri_roi is not none and m.g23_optb_tri_roi >= 0 %}pos{% elif m.g23_optb_tri_roi is not none %}neg{% endif %}">{% if m.g23_optb_tri_roi is not none %}{{ '%+.0f' | format(m.g23_optb_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.boat3_321_tri_hits }}/{{ m.boat3_321_tri_bets }}</td><td class="num {% if m.boat3_321_tri_roi is not none and m.boat3_321_tri_roi >= 0 %}pos{% elif m.boat3_321_tri_roi is not none %}neg{% endif %}">{% if m.boat3_321_tri_roi is not none %}{{ '%+.0f' | format(m.boat3_321_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.boat3_324_tri_hits }}/{{ m.boat3_324_tri_bets }}</td><td class="num {% if m.boat3_324_tri_roi is not none and m.boat3_324_tri_roi >= 0 %}pos{% elif m.boat3_324_tri_roi is not none %}neg{% endif %}">{% if m.boat3_324_tri_roi is not none %}{{ '%+.0f' | format(m.boat3_324_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.ashiya_boat4_exa_hits }}/{{ m.ashiya_boat4_exa_bets }}</td><td class="num {% if m.ashiya_boat4_exa_roi is not none and m.ashiya_boat4_exa_roi >= 0 %}pos{% elif m.ashiya_boat4_exa_roi is not none %}neg{% endif %}">{% if m.ashiya_boat4_exa_roi is not none %}{{ '%+.0f' | format(m.ashiya_boat4_exa_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.miyajima_boat4_tri_hits }}/{{ m.miyajima_boat4_tri_bets }}</td><td class="num {% if m.miyajima_boat4_tri_roi is not none and m.miyajima_boat4_tri_roi >= 0 %}pos{% elif m.miyajima_boat4_tri_roi is not none %}neg{% endif %}">{% if m.miyajima_boat4_tri_roi is not none %}{{ '%+.0f' | format(m.miyajima_boat4_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.karatsu_rain_exa_hits }}/{{ m.karatsu_rain_exa_bets }}</td><td class="num {% if m.karatsu_rain_exa_roi is not none and m.karatsu_rain_exa_roi >= 0 %}pos{% elif m.karatsu_rain_exa_roi is not none %}neg{% endif %}">{% if m.karatsu_rain_exa_roi is not none %}{{ '%+.0f' | format(m.karatsu_rain_exa_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.kiryu_win2_hits }}/{{ m.kiryu_win2_bets }}</td><td class="num {% if m.kiryu_win2_roi is not none and m.kiryu_win2_roi >= 0 %}pos{% elif m.kiryu_win2_roi is not none %}neg{% endif %}">{% if m.kiryu_win2_roi is not none %}{{ '%+.0f' | format(m.kiryu_win2_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.prime_tri_hits }}/{{ m.prime_tri_bets }}</td><td class="num {% if m.prime_tri_roi is not none and m.prime_tri_roi >= 0 %}pos{% elif m.prime_tri_roi is not none %}neg{% endif %}">{% if m.prime_tri_roi is not none %}{{ '%+.0f' | format(m.prime_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.r12_tri_hits }}/{{ m.r12_tri_bets }}</td><td class="num {% if m.r12_tri_roi is not none and m.r12_tri_roi >= 0 %}pos{% elif m.r12_tri_roi is not none %}neg{% endif %}">{% if m.r12_tri_roi is not none %}{{ '%+.0f' | format(m.r12_tri_roi) }}%{% else %}-{% endif %}</td>
+            <td class="num">{{ m.gen_r12_tri_hits }}/{{ m.gen_r12_tri_bets }}</td><td class="num {% if m.gen_r12_tri_roi is not none and m.gen_r12_tri_roi >= 0 %}pos{% elif m.gen_r12_tri_roi is not none %}neg{% endif %}">{% if m.gen_r12_tri_roi is not none %}{{ '%+.0f' | format(m.gen_r12_tri_roi) }}%{% else %}-{% endif %}</td>
           </tr>
           {% endfor %}
-          {% if not monthly_rows %}
-          <tr class="is-empty">
-            <td colspan="28" class="num muted">月別 ROI データがありません</td>
-          </tr>
-          {% endif %}
         </tbody>
       </table>
     </div>
@@ -256,184 +124,84 @@
     {% for m in monthly_rows_asc %}
     {
       ym: "{{ m.ym }}",
-      is_current: {{ 'true' if m.is_current else 'false' }},
       tri: {{ ('null' if m.tri_core_roi is none else '%.1f' | format(m.tri_core_roi)) }},
       f1: {{ ('null' if m.gen_f1_tri_roi is none else '%.1f' | format(m.gen_f1_tri_roi)) }},
       g200: {{ ('null' if m.gen_200_tri_roi is none else '%.1f' | format(m.gen_200_tri_roi)) }},
       tiera: {{ ('null' if m.mid_132_tier_a_tri_roi is none else '%.1f' | format(m.mid_132_tier_a_tri_roi)) }},
-      amaga: {{ ('null' if m.amagasaki_motor_exa_roi is none else '%.1f' | format(m.amagasaki_motor_exa_roi)) }},
+      g23b: {{ ('null' if m.g23_optb_tri_roi is none else '%.1f' | format(m.g23_optb_tri_roi)) }},
+      b321: {{ ('null' if m.boat3_321_tri_roi is none else '%.1f' | format(m.boat3_321_tri_roi)) }},
+      b324: {{ ('null' if m.boat3_324_tri_roi is none else '%.1f' | format(m.boat3_324_tri_roi)) }},
       ashiya41: {{ ('null' if m.ashiya_boat4_exa_roi is none else '%.1f' | format(m.ashiya_boat4_exa_roi)) }},
-      kiryu2: {{ ('null' if m.kiryu_win2_roi is none else '%.1f' | format(m.kiryu_win2_roi)) }},
-      karatsu12: {{ ('null' if m.karatsu_rain_exa_roi is none else '%.1f' | format(m.karatsu_rain_exa_roi)) }},
       miyajima4: {{ ('null' if m.miyajima_boat4_tri_roi is none else '%.1f' | format(m.miyajima_boat4_tri_roi)) }},
+      karatsu12: {{ ('null' if m.karatsu_rain_exa_roi is none else '%.1f' | format(m.karatsu_rain_exa_roi)) }},
+      kiryu2: {{ ('null' if m.kiryu_win2_roi is none else '%.1f' | format(m.kiryu_win2_roi)) }},
       prime: {{ ('null' if m.prime_tri_roi is none else '%.1f' | format(m.prime_tri_roi)) }},
       r12: {{ ('null' if m.r12_tri_roi is none else '%.1f' | format(m.r12_tri_roi)) }},
       gr12: {{ ('null' if m.gen_r12_tri_roi is none else '%.1f' | format(m.gen_r12_tri_roi)) }}
     },
     {% endfor %}
   ];
-
   const SERIES = [
-    {key:'tri', label:'3連単 (1-2-3)', color:'#ff006e'},
-    {key:'f1', label:'候補1', color:'#ffd700'},
+    {key:'tri', label:'3連単 1-2-3', color:'#ff006e'},
+    {key:'f1', label:'L4 G++ F1', color:'#ffd700'},
     {key:'g200', label:'一般戦×200', color:'#22c55e'},
-    {key:'tiera', label:'候補4', color:'#38bdf8'},
-    {key:'amaga', label:'尼崎 1-4', color:'#f59e0b'},
+    {key:'tiera', label:'Tier A', color:'#38bdf8'},
+    {key:'g23b', label:'G2/G3 123', color:'#f97316'},
+    {key:'b321', label:'3-2-1', color:'#a78bfa'},
+    {key:'b324', label:'3-2-4', color:'#8b5cf6'},
     {key:'ashiya41', label:'芦屋 4-1', color:'#ef4444'},
-    {key:'kiryu2', label:'桐生 単勝2', color:'#a78bfa'},
-    {key:'karatsu12', label:'Karatsu Rain 1-2', color:'#14b8a6'},
-    {key:'miyajima4', label:'宮島 4コースまくり', color:'#f97316'},
+    {key:'miyajima4', label:'宮島 4コースまくり', color:'#14b8a6'},
+    {key:'karatsu12', label:'唐津 雨 1-2', color:'#0ea5e9'},
+    {key:'kiryu2', label:'桐生 単勝2', color:'#eab308'},
     {key:'prime', label:'L4-prime', color:'#10b981'},
     {key:'r12', label:'L4-12R', color:'#06b6d4'},
     {key:'gr12', label:'一般戦×12R', color:'#84cc16'}
   ];
-
-  let activeKeys = new Set(['tri', 'f1', 'g200']);
+  let activeKeys = new Set(['tri','f1','g200','g23b','b321','b324']);
   const legendEl = document.getElementById('monthlyChartLegend');
   const canvas = document.getElementById('monthlyChart');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   const padL = 56, padR = 20, padT = 18, padB = 44;
-
   function rgba(hex, alpha) {
-    const r = parseInt(hex.slice(1,3), 16);
-    const g = parseInt(hex.slice(3,5), 16);
-    const b = parseInt(hex.slice(5,7), 16);
+    const r = parseInt(hex.slice(1,3), 16), g = parseInt(hex.slice(3,5), 16), b = parseInt(hex.slice(5,7), 16);
     return `rgba(${r},${g},${b},${alpha})`;
   }
-
   function renderLegend() {
-    if (!legendEl) return;
-    legendEl.innerHTML = SERIES.map(s => {
-      const active = activeKeys.has(s.key);
-      return `<button type="button" class="legend-item ${active ? 'is-active' : 'is-dim'}" data-key="${s.key}">
-        <span class="legend-swatch" style="background:${s.color}"></span>
-        <span class="legend-label">${s.label}</span>
-      </button>`;
-    }).join('');
-    legendEl.querySelectorAll('.legend-item').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const key = btn.dataset.key;
-        if (activeKeys.size === 1 && activeKeys.has(key)) {
-          activeKeys = new Set(SERIES.map(s => s.key));
-        } else {
-          activeKeys = new Set([key]);
-        }
-        renderLegend();
-        draw();
-      });
-    });
+    legendEl.innerHTML = SERIES.map(s => `<button type="button" class="legend-item ${activeKeys.has(s.key) ? 'is-active' : 'is-dim'}" data-key="${s.key}"><span class="legend-swatch" style="background:${s.color}"></span><span class="legend-label">${s.label}</span></button>`).join('');
+    legendEl.querySelectorAll('.legend-item').forEach(btn => btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      if (activeKeys.size === 1 && activeKeys.has(key)) activeKeys = new Set(SERIES.map(s => s.key));
+      else activeKeys = new Set([key]);
+      renderLegend(); draw();
+    }));
   }
-
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    if (!data.length) return;
     const visible = SERIES.filter(s => activeKeys.has(s.key));
-    const values = [];
-    visible.forEach(s => data.forEach(d => { if (d[s.key] !== null) values.push(d[s.key]); }));
-    if (!values.length) return;
-
-    let yMax = Math.max(...values, 0);
-    let yMin = Math.min(...values, 0);
-    const pad = (yMax - yMin) * 0.12 || 20;
-    yMax += pad;
-    yMin -= pad;
-    if (yMin > 0) yMin = -10;
-    if (yMax < 0) yMax = 10;
-
-    const ys = (v) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin));
-    const zeroY = ys(0);
-
-    const range = yMax - yMin;
-    let step = 50;
-    if (range > 400) step = 100;
-    else if (range > 200) step = 50;
-    else if (range > 80) step = 25;
-    else step = 10;
-
-    const firstTick = Math.ceil(yMin / step) * step;
-    ctx.font = '11px monospace';
-    ctx.textAlign = 'right';
-    for (let v = firstTick; v <= yMax; v += step) {
-      const y = ys(v);
-      if (v !== 0) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-        ctx.beginPath();
-        ctx.moveTo(padL, y);
-        ctx.lineTo(W - padR, y);
-        ctx.stroke();
-      }
-      ctx.fillStyle = v === 0 ? '#ffd700' : '#999';
-      ctx.fillText((v > 0 ? '+' : '') + v + '%', padL - 8, y + 3);
-    }
-
-    const chartW = W - padL - padR;
-    const groupW = chartW / data.length;
-    const innerGap = 6;
-    const barAreaW = groupW - innerGap;
-    const nVis = visible.length;
-    const barW = Math.max(4, barAreaW / Math.max(1, nVis) - 1);
-    const barWidth = nVis === 1 ? Math.min(barW, barAreaW * 0.6) : barW;
-
-    data.forEach((d, mi) => {
-      const groupX = padL + groupW * mi + innerGap / 2;
-      const centerOffset = nVis === 1 ? (barAreaW - barWidth) / 2 : 0;
-      visible.forEach((s, si) => {
-        const v = d[s.key];
-        if (v === null || v === undefined) return;
-        const x = groupX + centerOffset + si * (barWidth + 1);
-        const top = ys(Math.max(v, 0));
-        const bot = ys(Math.min(v, 0));
-        const h = bot - top;
-        const alpha = d.is_current ? 0.55 : 1.0;
-        const grad = ctx.createLinearGradient(0, top, 0, bot);
-        if (v >= 0) {
-          grad.addColorStop(0, rgba(s.color, alpha));
-          grad.addColorStop(1, rgba(s.color, alpha * 0.55));
-        } else {
-          grad.addColorStop(0, rgba(s.color, alpha * 0.55));
-          grad.addColorStop(1, rgba(s.color, alpha));
-        }
-        ctx.fillStyle = grad;
-        ctx.fillRect(x, top, barWidth, Math.max(1, h));
-        ctx.strokeStyle = rgba(s.color, alpha * 0.85);
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, top + 0.5, barWidth - 1, Math.max(1, h - 1));
-      });
-    });
-
-    ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(padL, zeroY);
-    ctx.lineTo(W - padR, zeroY);
-    ctx.stroke();
-
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(padL, padT);
-    ctx.lineTo(padL, H - padB);
-    ctx.lineTo(W - padR, H - padB);
-    ctx.stroke();
-
-    ctx.font = '11px monospace';
+    const vals = [];
+    visible.forEach(s => data.forEach(d => { if (d[s.key] !== null) vals.push(d[s.key]); }));
+    if (!vals.length) return;
+    let minV = Math.min(0, ...vals), maxV = Math.max(0, ...vals);
+    if (minV === maxV) { minV -= 10; maxV += 10; }
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const xAt = i => padL + (data.length <= 1 ? plotW / 2 : plotW * i / (data.length - 1));
+    const yAt = v => padT + (maxV - v) / (maxV - minV) * plotH;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+    for (let i=0; i<5; i++) { const y = padT + plotH * i / 4; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W-padR, y); ctx.stroke(); }
+    const zeroY = yAt(0); ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(padL, zeroY); ctx.lineTo(W-padR, zeroY); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '12px sans-serif'; ctx.textAlign = 'right';
+    for (let i=0; i<5; i++) { const v = maxV - (maxV-minV)*i/4; const y = padT + plotH*i/4; ctx.fillText(`${v >= 0 ? '+' : ''}${Math.round(v)}%`, padL - 8, y + 4); }
     ctx.textAlign = 'center';
-    data.forEach((d, mi) => {
-      const cx = padL + groupW * mi + groupW / 2;
-      ctx.fillStyle = d.is_current ? '#ffd700' : '#bbb';
-      ctx.fillText(d.ym.slice(2), cx, H - padB + 16);
-      if (d.is_current) {
-        ctx.font = '9px monospace';
-        ctx.fillText('(進行中)', cx, H - padB + 28);
-        ctx.font = '11px monospace';
-      }
+    data.forEach((d, i) => ctx.fillText(d.ym.slice(2), xAt(i), H - 14));
+    visible.forEach(s => {
+      ctx.strokeStyle = s.color; ctx.lineWidth = 2.5; ctx.beginPath(); let started = false;
+      data.forEach((d, i) => { const v = d[s.key]; if (v === null) return; const x = xAt(i), y = yAt(v); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
+      ctx.stroke();
     });
   }
-
-  renderLegend();
-  draw();
+  renderLegend(); draw();
 })();
 </script>
 {% endblock %}
