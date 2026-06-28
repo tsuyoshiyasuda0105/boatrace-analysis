@@ -2262,26 +2262,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 #   cache がない (= バッチ未実行 / 当日分なし) ときは旧 SQL に fallback.
                 boat3_signal_ctx: dict[str, dict] = {}
                 try:
-                    boat3_same_day_stats: dict[int, dict[str, float]] = {}
+                    boat3_same_day_roll: dict[int, dict[str, float]] = {}
                     boat3_venue_avg: dict[int, float] = {}
-                    cur = conn.execute("""
-                        SELECT r.stadium_number,
-                               COUNT(*) AS n_rows,
-                               SUM(NULLIF(pv3.exhibition_time, 0)) AS sum_ex
-                          FROM races r
-                          JOIN race_previews pv3
-                            ON pv3.race_id = r.race_id
-                           AND pv3.boat_number = 3
-                         WHERE r.race_date = ?
-                           AND NULLIF(pv3.exhibition_time, 0) IS NOT NULL
-                         GROUP BY r.stadium_number
-                    """, (target_date,))
-                    for stadium_no, n_rows, sum_ex in cur.fetchall():
-                        boat3_same_day_stats[int(stadium_no)] = {
-                            "n": int(n_rows or 0),
-                            "sum": float(sum_ex or 0.0),
-                        }
-
                     cur = conn.execute("""
                         SELECT r.stadium_number,
                                AVG(NULLIF(pv3.exhibition_time, 0)) AS avg_ex
@@ -2297,16 +2279,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if avg_ex is not None:
                             boat3_venue_avg[int(stadium_no)] = float(avg_ex)
 
-                    for race_id, info in all_race_info.items():
+                    ordered_races = sorted(
+                        all_race_info.items(),
+                        key=lambda kv: (
+                            int(kv[1].get("stadium") or 0),
+                            int(kv[1].get("race_number") or 0),
+                            kv[0],
+                        ),
+                    )
+                    for race_id, info in ordered_races:
                         stadium_no = info.get("stadium")
                         boat3_ex = info.get("boat3_exhibition_time")
                         same_day_avg = None
                         if stadium_no is not None and boat3_ex is not None:
-                            stat = boat3_same_day_stats.get(int(stadium_no))
-                            if stat and stat["n"] > 1:
-                                same_day_avg = (stat["sum"] - float(boat3_ex)) / (stat["n"] - 1)
-                            elif stat and stat["n"] == 1:
-                                same_day_avg = float(boat3_ex)
+                            stat = boat3_same_day_roll.get(int(stadium_no))
+                            if stat and stat["n"] > 0:
+                                same_day_avg = stat["sum"] / stat["n"]
                         boat3_signal_ctx[race_id] = {
                             "race_id": race_id,
                             "stadium": stadium_no,
@@ -2318,6 +2306,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "same_day_boat3_avg_ex": same_day_avg,
                             "venue_boat3_avg_ex": boat3_venue_avg.get(int(stadium_no)) if stadium_no is not None else None,
                         }
+                        if stadium_no is not None and boat3_ex is not None:
+                            stat = boat3_same_day_roll.setdefault(int(stadium_no), {"n": 0, "sum": 0.0})
+                            stat["n"] += 1
+                            stat["sum"] += float(boat3_ex)
                 except Exception as e:
                     logger.warning("boat3 niche context build failed: %s", e)
                     try:
@@ -4698,6 +4690,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     GENERAL200_CACHE_VERSION = "general200_v1"
     MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION = "miyajima_boat4_makuri_v2"
     GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v1"
+    BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v2"
     BET_UNIT_MAP = {
         "miyajima_boat4_tri": 2000,
     }
@@ -4747,6 +4740,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if day_d.get("_miyajima_boat4_makuri_version") != MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION:
                             continue
                         if day_d.get("_general_c_tri_version") != GENERAL_C_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_boat3_niche_version") != BOAT3_NICHE_CACHE_VERSION:
                             continue
                         cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
@@ -5388,31 +5383,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 (to_date,),
                 ).fetchall()
 
-                day_roll = defaultdict(lambda: {"sum": 0.0, "n": 0})
-                for _race_id, rdate, stadium_no, _race_no, _motor_top2, _ex_st3, ex_time3, _pay321, _pay324, _best_ex in candidate_rows:
-                    if ex_time3 is None:
-                        continue
-                    stat = day_roll[(rdate, int(stadium_no))]
-                    stat["sum"] += float(ex_time3)
-                    stat["n"] += 1
-
                 venue_roll = defaultdict(lambda: {"sum": 0.0, "n": 0})
                 current_date = None
                 pending_rows = []
 
                 def _flush_pending(rows_for_date):
+                    same_day_roll = defaultdict(lambda: {"sum": 0.0, "n": 0})
                     for race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, pay321, pay324, best_ex in rows_for_date:
                         if motor_top2 is None or ex_st3 is None or ex_time3 is None or best_ex is None:
                             continue
                         ex_time_v = float(ex_time3)
-                        day_stat = day_roll[(rdate, int(stadium_no))]
-                        if day_stat["n"] > 1:
-                            same_day_avg = (day_stat["sum"] - ex_time_v) / (day_stat["n"] - 1)
-                        elif day_stat["n"] == 1:
-                            same_day_avg = ex_time_v
-                        else:
-                            same_day_avg = None
-
+                        day_stat = same_day_roll[int(stadium_no)]
+                        same_day_avg = (day_stat["sum"] / day_stat["n"]) if day_stat["n"] else None
                         venue_stat = venue_roll[int(stadium_no)]
                         venue_avg = (venue_stat["sum"] / venue_stat["n"]) if venue_stat["n"] else None
                         same_day_gain = (same_day_avg - ex_time_v) if same_day_avg is not None else None
@@ -5426,8 +5408,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             and same_day_gain is not None and same_day_gain >= 0.08
                         )
                         match324 = (
-                            (motor_v >= 40.0 and ex_st_v <= 0.06 and same_day_gain is not None and same_day_gain >= 0.08)
-                            or (ex_st_v <= 0.06 and same_day_gain is not None and same_day_gain >= 0.08 and venue_gain is not None and venue_gain >= 0.08)
+                            motor_v >= 40.0
+                            and ex_st_v <= 0.06
+                            and same_day_gain is not None and same_day_gain >= 0.08
                         )
 
                         if from_date <= rdate <= to_date:
@@ -5443,6 +5426,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                     if pay324:
                                         d["boat3_324_tri_hits"] += 1
                                         d["boat3_324_tri_pay"] += int(pay324 or 0)
+
+                        same_day_roll[int(stadium_no)]["sum"] += ex_time_v
+                        same_day_roll[int(stadium_no)]["n"] += 1
 
                     for _race_id, _rdate, stadium_no, _race_no, _motor_top2, _ex_st3, ex_time3, _pay321, _pay324, _best_ex in rows_for_date:
                         if ex_time3 is None:
@@ -6119,6 +6105,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_general200_version"] = GENERAL200_CACHE_VERSION
                         day_d["_miyajima_boat4_makuri_version"] = MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION
                         day_d["_general_c_tri_version"] = GENERAL_C_TRI_CACHE_VERSION
+                        day_d["_boat3_niche_version"] = BOAT3_NICHE_CACHE_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
                             "INSERT OR REPLACE INTO l4_daily_stats_cache "
