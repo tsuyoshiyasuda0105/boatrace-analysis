@@ -281,8 +281,8 @@
                   // rank クラスで色分け (plus_plus=金、plus=銀、base=従来)
                   l4Badge.className = `l4-badge l4-${sig.l4.level} l4-rank-${rank}`;
                   if (sig.l4.is_1c80) l4Badge.className += ' l4-1c80';
-                  if (sig.l4.is_l4_pro) l4Badge.className += ' l4-pro';
                   if (sig.l4.is_exacta_niche) l4Badge.className += ' l4-exacta-niche';
+                  if (sig.l4.is_trifecta_niche) l4Badge.className += ' l4-trifecta-niche';
                   if (sig.l4.is_win_niche) l4Badge.className += ' l4-win-niche';
                   if (sig.l4.is_miyajima_boat4_watch) l4Badge.className += ' l4-miyajima-boat4-watch';
                   if (sig.l4.is_exhibition_st_out) l4Badge.className += ' l4-exhibition-st-out';
@@ -306,6 +306,27 @@
                           + ` | 買い目: ${sig.l4.bet || ''} 100円`
                           + ` | 条件: ${sig.l4.exacta_niche_tag || ''}`
                           + ` | 相性: ${sig.l4.exacta_niche_ahead}/${sig.l4.exacta_niche_meetings}`;
+                  }
+                  if (sig.l4.is_trifecta_niche) {
+                    title = `${sig.l4.label} | 3連単ニッチ | 検証ROI ${l4Rec}% (n=${l4N})`
+                          + ` | 的中率 ${sig.l4.trifecta_niche_hit_rate}%`
+                          + ` | 買い目: ${sig.l4.bet || ''} 100円`
+                          + ` | 条件: ${sig.l4.trifecta_niche_tag || ''}`;
+                    if (sig.l4.boat3_niche_motor_top2 != null) {
+                      title += ` | 3号艇モーター2連率 ${Number(sig.l4.boat3_niche_motor_top2).toFixed(1)}%`;
+                    }
+                    if (sig.l4.boat3_niche_ex_st != null) {
+                      title += ` | 3号艇展示ST ${Number(sig.l4.boat3_niche_ex_st).toFixed(2)}`;
+                    }
+                    if (sig.l4.boat3_niche_same_day_gain != null) {
+                      title += ` | 当日平均との差 ${Number(sig.l4.boat3_niche_same_day_gain).toFixed(2)}秒`;
+                    }
+                    if (sig.l4.boat3_niche_fastest_diff != null) {
+                      title += ` | 最速差 ${Number(sig.l4.boat3_niche_fastest_diff).toFixed(2)}秒`;
+                    }
+                    if (sig.l4.boat3_niche_venue_gain != null) {
+                      title += ` | 会場平均との差 ${Number(sig.l4.boat3_niche_venue_gain).toFixed(2)}秒`;
+                    }
                   }
                   if (sig.l4.is_win_niche) {
                     title = `${sig.l4.label} | 単勝ニッチ | 検証回収率 ${l4Rec}% (n=${l4N})`
@@ -360,9 +381,6 @@
                     const cst = sig.l4.course1_starts;
                     title += ` | 🚀1c80: 過去6ヶ月 1コース1着率 ${cwr}% (${cst}戦), 検証ROI ${sig.l4.recovery_1c80}% → 資金多め推奨`;
                   }
-                  if (sig.l4.is_l4_pro) {
-                    title += ` | 🔥L4 PRO: ${sig.l4.label_l4_pro}、検証ROI ${sig.l4.recovery_l4_pro}% → ベテラン×スタート好調`;
-                  }
                   if (sig.l4.is_l4_general_200) {
                     title += ` | L4一般200: 回収率 ${sig.l4.general200_recovery}%`
                           + ` / 的中率 ${sig.l4.general200_hit_rate}% / n=${sig.l4.general200_n}`
@@ -393,7 +411,7 @@
                   }
                   l4Badge.title = title;
                   const onec80 = sig.l4.is_1c80 ? ' 🚀' : '';
-                  const pro = sig.l4.is_l4_pro ? ' 🔥' : '';
+                  const pro = '';
                   const portfolio = sig.l4.is_portfolio_strong ? ' 🔥強' : '';
                   const exacta = sig.l4.is_exacta_niche ? ' 🎯2連単' : '';
                   const winNiche = sig.l4.is_win_niche ? ' 🎯単勝' : '';
@@ -404,7 +422,7 @@
                     ? ` ST${Number(sig.l4.miyajima_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.miyajima_boat4_course4_win_rate || 0).toFixed(1)}%`
                     : '';
                   const general200 = sig.l4.is_l4_general_200 ? ' 一般200' : '';
-                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${pro}${portfolio}${general200}${exacta}${winNiche}`;
+                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${portfolio}${general200}${exacta}${winNiche}`;
                   item.appendChild(l4Badge);
                   if (sig.l4.is_portfolio_strong) {
                     const ps = document.createElement('span');
@@ -451,22 +469,6 @@
                   //   条件: F1 (L4 G++) AND race_number IN (11, 12)
                   //   L4 帯 (本命500-999円) 制約は L4 universe 通過済の段階で
                   //   既に満たされている (is_f1 が立つには min_payout∈[500,1000) 必要)
-                  if (sig.l4.is_f1_prime) {
-                    const fpBadge = document.createElement('span');
-                    fpBadge.className = 'f1-prime-badge';
-                    const fpRec = (sig.l4.recovery_f1_prime != null)
-                      ? sig.l4.recovery_f1_prime : '-';
-                    fpBadge.textContent = `🎖 F1 Prime ${fpRec}%`;
-                    fpBadge.title = (
-                      `F1 Prime 11-12R (ユーザー提案条件)\n`
-                      + `条件: 一般戦×1号艇A1×B除外×男性のみ×雨除外×\n`
-                      + `      1号艇国1%≥7×2号モ2連率≥40×11/12R×本命500-999円帯\n`
-                      + `買い目: 3連単 1-2-3 (100円)\n`
-                      + `検証 ROI: ${fpRec}% (暫定値、本番再検証で更新予定)\n`
-                      + `→ F1 + L4-prime が同時成立した最上位候補`
-                    );
-                    item.appendChild(fpBadge);
-                  }
 
                   // 鉄板度スコアバッジ (backlog item 11、緑観察より優先表示)
                   if (sig.l4.tetsuban_score && sig.l4.tetsuban_score >= 3) {
@@ -510,8 +512,7 @@
 
                   // 観察バッジ (3 ヶ月実績で採用判断、緑色)
                   // L4-prime (11-12R) / L4-12R / 一般戦×12R / 戸田7R / L4-Mid
-                  if (sig.l4.is_obs_prime || sig.l4.is_obs_r12 || sig.l4.is_obs_gen_r12
-                      || sig.l4.is_obs_toda_7r
+                  if (sig.l4.is_obs_r12 || sig.l4.is_obs_toda_7r
                       || sig.l4.is_obs_mid_132 || sig.l4.is_obs_mid_132_tier_a) {
                     const obs = document.createElement('span');
                     let cls = 'obs-badge';
@@ -535,7 +536,7 @@
                       cls += ' obs-toda-7r';
                       txt = '🟢戸田7R';
                       tt = '観察: 戸田 7R 企画 (検証 ROI 171.5%, n=106、B除外バイパス)';
-                    } else if (sig.l4.is_obs_gen_r12) {
+                    } else if (false && sig.l4.is_obs_gen_r12) {
                       cls += ' obs-gen-r12';
                       txt = '🟢一般×12R';
                       tt = '観察: 一般戦×12R (検証 ROI 189%, n=2100)';
@@ -875,6 +876,7 @@
               const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
               const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
               const isExactaNiche = l4Badge && l4Badge.classList.contains('l4-exacta-niche');
+              const isTrifectaNiche = l4Badge && l4Badge.classList.contains('l4-trifecta-niche');
               const isMiyajimaBoat4 = l4Badge && l4Badge.classList.contains('l4-miyajima-boat4-watch');
               const isGeneral200 = l4Badge && (
                 l4Badge.classList.contains('l4-l4_general_200')
@@ -895,6 +897,7 @@
               if (!isExactaNiche && is1c80) rankLabel = '🚀 ' + rankLabel + ' 1c80';
               if (!isExactaNiche && isPro) rankLabel = '🔥 ' + rankLabel + ' PRO';
               if (!isExactaNiche && u.isPortfolioStrong) rankLabel = '🔥 強監視 ' + rankLabel;
+              if (isTrifectaNiche) rankLabel = '🎯 3連単';
               if (tbStars) rankLabel = tbStars + rankLabel;
               if (isGeneral200) rankLabel = '強 一般200';
               const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';

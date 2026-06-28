@@ -3932,14 +3932,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # ▼ L4 PRO (ベテラン × スタート上手 × 展示好調)
             #   平均ST<0.16 + 30-49歳 + 展示ST<0.18 (展示無ければ 2 条件で候補)
             #   検証: 4年 n=247、ROI 241.5%
-            if is_l4_pro(avg_st, age, ex_st):
-                base["is_l4_pro"] = True
-                base["recovery_l4_pro"] = L4_PRO_RECOVERY
-                _ex_part = f", 展示ST={float(ex_st):.2f}" if ex_st is not None else " (展示前)"
-                base["label_l4_pro"] = (
-                    f"🔥L4 PRO (ST={float(avg_st):.2f}, "
-                    f"{int(age)}歳{_ex_part})"
-                )
 
             # ▼ L4-prime / L4-12R / 一般戦×12R 観察フラグ (3 ヶ月実績で採用判断)
             # base が確定したレース (= L4 universe 通過済) なら race_number で判定
@@ -3957,12 +3949,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             #   F1 (一般戦×国1%≥7×2号モ2連率≥40) + 11/12R + L4 帯
             #   = is_f1 AND rn in (11, 12) のとき is_f1_prime=True
             #   検証 ROI: 暫定 204% (F1 単体と同等、 本番再検証で更新予定)
-            if base.get("is_f1") and rn in (11, 12):
-                base["is_f1_prime"] = True
-                # 専用 recovery (現状は F1 単体と同じ 204%)
-                # 本番再検証後に F1_PRIME_RECOVERY を更新するとここに反映
-                from src.evaluation.l4_strategy import F1_PRIME_RECOVERY
-                base["recovery_f1_prime"] = F1_PRIME_RECOVERY
 
             # ▼ 抜きフィルター (2026-05-30 追加、 決まり手データ投入後検証)
             #   江戸川/浜名湖/鳴門は水面流れあり → 1号艇「抜き」勝ち比率高い
@@ -4127,9 +4113,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 3:
                     base = {"level": "morning_G2", "label": "🌅👑朝L4 G2候補",
                             "recovery": 242.7, "n": 30}
-                elif grade == 4:
-                    base = {"level": "morning_G3", "label": "🌅🎯朝L4 G3候補",
-                            "recovery": 149.2, "n": 195}
                 elif grade == 5:
                     # 一般戦: F1 条件 (国1%≥7 + 2号 top_2≥40) チェック
                     try:
@@ -4173,10 +4156,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 elif grade == 3:
                     base = {"level": "morning_watch_G2", "label": "🌅👀朝監視 G2",
                             "recovery": 242.7, "n": 30, "is_reference": True,
-                            "is_morning_watch": True}
-                elif grade == 4:
-                    base = {"level": "morning_watch_G3", "label": "🌅👀朝監視 G3",
-                            "recovery": 149.2, "n": 195, "is_reference": True,
                             "is_morning_watch": True}
             elif cls == 1 and 0.58 <= prob_first < 0.60 and grade in (1, 2, 3):
                 # 朝監視ST:
@@ -4225,14 +4204,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     base["recovery_1c80"] = L4_1C80_RECOVERY
                     base["label_1c80"] = f"🚀1c80 ({c1[0]*100:.0f}%)"
             # ▼ L4 PRO オーバーレイ (展示 ST 無い朝予測でも 2 条件で候補判定)
-            if is_l4_pro(avg_st, age, ex_st):
-                base["is_l4_pro"] = True
-                base["recovery_l4_pro"] = L4_PRO_RECOVERY
-                _ex_part = f", 展示ST={float(ex_st):.2f}" if ex_st is not None else " (展示前)"
-                base["label_l4_pro"] = (
-                    f"🔥L4 PRO (ST={float(avg_st):.2f}, "
-                    f"{int(age)}歳{_ex_part})"
-                )
             # 参考レース (一般戦) と F1 一般戦は rank 補正をスキップ (固有の検証値を保持)
             if rec_override is not None and not base.get("is_reference") and not base.get("is_f1"):
                 base["recovery"] = rec_override
@@ -4250,10 +4221,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["is_obs_toda_7r"] = True
 
             # ▼ F1 Prime 11-12R (朝判定も同じロジック、 2026-05-30 追加)
-            if base.get("is_f1") and rn in (11, 12):
-                base["is_f1_prime"] = True
-                from src.evaluation.l4_strategy import F1_PRIME_RECOVERY
-                base["recovery_f1_prime"] = F1_PRIME_RECOVERY
 
             # ▼ 抜きフィルター (朝判定も同じロジック、 2026-05-30 追加)
             try:
