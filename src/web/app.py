@@ -3282,63 +3282,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         def _evaluate_g23_optb_signal(stadium, grade, cls, min_payout, natl_1=None, local_1=None,
                                      avg_st=None, age=None, ex_st=None, boat2_motor_top2=None,
                                      weather=None, n_female=0):
-            try:
-                stadium_i = int(stadium) if stadium is not None else None
-                grade_i = int(grade) if grade is not None else None
-                cls_i = int(cls) if cls is not None else None
-                min_payout_i = int(min_payout) if min_payout is not None else None
-                natl = float(natl_1) if natl_1 is not None else None
-                local = float(local_1) if local_1 is not None else None
-                st180 = float(avg_st) if avg_st is not None else None
-                age_i = int(age) if age is not None else None
-                exst = float(ex_st) if ex_st is not None else None
-                b2_motor = float(boat2_motor_top2) if boat2_motor_top2 is not None else None
-            except (TypeError, ValueError):
-                return None
-
-            venue_caps = {11: 35.0, 12: 35.0, 16: 40.0, 20: 30.0, 22: 35.0, 23: 40.0}
-            if stadium_i not in venue_caps:
-                return None
-            if grade_i not in (3, 4):
-                return None
-            if cls_i != 1:
-                return None
-            if min_payout_i is None or not (500 <= min_payout_i < 1000):
-                return None
-            if weather == 3:
-                return None
-            if n_female and int(n_female or 0) > 0:
-                return None
-            if natl is None or natl < 7.0:
-                return None
-            if local is None or local < 6.0:
-                return None
-            if age_i is None or not (30 <= age_i <= 49):
-                return None
-            if st180 is None or st180 >= 0.155:
-                return None
-            if exst is None or exst >= 0.18:
-                return None
-            if b2_motor is None or b2_motor > venue_caps[stadium_i]:
-                return None
-
-            return {
-                "level": "g23_optb",
-                "label": "G2/G3 1-2-3 会場別最適化B",
-                "recovery": 150.5,
-                "n": 38,
-                "bet": "3連単 1-2-3",
-                "rank": "formal",
-                "rank_label": "正式採用",
-                "natl_1": natl,
-                "local_1": local,
-                "is_reference": False,
-                "is_g23_optb": True,
-                "g23_optb_hit_rate": 36.8,
-                "g23_optb_tag": "G2+G3 + 1号艇A1 + 雨/女子除外 + 5-10倍 + 会場別2号艇モーター上限",
-                "tetsuban_score": 7,
-                "tetsuban_label": "G2/G3 123",
-            }
+            return None
 
         def _evaluate_exacta_niche(stadium, race_number, boat1_motor_top2=None,
                                    boat2_motor_top2=None, program_type=None,
@@ -3779,12 +3723,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         def _evaluate_win_niche(stadium, boat1_top2=None, boat3_top2=None, boat4_top2=None):
             """Evaluate verified win-bet niche strategies."""
-            try:
-                b1 = float(boat1_top2) if boat1_top2 is not None else 0.0
-                b3 = float(boat3_top2) if boat3_top2 is not None else 0.0
-                b4 = float(boat4_top2) if boat4_top2 is not None else 0.0
-            except (TypeError, ValueError):
-                return None
+            return None
             if stadium == 1 and (b3 - b1) >= 0.08 and (b3 - b4) >= 0.05:
                 return {
                     "level": "win_niche_kiryu_win2",
@@ -4008,12 +3947,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 rn = int(race_number) if race_number is not None else 0
             except (TypeError, ValueError):
                 rn = 0
-            if rn in (11, 12):
-                base["is_obs_prime"] = True
             if rn == 12:
                 base["is_obs_r12"] = True
-                if grade == 5:
-                    base["is_obs_gen_r12"] = True
             # 企画レース観察 (2026-05-19 追加): 戸田7R
             if stadium == 2 and rn == 7:
                 base["is_obs_toda_7r"] = True
@@ -4136,8 +4071,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if ex < 0.18:
                     return base
 
-                pre_ex_pro = is_l4_pro(avg_st, age, None)
-                if not (base.get("is_morning_watch_st") or pre_ex_pro):
+                if not base.get("is_morning_watch_st"):
                     return base
 
                 base["is_reference"] = True
@@ -4309,12 +4243,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 rn = int(race_number) if race_number is not None else 0
             except (TypeError, ValueError):
                 rn = 0
-            if rn in (11, 12):
-                base["is_obs_prime"] = True
             if rn == 12:
                 base["is_obs_r12"] = True
-                if grade == 5:
-                    base["is_obs_gen_r12"] = True
             # 企画レース観察 (2026-05-19 追加): 戸田7R
             if stadium == 2 and rn == 7:
                 base["is_obs_toda_7r"] = True
