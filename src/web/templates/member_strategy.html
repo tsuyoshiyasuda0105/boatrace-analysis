@@ -366,6 +366,42 @@
     </div>
   </section>
 
+  <section class="totals-summary">
+    <h3>現行手法サマリ</h3>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <span class="card-label">G2/G3 1-2-3</span>
+        <span class="card-value">{% if totals.g23_optb_tri_roi is not none %}{{ '%+.1f' | format(totals.g23_optb_tri_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.g23_optb_tri_bets }} HIT={{ totals.g23_optb_tri_hits }} / 損益 {{ totals.g23_optb_tri_profit | signed_comma }}円</span>
+      </div>
+      <div class="summary-card">
+        <span class="card-label">3号艇まくり型 3-2-1</span>
+        <span class="card-value">{% if totals.boat3_321_tri_roi is not none %}{{ '%+.1f' | format(totals.boat3_321_tri_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.boat3_321_tri_bets }} HIT={{ totals.boat3_321_tri_hits }} / 損益 {{ totals.boat3_321_tri_profit | signed_comma }}円</span>
+      </div>
+      <div class="summary-card">
+        <span class="card-label">3号艇まくり型 3-2-4</span>
+        <span class="card-value">{% if totals.boat3_324_tri_roi is not none %}{{ '%+.1f' | format(totals.boat3_324_tri_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.boat3_324_tri_bets }} HIT={{ totals.boat3_324_tri_hits }} / 損益 {{ totals.boat3_324_tri_profit | signed_comma }}円</span>
+      </div>
+      <div class="summary-card">
+        <span class="card-label">芦屋 4-1</span>
+        <span class="card-value">{% if totals.ashiya_boat4_exa_roi is not none %}{{ '%+.1f' | format(totals.ashiya_boat4_exa_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.ashiya_boat4_exa_bets }} HIT={{ totals.ashiya_boat4_exa_hits }} / 損益 {{ totals.ashiya_boat4_exa_profit | signed_comma }}円</span>
+      </div>
+      <div class="summary-card">
+        <span class="card-label">宮島 4コースまくり</span>
+        <span class="card-value">{% if totals.miyajima_boat4_tri_roi is not none %}{{ '%+.1f' | format(totals.miyajima_boat4_tri_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.miyajima_boat4_tri_bets }} HIT={{ totals.miyajima_boat4_tri_hits }} / 損益 {{ totals.miyajima_boat4_tri_profit | signed_comma }}円</span>
+      </div>
+      <div class="summary-card">
+        <span class="card-label">唐津 雨 1-2</span>
+        <span class="card-value">{% if totals.karatsu_rain_exa_roi is not none %}{{ '%+.1f' | format(totals.karatsu_rain_exa_roi) }}%{% else %}-{% endif %}</span>
+        <span class="card-sub">n={{ totals.karatsu_rain_exa_bets }} HIT={{ totals.karatsu_rain_exa_hits }} / 損益 {{ totals.karatsu_rain_exa_profit | signed_comma }}円</span>
+      </div>
+    </div>
+  </section>
+
   <section class="chart-section">
     <h3>📉 日別 累積損益 (1点100円ベース)</h3>
     <canvas id="cumChart" width="800" height="280"></canvas>
