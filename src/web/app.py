@@ -3284,6 +3284,79 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                      weather=None, n_female=0):
             return None
 
+        def _evaluate_general_c_signal(
+            stadium,
+            grade,
+            cls,
+            min_payout,
+            natl_1=None,
+            boat2_top2=None,
+            race_number=None,
+            weather=None,
+            boat2_exhibition_time=None,
+            boat3_exhibition_time=None,
+            n_female=0,
+        ):
+            try:
+                payout = int(min_payout) if min_payout is not None else None
+            except (TypeError, ValueError):
+                payout = None
+            try:
+                n1 = float(natl_1) if natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = 0.0
+            try:
+                b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                b2 = 0.0
+            try:
+                rn = int(race_number) if race_number is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
+            try:
+                b2_ex = float(boat2_exhibition_time) if boat2_exhibition_time is not None else None
+            except (TypeError, ValueError):
+                b2_ex = None
+            try:
+                b3_ex = float(boat3_exhibition_time) if boat3_exhibition_time is not None else None
+            except (TypeError, ValueError):
+                b3_ex = None
+
+            if not (
+                grade == 5
+                and cls == 1
+                and stadium not in EXCLUDE_B_VENUES
+                and weather != 3
+                and n_female == 0
+                and payout is not None and 500 <= payout < 1000
+                and n1 >= 7.0
+                and b2 >= 40.0
+                and rn in (10, 11, 12)
+                and b2_ex is not None and b3_ex is not None and b2_ex <= b3_ex
+            ):
+                return None
+
+            return {
+                "level": "general_c_tri",
+                "label": "一般C候補",
+                "recovery": 255.3,
+                "n": 148,
+                "bet": "3連単 1-2-3",
+                "rank": "trifecta_niche",
+                "rank_label": "一般C",
+                "rank_emoji": "候補",
+                "natl_1": natl_1,
+                "local_1": None,
+                "is_reference": False,
+                "is_trifecta_niche": True,
+                "trifecta_niche_name": "一般C 1-2-3",
+                "trifecta_niche_tag": "一般戦 + 10-12R + 1号艇全国1着率7%以上 + 2号艇全国2連対率40%以上 + 展示で2号艇<=3号艇",
+                "trifecta_niche_hit_rate": 37.2,
+                "trifecta_niche_recovery": 255.3,
+                "tetsuban_score": 6,
+                "tetsuban_label": "一般C",
+            }
+
         def _evaluate_exacta_niche(stadium, race_number, boat1_motor_top2=None,
                                    boat2_motor_top2=None, program_type=None,
                                    pair_affinity=None, grade=None, weather=None):
@@ -4303,7 +4376,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 n_female=n_female,
                 target_date_iso=target_date,
             )
-            data = results.get(rid)
+            core_data = results.get(rid)
+            data = core_data
             if data is None and rid in mid132_results:
                 data = {"min_payout": mid132_results[rid], "source": "1-3-2"}
 
@@ -4317,6 +4391,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 ex_st=ex_st,
                 boat2_motor_top2=boat2_motor_top2,
                 weather=weather,
+                n_female=n_female,
+            )
+            general_c = _evaluate_general_c_signal(
+                stadium,
+                grade,
+                cls,
+                core_data["min_payout"] if core_data else None,
+                natl_1=natl_1,
+                boat2_top2=boat2_top2,
+                race_number=race_no_info,
+                weather=weather,
+                boat2_exhibition_time=boat2_exhibition_time,
+                boat3_exhibition_time=boat3_exhibition_time,
                 n_female=n_female,
             )
 
@@ -4386,6 +4473,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     miyajima_watch,
                     win_niche,
                     boat3_trifecta_niche,
+                    general_c,
                     g23_optb,
                     candidate_l4,
                 )
@@ -4609,6 +4697,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KARATSU_RAIN_EXA_CACHE_VERSION = "karatsu_rain_exa_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
     MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION = "miyajima_boat4_makuri_v2"
+    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v1"
     BET_UNIT_MAP = {
         "miyajima_boat4_tri": 2000,
     }
@@ -4657,6 +4746,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_miyajima_boat4_makuri_version") != MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION:
                             continue
+                        if day_d.get("_general_c_tri_version") != GENERAL_C_TRI_CACHE_VERSION:
+                            continue
                         cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
                         pass
@@ -4684,7 +4775,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "toda_7r_tri", "mid_132_tri",
                             "mid_132_tier_a_tri", "venus_tri",
                             "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
-                            "karatsu_rain_exa", "miyajima_boat4_tri"):
+                            "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
+                            "boat3_321_tri", "boat3_324_tri", "g23_optb_tri"):
                     n = d.get(f"{bet}_bets", 0)
                     pay = d.get(f"{bet}_pay", 0)
                     unit = BET_UNIT_MAP.get(bet, 100)
@@ -4897,6 +4989,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "karatsu_rain_exa_bets": 0, "karatsu_rain_exa_hits": 0, "karatsu_rain_exa_pay": 0,
                 "miyajima_boat4_tri_bets": 0, "miyajima_boat4_tri_hits": 0, "miyajima_boat4_tri_pay": 0,
+                "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
                 "boat3_321_tri_bets": 0, "boat3_321_tri_hits": 0, "boat3_321_tri_pay": 0,
                 "boat3_324_tri_bets": 0, "boat3_324_tri_hits": 0, "boat3_324_tri_pay": 0,
                 "g23_optb_tri_bets": 0, "g23_optb_tri_hits": 0, "g23_optb_tri_pay": 0,
@@ -4957,6 +5050,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "karatsu_rain_exa_bets": 0, "karatsu_rain_exa_hits": 0, "karatsu_rain_exa_pay": 0,
                 "miyajima_boat4_tri_bets": 0, "miyajima_boat4_tri_hits": 0, "miyajima_boat4_tri_pay": 0,
+                "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
                 "boat3_321_tri_bets": 0, "boat3_321_tri_hits": 0, "boat3_321_tri_pay": 0,
                 "boat3_324_tri_bets": 0, "boat3_324_tri_hits": 0, "boat3_324_tri_pay": 0,
                 "g23_optb_tri_bets": 0, "g23_optb_tri_hits": 0, "g23_optb_tri_pay": 0,
@@ -5175,6 +5269,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if tri_hit:
                             d["gen_200_tri_hits"] += 1
                             d["gen_200_tri_pay"] += tri_pay_v
+                    if (
+                        n1 >= 7.0
+                        and b2 >= 40.0
+                        and rn in (10, 11, 12)
+                        and boat2_exhibition_time is not None
+                        and boat3_exhibition_time is not None
+                        and float(boat2_exhibition_time) <= float(boat3_exhibition_time)
+                    ):
+                        d["general_c_tri_bets"] += 1
+                        if tri_hit:
+                            d["general_c_tri_hits"] += 1
+                            d["general_c_tri_pay"] += tri_pay_v
                     if n1 >= 7.0 and b2 >= 40.0:
                         d["gen_f1_tri_bets"] += 1
                         if tri_hit:
@@ -5273,60 +5379,90 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                      GROUP BY race_id
                   ) exall
                     ON exall.race_id = r.race_id
-                 WHERE r.race_date BETWEEN ? AND ?
+                 WHERE r.race_date <= ?
                    AND pv3.exhibition_time IS NOT NULL
                    AND pv3.exhibition_time > 0
                    AND pv3.start_timing_exhibition IS NOT NULL
                  ORDER BY r.race_date, r.stadium_number, r.race_number, r.race_id
                 """,
-                (from_date, to_date),
+                (to_date,),
                 ).fetchall()
 
-                same_day_roll = defaultdict(lambda: {"sum": 0.0, "n": 0})
+                day_roll = defaultdict(lambda: {"sum": 0.0, "n": 0})
+                for _race_id, rdate, stadium_no, _race_no, _motor_top2, _ex_st3, ex_time3, _pay321, _pay324, _best_ex in candidate_rows:
+                    if ex_time3 is None:
+                        continue
+                    stat = day_roll[(rdate, int(stadium_no))]
+                    stat["sum"] += float(ex_time3)
+                    stat["n"] += 1
+
                 venue_roll = defaultdict(lambda: {"sum": 0.0, "n": 0})
+                current_date = None
+                pending_rows = []
+
+                def _flush_pending(rows_for_date):
+                    for race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, pay321, pay324, best_ex in rows_for_date:
+                        if motor_top2 is None or ex_st3 is None or ex_time3 is None or best_ex is None:
+                            continue
+                        ex_time_v = float(ex_time3)
+                        day_stat = day_roll[(rdate, int(stadium_no))]
+                        if day_stat["n"] > 1:
+                            same_day_avg = (day_stat["sum"] - ex_time_v) / (day_stat["n"] - 1)
+                        elif day_stat["n"] == 1:
+                            same_day_avg = ex_time_v
+                        else:
+                            same_day_avg = None
+
+                        venue_stat = venue_roll[int(stadium_no)]
+                        venue_avg = (venue_stat["sum"] / venue_stat["n"]) if venue_stat["n"] else None
+                        same_day_gain = (same_day_avg - ex_time_v) if same_day_avg is not None else None
+                        venue_gain = (venue_avg - ex_time_v) if venue_avg is not None else None
+                        motor_v = float(motor_top2)
+                        ex_st_v = float(ex_st3)
+
+                        match321 = (
+                            motor_v >= 35.0
+                            and ex_st_v <= 0.08
+                            and same_day_gain is not None and same_day_gain >= 0.08
+                        )
+                        match324 = (
+                            (motor_v >= 40.0 and ex_st_v <= 0.06 and same_day_gain is not None and same_day_gain >= 0.08)
+                            or (ex_st_v <= 0.06 and same_day_gain is not None and same_day_gain >= 0.08 and venue_gain is not None and venue_gain >= 0.08)
+                        )
+
+                        if from_date <= rdate <= to_date:
+                            d = by_date.get(rdate)
+                            if d is not None:
+                                if match321:
+                                    d["boat3_321_tri_bets"] += 1
+                                    if pay321:
+                                        d["boat3_321_tri_hits"] += 1
+                                        d["boat3_321_tri_pay"] += int(pay321 or 0)
+                                if match324:
+                                    d["boat3_324_tri_bets"] += 1
+                                    if pay324:
+                                        d["boat3_324_tri_hits"] += 1
+                                        d["boat3_324_tri_pay"] += int(pay324 or 0)
+
+                    for _race_id, _rdate, stadium_no, _race_no, _motor_top2, _ex_st3, ex_time3, _pay321, _pay324, _best_ex in rows_for_date:
+                        if ex_time3 is None:
+                            continue
+                        stat = venue_roll[int(stadium_no)]
+                        stat["sum"] += float(ex_time3)
+                        stat["n"] += 1
 
                 for race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, pay321, pay324, best_ex in candidate_rows:
                     if motor_top2 is None or ex_st3 is None or ex_time3 is None or best_ex is None:
                         continue
-                    ex_time_v = float(ex_time3)
-                    same_key = (rdate, int(stadium_no))
-                    same_stat = same_day_roll[same_key]
-                    venue_stat = venue_roll[int(stadium_no)]
-                    same_day_avg = (same_stat["sum"] / same_stat["n"]) if same_stat["n"] else None
-                    venue_avg = (venue_stat["sum"] / venue_stat["n"]) if venue_stat["n"] else None
-                    same_day_gain = (same_day_avg - ex_time_v) if same_day_avg is not None else None
-                    venue_gain = (venue_avg - ex_time_v) if venue_avg is not None else None
-                    fastest_diff = ex_time_v - float(best_ex)
-                    motor_v = float(motor_top2)
-                    ex_st_v = float(ex_st3)
-
-                    match321 = (
-                        motor_v >= 35.0
-                        and ex_st_v <= 0.08
-                        and same_day_gain is not None and same_day_gain >= 0.08
-                    )
-                    match324 = (
-                        (motor_v >= 40.0 and ex_st_v <= 0.06 and same_day_gain is not None and same_day_gain >= 0.08)
-                        or (ex_st_v <= 0.06 and same_day_gain is not None and same_day_gain >= 0.08 and venue_gain is not None and venue_gain >= 0.08)
-                    )
-
-                    d = by_date.get(rdate)
-                    if d is not None:
-                        if match321:
-                            d["boat3_321_tri_bets"] += 1
-                            if pay321:
-                                d["boat3_321_tri_hits"] += 1
-                                d["boat3_321_tri_pay"] += int(pay321 or 0)
-                        if match324:
-                            d["boat3_324_tri_bets"] += 1
-                            if pay324:
-                                d["boat3_324_tri_hits"] += 1
-                                d["boat3_324_tri_pay"] += int(pay324 or 0)
-
-                    same_stat["sum"] += ex_time_v
-                    same_stat["n"] += 1
-                    venue_stat["sum"] += ex_time_v
-                    venue_stat["n"] += 1
+                    if current_date is None:
+                        current_date = rdate
+                    if rdate != current_date:
+                        _flush_pending(pending_rows)
+                        pending_rows = []
+                        current_date = rdate
+                    pending_rows.append((race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, pay321, pay324, best_ex))
+                if pending_rows:
+                    _flush_pending(pending_rows)
         except Exception as e:
             logger.warning("boat3 trifecta niche daily stats failed: %s", e)
 
@@ -5765,7 +5901,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                               "ashiya_boat4_exa_bets, ashiya_boat4_exa_hits, ashiya_boat4_exa_pay, "
                               "kiryu_win2_bets, kiryu_win2_hits, kiryu_win2_pay, "
                               "karatsu_rain_exa_bets, karatsu_rain_exa_hits, karatsu_rain_exa_pay, "
-                              "miyajima_boat4_tri_bets, miyajima_boat4_tri_hits, miyajima_boat4_tri_pay")
+                              "miyajima_boat4_tri_bets, miyajima_boat4_tri_hits, miyajima_boat4_tri_pay, "
+                              "general_c_tri_bets, general_c_tri_hits, general_c_tri_pay")
                 has_obs_cols = True
                 has_planned_cols = True
                 has_niche_cols = True
@@ -5837,7 +5974,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          ashib, ashih, aship,
                          kiryub, kiryuh, kiryup,
                          karab, karah, karap,
-                         miyab, miyah, miyap) = row
+                         miyab, miyah, miyap,
+                         gcb, gch, gcp) = row
                     elif has_planned_cols:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -5855,6 +5993,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         kiryub = kiryuh = kiryup = 0
                         karab = karah = karap = 0
                         miyab = miyah = miyap = 0
+                        gcb = gch = gcp = 0
                     elif has_obs_cols:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -5872,6 +6011,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         kiryub = kiryuh = kiryup = 0
                         karab = karah = karap = 0
                         miyab = miyah = miyap = 0
+                        gcb = gch = gcp = 0
                     else:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -5890,6 +6030,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         kiryub = kiryuh = kiryup = 0
                         karab = karah = karap = 0
                         miyab = miyah = miyap = 0
+                        gcb = gch = gcp = 0
                     if sdate >= STRICT_ODDS_DAILY_START:
                         # Recent live-operation stats must come from raw odds snapshots.
                         # Legacy summaries may include final-payout proxy rows.
@@ -5931,6 +6072,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "kiryu_win2_bets": kiryub or 0, "kiryu_win2_hits": kiryuh or 0, "kiryu_win2_pay": kiryup or 0,
                         "karatsu_rain_exa_bets": karab or 0, "karatsu_rain_exa_hits": karah or 0, "karatsu_rain_exa_pay": karap or 0,
                         "miyajima_boat4_tri_bets": miyab or 0, "miyajima_boat4_tri_hits": miyah or 0, "miyajima_boat4_tri_pay": miyap or 0,
+                        "general_c_tri_bets": gcb or 0, "general_c_tri_hits": gch or 0, "general_c_tri_pay": gcp or 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
@@ -5945,10 +6087,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
                         "prime_tri", "r12_tri", "gen_r12_tri",
                         "toda_7r_tri", "mid_132_tri",
-                        "mid_132_tier_a_tri", "venus_tri",
-                        "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
-                        "karatsu_rain_exa", "miyajima_boat4_tri",
-                        "boat3_321_tri", "boat3_324_tri", "g23_optb_tri"):
+                    "mid_132_tier_a_tri", "venus_tri",
+                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
+                    "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
+                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 unit = BET_UNIT_MAP.get(bet, 100)
@@ -5976,6 +6118,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_karatsu_rain_exa_version"] = KARATSU_RAIN_EXA_CACHE_VERSION
                         day_d["_general200_version"] = GENERAL200_CACHE_VERSION
                         day_d["_miyajima_boat4_makuri_version"] = MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION
+                        day_d["_general_c_tri_version"] = GENERAL_C_TRI_CACHE_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
                             "INSERT OR REPLACE INTO l4_daily_stats_cache "
@@ -6485,7 +6628,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
-        from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
+        from_d = request.args.get("from") or (today - timedelta(days=548)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
@@ -6518,7 +6661,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
-                    "karatsu_rain_exa", "miyajima_boat4_tri",
+                    "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
                     "boat3_321_tri", "boat3_324_tri", "g23_optb_tri")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
@@ -6588,7 +6731,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             health_results = []
 
         return render_template(
-            "member_strategy.html",
+            "member_strategy_v2.html",
             rows=rows,
             totals=totals,
             health_results=[],
@@ -6617,7 +6760,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
-                    "karatsu_rain_exa", "miyajima_boat4_tri",
+                    "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
                     "boat3_321_tri", "boat3_324_tri", "g23_optb_tri")
         try:
             monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
@@ -6706,7 +6849,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_total_keys = (
             "win", "exa", "tri", "gen_f1_tri", "gen_200_tri",
             "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa",
-            "kiryu_win2", "karatsu_rain_exa", "miyajima_boat4_tri",
+            "kiryu_win2", "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
             "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
             "prime_tri", "r12_tri", "gen_r12_tri",
         )
@@ -6756,7 +6899,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             health_results = []
 
         return render_template(
-            "member_monthly.html",
+            "member_monthly_v2.html",
             monthly_rows=monthly_rows,
             monthly_rows_asc=monthly_rows_asc,
             monthly_totals=monthly_totals,
