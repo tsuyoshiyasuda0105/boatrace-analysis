@@ -6491,7 +6491,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             return "Invalid date format", 400
 
-        rows = _candidate_134_daily_stats(from_d, to_d)
+        rows = _l4_daily_stats(from_d, to_d)
 
         for r in rows:
             tri_bets = int(r.get("tri_bets", 0) or 0)
@@ -6620,7 +6620,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "karatsu_rain_exa", "miyajima_boat4_tri",
                     "boat3_321_tri", "boat3_324_tri", "g23_optb_tri")
         try:
-            monthly_daily = _candidate_134_daily_stats(monthly_from, monthly_to)
+            monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
         except Exception as e:
             logger.warning("monthly daily stats failed: %s", e)
             monthly_daily = []
