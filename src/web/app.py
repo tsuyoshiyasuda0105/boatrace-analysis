@@ -6635,8 +6635,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         rows = _l4_daily_stats(from_d, to_d)
+        adopted_keys = (
+            "g23_optb_tri",
+            "boat3_321_tri",
+            "boat3_324_tri",
+            "ashiya_boat4_exa",
+            "miyajima_boat4_tri",
+            "karatsu_rain_exa",
+            "general_c_tri",
+        )
 
         for r in rows:
+            for key in adopted_keys:
+                r.setdefault(f"{key}_bets", 0)
+                r.setdefault(f"{key}_hits", 0)
+                r.setdefault(f"{key}_pay", 0)
+                bets_v = int(r.get(f"{key}_bets", 0) or 0)
+                pay_v = int(r.get(f"{key}_pay", 0) or 0)
+                unit_v = BET_UNIT_MAP.get(key, 100)
+                r.setdefault(f"{key}_roi", ((pay_v - unit_v * bets_v) / (unit_v * bets_v) * 100) if bets_v else None)
+                r.setdefault(f"{key}_recovery", (pay_v / (unit_v * bets_v) * 100) if bets_v else None)
+                r.setdefault(f"{key}_profit", pay_v - unit_v * bets_v if bets_v else 0)
             tri_bets = int(r.get("tri_bets", 0) or 0)
             tri_hits = int(r.get("tri_hits", 0) or 0)
             tri_pay = int(r.get("tri_pay", 0) or 0)
@@ -6672,6 +6691,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             totals[f"{k}_roi"] = (pay - unit*n)/(unit*n)*100 if n else None
             totals[f"{k}_recovery"] = pay/(unit*n)*100 if n else None
             totals[f"{k}_profit"] = pay - unit*n if n else 0
+        for key in adopted_keys:
+            totals.setdefault(f"{key}_bets", 0)
+            totals.setdefault(f"{key}_hits", 0)
+            totals.setdefault(f"{key}_pay", 0)
+            totals.setdefault(f"{key}_roi", None)
+            totals.setdefault(f"{key}_recovery", None)
+            totals.setdefault(f"{key}_profit", 0)
 
         totals["n_l4_display"] = int(totals.get("n_l4", 0) or 0)
         tri_bets = int(totals.get("tri_bets", 0) or 0)
@@ -6762,6 +6788,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
                     "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
                     "boat3_321_tri", "boat3_324_tri", "g23_optb_tri")
+        adopted_keys = (
+            "g23_optb_tri",
+            "boat3_321_tri",
+            "boat3_324_tri",
+            "ashiya_boat4_exa",
+            "miyajima_boat4_tri",
+            "karatsu_rain_exa",
+            "general_c_tri",
+        )
         try:
             monthly_daily = _l4_daily_stats(monthly_from, monthly_to)
         except Exception as e:
@@ -6770,6 +6805,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         monthly_map: dict[str, dict] = {}
         for r in monthly_daily:
+            for key in adopted_keys:
+                r.setdefault(f"{key}_bets", 0)
+                r.setdefault(f"{key}_hits", 0)
+                r.setdefault(f"{key}_pay", 0)
             ym = r["date"][:7]
             m = monthly_map.setdefault(ym, {
                 "ym": ym,
