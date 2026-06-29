@@ -25,6 +25,17 @@
     集計範囲: {{ from_date }} - {{ to_date }}
   </p>
 
+  <form method="get" class="health-filter-form" style="margin:12px 0 18px;">
+    <label>期間:
+      <input type="date" name="from" value="{{ from_date }}">
+    </label>
+    <span>〜</span>
+    <label>
+      <input type="date" name="to" value="{{ to_date }}">
+    </label>
+    <button type="submit" class="detail-btn">更新</button>
+  </form>
+
   <section class="summary-grid" style="margin-bottom:16px;">
     <article class="summary-card">
       <div class="summary-label">G2/G3 1-2-3</div>
