@@ -3864,6 +3864,11 @@ main h2 {
   font-size: 10px;
   font-weight: bold;
 }
+.todays-picks-table tbody .mismatch-tag.is-adopted {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.45);
+}
 .todays-picks-table tbody tr.is-odds-mismatch .vote-btn-disabled {
   display: inline-flex;
   align-items: center;

@@ -315,6 +315,8 @@
                   if (sig.l4.is_exhibition_st_out) l4Badge.className += ' l4-exhibition-st-out';
                   if (sig.l4.is_ashiya_boat4_watch) l4Badge.className += ' l4-ashiya-watch';
                   if (sig.l4.ashiya_watch_ready) l4Badge.className += ' l4-ashiya-watch-ready';
+                  if (sig.l4.is_after_exhibition_out) l4Badge.className += ' l4-after-exhibition-out';
+                  if (sig.l4.is_display_confirmed) l4Badge.className += ' l4-display-confirmed';
                   // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
                   if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
                   // ♀ 案A: 女性混入レースは専用クラスで視覚的に区別
@@ -1032,7 +1034,9 @@
           function isBoat3WatchSignal(l4) {
             if (!l4) return false;
             const text = `${l4.textContent || ''} ${l4.title || ''}`;
-            return /3-2-1|3-2-4/.test(text) && Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'));
+            return /3-2-1|3-2-4/.test(text)
+              && Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'))
+              && !l4.classList.contains('l4-after-exhibition-out');
           }
 
           items.forEach(el => {
@@ -1048,17 +1052,19 @@
             const isMorningBadge = Array.from(l4.classList).some(c => c.startsWith('l4-morning_'));
             let isMorningWatch = Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'));
             const isExhibitionStOut = l4.classList.contains('l4-exhibition-st-out');
-            if (isExhibitionStOut) isMorningWatch = false;
+            const isAfterExhibitionOut = l4.classList.contains('l4-after-exhibition-out');
+            const isDisplayConfirmed = l4.classList.contains('l4-display-confirmed');
+            if (isExhibitionStOut || isAfterExhibitionOut) isMorningWatch = false;
             const isPortfolioStrong = l4.classList.contains('l4-portfolio_strong')
               || Boolean(el.querySelector('.portfolio-strong-badge'));
             const isOddsMismatch = false;
             const isRainExclusion = false;
             const isFemaleExclusion = false;
-            const isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch && !isExhibitionStOut;
+            const isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch && !isExhibitionStOut && !isAfterExhibitionOut;
             const isGeneralReference = isRef && isMorningBadge && !isMorningWatch
               && (l4.classList.contains('l4-morning_general') || l4.classList.contains('l4-morning_default'));
             if (isFemaleExclusion || isGeneralReference) return;
-            const isAnyExclusion = isOddsMismatch || isRainExclusion || isExhibitionStOut || isMorningOutOfRange || isMorningWatch;
+            const isAnyExclusion = isOddsMismatch || isRainExclusion || isExhibitionStOut || isAfterExhibitionOut || isMorningOutOfRange || isMorningWatch;
             const l4Actionable = !isRef || isAnyExclusion;
             if (!l4Actionable) return;
 
@@ -1071,7 +1077,7 @@
               el, closedAt, minutesUntil, isClosed, isDone,
               isOddsMismatch, isRainExclusion, isFemaleExclusion,
               isMorningWatch, isPortfolioStrong,
-              isMorningOutOfRange, isExhibitionStOut, isAnyExclusion,
+              isMorningOutOfRange, isExhibitionStOut, isAfterExhibitionOut, isDisplayConfirmed, isAnyExclusion,
               isBoat3WatchOnly: isBoat3WatchSignal(l4),
             });
           });
@@ -1179,6 +1185,10 @@
                 excEmoji = 'MON';
                 excShort = '\u671d\u5019\u88dc';
                 excTitle = '\u5c55\u793a\u524d\u306e\u76e3\u8996\u5bfe\u8c61\u3067\u3059\u3002\u76f4\u524d\u6761\u4ef6\u304c\u63c3\u3063\u305f\u6642\u70b9\u3067\u5019\u88dc\u5316\u3057\u307e\u3059\u3002';
+              } else if (u.isAfterExhibitionOut) {
+                excEmoji = 'OUT';
+                excShort = '\u570f\u5916';
+                excTitle = '\u5c55\u793a\u5f8c\u306b\u518d\u5224\u5b9a\u3057\u305f\u7d50\u679c\u3001\u672c\u65e5\u306f\u4e0d\u63a1\u7528\u3067\u3059';
               } else if (u.isExhibitionStOut) {
                 excEmoji = 'ST';
                 excShort = '\u5c55\u793aST';
@@ -1192,9 +1202,12 @@
               const voteBtnHtml = u.isAnyExclusion
                 ? `<span class="vote-btn vote-btn-disabled" title="${excTitle}">${excEmoji} ${excShort}</span>`
                 : `<a href="https://ib.mbrace.or.jp/" target="_blank" rel="noopener noreferrer" class="vote-btn" title="${stadium} ${rno}R \u306e\u6295\u7968\u753b\u9762\u3092\u958b\u304d\u307e\u3059">\u6295\u7968</a>`;
+              const adoptedTag = u.isDisplayConfirmed
+                ? ' <span class="mismatch-tag is-adopted" title="\u5c55\u793a\u5f8c\u306e\u78ba\u8a8d\u3067\u63a1\u7528\u78ba\u5b9a">\u63a1\u7528</span>'
+                : '';
               const finalRankLabel = u.isAnyExclusion
                 ? `${rankLabel} <span class="mismatch-tag" title="${excTitle}">${excEmoji} ${excShort}</span>`
-                : rankLabel;
+                : `${rankLabel}${adoptedTag}`;
 
               const tr = document.createElement('tr');
               tr.className = rowClass;
