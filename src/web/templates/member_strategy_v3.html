@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}ROIダッシュボード{% endblock %}
+
+{% block head_extra %}
+  <meta http-equiv="refresh" content="180">
+{% endblock %}
+
+{% macro roi_cell(value) -%}
+  <td class="num {% if value is not none and value >= 100 %}pos{% elif value is not none %}neg{% endif %}">
+    {% if value is not none %}{{ '%.0f' | format(value) }}%{% else %}-{% endif %}
+  </td>
+{%- endmacro %}
+
+{% macro profit_cell(value, bets) -%}
+  <td class="num {% if value and value > 0 %}pos{% elif value and value < 0 %}neg{% endif %}">
+    {% if bets > 0 %}{{ value | signed_comma }}{% else %}-{% endif %}
+  </td>
+{%- endmacro %}
+
+{% block content %}
+<div class="strategy-dashboard">
+  <h2>ROIダッシュボード <span class="live-indicator">LIVE</span></h2>
+  <p class="dashboard-hint">
+    採用手法の HIT / 回収率 / 損益を日別に確認します。<br>
+    集計範囲: {{ from_date }} - {{ to_date }}
+  </p>
+
+  <section class="summary-grid" style="margin-bottom:16px;">
+    <article class="summary-card">
+      <div class="summary-label">G2/G3 1-2-3</div>
+      <div class="summary-roi">{% if totals.g23_optb_tri_recovery is not none %}{{ '%+.1f' | format(totals.g23_optb_tri_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.g23_optb_tri_bets }} HIT={{ totals.g23_optb_tri_hits }} 損益={{ totals.g23_optb_tri_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">3-2-1</div>
+      <div class="summary-roi">{% if totals.boat3_321_tri_recovery is not none %}{{ '%+.1f' | format(totals.boat3_321_tri_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.boat3_321_tri_bets }} HIT={{ totals.boat3_321_tri_hits }} 損益={{ totals.boat3_321_tri_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">3-2-4</div>
+      <div class="summary-roi">{% if totals.boat3_324_tri_recovery is not none %}{{ '%+.1f' | format(totals.boat3_324_tri_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.boat3_324_tri_bets }} HIT={{ totals.boat3_324_tri_hits }} 損益={{ totals.boat3_324_tri_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">1-3-2 展示型</div>
+      <div class="summary-roi">{% if totals.tri132_a12_tri_recovery is not none %}{{ '%+.1f' | format(totals.tri132_a12_tri_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.tri132_a12_tri_bets }} HIT={{ totals.tri132_a12_tri_hits }} 損益={{ totals.tri132_a12_tri_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">1-2-4 展示型</div>
+      <div class="summary-roi">{% if totals.tri124_a12_tri_recovery is not none %}{{ '%+.1f' | format(totals.tri124_a12_tri_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.tri124_a12_tri_bets }} HIT={{ totals.tri124_a12_tri_hits }} 損益={{ totals.tri124_a12_tri_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">芦屋 4-1</div>
+      <div class="summary-roi">{% if totals.ashiya_boat4_exa_recovery is not none %}{{ '%+.1f' | format(totals.ashiya_boat4_exa_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.ashiya_boat4_exa_bets }} HIT={{ totals.ashiya_boat4_exa_hits }} 損益={{ totals.ashiya_boat4_exa_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">宮島 4コースまくり</div>
+      <div class="summary-roi">{% if totals.miyajima_boat4_tri_recovery is not none %}{{ '%+.1f' | format(totals.miyajima_boat4_tri_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.miyajima_boat4_tri_bets }} HIT={{ totals.miyajima_boat4_tri_hits }} 損益={{ totals.miyajima_boat4_tri_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">唐津 雨 1-2</div>
+      <div class="summary-roi">{% if totals.karatsu_rain_exa_recovery is not none %}{{ '%+.1f' | format(totals.karatsu_rain_exa_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.karatsu_rain_exa_bets }} HIT={{ totals.karatsu_rain_exa_hits }} 損益={{ totals.karatsu_rain_exa_profit | signed_comma }}</div>
+    </article>
+    <article class="summary-card">
+      <div class="summary-label">一般C 1-2-3</div>
+      <div class="summary-roi">{% if totals.general_c_tri_recovery is not none %}{{ '%+.1f' | format(totals.general_c_tri_recovery - 100) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ totals.general_c_tri_bets }} HIT={{ totals.general_c_tri_hits }} 損益={{ totals.general_c_tri_profit | signed_comma }}</div>
+    </article>
+  </section>
+
+  <section class="daily-table-section">
+    <h3>日別詳細 ({{ rows | length }}日分)</h3>
+    <p class="dashboard-hint">
+      日別の採用手法だけを並べています。件数ゼロの日も確認できるよう全日付を表示します。
+    </p>
+    <div class="table-wrap">
+      <table class="daily-table">
+        <thead>
+          <tr>
+            <th rowspan="2">日付</th>
+            <th rowspan="2">総R</th>
+            <th colspan="3">G2/G3 1-2-3</th>
+            <th colspan="3">3-2-1</th>
+            <th colspan="3">3-2-4</th>
+            <th colspan="3">1-3-2 展示型</th>
+            <th colspan="3">1-2-4 展示型</th>
+            <th colspan="3">芦屋 4-1</th>
+            <th colspan="3">宮島 4コースまくり</th>
+            <th colspan="3">唐津 雨 1-2</th>
+            <th colspan="3">一般C 1-2-3</th>
+            <th rowspan="2">詳細</th>
+          </tr>
+          <tr>
+            {% for _ in range(9) %}
+            <th>HIT</th><th>回収</th><th>損益</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          {% set has_signal =
+            (r.g23_optb_tri_bets and r.g23_optb_tri_bets > 0) or
+            (r.boat3_321_tri_bets and r.boat3_321_tri_bets > 0) or
+            (r.boat3_324_tri_bets and r.boat3_324_tri_bets > 0) or
+            (r.tri132_a12_tri_bets and r.tri132_a12_tri_bets > 0) or
+            (r.tri124_a12_tri_bets and r.tri124_a12_tri_bets > 0) or
+            (r.ashiya_boat4_exa_bets and r.ashiya_boat4_exa_bets > 0) or
+            (r.miyajima_boat4_tri_bets and r.miyajima_boat4_tri_bets > 0) or
+            (r.karatsu_rain_exa_bets and r.karatsu_rain_exa_bets > 0) or
+            (r.general_c_tri_bets and r.general_c_tri_bets > 0)
+          %}
+          <tr class="{% if has_signal %}has-l4{% endif %}">
+            <td class="date-cell"><span class="date-text">{{ r.date }}</span></td>
+            <td class="num">{{ r.n_total }}</td>
+
+            <td class="num">{{ r.g23_optb_tri_hits }}/{{ r.g23_optb_tri_bets }}</td>
+            {{ roi_cell(r.g23_optb_tri_recovery) }}
+            {{ profit_cell(r.g23_optb_tri_profit, r.g23_optb_tri_bets) }}
+
+            <td class="num">{{ r.boat3_321_tri_hits }}/{{ r.boat3_321_tri_bets }}</td>
+            {{ roi_cell(r.boat3_321_tri_recovery) }}
+            {{ profit_cell(r.boat3_321_tri_profit, r.boat3_321_tri_bets) }}
+
+            <td class="num">{{ r.boat3_324_tri_hits }}/{{ r.boat3_324_tri_bets }}</td>
+            {{ roi_cell(r.boat3_324_tri_recovery) }}
+            {{ profit_cell(r.boat3_324_tri_profit, r.boat3_324_tri_bets) }}
+
+            <td class="num">{{ r.tri132_a12_tri_hits }}/{{ r.tri132_a12_tri_bets }}</td>
+            {{ roi_cell(r.tri132_a12_tri_recovery) }}
+            {{ profit_cell(r.tri132_a12_tri_profit, r.tri132_a12_tri_bets) }}
+
+            <td class="num">{{ r.tri124_a12_tri_hits }}/{{ r.tri124_a12_tri_bets }}</td>
+            {{ roi_cell(r.tri124_a12_tri_recovery) }}
+            {{ profit_cell(r.tri124_a12_tri_profit, r.tri124_a12_tri_bets) }}
+
+            <td class="num">{{ r.ashiya_boat4_exa_hits }}/{{ r.ashiya_boat4_exa_bets }}</td>
+            {{ roi_cell(r.ashiya_boat4_exa_recovery) }}
+            {{ profit_cell(r.ashiya_boat4_exa_profit, r.ashiya_boat4_exa_bets) }}
+
+            <td class="num">{{ r.miyajima_boat4_tri_hits }}/{{ r.miyajima_boat4_tri_bets }}</td>
+            {{ roi_cell(r.miyajima_boat4_tri_recovery) }}
+            {{ profit_cell(r.miyajima_boat4_tri_profit, r.miyajima_boat4_tri_bets) }}
+
+            <td class="num">{{ r.karatsu_rain_exa_hits }}/{{ r.karatsu_rain_exa_bets }}</td>
+            {{ roi_cell(r.karatsu_rain_exa_recovery) }}
+            {{ profit_cell(r.karatsu_rain_exa_profit, r.karatsu_rain_exa_bets) }}
+
+            <td class="num">{{ r.general_c_tri_hits }}/{{ r.general_c_tri_bets }}</td>
+            {{ roi_cell(r.general_c_tri_recovery) }}
+            {{ profit_cell(r.general_c_tri_profit, r.general_c_tri_bets) }}
+
+            <td class="detail-cell">
+              <a href="{{ url_for('races', date=r.date) }}"
+                 class="detail-btn {% if not has_signal %}detail-btn-muted{% endif %}"
+                 title="その日の全レース一覧">
+                全R →
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="totals-row">
+            <td class="totals-label">合計</td>
+            <td class="num totals-label">{{ totals.n_total }}</td>
+
+            <td class="num"><strong>{{ totals.g23_optb_tri_hits }}/{{ totals.g23_optb_tri_bets }}</strong></td>
+            {{ roi_cell(totals.g23_optb_tri_recovery) }}
+            {{ profit_cell(totals.g23_optb_tri_profit, totals.g23_optb_tri_bets) }}
+
+            <td class="num"><strong>{{ totals.boat3_321_tri_hits }}/{{ totals.boat3_321_tri_bets }}</strong></td>
+            {{ roi_cell(totals.boat3_321_tri_recovery) }}
+            {{ profit_cell(totals.boat3_321_tri_profit, totals.boat3_321_tri_bets) }}
+
+            <td class="num"><strong>{{ totals.boat3_324_tri_hits }}/{{ totals.boat3_324_tri_bets }}</strong></td>
+            {{ roi_cell(totals.boat3_324_tri_recovery) }}
+            {{ profit_cell(totals.boat3_324_tri_profit, totals.boat3_324_tri_bets) }}
+
+            <td class="num"><strong>{{ totals.tri132_a12_tri_hits }}/{{ totals.tri132_a12_tri_bets }}</strong></td>
+            {{ roi_cell(totals.tri132_a12_tri_recovery) }}
+            {{ profit_cell(totals.tri132_a12_tri_profit, totals.tri132_a12_tri_bets) }}
+
+            <td class="num"><strong>{{ totals.tri124_a12_tri_hits }}/{{ totals.tri124_a12_tri_bets }}</strong></td>
+            {{ roi_cell(totals.tri124_a12_tri_recovery) }}
+            {{ profit_cell(totals.tri124_a12_tri_profit, totals.tri124_a12_tri_bets) }}
+
+            <td class="num"><strong>{{ totals.ashiya_boat4_exa_hits }}/{{ totals.ashiya_boat4_exa_bets }}</strong></td>
+            {{ roi_cell(totals.ashiya_boat4_exa_recovery) }}
+            {{ profit_cell(totals.ashiya_boat4_exa_profit, totals.ashiya_boat4_exa_bets) }}
+
+            <td class="num"><strong>{{ totals.miyajima_boat4_tri_hits }}/{{ totals.miyajima_boat4_tri_bets }}</strong></td>
+            {{ roi_cell(totals.miyajima_boat4_tri_recovery) }}
+            {{ profit_cell(totals.miyajima_boat4_tri_profit, totals.miyajima_boat4_tri_bets) }}
+
+            <td class="num"><strong>{{ totals.karatsu_rain_exa_hits }}/{{ totals.karatsu_rain_exa_bets }}</strong></td>
+            {{ roi_cell(totals.karatsu_rain_exa_recovery) }}
+            {{ profit_cell(totals.karatsu_rain_exa_profit, totals.karatsu_rain_exa_bets) }}
+
+            <td class="num"><strong>{{ totals.general_c_tri_hits }}/{{ totals.general_c_tri_bets }}</strong></td>
+            {{ roi_cell(totals.general_c_tri_recovery) }}
+            {{ profit_cell(totals.general_c_tri_profit, totals.general_c_tri_bets) }}
+
+            <td class="detail-cell">-</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

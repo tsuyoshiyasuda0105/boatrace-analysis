@@ -2313,6 +2313,64 @@ main h2 {
   cursor: pointer;
 }
 
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.health-board-link {
+  color: #7dd3fc;
+  font-size: 12px;
+  text-decoration: none;
+}
+.health-board-link:hover {
+  text-decoration: underline;
+}
+.strategy-health-board {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+.strategy-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.strategy-health-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 4px solid rgba(148, 163, 184, 0.55);
+  border-radius: 8px;
+  padding: 12px;
+}
+.strategy-health-chip.status-healthy { border-left-color: #16a34a; }
+.strategy-health-chip.status-watch { border-left-color: #facc15; }
+.strategy-health-chip.status-warning { border-left-color: #fb923c; }
+.strategy-health-chip.status-critical { border-left-color: #dc2626; }
+.strategy-health-chip.status-insufficient { border-left-color: #6b7280; }
+.strategy-health-chip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.strategy-health-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.strategy-health-chip-body {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 .totals-summary { margin-bottom: 28px; }
 .totals-summary h3 { margin-bottom: 12px; }
 .summary-grid {
@@ -3683,6 +3741,43 @@ main h2 {
   font-size: 11px;
   color: rgba(255, 230, 160, 0.65);
   margin: 0 0 10px;
+}
+.todays-picks-tabs {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0 12px;
+  flex-wrap: wrap;
+}
+.todays-picks-tab {
+  border: 1px solid rgba(255, 215, 0, 0.28);
+  background: rgba(255, 215, 0, 0.08);
+  color: #f8e28a;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.todays-picks-tab:hover {
+  background: rgba(255, 215, 0, 0.14);
+}
+.todays-picks-tab.is-active {
+  background: linear-gradient(180deg, rgba(255, 215, 0, 0.26), rgba(255, 190, 0, 0.16));
+  border-color: rgba(255, 215, 0, 0.56);
+  color: #fff6c6;
+  box-shadow: 0 6px 18px rgba(255, 190, 0, 0.12);
+}
+.todays-picks-tabpanel {
+  display: none;
+}
+.todays-picks-tabpanel.is-active {
+  display: block;
+}
+.todays-picks-subhint {
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 .todays-picks-table {
   width: 100%;

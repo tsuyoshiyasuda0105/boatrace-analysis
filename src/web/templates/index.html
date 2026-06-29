@@ -158,6 +158,11 @@
         右側「1-2-3 推移」: <b>2h</b>=締切2時間前オッズ / T-5〜T-1=締切直前推移 (青=20倍未満, 赤=上昇, 黄=下落, 末尾%=2h→直近の変動)<br>
         </small>
       </p>
+      <div class="todays-picks-tabs" id="todays-picks-tabs" hidden>
+        <button type="button" class="todays-picks-tab is-active" data-picks-tab="main">ROIが高いレース</button>
+        <button type="button" class="todays-picks-tab" data-picks-tab="boat3watch">3-2監視</button>
+      </div>
+      <div class="todays-picks-tabpanel is-active" id="todays-picks-main-panel" data-picks-panel="main">
       <table class="todays-picks-table">
         <thead>
           <tr>
@@ -176,6 +181,28 @@
         </thead>
         <tbody id="todays-picks-tbody"></tbody>
       </table>
+      </div>
+      <div class="todays-picks-tabpanel" id="todays-picks-boat3watch-panel" data-picks-panel="boat3watch" hidden>
+        <p class="todays-picks-subhint">3-2-1 / 3-2-4 は展示前だと件数が増えやすいため、通常候補とは分けて監視専用で表示します。</p>
+        <table class="todays-picks-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>締切</th>
+              <th>残り</th>
+              <th>ランク</th>
+              <th>会場 R</th>
+              <th>候補</th>
+              <th>1号艇</th>
+              <th>回収</th>
+              <th class="pick-odds-head">1-2-3 推移 (T-5 → T-1)</th>
+              <th></th>
+              <th class="pick-vote-head">投票</th>
+            </tr>
+          </thead>
+          <tbody id="todays-picks-boat3watch-tbody"></tbody>
+        </table>
+      </div>
       <p class="todays-picks-footer">
         <small>本サービスは投資助言ではありません。最終判断はご自身で。</small>
       </p>
@@ -300,6 +327,14 @@
                   let title = `${sig.l4.label} | 検証回収率 ${l4Rec}% (n=${l4N}) | `
                             + `1号艇 国1%=${natl} 局1%=${local} | `
                             + `買い目: ${sig.l4.bet || ''} 100円 | ランク: ${rankLabel}`;
+                  if (Array.isArray(sig.l4.watch_strategy_labels) && sig.l4.watch_strategy_labels.length) {
+                    const labels = sig.l4.watch_strategy_labels.join(' / ');
+                    const bets = Array.isArray(sig.l4.watch_strategy_bets) ? sig.l4.watch_strategy_bets.join(' / ') : (sig.l4.bet || '');
+                    title = `${sig.l4.label} | 朝監視 ${sig.l4.watch_strategy_count || sig.l4.watch_strategy_labels.length}手法`
+                          + ` | 対象: ${labels}`
+                          + ` | 買い目: ${bets}`
+                          + ` | 最大想定回収率 ${l4Rec}% (代表n=${l4N})`;
+                  }
                   if (sig.l4.is_exacta_niche) {
                     title = `${sig.l4.label} | 2連単ニッチ | 検証回収率 ${l4Rec}% (n=${l4N})`
                           + ` | 的中率 ${sig.l4.exacta_niche_hit_rate}%`
@@ -977,14 +1012,225 @@
           });
         }
 
+        
+        
+        function renderTodaysPicks() {
+          const panel = document.getElementById('todays-picks-panel');
+          const tbody = document.getElementById('todays-picks-tbody');
+          const watchTbody = document.getElementById('todays-picks-boat3watch-tbody');
+          const tabs = document.getElementById('todays-picks-tabs');
+          const mainPanel = document.getElementById('todays-picks-main-panel');
+          const watchPanel = document.getElementById('todays-picks-boat3watch-panel');
+          if (!panel || !tbody || !watchTbody || !tabs || !mainPanel || !watchPanel) return;
+          const now = new Date();
+          const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
+          const picks = [];
+
+          function isBoat3WatchSignal(l4) {
+            if (!l4) return false;
+            const text = `${l4.textContent || ''} ${l4.title || ''}`;
+            return /3-2-1|3-2-4/.test(text) && Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'));
+          }
+
+          items.forEach(el => {
+            const l4 = el.querySelector('.l4-badge');
+            if (!l4 || l4.classList.contains('l4-venus')) return;
+            const labelText = l4.textContent || '';
+            const isMid132 = l4.classList.contains('l4-obs_mid_132')
+              || l4.classList.contains('l4-obs_mid_132_tier_a')
+              || /L4-Mid/.test(labelText);
+            if (isMid132) return;
+
+            const isRef = l4.classList.contains('l4-reference');
+            const isMorningBadge = Array.from(l4.classList).some(c => c.startsWith('l4-morning_'));
+            let isMorningWatch = Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'));
+            const isExhibitionStOut = l4.classList.contains('l4-exhibition-st-out');
+            if (isExhibitionStOut) isMorningWatch = false;
+            const isPortfolioStrong = l4.classList.contains('l4-portfolio_strong')
+              || Boolean(el.querySelector('.portfolio-strong-badge'));
+            const isOddsMismatch = false;
+            const isRainExclusion = false;
+            const isFemaleExclusion = false;
+            const isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch && !isExhibitionStOut;
+            const isGeneralReference = isRef && isMorningBadge && !isMorningWatch
+              && (l4.classList.contains('l4-morning_general') || l4.classList.contains('l4-morning_default'));
+            if (isFemaleExclusion || isGeneralReference) return;
+            const isAnyExclusion = isOddsMismatch || isRainExclusion || isExhibitionStOut || isMorningOutOfRange || isMorningWatch;
+            const l4Actionable = !isRef || isAnyExclusion;
+            if (!l4Actionable) return;
+
+            const closedAt = parseClosedAt(el.dataset.closedAt);
+            if (!closedAt) return;
+            const minutesUntil = (closedAt - now) / 60000;
+            const isDone = parseInt(el.dataset.resultsCount || '0', 10) > 0;
+            const isClosed = minutesUntil < 0 || isDone;
+            picks.push({
+              el, closedAt, minutesUntil, isClosed, isDone,
+              isOddsMismatch, isRainExclusion, isFemaleExclusion,
+              isMorningWatch, isPortfolioStrong,
+              isMorningOutOfRange, isExhibitionStOut, isAnyExclusion,
+              isBoat3WatchOnly: isBoat3WatchSignal(l4),
+            });
+          });
+
+          picks.sort((a, b) => a.closedAt - b.closedAt);
+          panel.hidden = false;
+          tbody.innerHTML = '';
+          watchTbody.innerHTML = '';
+          warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
+
+          const mainPicks = picks.filter(p => !p.isBoat3WatchOnly);
+          const boat3WatchPicks = picks.filter(p => p.isBoat3WatchOnly);
+
+          tabs.hidden = boat3WatchPicks.length === 0;
+          mainPanel.hidden = false;
+          mainPanel.classList.add('is-active');
+          watchPanel.hidden = boat3WatchPicks.length === 0;
+          watchPanel.classList.remove('is-active');
+          tabs.querySelectorAll('.todays-picks-tab').forEach(btn => {
+            btn.classList.toggle('is-active', btn.dataset.picksTab === 'main');
+          });
+
+          if (mainPicks.length === 0 && boat3WatchPicks.length === 0) {
+            const tr = document.createElement('tr');
+            tr.className = 'todays-pick-row is-empty';
+            tr.innerHTML = '<td colspan="11" class="pick-empty">該当レースはありません</td>';
+            tbody.appendChild(tr);
+            return;
+          }
+
+          function renderPickRows(targetBody, rows) {
+            const firstUpcomingIdx = rows.findIndex(p => !p.isClosed);
+            if (rows.length === 0) {
+              const tr = document.createElement('tr');
+              tr.className = 'todays-pick-row is-empty';
+              tr.innerHTML = '<td colspan="11" class="pick-empty">該当レースはありません</td>';
+              targetBody.appendChild(tr);
+              return;
+            }
+
+            rows.forEach((u, idx) => {
+              const stadium = u.el.dataset.stadiumName || '';
+              const rno = u.el.dataset.raceNumber || '';
+              const rid = u.el.dataset.raceId || '';
+              const hh = String(u.closedAt.getHours()).padStart(2, '0');
+              const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
+              const tilStr = u.isClosed ? '\u6761\u4ef6\u5f85\u3061' : fmtTimeTil(u.minutesUntil);
+              let rowClass = 'todays-pick-row';
+              if (u.isClosed) rowClass += ' is-closed';
+              else if (idx === firstUpcomingIdx) rowClass += ' is-next';
+              const oddsCellHtml = renderOdds123Cell(rid);
+
+              const l4Badge = u.el.querySelector('.l4-badge');
+              const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
+              const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
+              const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
+              const isExactaNiche = l4Badge && l4Badge.classList.contains('l4-exacta-niche');
+              const isTrifectaNiche = l4Badge && l4Badge.classList.contains('l4-trifecta-niche');
+              const isGeneral200 = l4Badge && (
+                l4Badge.classList.contains('l4-l4_general_200')
+                || l4Badge.classList.contains('l4-morning_watch_l4_general_200')
+              );
+              const tbEl = u.el.querySelector('.tetsuban-badge');
+              const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
+                .find(c => c.startsWith('tetsuban-'))?.replace('tetsuban-', '') || '0', 10) : 0;
+              const tbStars = tbScore >= 3 ? `${tbScore}*` : '';
+
+              let rankLabel = l4Cls === 'l4-rank-plus_plus' ? 'L4++'
+                            : l4Cls === 'l4-rank-plus' ? 'L4+'
+                            : '\u5019\u88dc';
+              if (isExactaNiche) rankLabel = '2\u9023\u5358';
+              if (isTrifectaNiche) rankLabel = '3\u9023\u5358';
+              if (!isExactaNiche && is1c80) rankLabel = `1c80 ${rankLabel}`;
+              if (!isExactaNiche && isPro) rankLabel = `PRO ${rankLabel}`;
+              if (!isExactaNiche && u.isPortfolioStrong) rankLabel = `\u5f37\u76e3\u8996 ${rankLabel}`;
+              if (tbStars) rankLabel = `${tbStars} ${rankLabel}`;
+              if (isGeneral200) rankLabel = '\u4e00\u822c200';
+
+              const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
+              const recMatch = l4Title.match(/([0-9]+(?:\.[0-9]+)?%)/);
+              const recovery = recMatch ? recMatch[1] : '-';
+              const titleParts = l4Title.split('|').map(s => s.trim()).filter(Boolean);
+              let racerInfo = titleParts.length >= 2 ? titleParts[1] : '';
+              if (isExactaNiche && titleParts.length >= 3) racerInfo = titleParts[2];
+              const pickType = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
+
+              if (u.isMorningWatch) rowClass += ' is-watch';
+              if (u.isPortfolioStrong) rowClass += ' is-portfolio-strong';
+              if (!u.isMorningWatch && !u.isPortfolioStrong && u.isAnyExclusion) {
+                rowClass += ' is-odds-mismatch';
+              }
+
+              let excEmoji = 'WAIT';
+              let excShort = '\u6761\u4ef6\u5f85\u3061';
+              let excTitle = '\u76f4\u524d\u6761\u4ef6\u3084\u30aa\u30c3\u30ba\u5f85\u3061\u3067\u3059';
+              if (u.isMorningWatch) {
+                excEmoji = 'MON';
+                excShort = '\u671d\u5019\u88dc';
+                excTitle = '\u5c55\u793a\u524d\u306e\u76e3\u8996\u5bfe\u8c61\u3067\u3059\u3002\u76f4\u524d\u6761\u4ef6\u304c\u63c3\u3063\u305f\u6642\u70b9\u3067\u5019\u88dc\u5316\u3057\u307e\u3059\u3002';
+              } else if (u.isExhibitionStOut) {
+                excEmoji = 'ST';
+                excShort = '\u5c55\u793aST';
+                excTitle = '\u5c55\u793aST\u304c\u6761\u4ef6\u5916\u306e\u305f\u3081\u9664\u5916\u4e2d\u3067\u3059';
+              } else if (u.isMorningOutOfRange) {
+                excEmoji = 'AM';
+                excShort = '\u671d\u5019\u88dc';
+                excTitle = '\u8a72\u5f53\u30ec\u30fc\u30b9\u306f\u3042\u308a\u307e\u305b\u3093';
+              }
+
+              const voteBtnHtml = u.isAnyExclusion
+                ? `<span class="vote-btn vote-btn-disabled" title="${excTitle}">${excEmoji} ${excShort}</span>`
+                : `<a href="https://ib.mbrace.or.jp/" target="_blank" rel="noopener noreferrer" class="vote-btn" title="${stadium} ${rno}R \u306e\u6295\u7968\u753b\u9762\u3092\u958b\u304d\u307e\u3059">\u6295\u7968</a>`;
+              const finalRankLabel = u.isAnyExclusion
+                ? `${rankLabel} <span class="mismatch-tag" title="${excTitle}">${excEmoji} ${excShort}</span>`
+                : rankLabel;
+
+              const tr = document.createElement('tr');
+              tr.className = rowClass;
+              tr.innerHTML = `
+                <td class="pick-idx">${idx + 1}</td>
+                <td class="pick-time">${hh}:${mm}</td>
+                <td class="pick-til">${tilStr}</td>
+                <td class="pick-rank">${finalRankLabel}</td>
+                <td class="pick-place"><strong>${stadium}</strong> ${rno}R</td>
+                <td class="pick-type">${pickType}</td>
+                <td class="pick-racer">${racerInfo}</td>
+                <td class="pick-rec"><strong>${recovery}</strong></td>
+                <td class="pick-odds">${oddsCellHtml}</td>
+                <td class="pick-link"><a href="/race/${rid}">\u8a73\u7d30\u2192</a></td>
+                <td class="pick-vote">${voteBtnHtml}</td>
+              `;
+              targetBody.appendChild(tr);
+            });
+          }
+
+          renderPickRows(tbody, mainPicks);
+          renderPickRows(watchTbody, boat3WatchPicks);
+        }
+
+        function setupTodaysPickTabs() {
+          const tabs = Array.from(document.querySelectorAll('.todays-picks-tab'));
+          const panels = Array.from(document.querySelectorAll('.todays-picks-tabpanel'));
+          if (!tabs.length || !panels.length) return;
+          tabs.forEach(btn => {
+            btn.addEventListener('click', () => {
+              const target = btn.dataset.picksTab;
+              tabs.forEach(b => b.classList.toggle('is-active', b === btn));
+              panels.forEach(panel => {
+                const active = panel.dataset.picksPanel === target;
+                panel.classList.toggle('is-active', active);
+                panel.hidden = !active;
+              });
+            });
+          });
+        }
+
         updateNextRaces();
-        setInterval(updateNextRaces, 30000);  // 30秒毎に再評価
-        // market-signals 描画完了後に再度実行 (L4 バッジを取り込むため)
+        setupTodaysPickTabs();
+        setInterval(updateNextRaces, 30000);
         setTimeout(updateNextRaces, 1500);
 
-        // 締切過ぎたレースに .is-closed クラスを動的付与 (グレーアウト表示)
-        // 結果確定 (.done) を待たず、締切時刻を超えた時点で即視覚的にグレー化
-        function updateClosedRaceTiles() {
+function updateClosedRaceTiles() {
           const now = new Date();
           document.querySelectorAll('.race-item').forEach(item => {
             const closedAt = parseClosedAt(item.dataset.closedAt);
