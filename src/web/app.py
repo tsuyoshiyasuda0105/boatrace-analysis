@@ -1900,6 +1900,244 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
         )
 
+
+    def _safe_float(value):
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_int(value):
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _build_tsu_suminoe_history_seed(conn, cutoff_date_iso: str) -> dict:
+        seed = {
+            "racer_global": {},
+            "racer_venue": {},
+            "venue123": {9: [0, 0], 12: [0, 0]},
+        }
+        try:
+            cur = conn.execute(
+                """
+                SELECT r.stadium_number,
+                       e.boat_number,
+                       e.racer_number,
+                       rr.finishing_position
+                  FROM races r
+                  JOIN race_entries e
+                    ON e.race_id = r.race_id
+                   AND e.boat_number IN (2, 3)
+                  JOIN race_results rr
+                    ON rr.race_id = e.race_id
+                   AND rr.boat_number = e.boat_number
+                 WHERE r.race_date < ?
+                   AND r.stadium_number IN (9, 12)
+                   AND rr.finishing_position IS NOT NULL
+                """,
+                (cutoff_date_iso,),
+            )
+            for stadium, boat_no, racer_no, finish_pos in cur.fetchall():
+                if racer_no is None or boat_no not in (2, 3):
+                    continue
+                hit_pos = 2 if boat_no == 2 else 3
+                gkey = (boat_no, racer_no)
+                vkey = (stadium, boat_no, racer_no)
+                grec = seed["racer_global"].setdefault(gkey, [0, 0])
+                vrec = seed["racer_venue"].setdefault(vkey, [0, 0])
+                grec[0] += 1
+                vrec[0] += 1
+                if finish_pos == hit_pos:
+                    grec[1] += 1
+                    vrec[1] += 1
+        except Exception:
+            pass
+        try:
+            cur = conn.execute(
+                """
+                SELECT r.stadium_number,
+                       res1.boat_number,
+                       res2.boat_number,
+                       res3.boat_number
+                  FROM races r
+                  JOIN race_results res1
+                    ON res1.race_id = r.race_id
+                   AND res1.finishing_position = 1
+                  JOIN race_results res2
+                    ON res2.race_id = r.race_id
+                   AND res2.finishing_position = 2
+                  JOIN race_results res3
+                    ON res3.race_id = r.race_id
+                   AND res3.finishing_position = 3
+                 WHERE r.race_date < ?
+                   AND r.stadium_number IN (9, 12)
+                """,
+                (cutoff_date_iso,),
+            )
+            for stadium, w1, w2, w3 in cur.fetchall():
+                rec = seed["venue123"].setdefault(stadium, [0, 0])
+                rec[0] += 1
+                if (w1, w2, w3) == (1, 2, 3):
+                    rec[1] += 1
+        except Exception:
+            pass
+        return seed
+
+    def _build_tsu_suminoe_ctx(stadium: int, info: dict | None, seed: dict | None) -> dict | None:
+        if stadium not in (9, 12) or not info or not seed:
+            return None
+        boat2_racer = info.get("boat2_racer")
+        boat3_racer = info.get("boat3_racer")
+        if not boat2_racer or not boat3_racer:
+            return None
+
+        rg = seed.get("racer_global", {})
+        rv = seed.get("racer_venue", {})
+        v123 = seed.get("venue123", {})
+
+        b2g_n, b2g_h = rg.get((2, boat2_racer), [0, 0])
+        b2v_n, b2v_h = rv.get((stadium, 2, boat2_racer), [0, 0])
+        b3g_n, b3g_h = rg.get((3, boat3_racer), [0, 0])
+        b3v_n, b3v_h = rv.get((stadium, 3, boat3_racer), [0, 0])
+        v_n, v_h = v123.get(stadium, [0, 0])
+
+        return {
+            "stadium": stadium,
+            "class": info.get("class"),
+            "natl_1": info.get("natl_1"),
+            "avg_st": info.get("avg_st"),
+            "boat2_top2": info.get("boat2_top2"),
+            "boat2_motor_top2": info.get("boat2_motor_top2"),
+            "boat3_top2": info.get("boat3_top2"),
+            "boat3_motor_top2": info.get("boat3_motor_top2"),
+            "boat2_global_n": b2g_n,
+            "boat2_global_rate": (b2g_h / b2g_n * 100.0) if b2g_n else None,
+            "boat2_venue_n": b2v_n,
+            "boat2_venue_rate": (b2v_h / b2v_n * 100.0) if b2v_n else None,
+            "boat3_global_n": b3g_n,
+            "boat3_global_rate": (b3g_h / b3g_n * 100.0) if b3g_n else None,
+            "boat3_venue_n": b3v_n,
+            "boat3_venue_rate": (b3v_h / b3v_n * 100.0) if b3v_n else None,
+            "venue123_n": v_n,
+            "venue123_rate": (v_h / v_n * 100.0) if v_n else None,
+        }
+
+    def _evaluate_tsu_suminoe_123_signal(ctx: dict | None):
+        if not ctx:
+            return None
+        stadium = _safe_int(ctx.get("stadium"))
+        cls = _safe_int(ctx.get("class"))
+        natl_1 = _safe_float(ctx.get("natl_1"))
+        avg_st = _safe_float(ctx.get("avg_st"))
+        boat2_top2 = _safe_float(ctx.get("boat2_top2"))
+        boat2_motor = _safe_float(ctx.get("boat2_motor_top2"))
+        boat3_top2 = _safe_float(ctx.get("boat3_top2"))
+        boat3_motor = _safe_float(ctx.get("boat3_motor_top2"))
+        b2g_n = _safe_int(ctx.get("boat2_global_n")) or 0
+        b2g_rate = _safe_float(ctx.get("boat2_global_rate"))
+        b2v_n = _safe_int(ctx.get("boat2_venue_n")) or 0
+        b2v_rate = _safe_float(ctx.get("boat2_venue_rate"))
+        b3g_n = _safe_int(ctx.get("boat3_global_n")) or 0
+        b3g_rate = _safe_float(ctx.get("boat3_global_rate"))
+        b3v_n = _safe_int(ctx.get("boat3_venue_n")) or 0
+        b3v_rate = _safe_float(ctx.get("boat3_venue_rate"))
+        v123_rate = _safe_float(ctx.get("venue123_rate"))
+
+        if stadium not in (9, 12) or cls not in (1, 2):
+            return None
+        if natl_1 is None or natl_1 < 7.0:
+            return None
+        if avg_st is None or avg_st > 0.16:
+            return None
+        if boat2_motor is None or boat2_motor < 30.0:
+            return None
+        if boat3_top2 is None or boat3_top2 < 25.0:
+            return None
+        if boat3_motor is None or boat3_motor < 35.0:
+            return None
+        if b2g_n < 20 or b2g_rate is None or b2g_rate < 10.0:
+            return None
+        if b2v_n < 5 or b2v_rate is None or b2v_rate < 10.0:
+            return None
+        if b3g_n < 20 or b3g_rate is None or b3g_rate < 8.0:
+            return None
+        if b3v_n < 5 or b3v_rate is None or b3v_rate < 8.0:
+            return None
+        if v123_rate is None or v123_rate < 8.0:
+            return None
+
+        if stadium == 9:
+            if boat2_top2 is None or boat2_top2 < 40.0:
+                return None
+            return {
+                "level": "tsu_123_tri",
+                "label": "津 1-2-3",
+                "bet": "3連単 1-2-3",
+                "rank": "trifecta_niche",
+                "rank_label": "3連単ニッチ",
+                "recovery": 154.1,
+                "n": 32,
+                "hit_rate": 21.9,
+                "tetsuban_score": 6,
+                "tetsuban_label": "津123",
+                "is_trifecta_niche": True,
+                "trifecta_niche_name": "津123",
+                "trifecta_niche_tag": "A1/A2 + 1号艇ST + 2号艇/3号艇実績 + 会場123率",
+                "trifecta_niche_hit_rate": 21.9,
+                "trifecta_niche_recovery": 154.1,
+                "watch_strategy_bets": ["3連単 1-2-3"],
+            }
+
+        if boat2_top2 is None or boat2_top2 < 35.0:
+            return None
+        return {
+            "level": "suminoe_123_tri",
+            "label": "住之江 1-2-3",
+            "bet": "3連単 1-2-3",
+            "rank": "trifecta_niche",
+            "rank_label": "3連単ニッチ",
+            "recovery": 182.2,
+            "n": 82,
+            "hit_rate": 23.2,
+            "tetsuban_score": 7,
+            "tetsuban_label": "住之江123",
+            "is_trifecta_niche": True,
+            "trifecta_niche_name": "住之江123",
+            "trifecta_niche_tag": "A1/A2 + 1号艇ST + 2号艇/3号艇実績 + 会場123率",
+            "trifecta_niche_hit_rate": 23.2,
+            "trifecta_niche_recovery": 182.2,
+            "watch_strategy_bets": ["3連単 1-2-3"],
+        }
+
+    def _update_tsu_suminoe_history(seed: dict | None, stadium: int, boat2_racer, boat3_racer, w1, w2, w3):
+        if not seed or stadium not in (9, 12):
+            return
+        rg = seed.setdefault("racer_global", {})
+        rv = seed.setdefault("racer_venue", {})
+        v123 = seed.setdefault("venue123", {})
+        if boat2_racer:
+            g2 = rg.setdefault((2, boat2_racer), [0, 0])
+            v2 = rv.setdefault((stadium, 2, boat2_racer), [0, 0])
+            g2[0] += 1
+            v2[0] += 1
+            if w2 == 2:
+                g2[1] += 1
+                v2[1] += 1
+        if boat3_racer:
+            g3 = rg.setdefault((3, boat3_racer), [0, 0])
+            v3 = rv.setdefault((stadium, 3, boat3_racer), [0, 0])
+            g3[0] += 1
+            v3[0] += 1
+            if w3 == 3:
+                g3[1] += 1
+                v3[1] += 1
+        rec = v123.setdefault(stadium, [0, 0])
+        rec[0] += 1
+        if (w1, w2, w3) == (1, 2, 3):
+            rec[1] += 1
+
     @app.route("/api/odds-123-timeline")
     @member_only_api
     @cached(ttl=8)  # 8秒キャッシュ (JS 側 20秒ポーリング)
@@ -2002,6 +2240,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         exacta_pair_affinity: dict[str, dict] = {}
         ashiya_boat4_lift: dict[str, dict] = {}
         miyajima_boat4_watch: dict[str, dict] = {}
+        tsu_suminoe_live: dict[str, dict] = {}
 
         # T-X snapshot の優先度 (小さいほど優先)
         # T-5min を最優先 (実運用での投票タイミング = レース 5 分前)
@@ -2135,6 +2374,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e2.national_top_2_percent AS boat2_top2,
                                e2.assigned_motor_top_2_percent AS boat2_motor_top2,
                                NULLIF(pv2.exhibition_time, 0) AS boat2_exhibition_time,
+                               e3.racer_number AS boat3_racer,
+                               e3.national_top_2_percent AS boat3_top2,
                                e3.national_top_1_percent AS boat3_natl_1,
                                e3.assigned_motor_top_2_percent AS boat3_motor_top2,
                                NULLIF(pv3.exhibition_time, 0) AS boat3_exhibition_time,
@@ -2188,7 +2429,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          avg_st, age, boat1_racer, boat1_motor_top2,
                          weather, ex_st, wind_speed,
                          boat2_racer, boat2_top2, boat2_motor_top2, boat2_exhibition_time,
-                         boat3_natl_1, boat3_motor_top2, boat3_exhibition_time, boat3_ex_st,
+                         boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat3_exhibition_time, boat3_ex_st,
                          boat1_pred_top2, boat3_pred_top2, boat4_pred_top2, boat4_class,
                          boat4_racer, boat4_motor_number, boat4_motor_top2,
                          boat4_ex_course, boat4_exhibition_time, boat4_ex_st,
@@ -2209,6 +2450,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat2_top2": boat2_top2,
                             "boat2_motor_top2": boat2_motor_top2,
                             "boat2_exhibition_time": boat2_exhibition_time,
+                            "boat3_racer": boat3_racer,
+                            "boat3_top2": boat3_top2,
                             "boat3_natl_1": boat3_natl_1,
                             "boat3_motor_top2": boat3_motor_top2,
                             "boat3_exhibition_time": boat3_exhibition_time,
@@ -2723,6 +2966,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 "rate": rate,
                                 "is_boat1_over_boat2": bool(meetings >= 2 and rate is not None and rate >= 0.60),
                             }
+
+                    if all_race_info:
+                        tsu_seed = _build_tsu_suminoe_history_seed(conn, target_date)
+                        for rid, info in all_race_info.items():
+                            ctx = _build_tsu_suminoe_ctx(info.get("stadium"), info, tsu_seed)
+                            if ctx:
+                                tsu_suminoe_live[rid] = ctx
                 except Exception as e:
                     logger.warning("exacta pair affinity fetch failed: %s", e)
                     try:
@@ -4703,6 +4953,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if data is None and rid in mid132_results:
                 data = {"min_payout": mid132_results[rid], "source": "1-3-2"}
 
+            tsu_suminoe_signal = _evaluate_tsu_suminoe_123_signal(tsu_suminoe_live.get(rid))
+
             g23_optb = _evaluate_g23_optb_signal(
                 stadium, grade, cls,
                 data["min_payout"] if data else None,
@@ -4798,6 +5050,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tri124_132_niche,
                     general_c,
                     g23_optb,
+                    tsu_suminoe_signal,
                     candidate_l4,
                 )
 
@@ -4978,6 +5231,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tri124_132_watch,
                     general_c_watch,
                     g23_watch,
+                    tsu_suminoe_signal,
                     win_niche,
                     boat3_trifecta_niche,
                     candidate_l4,
@@ -5048,6 +5302,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     TRI132_A12_CACHE_VERSION = "tri132_a12_v1"
     TRI124_A12_CACHE_VERSION = "tri124_a12_v1"
     BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v2"
+    TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v1"
+    SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v1"
     BET_UNIT_MAP = {
         "miyajima_boat4_tri": 2000,
     }
@@ -5100,6 +5356,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_boat3_niche_version") != BOAT3_NICHE_CACHE_VERSION:
                             continue
+                        if day_d.get("_tsu_123_tri_version") != TSU_123_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_suminoe_123_tri_version") != SUMINOE_123_TRI_CACHE_VERSION:
+                            continue
                         cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
                         pass
@@ -5129,7 +5389,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
                             "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
                             "tri132_a12_tri", "tri124_a12_tri",
-                            "boat3_321_tri", "boat3_324_tri", "g23_optb_tri"):
+                            "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
+                            "tsu_123_tri", "suminoe_123_tri"):
                     n = d.get(f"{bet}_bets", 0)
                     pay = d.get(f"{bet}_pay", 0)
                     unit = BET_UNIT_MAP.get(bet, 100)
@@ -5190,6 +5451,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """, (from_date, to_date)).fetchall()
             n_total_by_date = {row[0]: row[1] for row in cur_n}
 
+            tsu_suminoe_seed = _build_tsu_suminoe_history_seed(conn, from_date)
+
             # 集計 SQL: race_payouts/odds_trifecta/predictions 全部 LEFT JOIN し、
             # confirmed / odds / morning_miss / morning の 4 ソースで L4 判定する
             cur = conn.execute(f"""
@@ -5206,6 +5469,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e.assigned_motor_top_2_percent AS boat1_motor_top2,
                     e2.national_top_2_percent AS boat2_top2,
                     e2.assigned_motor_top_2_percent AS boat2_motor_top2,
+                    e2.racer_number AS boat2_racer,
+                    e3.racer_number AS boat3_racer,
+                    e3.national_top_2_percent AS boat3_top2,
                     e3.national_top_1_percent AS boat3_natl_1,
                     e3.assigned_motor_top_2_percent AS boat3_motor_top2,
                     e4.assigned_motor_top_2_percent AS boat4_motor_top2,
@@ -5309,7 +5575,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_payouts pt_132 ON pt_132.race_id = r.race_id AND pt_132.bet_type='trifecta' AND pt_132.combination='1-3-2'
                 LEFT JOIN race_payouts pt_124 ON pt_124.race_id = r.race_id AND pt_124.bet_type='trifecta' AND pt_124.combination='1-2-4'
                 WHERE r.race_date BETWEEN ? AND ?
-                ORDER BY r.race_date
+                ORDER BY r.race_date, r.race_number
             """, (from_date, to_date)).fetchall()
 
         # 日別に集計
@@ -5360,12 +5626,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "boat3_321_tri_bets": 0, "boat3_321_tri_hits": 0, "boat3_321_tri_pay": 0,
                 "boat3_324_tri_bets": 0, "boat3_324_tri_hits": 0, "boat3_324_tri_pay": 0,
                 "g23_optb_tri_bets": 0, "g23_optb_tri_hits": 0, "g23_optb_tri_pay": 0,
+                "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
+                "suminoe_123_tri_bets": 0, "suminoe_123_tri_hits": 0, "suminoe_123_tri_pay": 0,
                 "grade_breakdown": {},
             }
 
         for row in cur:
             (rdate, stadium, grade, race_no, cls, natl_1, local_1_rt, age1_rt, avg_st_180,
-             boat1_motor_top2, boat2_top2, boat2_motor_top2, boat3_natl_1, boat3_motor_top2, boat4_motor_top2,
+             boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_motor_top2,
              boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
              fav_pay, fav_odds, any_in_l4, l4_odds, mid_132_odds, prob_first,
              w1, w2, w3, win_pay, win2_pay, ex_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, weather, ex_st,
@@ -5422,6 +5690,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "boat3_321_tri_bets": 0, "boat3_321_tri_hits": 0, "boat3_321_tri_pay": 0,
                 "boat3_324_tri_bets": 0, "boat3_324_tri_hits": 0, "boat3_324_tri_pay": 0,
                 "g23_optb_tri_bets": 0, "g23_optb_tri_hits": 0, "g23_optb_tri_pay": 0,
+                "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
+                "suminoe_123_tri_bets": 0, "suminoe_123_tri_hits": 0, "suminoe_123_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -5501,6 +5771,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if w1 == 1 and w2 == 2 and w3 == 4:
                         d["tri124_a12_tri_hits"] += 1
                         d["tri124_a12_tri_pay"] += (pay_124 or 0)
+
+
+            if is_done and stadium in (9, 12):
+                tsu_ctx = _build_tsu_suminoe_ctx(
+                    stadium,
+                    {
+                        "class": cls,
+                        "natl_1": natl_1,
+                        "avg_st": avg_st_180,
+                        "boat2_top2": boat2_top2,
+                        "boat2_motor_top2": boat2_motor_top2,
+                        "boat3_top2": boat3_top2,
+                        "boat3_motor_top2": boat3_motor_top2,
+                        "boat2_racer": boat2_racer,
+                        "boat3_racer": boat3_racer,
+                    },
+                    tsu_suminoe_seed,
+                )
+                tsu_sig = _evaluate_tsu_suminoe_123_signal(tsu_ctx)
+                if tsu_sig:
+                    alias = "tsu_123_tri" if stadium == 9 else "suminoe_123_tri"
+                    d[f"{alias}_bets"] += 1
+                    if w1 == 1 and w2 == 2 and w3 == 3:
+                        d[f"{alias}_hits"] += 1
+                        d[f"{alias}_pay"] += int(tri_pay or 0)
+                _update_tsu_suminoe_history(tsu_suminoe_seed, stadium, boat2_racer, boat3_racer, w1, w2, w3)
 
             if is_rain_weather:
                 continue
@@ -6540,6 +6836,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "general_c_tri_bets": gcb or 0, "general_c_tri_hits": gch or 0, "general_c_tri_pay": gcp or 0,
                         "tri132_a12_tri_bets": t132b or 0, "tri132_a12_tri_hits": t132h or 0, "tri132_a12_tri_pay": t132p or 0,
                         "tri124_a12_tri_bets": t124b or 0, "tri124_a12_tri_hits": t124h or 0, "tri124_a12_tri_pay": t124p or 0,
+                        "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
+                        "suminoe_123_tri_bets": 0, "suminoe_123_tri_hits": 0, "suminoe_123_tri_pay": 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
@@ -6558,7 +6856,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
                     "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
-                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri"):
+                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
+                    "tsu_123_tri", "suminoe_123_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 unit = BET_UNIT_MAP.get(bet, 100)
@@ -6588,6 +6887,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_miyajima_boat4_makuri_version"] = MIYAJIMA_BOAT4_MAKURI_CACHE_VERSION
                         day_d["_general_c_tri_version"] = GENERAL_C_TRI_CACHE_VERSION
                         day_d["_boat3_niche_version"] = BOAT3_NICHE_CACHE_VERSION
+                        day_d["_tsu_123_tri_version"] = TSU_123_TRI_CACHE_VERSION
+                        day_d["_suminoe_123_tri_version"] = SUMINOE_123_TRI_CACHE_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
                             "INSERT OR REPLACE INTO l4_daily_stats_cache "
@@ -7108,6 +7409,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "g23_optb_tri",
             "boat3_321_tri",
             "boat3_324_tri",
+            "tsu_123_tri",
+            "suminoe_123_tri",
             "tri132_a12_tri",
             "tri124_a12_tri",
             "ashiya_boat4_exa",
@@ -7153,7 +7456,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
                     "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
-                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri")
+                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
@@ -7260,11 +7563,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
                     "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
-                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri")
+                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         adopted_keys = (
             "g23_optb_tri",
             "boat3_321_tri",
             "boat3_324_tri",
+            "tsu_123_tri",
+            "suminoe_123_tri",
             "tri132_a12_tri",
             "tri124_a12_tri",
             "ashiya_boat4_exa",
@@ -7366,6 +7671,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "kiryu_win2", "karatsu_rain_exa", "miyajima_boat4_tri", "general_c_tri",
             "tri132_a12_tri", "tri124_a12_tri",
             "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
+            "tsu_123_tri", "suminoe_123_tri",
             "prime_tri", "r12_tri", "gen_r12_tri",
         )
         for k in monthly_total_keys:

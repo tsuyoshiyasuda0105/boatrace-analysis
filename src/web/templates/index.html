@@ -955,6 +955,9 @@
                 }
               }
               pickType = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
+              const buyMatch = l4Title.match(/買い目[:：]\s*([^|]+)/);
+              const buyText = buyMatch ? buyMatch[1].trim() : '';
+              if (buyText) pickType = `${pickType} / ${buyText}`.slice(0, 40);
               // 除外系 (帯外/雨/女性混合) はすべて既存の is-odds-mismatch
               // styling でグレー表示 (完全消滅させない、2026-05-28 修正)。
               if (u.isMorningWatch) rowClass += ' is-watch';
