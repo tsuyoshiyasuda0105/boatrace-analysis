@@ -1151,9 +1151,17 @@
               const recMatch = l4Title.match(/([0-9]+(?:\.[0-9]+)?%)/);
               const recovery = recMatch ? recMatch[1] : '-';
               const titleParts = l4Title.split('|').map(s => s.trim()).filter(Boolean);
+              const findPart = (prefixes) => titleParts.find((part) => prefixes.some((prefix) => part.startsWith(prefix))) || '';
               let racerInfo = titleParts.length >= 2 ? titleParts[1] : '';
               if (isExactaNiche && titleParts.length >= 3) racerInfo = titleParts[2];
+              const strategyInfo = findPart(['条件:', '対象:', '監視:', '買い目:']);
+              const edgeInfo = findPart(['優位性:', '的中率', '4C平均ST', '3号艇モーター2連率', '2号艇全国2連対率']);
               const pickType = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
+              const strategyHtmlParts = [];
+              if (racerInfo) strategyHtmlParts.push(`<div>${racerInfo}</div>`);
+              if (strategyInfo) strategyHtmlParts.push(`<div class="pick-strategy-note"><small>${strategyInfo}</small></div>`);
+              if (edgeInfo && edgeInfo !== strategyInfo) strategyHtmlParts.push(`<div class="pick-strategy-note"><small>${edgeInfo}</small></div>`);
+              const pickStrategyHtml = strategyHtmlParts.join('');
 
               if (u.isMorningWatch) rowClass += ' is-watch';
               if (u.isPortfolioStrong) rowClass += ' is-portfolio-strong';
@@ -1194,7 +1202,7 @@
                 <td class="pick-rank">${finalRankLabel}</td>
                 <td class="pick-place"><strong>${stadium}</strong> ${rno}R</td>
                 <td class="pick-type">${pickType}</td>
-                <td class="pick-racer">${racerInfo}</td>
+                <td class="pick-racer">${pickStrategyHtml || racerInfo}</td>
                 <td class="pick-rec"><strong>${recovery}</strong></td>
                 <td class="pick-odds">${oddsCellHtml}</td>
                 <td class="pick-link"><a href="/race/${rid}">\u8a73\u7d30\u2192</a></td>
