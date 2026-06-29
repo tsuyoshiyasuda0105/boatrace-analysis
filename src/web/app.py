@@ -3983,6 +3983,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 and rn in (10, 11, 12)
             ):
                 return None
+            has_exhibition = (b2_ex is not None) or (b3_ex is not None)
+            display_confirmed = (
+                b2_ex is not None
+                and b3_ex is not None
+                and b2_ex <= b3_ex
+            )
             return {
                 "level": "morning_watch_general_c_tri",
                 "label": "朝監視 一般C",
