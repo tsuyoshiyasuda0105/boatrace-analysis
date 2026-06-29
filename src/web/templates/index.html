@@ -266,6 +266,7 @@
       (function() {
         const targetDate = "{{ target_date }}";
         let marketSignalsLoading = false;
+        let currentTodaysPicksTab = 'main';
         const warmRaceDetail = (raceId) => {
           if (!raceId || !window.BoatraceSpeed) return;
           window.BoatraceSpeed.prefetchUrl(`/race/${encodeURIComponent(raceId)}`);
@@ -1090,14 +1091,18 @@
 
           const mainPicks = picks.filter(p => !p.isBoat3WatchOnly);
           const boat3WatchPicks = picks.filter(p => p.isBoat3WatchOnly);
+          const activeTab = (currentTodaysPicksTab === 'boat3watch' && boat3WatchPicks.length > 0)
+            ? 'boat3watch'
+            : 'main';
+          currentTodaysPicksTab = activeTab;
 
           tabs.hidden = boat3WatchPicks.length === 0;
-          mainPanel.hidden = false;
-          mainPanel.classList.add('is-active');
-          watchPanel.hidden = boat3WatchPicks.length === 0;
-          watchPanel.classList.remove('is-active');
+          mainPanel.hidden = activeTab !== 'main';
+          mainPanel.classList.toggle('is-active', activeTab === 'main');
+          watchPanel.hidden = boat3WatchPicks.length === 0 || activeTab !== 'boat3watch';
+          watchPanel.classList.toggle('is-active', activeTab === 'boat3watch');
           tabs.querySelectorAll('.todays-picks-tab').forEach(btn => {
-            btn.classList.toggle('is-active', btn.dataset.picksTab === 'main');
+            btn.classList.toggle('is-active', btn.dataset.picksTab === activeTab);
           });
 
           if (mainPicks.length === 0 && boat3WatchPicks.length === 0) {
@@ -1239,6 +1244,7 @@
           tabs.forEach(btn => {
             btn.addEventListener('click', () => {
               const target = btn.dataset.picksTab;
+              currentTodaysPicksTab = target;
               tabs.forEach(b => b.classList.toggle('is-active', b === btn));
               panels.forEach(panel => {
                 const active = panel.dataset.picksPanel === target;
