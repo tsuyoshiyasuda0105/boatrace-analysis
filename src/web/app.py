@@ -4116,8 +4116,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             best = _pick_best_market_signal(*matched)
             if not best:
                 return None
-            has_exhibition = b2_ex is not None and b3_ex is not None
-            display_confirmed = has_exhibition and b2_ex <= b3_ex
             return {
                 **best,
                 "natl_1": None,
