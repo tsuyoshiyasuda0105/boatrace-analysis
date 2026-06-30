@@ -824,7 +824,7 @@
         }
 
         // 本日 L4 候補レース 時系列リスト (締切済も含む全件を表示)
-        function renderTodaysPicks() {
+        function renderTodaysPicksLegacyUnused() {
           const panel = document.getElementById('todays-picks-panel');
           const tbody = document.getElementById('todays-picks-tbody');
           if (!panel || !tbody) return;
@@ -1038,7 +1038,7 @@
 
         
         
-        function renderTodaysPicksLegacyUnused() {
+        function renderTodaysPicks() {
           const panel = document.getElementById('todays-picks-panel');
           const tbody = document.getElementById('todays-picks-tbody');
           const watchTbody = document.getElementById('todays-picks-boat3watch-tbody');
