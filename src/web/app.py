@@ -2386,6 +2386,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e4.class_number AS boat4_class,
                                e4.racer_number AS boat4_racer,
                                e4.assigned_motor_number AS boat4_motor_number,
+                               e4.national_top_1_percent AS boat4_natl_1,
                                e4.assigned_motor_top_2_percent AS boat4_motor_top2,
                                e5.assigned_motor_top_2_percent AS boat5_motor_top2,
                                pv4.course_number AS boat4_ex_course,
@@ -2433,7 +2434,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          boat2_racer, boat2_top2, boat2_motor_top2, boat2_exhibition_time,
                          boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat3_exhibition_time, boat3_ex_st,
                          boat1_pred_top2, boat3_pred_top2, boat4_pred_top2, boat4_class,
-                         boat4_racer, boat4_motor_number, boat4_motor_top2, boat5_motor_top2,
+                         boat4_racer, boat4_motor_number, boat4_natl_1, boat4_motor_top2, boat5_motor_top2,
                          boat4_ex_course, boat4_exhibition_time, boat4_ex_st,
                          best_exhibition_time, n_exhibition_times,
                          n_female, program_type, program_name, is_fixed_entry) in cur.fetchall():
@@ -2464,6 +2465,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat4_class": boat4_class,
                             "boat4_racer": boat4_racer,
                             "boat4_motor_number": boat4_motor_number,
+                            "boat4_natl_1": boat4_natl_1,
                             "boat4_motor_top2": boat4_motor_top2,
                             "boat5_motor_top2": boat5_motor_top2,
                             "boat4_ex_course": boat4_ex_course,
@@ -4131,8 +4133,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
 
         def _evaluate_exacta_niche(stadium, race_number, boat1_motor_top2=None,
-                                   boat2_motor_top2=None, program_type=None,
-                                   pair_affinity=None, grade=None, weather=None):
+                                   boat2_motor_top2=None, boat4_motor_top2=None,
+                                   boat1_natl_1=None, boat4_natl_1=None, n_female=0,
+                                   program_type=None, pair_affinity=None, grade=None, weather=None):
             """Evaluate verified exacta niche strategies."""
             try:
                 rn = int(race_number) if race_number is not None else 0
@@ -4146,6 +4149,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 m2 = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
             except (TypeError, ValueError):
                 m2 = 0.0
+            try:
+                m4 = float(boat4_motor_top2) if boat4_motor_top2 is not None else 0.0
+            except (TypeError, ValueError):
+                m4 = 0.0
+            try:
+                n1 = float(boat1_natl_1) if boat1_natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1 = 0.0
+            try:
+                n4 = float(boat4_natl_1) if boat4_natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                n4 = 0.0
 
             if stadium == 13 and m2 >= 55.0:
                 return {
@@ -4169,6 +4184,52 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_score": 5,
                     "tetsuban_label": "2連単 5★",
                 }
+            if stadium == 6 and grade == 5 and n_female == 0 and weather != 3 and n1 >= 7.0 and n4 >= 5.0 and m4 >= 40.0 and m2 <= 35.0:
+                return {
+                    "level": "exacta_niche_hamanako14",
+                    "label": "浜名湖 2連単1-4",
+                    "recovery": 151.6,
+                    "n": 50,
+                    "bet": "2連単 1-4",
+                    "rank": "exacta_niche",
+                    "rank_label": "2連単ニッチ",
+                    "rank_emoji": "2R",
+                    "natl_1": None,
+                    "local_1": None,
+                    "is_exacta_niche": True,
+                    "exacta_niche_tag": "浜名湖 一般戦 1-4",
+                    "exacta_niche_hit_rate": 30.0,
+                    "exacta_niche_recovery": 151.6,
+                    "exacta_niche_meetings": None,
+                    "exacta_niche_ahead": None,
+                    "exacta_niche_rate": None,
+                    "tetsuban_score": 5,
+                    "tetsuban_label": "2連単 5★",
+                }
+
+            if stadium == 24 and grade == 5 and rn in (5, 6, 7, 8) and n_female == 0 and weather != 3 and n1 >= 7.0 and n4 >= 5.0 and m2 <= 35.0:
+                return {
+                    "level": "exacta_niche_omura14",
+                    "label": "大村 2連単1-4",
+                    "recovery": 152.8,
+                    "n": 32,
+                    "bet": "2連単 1-4",
+                    "rank": "exacta_niche",
+                    "rank_label": "2連単ニッチ",
+                    "rank_emoji": "2R",
+                    "natl_1": None,
+                    "local_1": None,
+                    "is_exacta_niche": True,
+                    "exacta_niche_tag": "大村 一般戦5-8R 1-4",
+                    "exacta_niche_hit_rate": 31.2,
+                    "exacta_niche_recovery": 152.8,
+                    "exacta_niche_meetings": None,
+                    "exacta_niche_ahead": None,
+                    "exacta_niche_rate": None,
+                    "tetsuban_score": 5,
+                    "tetsuban_label": "2連単 5★",
+                }
+
             pair = pair_affinity or {}
             if not pair.get("is_boat1_over_boat2"):
                 return None
@@ -5186,7 +5247,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 l4 = _apply_l4_general_200(l4, l4_general_200)
                 exacta_niche = _evaluate_exacta_niche(
                     stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
-                    boat2_motor_top2=boat2_motor_top2,
+                    boat2_motor_top2=boat2_motor_top2, boat4_motor_top2=boat4_motor_top2,
+                    boat1_natl_1=natl_1, boat4_natl_1=info.get("boat4_natl_1"), n_female=n_female,
                     program_type=program_type,
                     pair_affinity=exacta_pair_affinity.get(rid),
                     grade=grade, weather=weather,
@@ -5355,7 +5417,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 morning_l4 = _apply_l4_general_200(morning_l4, l4_general_200)
                 exacta_niche = _evaluate_exacta_niche(
                     stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
-                    boat2_motor_top2=boat2_motor_top2,
+                    boat2_motor_top2=boat2_motor_top2, boat4_motor_top2=boat4_motor_top2,
+                    boat1_natl_1=natl_1, boat4_natl_1=info.get("boat4_natl_1"), n_female=n_female,
                     program_type=program_type,
                     pair_affinity=exacta_pair_affinity.get(rid),
                     grade=grade, weather=weather,
@@ -5464,17 +5527,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     AMAGASAKI_MOTOR_EXA_CACHE_VERSION = "amagasaki_motor_exa_v1"
     # 芦屋 4-1 は差分調査後に再集計したいので、キャッシュを強制無効化する。
     ASHIYA_BOAT4_EXA_CACHE_VERSION = "ashiya_boat4_exa_v2"
+    HAMANAKO_14_EXA_CACHE_VERSION = "hamanako_14_exa_v2"
+    OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v2"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
     GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v1"
     TRI132_A12_CACHE_VERSION = "tri132_a12_v1"
     TRI124_A12_CACHE_VERSION = "tri124_a12_v1"
-    BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v2"
+    BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v3"
     TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v1"
     SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v1"
     TOKUYAMA_123_TRI_CACHE_VERSION = "tokuyama_123_tri_v1"
     SHIMONOSEKI_132_TRI_CACHE_VERSION = "shimonoseki_132_tri_v1"
     KOJIMA_124_TRI_CACHE_VERSION = "kojima_124_tri_v1"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v2"
     BET_UNIT_MAP = {}
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
@@ -5513,6 +5579,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_ashiya_boat4_exa_version") != ASHIYA_BOAT4_EXA_CACHE_VERSION:
                             continue
+                        if day_d.get("_hamanako_14_exa_version") != HAMANAKO_14_EXA_CACHE_VERSION:
+                            continue
+                        if day_d.get("_omura_14_exa_version") != OMURA_14_EXA_CACHE_VERSION:
+                            continue
                         if day_d.get("_kiryu_win2_version") != KIRYU_WIN2_CACHE_VERSION:
                             continue
                         if day_d.get("_general200_version") != GENERAL200_CACHE_VERSION:
@@ -5531,6 +5601,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_kojima_124_tri_version") != KOJIMA_124_TRI_CACHE_VERSION:
                             continue
+                        if day_d.get("_adopted_daily_select_version") != ADOPTED_DAILY_SELECT_VERSION:
+                            continue
                         cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
                         pass
@@ -5542,6 +5614,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             niche_bet_keys = (
                 "amagasaki_motor_exa",
                 "ashiya_boat4_exa",
+                "hamanako_14_exa",
+                "omura_14_exa",
                 "kiryu_win2",
             )
             for d in stats_by_date.values():
@@ -5555,7 +5629,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "prime_tri", "r12_tri", "gen_r12_tri",
                             "toda_7r_tri", "mid_132_tri",
                             "mid_132_tier_a_tri", "venus_tri",
-                            "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2", "general_c_tri",
+                            "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                             "tri132_a12_tri", "tri124_a12_tri",
                             "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
                             "tsu_123_tri", "suminoe_123_tri",
@@ -5626,6 +5700,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # confirmed / odds / morning_miss / morning の 4 ソースで L4 判定する
             cur = conn.execute(f"""
                 SELECT
+                    r.race_id,
                     r.race_date,
                     r.stadium_number,
                     r.race_grade_number,
@@ -5643,6 +5718,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e3.national_top_2_percent AS boat3_top2,
                     e3.national_top_1_percent AS boat3_natl_1,
                     e3.assigned_motor_top_2_percent AS boat3_motor_top2,
+                    e4.national_top_1_percent AS boat4_natl_1,
                     e4.assigned_motor_top_2_percent AS boat4_motor_top2,
                     e5.assigned_motor_top_2_percent AS boat5_motor_top2,
                     p1t2.prob_top_2 AS boat1_pred_top2,
@@ -5788,6 +5864,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
                 "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
                 "ashiya_boat4_exa_bets": 0, "ashiya_boat4_exa_hits": 0, "ashiya_boat4_exa_pay": 0,
+                "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
+                "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
                 "tri132_a12_tri_bets": 0, "tri132_a12_tri_hits": 0, "tri132_a12_tri_pay": 0,
@@ -5803,9 +5881,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "grade_breakdown": {},
             }
 
+        adopted_signal_by_race: dict[str, dict] = {}
+
+        def _record_adopted_signal(
+            race_id: str | None,
+            rdate: str,
+            key: str,
+            recovery: float,
+            hit: bool,
+            pay: int,
+        ) -> None:
+            if not race_id:
+                return
+            prev = adopted_signal_by_race.get(race_id)
+            payload = {
+                "date": rdate,
+                "key": key,
+                "recovery": float(recovery),
+                "hit": bool(hit),
+                "pay": int(pay or 0),
+            }
+            if prev is None or payload["recovery"] > prev["recovery"]:
+                adopted_signal_by_race[race_id] = payload
+
         for row in cur:
-            (rdate, stadium, grade, race_no, cls, natl_1, local_1_rt, age1_rt, avg_st_180,
-             boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_motor_top2, boat5_motor_top2,
+            (race_id, rdate, stadium, grade, race_no, cls, natl_1, local_1_rt, age1_rt, avg_st_180,
+             boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_natl_1, boat4_motor_top2, boat5_motor_top2,
              boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
              fav_pay, fav_odds, any_in_l4, l4_odds, mid_132_odds, prob_first,
              w1, w2, w3, win_pay, win2_pay, ex_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, weather, ex_st,
@@ -5853,6 +5954,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
                 "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
                 "ashiya_boat4_exa_bets": 0, "ashiya_boat4_exa_hits": 0, "ashiya_boat4_exa_pay": 0,
+                "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
+                "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
                 "tri132_a12_tri_bets": 0, "tri132_a12_tri_hits": 0, "tri132_a12_tri_pay": 0,
@@ -5871,6 +5974,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             is_done = w1 is not None and w2 is not None and w3 is not None
             if is_done:
                 d["n_done"] += 1
+            tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
+            tri_pay_v = int(tri_pay or 0) if tri_hit else 0
 
             try:
                 b2_motor = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
@@ -5885,14 +5990,34 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except (TypeError, ValueError):
                 b3_motor = 0.0
             try:
+                b4_natl_1 = float(boat4_natl_1) if boat4_natl_1 is not None else 0.0
+            except (TypeError, ValueError):
+                b4_natl_1 = 0.0
+            try:
                 b4_motor = float(boat4_motor_top2) if boat4_motor_top2 is not None else 0.0
             except (TypeError, ValueError):
                 b4_motor = 0.0
+            try:
+                rn = int(race_no) if race_no is not None else 0
+            except (TypeError, ValueError):
+                rn = 0
             if is_done and stadium == 13 and b2_motor >= 55.0:
                 d["amagasaki_motor_exa_bets"] += 1
                 if w1 == 1 and w2 == 4:
                     d["amagasaki_motor_exa_hits"] += 1
                     d["amagasaki_motor_exa_pay"] += (ex14_pay or 0)
+
+            if is_done and stadium == 6 and grade == 5 and n_female == 0 and not is_rain_weather and float(natl_1 or 0) >= 7.0 and b4_natl_1 >= 5.0 and b4_motor >= 40.0 and b2_motor <= 35.0:
+                d["hamanako_14_exa_bets"] += 1
+                if w1 == 1 and w2 == 4:
+                    d["hamanako_14_exa_hits"] += 1
+                    d["hamanako_14_exa_pay"] += int(ex14_pay or 0)
+
+            if is_done and stadium == 24 and grade == 5 and rn in (5, 6, 7, 8) and n_female == 0 and not is_rain_weather and float(natl_1 or 0) >= 7.0 and b4_natl_1 >= 5.0 and b2_motor <= 35.0:
+                d["omura_14_exa_bets"] += 1
+                if w1 == 1 and w2 == 4:
+                    d["omura_14_exa_hits"] += 1
+                    d["omura_14_exa_pay"] += int(ex14_pay or 0)
 
             ex_time_pairs = (
                 (1, boat1_exhibition_time),
@@ -5925,34 +6050,39 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     and b3_motor >= 40.0
                     and (ex_rank_by_boat.get(3) or 99) <= 2
                 ):
-                    d["tri132_a12_tri_bets"] += 1
-                    if w1 == 1 and w2 == 3 and w3 == 2:
-                        d["tri132_a12_tri_hits"] += 1
-                        d["tri132_a12_tri_pay"] += (pay_132 or 0)
+                    _record_adopted_signal(
+                        race_id, rdate, "tri132_a12_tri", 178.9,
+                        w1 == 1 and w2 == 3 and w3 == 2,
+                        int(pay_132 or 0),
+                    )
                 if (
                     float(boat2_top2 or 0) >= 40.0
                     and b4_motor >= 40.0
                     and (ex_rank_by_boat.get(4) or 99) <= 2
                 ):
-                    d["tri124_a12_tri_bets"] += 1
-                    if w1 == 1 and w2 == 2 and w3 == 4:
-                        d["tri124_a12_tri_hits"] += 1
-                        d["tri124_a12_tri_pay"] += (pay_124 or 0)
+                    _record_adopted_signal(
+                        race_id, rdate, "tri124_a12_tri", 254.0,
+                        w1 == 1 and w2 == 2 and w3 == 4,
+                        int(pay_124 or 0),
+                    )
                 if stadium == 18 and float(boat2_motor_top2 or 0) >= 40.0 and float(boat5_motor_top2 or 0) >= 45.0:
-                    d["tokuyama_123_tri_bets"] += 1
-                    if tri_hit:
-                        d["tokuyama_123_tri_hits"] += 1
-                        d["tokuyama_123_tri_pay"] += tri_pay_v
+                    _record_adopted_signal(
+                        race_id, rdate, "tokuyama_123_tri", 212.0,
+                        tri_hit,
+                        int(tri_pay_v or 0),
+                    )
                 if stadium == 19 and b3_natl_1 >= 6.0 and b3_motor >= 40.0 and float(avg_st_180 or 9) < 0.16:
-                    d["shimonoseki_132_tri_bets"] += 1
-                    if w1 == 1 and w2 == 3 and w3 == 2:
-                        d["shimonoseki_132_tri_hits"] += 1
-                        d["shimonoseki_132_tri_pay"] += (pay_132 or 0)
+                    _record_adopted_signal(
+                        race_id, rdate, "shimonoseki_132_tri", 195.3,
+                        w1 == 1 and w2 == 3 and w3 == 2,
+                        int(pay_132 or 0),
+                    )
                 if stadium == 16 and 40 <= int(age1_rt or 0) <= 49 and float(boat2_motor_top2 or 0) >= 45.0 and float(boat2_top2 or 0) >= 35.0:
-                    d["kojima_124_tri_bets"] += 1
-                    if w1 == 1 and w2 == 2 and w3 == 4:
-                        d["kojima_124_tri_hits"] += 1
-                        d["kojima_124_tri_pay"] += (pay_124 or 0)
+                    _record_adopted_signal(
+                        race_id, rdate, "kojima_124_tri", 157.0,
+                        w1 == 1 and w2 == 2 and w3 == 4,
+                        int(pay_124 or 0),
+                    )
 
 
             if is_done and stadium in (9, 12):
@@ -5974,10 +6104,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 tsu_sig = _evaluate_tsu_suminoe_123_signal(tsu_ctx)
                 if tsu_sig:
                     alias = "tsu_123_tri" if stadium == 9 else "suminoe_123_tri"
-                    d[f"{alias}_bets"] += 1
-                    if w1 == 1 and w2 == 2 and w3 == 3:
-                        d[f"{alias}_hits"] += 1
-                        d[f"{alias}_pay"] += int(tri_pay or 0)
+                    _record_adopted_signal(
+                        race_id, rdate, alias, float(tsu_sig.get("recovery") or 0.0),
+                        w1 == 1 and w2 == 2 and w3 == 3,
+                        int(tri_pay or 0),
+                    )
                 _update_tsu_suminoe_history(tsu_suminoe_seed, stadium, boat2_racer, boat3_racer, w1, w2, w3)
 
             if is_rain_weather:
@@ -6021,10 +6152,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 and fav_pay is not None and 500 <= int(fav_pay) < 1000
             )
             if g23_match:
-                d["g23_optb_tri_bets"] += 1
-                if tri_hit:
-                    d["g23_optb_tri_hits"] += 1
-                    d["g23_optb_tri_pay"] += tri_pay_v
+                _record_adopted_signal(
+                    race_id, rdate, "g23_optb_tri", 204.0,
+                    tri_hit,
+                    int(tri_pay_v or 0),
+                )
 
             # === L4 候補判定 (T-X オッズ優先、race_payouts MIN フォールバック) ===
             # L4 の正式定義は「3連単 1-2-3 の事前オッズ × 100 が 500-1000円帯」。
@@ -6179,10 +6311,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         and boat3_exhibition_time is not None
                         and float(boat2_exhibition_time) <= float(boat3_exhibition_time)
                     ):
-                        d["general_c_tri_bets"] += 1
-                        if tri_hit:
-                            d["general_c_tri_hits"] += 1
-                            d["general_c_tri_pay"] += tri_pay_v
+                        _record_adopted_signal(
+                            race_id, rdate, "general_c_tri", 154.1,
+                            tri_hit,
+                            int(tri_pay_v or 0),
+                        )
                     if n1 >= 7.0 and b2 >= 40.0:
                         d["gen_f1_tri_bets"] += 1
                         if tri_hit:
@@ -6255,6 +6388,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                        e3.assigned_motor_top_2_percent AS boat3_motor_top2,
                        pv3.start_timing_exhibition AS boat3_ex_st,
                        pv3.exhibition_time AS boat3_ex_time,
+                       CASE WHEN EXISTS (
+                           SELECT 1
+                             FROM race_results rr_done
+                            WHERE rr_done.race_id = r.race_id
+                              AND rr_done.finishing_position = 1
+                       ) THEN 1 ELSE 0 END AS is_done,
                        COALESCE(pt321.payout, 0) AS pay321,
                        COALESCE(pt324.payout, 0) AS pay324,
                        exall.best_ex
@@ -6295,25 +6434,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 pending_rows = []
 
                 def _flush_pending(rows_for_date):
-                    same_day_totals = defaultdict(lambda: {"sum": 0.0, "n": 0})
-                    for _race_id, _rdate, stadium_no, _race_no, _motor_top2, _ex_st3, ex_time3, _pay321, _pay324, _best_ex in rows_for_date:
-                        if ex_time3 is None:
-                            continue
-                        stat = same_day_totals[int(stadium_no)]
-                        stat["sum"] += float(ex_time3)
-                        stat["n"] += 1
+                    same_day_roll = defaultdict(lambda: {"sum": 0.0, "n": 0})
 
-                    for race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, pay321, pay324, best_ex in rows_for_date:
+                    for race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, is_done_row, pay321, pay324, best_ex in rows_for_date:
                         if motor_top2 is None or ex_st3 is None or ex_time3 is None or best_ex is None:
                             continue
                         ex_time_v = float(ex_time3)
-                        day_stat = same_day_totals[int(stadium_no)]
-                        if day_stat["n"] > 1:
-                            same_day_avg = (day_stat["sum"] - ex_time_v) / (day_stat["n"] - 1)
-                        elif day_stat["n"] == 1:
-                            same_day_avg = ex_time_v
-                        else:
-                            same_day_avg = None
+                        day_stat = same_day_roll[int(stadium_no)]
+                        same_day_avg = (day_stat["sum"] / day_stat["n"]) if day_stat["n"] else None
                         venue_stat = venue_roll[int(stadium_no)]
                         venue_avg = (venue_stat["sum"] / venue_stat["n"]) if venue_stat["n"] else None
                         same_day_gain = (same_day_avg - ex_time_v) if same_day_avg is not None else None
@@ -6359,28 +6487,37 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             }
                             chosen_level = max(matched_levels, key=lambda key: priority.get(key, float("-inf")))
 
-                        if from_date <= rdate <= to_date:
-                            d = by_date.get(rdate)
-                            if d is not None:
-                                if chosen_level in ("trifecta_niche_321_core", "trifecta_niche_321_boost"):
-                                    d["boat3_321_tri_bets"] += 1
-                                    if pay321:
-                                        d["boat3_321_tri_hits"] += 1
-                                        d["boat3_321_tri_pay"] += int(pay321 or 0)
-                                if chosen_level in ("trifecta_niche_324_core", "trifecta_niche_324_venue"):
-                                    d["boat3_324_tri_bets"] += 1
-                                    if pay324:
-                                        d["boat3_324_tri_hits"] += 1
-                                        d["boat3_324_tri_pay"] += int(pay324 or 0)
+                        if from_date <= rdate <= to_date and is_done_row:
+                            if chosen_level in ("trifecta_niche_321_core", "trifecta_niche_321_boost"):
+                                _record_adopted_signal(
+                                    race_id,
+                                    rdate,
+                                    "boat3_321_tri",
+                                    priority.get(chosen_level, 0.0),
+                                    bool(pay321),
+                                    int(pay321 or 0),
+                                )
+                            if chosen_level in ("trifecta_niche_324_core", "trifecta_niche_324_venue"):
+                                _record_adopted_signal(
+                                    race_id,
+                                    rdate,
+                                    "boat3_324_tri",
+                                    priority.get(chosen_level, 0.0),
+                                    bool(pay324),
+                                    int(pay324 or 0),
+                                )
 
-                    for _race_id, _rdate, stadium_no, _race_no, _motor_top2, _ex_st3, ex_time3, _pay321, _pay324, _best_ex in rows_for_date:
+                        day_stat["sum"] += ex_time_v
+                        day_stat["n"] += 1
+
+                    for _race_id, _rdate, stadium_no, _race_no, _motor_top2, _ex_st3, ex_time3, _is_done, _pay321, _pay324, _best_ex in rows_for_date:
                         if ex_time3 is None:
                             continue
                         stat = venue_roll[int(stadium_no)]
                         stat["sum"] += float(ex_time3)
                         stat["n"] += 1
 
-                for race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, pay321, pay324, best_ex in candidate_rows:
+                for race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, is_done_row, pay321, pay324, best_ex in candidate_rows:
                     if motor_top2 is None or ex_st3 is None or ex_time3 is None or best_ex is None:
                         continue
                     if current_date is None:
@@ -6389,7 +6526,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         _flush_pending(pending_rows)
                         pending_rows = []
                         current_date = rdate
-                    pending_rows.append((race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, pay321, pay324, best_ex))
+                    pending_rows.append((race_id, rdate, stadium_no, race_no, motor_top2, ex_st3, ex_time3, is_done_row, pay321, pay324, best_ex))
                 if pending_rows:
                     _flush_pending(pending_rows)
         except Exception as e:
@@ -6409,6 +6546,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                        COALESCE(pv4.course_number, 4) AS boat4_ex_course,
                        pv4.exhibition_time AS boat4_ex_time,
                        pv4.start_timing_exhibition AS boat4_ex_st,
+                       CASE WHEN EXISTS (
+                           SELECT 1
+                             FROM race_results rr_done
+                            WHERE rr_done.race_id = r.race_id
+                              AND rr_done.finishing_position = 1
+                       ) THEN 1 ELSE 0 END AS is_done,
                        COALESCE(pe41.payout, 0) AS ex41_pay
                   FROM races r
                   JOIN race_entries e4
@@ -6519,7 +6662,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     racer_ex_idx = 0
                     motor_ex_idx = 0
 
-                    for race_id, rdate, racer_no, motor_no, ex_course, boat4_ex_time, boat4_ex_st, ex41_pay in candidate_rows:
+                    for race_id, rdate, racer_no, motor_no, ex_course, boat4_ex_time, boat4_ex_st, is_done_row, ex41_pay in candidate_rows:
                         while racer_hist_idx < len(racer_hist_rows) and racer_hist_rows[racer_hist_idx][0] < rdate:
                             _d, hracer, hst, hpos = racer_hist_rows[racer_hist_idx]
                             stat = racer_stats[hracer]
@@ -6575,13 +6718,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         ):
                             continue
 
-                        d = by_date.get(rdate)
-                        if d is None:
+                        if not is_done_row:
                             continue
-                        d["ashiya_boat4_exa_bets"] += 1
-                        if ex41_pay:
-                            d["ashiya_boat4_exa_hits"] += 1
-                            d["ashiya_boat4_exa_pay"] += int(ex41_pay or 0)
+                        _record_adopted_signal(
+                            race_id, rdate, "ashiya_boat4_exa", 311.5,
+                            bool(ex41_pay),
+                            int(ex41_pay or 0),
+                        )
         except Exception as e:
             logger.warning("ashiya boat4 exacta daily stats failed: %s", e)
 
@@ -7021,13 +7164,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # ROI 計算 (L4 = A1 のみ。A2 派生は対象外)
         # gen_f1_tri = 一般戦 F1 (採用ベース)
         # gen_tri / gen_plus_tri は観察用 (運用前比較ベンチ)
+        for adopted in adopted_signal_by_race.values():
+            rdate = adopted["date"]
+            d = by_date.get(rdate)
+            if d is None:
+                continue
+            key = adopted["key"]
+            d[f"{key}_bets"] = int(d.get(f"{key}_bets", 0) or 0) + 1
+            if adopted["hit"]:
+                d[f"{key}_hits"] = int(d.get(f"{key}_hits", 0) or 0) + 1
+                d[f"{key}_pay"] = int(d.get(f"{key}_pay", 0) or 0) + int(adopted["pay"] or 0)
+
         for d in by_date.values():
             for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
                         "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
                         "prime_tri", "r12_tri", "gen_r12_tri",
                         "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2",
+                    "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2",
                     "general_c_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
@@ -7056,6 +7210,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_mid132_odds_version"] = MID132_ODDS_CACHE_VERSION
                         day_d["_amagasaki_motor_exa_version"] = AMAGASAKI_MOTOR_EXA_CACHE_VERSION
                         day_d["_ashiya_boat4_exa_version"] = ASHIYA_BOAT4_EXA_CACHE_VERSION
+                        day_d["_hamanako_14_exa_version"] = HAMANAKO_14_EXA_CACHE_VERSION
+                        day_d["_omura_14_exa_version"] = OMURA_14_EXA_CACHE_VERSION
                         day_d["_kiryu_win2_version"] = KIRYU_WIN2_CACHE_VERSION
                         day_d["_general200_version"] = GENERAL200_CACHE_VERSION
                         day_d["_general_c_tri_version"] = GENERAL_C_TRI_CACHE_VERSION
@@ -7065,6 +7221,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_tokuyama_123_tri_version"] = TOKUYAMA_123_TRI_CACHE_VERSION
                         day_d["_shimonoseki_132_tri_version"] = SHIMONOSEKI_132_TRI_CACHE_VERSION
                         day_d["_kojima_124_tri_version"] = KOJIMA_124_TRI_CACHE_VERSION
+                        day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
                             "INSERT OR REPLACE INTO l4_daily_stats_cache "
@@ -7574,7 +7731,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
-        from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
+        from_d = request.args.get("from") or (today - timedelta(days=31)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
@@ -7593,6 +7750,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "tri132_a12_tri",
             "tri124_a12_tri",
             "ashiya_boat4_exa",
+            "hamanako_14_exa",
+            "omura_14_exa",
             "general_c_tri",
         )
 
@@ -7630,7 +7789,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2", "general_c_tri",
+                    "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "boat3_321_tri", "boat3_324_tri", "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
@@ -7737,7 +7896,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "ashiya_boat4_exa", "kiryu_win2", "general_c_tri",
+                    "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "boat3_321_tri", "boat3_324_tri", "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
@@ -7753,6 +7912,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "tri132_a12_tri",
             "tri124_a12_tri",
             "ashiya_boat4_exa",
+            "hamanako_14_exa",
+            "omura_14_exa",
             "general_c_tri",
         )
         try:
@@ -7846,7 +8007,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_total_keys = (
             "win", "exa", "tri", "gen_f1_tri", "gen_200_tri",
             "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa",
-            "kiryu_win2", "general_c_tri",
+            "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "tri132_a12_tri", "tri124_a12_tri",
             "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",

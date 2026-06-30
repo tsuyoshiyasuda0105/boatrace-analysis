@@ -9,10 +9,12 @@
   ('g23_optb_tri', 'G2/G3 1-2-3', 'g23', '#ff006e'),
   ('boat3_321_tri', '3-2-1', 'b321', '#a78bfa'),
   ('boat3_324_tri', '3-2-4', 'b324', '#8b5cf6'),
-  ('tri132_a12_tri', '1-3-2 A1/A2', 'tri132', '#f97316'),
-  ('tri124_a12_tri', '1-2-4 A1/A2', 'tri124', '#22c55e'),
+  ('tri132_a12_tri', '1-3-2 展示型', 'tri132', '#f97316'),
+  ('tri124_a12_tri', '1-2-4 展示型', 'tri124', '#22c55e'),
   ('ashiya_boat4_exa', '芦屋 4-1', 'ashiya41', '#ef4444'),
-  ('tokuyama_123_tri', '徳山 1-2-3', 'tokuyama123', '#f59e0b'),
+  ('hamanako_14_exa', '浜名湖 1-4', 'hamanako14', '#f59e0b'),
+  ('omura_14_exa', '大村 1-4', 'omura14', '#fb7185'),
+  ('tokuyama_123_tri', '徳山 1-2-3', 'tokuyama123', '#38bdf8'),
   ('shimonoseki_132_tri', '下関 1-3-2', 'shimonoseki132', '#84cc16'),
   ('kojima_124_tri', '児島 1-2-4', 'kojima124', '#10b981'),
   ('tsu_123_tri', '津 1-2-3', 'tsu123', '#38bdf8'),
@@ -23,7 +25,7 @@
 {% block content %}
 <div class="strategy-dashboard">
   <h2>月別 ROI 推移 <span class="live-indicator">LIVE</span></h2>
-  <p class="dashboard-hint">採用手法を月別に比較します。集計範囲: {{ monthly_from }} - {{ monthly_to }}</p>
+  <p class="dashboard-hint">採用手法を月別に比較します。<br>集計範囲: {{ monthly_from }} - {{ monthly_to }}</p>
 
   <section class="summary-grid" style="margin-bottom:16px;">
     {% for key, label, _, _ in strategies %}
@@ -39,7 +41,7 @@
     <h3>月別 ROI 推移グラフ</h3>
     <div class="chart-legend" id="monthlyChartLegend"></div>
     <canvas id="monthlyChart" width="980" height="380"></canvas>
-    <p class="dashboard-hint" style="margin-top:8px;"><small>横軸: 月 / 縦軸: ROI (%)</small></p>
+    <p class="dashboard-hint" style="margin-top:8px;"><small>横軸: 年月 / 縦軸: ROI (%)</small></p>
   </section>
 
   <section class="daily-table-section monthly-roi-section">
@@ -69,9 +71,7 @@
             <td class="num">{{ m.n_l4_display }}</td>
             {% for key, _, _, _ in strategies %}
             <td class="num">{{ m[key ~ '_hits'] }}/{{ m[key ~ '_bets'] }}</td>
-            <td class="num {% if m[key ~ '_roi'] is not none and m[key ~ '_roi'] >= 0 %}pos{% elif m[key ~ '_roi'] is not none %}neg{% endif %}">
-              {% if m[key ~ '_roi'] is not none %}{{ '%+.0f' | format(m[key ~ '_roi']) }}%{% else %}-{% endif %}
-            </td>
+            <td class="num {% if m[key ~ '_roi'] is not none and m[key ~ '_roi'] >= 0 %}pos{% elif m[key ~ '_roi'] is not none %}neg{% endif %}">{% if m[key ~ '_roi'] is not none %}{{ '%+.0f' | format(m[key ~ '_roi']) }}%{% else %}-{% endif %}</td>
             {% endfor %}
           </tr>
           {% endfor %}
@@ -86,17 +86,17 @@
   const data = [
     {% for m in monthly_rows_asc %}
     {
-      ym: "{{ m.ym }}",
+      ym: {{ m.ym | tojson }},
       {% for key, _, short, _ in strategies %}
-      {{ short }}: {{ ('null' if m[key ~ '_roi'] is none else '%.1f' | format(m[key ~ '_roi'])) }},
+      {{ short }}: {{ ('null' if m[key ~ '_roi'] is none else '%.1f' | format(m[key ~ '_roi'])) }}{% if not loop.last %},{% endif %}
       {% endfor %}
-    },
+    }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
 
   const SERIES = [
     {% for _, label, short, color in strategies %}
-    { key: '{{ short }}', label: '{{ label }}', color: '{{ color }}' },
+    { key: '{{ short }}', label: {{ label | tojson }}, color: '{{ color }}' }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
 
@@ -166,7 +166,7 @@
     }
 
     ctx.textAlign = 'center';
-    data.forEach((d, i) => ctx.fillText(d.ym.slice(2), xAt(i), H - 14));
+    data.forEach((d, i) => ctx.fillText(String(d.ym).slice(2), xAt(i), H - 14));
 
     visible.forEach((s) => {
       ctx.strokeStyle = s.color;
