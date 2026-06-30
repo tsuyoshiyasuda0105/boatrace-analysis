@@ -266,7 +266,22 @@
       (function() {
         const targetDate = "{{ target_date }}";
         let marketSignalsLoading = false;
-        let currentTodaysPicksTab = 'main';
+        const TODAYS_PICKS_TAB_KEY = 'boatrace:todays-picks-tab';
+        let currentTodaysPicksTab = (() => {
+          try {
+            return window.sessionStorage.getItem(TODAYS_PICKS_TAB_KEY) || 'main';
+          } catch (e) {
+            return 'main';
+          }
+        })();
+        function persistTodaysPicksTab(tabName) {
+          currentTodaysPicksTab = tabName || 'main';
+          try {
+            window.sessionStorage.setItem(TODAYS_PICKS_TAB_KEY, currentTodaysPicksTab);
+          } catch (e) {
+            // ignore storage failures
+          }
+        }
         const warmRaceDetail = (raceId) => {
           if (!raceId || !window.BoatraceSpeed) return;
           window.BoatraceSpeed.prefetchUrl(`/race/${encodeURIComponent(raceId)}`);
@@ -1091,10 +1106,10 @@
 
           const mainPicks = picks.filter(p => !p.isBoat3WatchOnly);
           const boat3WatchPicks = picks.filter(p => p.isBoat3WatchOnly);
-          const activeTab = (currentTodaysPicksTab === 'boat3watch' && boat3WatchPicks.length > 0)
+          const desiredTab = currentTodaysPicksTab;
+          const activeTab = (desiredTab === 'boat3watch' && boat3WatchPicks.length > 0)
             ? 'boat3watch'
             : 'main';
-          currentTodaysPicksTab = activeTab;
 
           tabs.hidden = boat3WatchPicks.length === 0;
           mainPanel.hidden = activeTab !== 'main';
@@ -1244,7 +1259,7 @@
           tabs.forEach(btn => {
             btn.addEventListener('click', () => {
               const target = btn.dataset.picksTab;
-              currentTodaysPicksTab = target;
+              persistTodaysPicksTab(target);
               tabs.forEach(b => b.classList.toggle('is-active', b === btn));
               panels.forEach(panel => {
                 const active = panel.dataset.picksPanel === target;
