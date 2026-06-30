@@ -61,13 +61,15 @@
       <div class="health-metrics-grid">
         <div class="metric">
           <span class="metric-label">ベースライン</span>
-          <span class="metric-value">{{ '%.1f' | format(r.baseline_recovery) }}%</span>
-          <span class="metric-sub">10ヶ月検証</span>
+          <span class="metric-value">
+            {% if r.baseline_recovery is not none %}{{ '%.1f' | format(r.baseline_recovery) }}%{% else %}-{% endif %}
+          </span>
+          <span class="metric-sub">{% if r.baseline_recovery is not none %}10ヶ月検証{% else %}基準作成中{% endif %}</span>
         </div>
         <div class="metric">
           <span class="metric-label">30日 ROI</span>
           <span class="metric-value
-            {% if r.roi_30d and r.roi_30d >= r.baseline_recovery %}pos
+            {% if r.roi_30d and r.baseline_recovery is not none and r.roi_30d >= r.baseline_recovery %}pos
             {% elif r.roi_30d and r.roi_30d < 100 %}neg
             {% endif %}">
             {% if r.roi_30d %}{{ '%.1f' | format(r.roi_30d) }}%{% else %}-{% endif %}

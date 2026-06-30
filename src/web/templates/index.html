@@ -266,6 +266,7 @@
       (function() {
         const targetDate = "{{ target_date }}";
         let marketSignalsLoading = false;
+        let marketSignalsCache = {};
         const TODAYS_PICKS_TAB_KEY = 'boatrace:todays-picks-tab';
         let currentTodaysPicksTab = (() => {
           try {
@@ -304,6 +305,7 @@
             if (!r.ok) return;
             const data = await r.json();
             const signals = data.signals || {};
+            marketSignalsCache = signals;
             document.querySelectorAll(
               '.race-item .l4-badge, .race-item .nuki-filter-badge, ' +
               '.race-item .f1-prime-badge, .race-item .tetsuban-badge, ' +
@@ -623,6 +625,7 @@
           }
           // market-signals 描画が終わったら、次のレースカードを再描画して
           // 取り込まれた L4 バッジをミラー表示する
+          try { renderTodaysPicks(); } catch (e) { /* renderTodaysPicks 未定義時は無視 */ }
           try { updateNextRaces(); } catch (e) { /* updateNextRaces 未定義時は無視 */ }
         }
         loadMarketSignals();
@@ -1035,7 +1038,7 @@
 
         
         
-        function renderTodaysPicks() {
+        function renderTodaysPicksLegacyUnused() {
           const panel = document.getElementById('todays-picks-panel');
           const tbody = document.getElementById('todays-picks-tbody');
           const watchTbody = document.getElementById('todays-picks-boat3watch-tbody');
@@ -1047,38 +1050,61 @@
           const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
           const picks = [];
 
-          function isBoat3WatchSignal(l4) {
-            if (!l4) return false;
-            const text = `${l4.textContent || ''} ${l4.title || ''}`;
+          function getRaceSignal(raceId) {
+            return (raceId && marketSignalsCache && marketSignalsCache[raceId]) ? marketSignalsCache[raceId] : null;
+          }
+
+          function isBoat3WatchSignal(l4, l4Data) {
+            const text = `${l4?.textContent || ''} ${l4?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''}`;
             return /3-2-1|3-2-4/.test(text)
-              && Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'))
-              && !l4.classList.contains('l4-after-exhibition-out');
+              && (
+                Boolean(l4Data?.is_morning_watch)
+                || Boolean(l4Data?.level?.startsWith('morning_watch_'))
+                || Array.from(l4?.classList || []).some(c => c.startsWith('l4-morning_watch_'))
+              )
+              && !(l4Data?.is_after_exhibition_out || l4?.classList?.contains('l4-after-exhibition-out'));
           }
 
           items.forEach(el => {
+            const sig = getRaceSignal(el.dataset.raceId);
+            const l4Data = sig && sig.l4 ? sig.l4 : null;
             const l4 = el.querySelector('.l4-badge');
-            if (!l4 || l4.classList.contains('l4-venus')) return;
-            const labelText = l4.textContent || '';
-            const isMid132 = l4.classList.contains('l4-obs_mid_132')
-              || l4.classList.contains('l4-obs_mid_132_tier_a')
+            if (!l4 && !l4Data) return;
+            if (l4?.classList.contains('l4-venus') || l4Data?.is_venus) return;
+            const labelText = `${l4?.textContent || ''} ${l4?.title || ''} ${l4Data?.label || ''}`.trim();
+            const classList = Array.from(l4?.classList || []);
+            const isMid132 = classList.includes('l4-obs_mid_132')
+              || classList.includes('l4-obs_mid_132_tier_a')
+              || Boolean(l4Data?.is_obs_mid_132)
+              || Boolean(l4Data?.is_obs_mid_132_tier_a)
               || /L4-Mid/.test(labelText);
             if (isMid132) return;
 
-            const isRef = l4.classList.contains('l4-reference');
-            const isMorningBadge = Array.from(l4.classList).some(c => c.startsWith('l4-morning_'));
-            let isMorningWatch = Array.from(l4.classList).some(c => c.startsWith('l4-morning_watch_'));
-            const isExhibitionStOut = l4.classList.contains('l4-exhibition-st-out');
-            const isAfterExhibitionOut = l4.classList.contains('l4-after-exhibition-out');
-            const isDisplayConfirmed = l4.classList.contains('l4-display-confirmed');
+            const isRef = Boolean(l4Data?.is_reference) || classList.includes('l4-reference');
+            const isMorningBadge = Boolean(l4Data?.is_morning)
+              || Boolean(l4Data?.level?.startsWith('morning_'))
+              || classList.some(c => c.startsWith('l4-morning_'));
+            let isMorningWatch = Boolean(l4Data?.is_morning_watch)
+              || Boolean(l4Data?.level?.startsWith('morning_watch_'))
+              || classList.some(c => c.startsWith('l4-morning_watch_'));
+            const isExhibitionStOut = Boolean(l4Data?.is_exhibition_st_out) || classList.includes('l4-exhibition-st-out');
+            const isAfterExhibitionOut = Boolean(l4Data?.is_after_exhibition_out) || classList.includes('l4-after-exhibition-out');
+            const isDisplayConfirmed = Boolean(l4Data?.is_display_confirmed) || classList.includes('l4-display-confirmed');
             if (isExhibitionStOut || isAfterExhibitionOut) isMorningWatch = false;
-            const isPortfolioStrong = l4.classList.contains('l4-portfolio_strong')
+            const isPortfolioStrong = Boolean(l4Data?.is_portfolio_strong)
+              || classList.includes('l4-portfolio_strong')
               || Boolean(el.querySelector('.portfolio-strong-badge'));
-            const isOddsMismatch = false;
-            const isRainExclusion = false;
-            const isFemaleExclusion = false;
+            const isOddsMismatch = isRef && /\(想定払/.test(labelText);
+            const isRainExclusion = Boolean(l4Data?.rain_exclusion_active) || (isRef && /雨除外/.test(labelText));
+            const isFemaleExclusion = Boolean(l4Data?.is_female_present) && isRef && !Boolean(l4Data?.is_venus);
             const isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch && !isExhibitionStOut && !isAfterExhibitionOut;
             const isGeneralReference = isRef && isMorningBadge && !isMorningWatch
-              && (l4.classList.contains('l4-morning_general') || l4.classList.contains('l4-morning_default'));
+              && (
+                classList.includes('l4-morning_general')
+                || classList.includes('l4-morning_default')
+                || l4Data?.level === 'morning_general'
+                || l4Data?.level === 'morning_default'
+              );
             if (isFemaleExclusion || isGeneralReference) return;
             const isAnyExclusion = isOddsMismatch || isRainExclusion || isExhibitionStOut || isAfterExhibitionOut || isMorningOutOfRange || isMorningWatch;
             const l4Actionable = !isRef || isAnyExclusion;
@@ -1094,7 +1120,9 @@
               isOddsMismatch, isRainExclusion, isFemaleExclusion,
               isMorningWatch, isPortfolioStrong,
               isMorningOutOfRange, isExhibitionStOut, isAfterExhibitionOut, isDisplayConfirmed, isAnyExclusion,
-              isBoat3WatchOnly: isBoat3WatchSignal(l4),
+              signal: sig,
+              l4Data,
+              isBoat3WatchOnly: isBoat3WatchSignal(l4, l4Data),
             });
           });
 
@@ -1151,23 +1179,28 @@
               const oddsCellHtml = renderOdds123Cell(rid);
 
               const l4Badge = u.el.querySelector('.l4-badge');
-              const l4Cls = l4Badge ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-')) : '';
-              const is1c80 = l4Badge && l4Badge.classList.contains('l4-1c80');
-              const isPro = l4Badge && l4Badge.classList.contains('l4-pro');
-              const isExactaNiche = l4Badge && l4Badge.classList.contains('l4-exacta-niche');
-              const isTrifectaNiche = l4Badge && l4Badge.classList.contains('l4-trifecta-niche');
-              const isGeneral200 = l4Badge && (
-                l4Badge.classList.contains('l4-l4_general_200')
-                || l4Badge.classList.contains('l4-morning_watch_l4_general_200')
-              );
+              const l4Data = u.l4Data || (u.signal && u.signal.l4 ? u.signal.l4 : null);
+              const l4Cls = l4Badge
+                ? Array.from(l4Badge.classList).find(c => c.startsWith('l4-rank-'))
+                : (l4Data?.rank ? `l4-rank-${l4Data.rank}` : '');
+              const is1c80 = Boolean(l4Data?.is_1c80) || (l4Badge && l4Badge.classList.contains('l4-1c80'));
+              const isPro = Boolean(l4Data?.is_pro) || (l4Badge && l4Badge.classList.contains('l4-pro'));
+              const isExactaNiche = Boolean(l4Data?.is_exacta_niche) || (l4Badge && l4Badge.classList.contains('l4-exacta-niche'));
+              const isTrifectaNiche = Boolean(l4Data?.is_trifecta_niche) || (l4Badge && l4Badge.classList.contains('l4-trifecta-niche'));
+              const isGeneral200 = Boolean(l4Data?.level === 'l4_general_200' || l4Data?.level === 'morning_watch_l4_general_200')
+                || (l4Badge && (
+                  l4Badge.classList.contains('l4-l4_general_200')
+                  || l4Badge.classList.contains('l4-morning_watch_l4_general_200')
+                ));
               const tbEl = u.el.querySelector('.tetsuban-badge');
               const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
                 .find(c => c.startsWith('tetsuban-'))?.replace('tetsuban-', '') || '0', 10) : 0;
               const tbStars = tbScore >= 3 ? `${tbScore}*` : '';
 
-              let rankLabel = l4Cls === 'l4-rank-plus_plus' ? 'L4++'
+              let rankLabel = l4Data?.rank_label
+                            || (l4Cls === 'l4-rank-plus_plus' ? 'L4++'
                             : l4Cls === 'l4-rank-plus' ? 'L4+'
-                            : '\u5019\u88dc';
+                            : '\u5019\u88dc');
               if (isExactaNiche) rankLabel = '2\u9023\u5358';
               if (isTrifectaNiche) rankLabel = '3\u9023\u5358';
               if (!isExactaNiche && is1c80) rankLabel = `1c80 ${rankLabel}`;
@@ -1176,16 +1209,24 @@
               if (tbStars) rankLabel = `${tbStars} ${rankLabel}`;
               if (isGeneral200) rankLabel = '\u4e00\u822c200';
 
-              const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
+              const synthesizedTitle = l4Data ? [
+                l4Data.label || '',
+                (Array.isArray(l4Data.watch_strategy_labels) && l4Data.watch_strategy_labels.length) ? `対象: ${l4Data.watch_strategy_labels.join(' / ')}` : '',
+                (Array.isArray(l4Data.watch_strategy_bets) && l4Data.watch_strategy_bets.length) ? `買い目: ${l4Data.watch_strategy_bets.join(' / ')}` : '',
+                l4Data.bet ? `買い目: ${l4Data.bet}` : '',
+                (l4Data.recovery != null) ? `検証回収率 ${l4Data.recovery}% (n=${l4Data.n ?? '-'})` : '',
+                (l4Data.trifecta_niche_tag || l4Data.exacta_niche_tag) ? `条件: ${l4Data.trifecta_niche_tag || l4Data.exacta_niche_tag}` : '',
+              ].filter(Boolean).join(' | ') : '';
+              const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : synthesizedTitle;
               const recMatch = l4Title.match(/([0-9]+(?:\.[0-9]+)?%)/);
-              const recovery = recMatch ? recMatch[1] : '-';
+              const recovery = recMatch ? recMatch[1] : ((l4Data?.recovery != null) ? `${l4Data.recovery}%` : '-');
               const titleParts = l4Title.split('|').map(s => s.trim()).filter(Boolean);
               const findPart = (prefixes) => titleParts.find((part) => prefixes.some((prefix) => part.startsWith(prefix))) || '';
-              let racerInfo = titleParts.length >= 2 ? titleParts[1] : '';
+              let racerInfo = titleParts.length >= 2 ? titleParts[1] : (l4Data?.label || '');
               if (isExactaNiche && titleParts.length >= 3) racerInfo = titleParts[2];
               const strategyInfo = findPart(['条件:', '対象:', '監視:', '買い目:']);
               const edgeInfo = findPart(['優位性:', '的中率', '4C平均ST', '3号艇モーター2連率', '2号艇全国2連対率']);
-              const pickType = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : '';
+              const pickType = l4Badge ? l4Badge.textContent.trim().slice(0, 28) : ((l4Data?.label || '').slice(0, 28));
               const strategyHtmlParts = [];
               if (racerInfo) strategyHtmlParts.push(`<div>${racerInfo}</div>`);
               if (strategyInfo) strategyHtmlParts.push(`<div class="pick-strategy-note"><small>${strategyInfo}</small></div>`);
