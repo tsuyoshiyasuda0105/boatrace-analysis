@@ -1108,7 +1108,9 @@
           picks.sort((a, b) => a.closedAt - b.closedAt);
           panel.hidden = false;
           tbody.innerHTML = '';
-          watchTbody.innerHTML = '';
+          if (hasBoat3WatchPanel) {
+            watchTbody.innerHTML = '';
+          }
           warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
 
           const mainPicks = picks.filter(p => !p.isBoat3WatchOnly);
