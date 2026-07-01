@@ -4181,8 +4181,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "exacta_niche_rate": None,
                     "tetsuban_score": 5,
                     "tetsuban_label": "2連単 5★",
+                    "uses_rain_filter": True,
                 }
-            if stadium == 6 and grade == 5 and n_female == 0 and weather != 3 and n1 >= 7.0 and n4 >= 5.0 and m4 >= 40.0 and m2 <= 35.0:
+            if stadium == 6 and grade == 5 and n_female == 0 and n1 >= 7.0 and n4 >= 5.0 and m4 >= 40.0 and m2 <= 35.0:
                 return {
                     "level": "exacta_niche_hamanako14",
                     "label": "浜名湖 2連単1-4",
@@ -4203,9 +4204,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "exacta_niche_rate": None,
                     "tetsuban_score": 5,
                     "tetsuban_label": "2連単 5★",
+                    "uses_rain_filter": True,
                 }
 
-            if stadium == 24 and grade == 5 and rn in (5, 6, 7, 8) and n_female == 0 and weather != 3 and n1 >= 7.0 and n4 >= 5.0 and m2 <= 35.0:
+            if stadium == 24 and grade == 5 and rn in (5, 6, 7, 8) and n_female == 0 and n1 >= 7.0 and n4 >= 5.0 and m2 <= 35.0:
                 return {
                     "level": "exacta_niche_omura14",
                     "label": "大村 2連単1-4",
@@ -4226,6 +4228,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "exacta_niche_rate": None,
                     "tetsuban_score": 5,
                     "tetsuban_label": "2連単 5★",
+                    "uses_rain_filter": True,
                 }
 
             pair = pair_affinity or {}
@@ -5271,7 +5274,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ashiya_exacta,
                     miyajima_watch,
                     win_niche,
-                    boat3_trifecta_niche,
                     tri124_132_niche,
                     non_exhibition_core,
                     general_c,
@@ -5335,6 +5337,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     (not l4.get("is_exacta_niche") and not l4.get("is_win_niche") and not l4.get("is_trifecta_niche"))
                     or l4.get("is_ashiya_boat4_lift")
                     or l4.get("is_ashiya_boat4_watch")
+                    or l4.get("uses_rain_filter")
                 ):
                     l4["is_rain"] = True
                     l4["rain_exclusion_active"] = True
@@ -5424,7 +5427,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                 miyajima_watch = _evaluate_miyajima_boat4_watch(miyajima_boat4_watch.get(rid))
-                boat3_watch = _evaluate_boat3_trifecta_niche_watch(boat3_signal_ctx.get(rid))
                 tri124_132_watch = _evaluate_tri124_132_trifecta_niche_watch(info)
                 general_c_watch = _evaluate_general_c_watch(
                     stadium, grade, cls,
@@ -5458,13 +5460,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ashiya_watch,
                     ashiya_exacta,
                     miyajima_watch,
-                    boat3_watch,
                     tri124_132_watch,
                     general_c_watch,
                     g23_watch,
                     tsu_suminoe_signal,
                     win_niche,
-                    boat3_trifecta_niche,
                     candidate_l4,
                 )
                 if morning_l4:
@@ -5472,6 +5472,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         (not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche") and not morning_l4.get("is_trifecta_niche"))
                         or morning_l4.get("is_ashiya_boat4_lift")
                         or morning_l4.get("is_ashiya_boat4_watch")
+                        or morning_l4.get("uses_rain_filter")
                     ):
                         morning_l4["is_rain"] = True
                         morning_l4["rain_exclusion_active"] = True
@@ -5629,7 +5630,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "mid_132_tier_a_tri", "venus_tri",
                             "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                             "tri132_a12_tri", "tri124_a12_tri",
-                            "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
+                            "g23_optb_tri",
                             "tsu_123_tri", "suminoe_123_tri",
                             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri"):
                     n = d.get(f"{bet}_bets", 0)
@@ -7183,7 +7184,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "general_c_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
-                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
+                    "g23_optb_tri",
                     "tsu_123_tri", "suminoe_123_tri"):
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
@@ -7738,8 +7739,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         rows = _l4_daily_stats(from_d, to_d, force_full_scan=True)
         adopted_keys = (
             "g23_optb_tri",
-            "boat3_321_tri",
-            "boat3_324_tri",
             "tokuyama_123_tri",
             "shimonoseki_132_tri",
             "kojima_124_tri",
@@ -7790,7 +7789,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
-                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
+                    "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
@@ -7897,11 +7896,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
-                    "boat3_321_tri", "boat3_324_tri", "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
+                    "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         adopted_keys = (
             "g23_optb_tri",
-            "boat3_321_tri",
-            "boat3_324_tri",
             "tokuyama_123_tri",
             "shimonoseki_132_tri",
             "kojima_124_tri",
@@ -8008,7 +8005,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "tri132_a12_tri", "tri124_a12_tri",
-            "boat3_321_tri", "boat3_324_tri", "g23_optb_tri",
+            "g23_optb_tri",
             "tsu_123_tri", "suminoe_123_tri",
             "prime_tri", "r12_tri", "gen_r12_tri",
         )
