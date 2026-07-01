@@ -1023,7 +1023,8 @@
           const tabs = document.getElementById('todays-picks-tabs');
           const mainPanel = document.getElementById('todays-picks-main-panel');
           const watchPanel = document.getElementById('todays-picks-boat3watch-panel');
-          if (!panel || !tbody || !watchTbody || !tabs || !mainPanel || !watchPanel) return;
+          if (!panel || !tbody || !tabs || !mainPanel) return;
+          const hasBoat3WatchPanel = Boolean(watchTbody && watchPanel);
           const now = new Date();
           const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
           const picks = [];
@@ -1112,16 +1113,18 @@
 
           const mainPicks = picks.filter(p => !p.isBoat3WatchOnly);
           const boat3WatchPicks = picks.filter(p => p.isBoat3WatchOnly);
-          const desiredTab = currentTodaysPicksTab;
-          const activeTab = (desiredTab === 'boat3watch' && boat3WatchPicks.length > 0)
+          const desiredTab = hasBoat3WatchPanel ? currentTodaysPicksTab : 'main';
+          const activeTab = (hasBoat3WatchPanel && desiredTab === 'boat3watch' && boat3WatchPicks.length > 0)
             ? 'boat3watch'
             : 'main';
 
-          tabs.hidden = boat3WatchPicks.length === 0;
+          tabs.hidden = !hasBoat3WatchPanel || boat3WatchPicks.length === 0;
           mainPanel.hidden = activeTab !== 'main';
           mainPanel.classList.toggle('is-active', activeTab === 'main');
-          watchPanel.hidden = boat3WatchPicks.length === 0 || activeTab !== 'boat3watch';
-          watchPanel.classList.toggle('is-active', activeTab === 'boat3watch');
+          if (hasBoat3WatchPanel) {
+            watchPanel.hidden = boat3WatchPicks.length === 0 || activeTab !== 'boat3watch';
+            watchPanel.classList.toggle('is-active', activeTab === 'boat3watch');
+          }
           tabs.querySelectorAll('.todays-picks-tab').forEach(btn => {
             btn.classList.toggle('is-active', btn.dataset.picksTab === activeTab);
           });
@@ -1267,8 +1270,10 @@
             });
           }
 
-          renderPickRows(tbody, mainPicks);
-          renderPickRows(watchTbody, boat3WatchPicks);
+          renderPickRows(tbody, hasBoat3WatchPanel ? mainPicks : picks);
+          if (hasBoat3WatchPanel) {
+            renderPickRows(watchTbody, boat3WatchPicks);
+          }
         }
 
         function setupTodaysPickTabs() {
