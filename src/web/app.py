@@ -4061,6 +4061,69 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "tetsuban_label": "朝監視 一般C",
             }
 
+        def _evaluate_omura_123_watch(
+            stadium,
+            race_number=None,
+            boat4_local_1=None,
+            boat2_top2=None,
+            boat3_top2=None,
+            wind_speed=None,
+            boat3_ex_st=None,
+            boat1_exhibition_time=None,
+            best_exhibition_time=None,
+        ):
+            try:
+                rn = int(race_number) if race_number is not None else 0
+                b4_local = float(boat4_local_1) if boat4_local_1 is not None else None
+                b2 = float(boat2_top2) if boat2_top2 is not None else None
+                b3 = float(boat3_top2) if boat3_top2 is not None else None
+                wind = float(wind_speed) if wind_speed is not None else None
+                b3st = float(boat3_ex_st) if boat3_ex_st is not None else None
+                b1ex = float(boat1_exhibition_time) if boat1_exhibition_time is not None else None
+                best_ex = float(best_exhibition_time) if best_exhibition_time is not None else None
+            except (TypeError, ValueError):
+                return None
+
+            if not (
+                stadium == 24
+                and rn in (10, 11, 12)
+                and b4_local is not None
+                and b4_local <= 5.0
+                and b2 is not None
+                and b3 is not None
+                and b2 >= b3
+            ):
+                return None
+
+            has_followup = any(v is not None for v in (wind, b3st, b1ex, best_ex))
+            display_confirmed = (
+                wind is not None and wind >= 5.0
+                and b3st is not None and b3st <= 0.15
+                and b1ex is not None
+                and best_ex is not None
+                and (b1ex - best_ex) <= 0.10
+            )
+            return {
+                "level": "morning_watch_omura_123_tri",
+                "label": "朝監視 大村1-2-3",
+                "recovery": 336.8,
+                "n": 38,
+                "bet": "3連単 1-2-3",
+                "rank": "trifecta_niche",
+                "rank_label": "朝監視",
+                "rank_emoji": "👀",
+                "is_reference": True,
+                "is_morning": True,
+                "is_morning_watch": True,
+                "watch_strategy_labels": ["朝監視 大村1-2-3"],
+                "watch_strategy_bets": ["3連単 1-2-3"],
+                "watch_strategy_count": 1,
+                "is_display_confirmed": display_confirmed,
+                "is_after_exhibition_out": has_followup and not display_confirmed,
+                "tetsuban_score": 4 if not display_confirmed else 5,
+                "tetsuban_label": "朝監視 大村123",
+            }
+
         def _evaluate_non_exhibition_core_signal(
             stadium,
             grade,
@@ -5532,6 +5595,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                 miyajima_watch = _evaluate_miyajima_boat4_watch(miyajima_boat4_watch.get(rid))
+                omura_123_watch = _evaluate_omura_123_watch(
+                    stadium,
+                    race_number=race_no_info,
+                    boat4_local_1=info.get("boat4_local_1"),
+                    boat2_top2=boat2_top2,
+                    boat3_top2=info.get("boat3_top2"),
+                    wind_speed=wind_speed,
+                    boat3_ex_st=info.get("boat3_ex_st"),
+                    boat1_exhibition_time=boat1_exhibition_time,
+                    best_exhibition_time=info.get("best_exhibition_time"),
+                )
                 tri124_132_watch = _evaluate_tri124_132_trifecta_niche_watch(info)
                 general_c_watch = _evaluate_general_c_watch(
                     stadium, grade, cls,
@@ -5565,6 +5639,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ashiya_watch,
                     ashiya_exacta,
                     miyajima_watch,
+                    omura_123_watch,
                     tri124_132_watch,
                     general_c_watch,
                     g23_watch,
