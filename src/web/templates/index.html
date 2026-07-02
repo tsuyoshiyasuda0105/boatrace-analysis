@@ -292,6 +292,31 @@
             || Boolean(l4Data?.is_l4_general_200)
             || /\bL4\s+(?:SG|G[123])/.test(text);
         }
+
+        function isSupportedStrategySignal(l4Data, l4El) {
+          if (!l4Data && !l4El) return false;
+          const level = String(l4Data?.level || '');
+          const text = `${l4El?.textContent || ''} ${l4El?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''}`.trim();
+          const supportedLevels = new Set([
+            'g23_optb_tri',
+            'morning_watch_g23_optb',
+            'trifecta_niche_321_core',
+            'trifecta_niche_321_boost',
+            'trifecta_niche_324_core',
+            'trifecta_niche_324_venue',
+            'morning_watch_boat3_multi',
+            'trifecta_niche_132_a12',
+            'trifecta_niche_124_a12',
+            'morning_watch_tri132_a12',
+            'morning_watch_tri124_a12',
+            'morning_watch_tri124_132_multi',
+            'exacta_niche_ashiya_boat4_lift',
+            'morning_watch_ashiya_boat4_lift',
+            'tsu_123_tri',
+            'suminoe_123_tri',
+          ]);
+          return supportedLevels.has(level);
+        }
         // 注: EV+ 自動判定 UI/API はユーザ指示 (backlog.md item 3) により削除済。
 
         // 市場非効率ベース +EV シグナル (誰でも閲覧可)
@@ -321,7 +346,7 @@
                 item.querySelectorAll('.l4-badge').forEach(el => el.remove());
 
                 // L4 マーク (該当時、市場バッジより優先表示)
-                if (sig.l4 && !isLegacyL4HighGradeSignal(sig.l4, null)) {
+                if (sig.l4 && !isLegacyL4HighGradeSignal(sig.l4, null) && isSupportedStrategySignal(sig.l4, null)) {
                   const l4Badge = document.createElement('span');
                   const rank = sig.l4.rank || 'base';
                   // rank クラスで色分け (plus_plus=金、plus=銀、base=従来)
@@ -1074,6 +1099,7 @@
             if (!l4 && !l4Data) return;
             if (l4?.classList.contains('l4-venus') || l4Data?.is_venus) return;
             if (isLegacyL4HighGradeSignal(l4Data, l4)) return;
+            if (!isSupportedStrategySignal(l4Data, l4)) return;
             const labelText = `${l4?.textContent || ''} ${l4?.title || ''} ${l4Data?.label || ''}`.trim();
             const classList = Array.from(l4?.classList || []);
             const isMid132 = classList.includes('l4-obs_mid_132')
