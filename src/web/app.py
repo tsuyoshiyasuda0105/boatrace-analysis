@@ -2391,6 +2391,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e4.national_top_1_percent AS boat4_natl_1,
                                e4.assigned_motor_top_2_percent AS boat4_motor_top2,
                                e5.assigned_motor_top_2_percent AS boat5_motor_top2,
+                               NULLIF(pv5.exhibition_time, 0) AS boat5_exhibition_time,
+                               NULLIF(pv6.exhibition_time, 0) AS boat6_exhibition_time,
                                pv4.course_number AS boat4_ex_course,
                                NULLIF(pv4.exhibition_time, 0) AS boat4_exhibition_time,
                                pv4.start_timing_exhibition AS boat4_ex_st,
@@ -2413,6 +2415,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         LEFT JOIN race_previews pv2 ON pv2.race_id = r.race_id AND pv2.boat_number = 2
                         LEFT JOIN race_previews pv3 ON pv3.race_id = r.race_id AND pv3.boat_number = 3
                         LEFT JOIN race_previews pv4 ON pv4.race_id = r.race_id AND pv4.boat_number = 4
+                        LEFT JOIN race_previews pv5 ON pv5.race_id = r.race_id AND pv5.boat_number = 5
+                        LEFT JOIN race_previews pv6 ON pv6.race_id = r.race_id AND pv6.boat_number = 6
                         LEFT JOIN race_program_tags pt ON pt.race_id = r.race_id
                         LEFT JOIN (
                             SELECT race_id,
@@ -2437,6 +2441,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat3_exhibition_time, boat3_ex_st,
                          boat1_pred_top2, boat3_pred_top2, boat4_pred_top2, boat4_class,
                          boat4_racer, boat4_motor_number, boat4_local_1, boat4_natl_1, boat4_motor_top2, boat5_motor_top2,
+                         boat5_exhibition_time, boat6_exhibition_time,
                          boat4_ex_course, boat4_exhibition_time, boat4_ex_st,
                          best_exhibition_time, n_exhibition_times,
                          n_female, program_type, program_name, is_fixed_entry) in cur.fetchall():
@@ -2472,6 +2477,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat4_natl_1": boat4_natl_1,
                             "boat4_motor_top2": boat4_motor_top2,
                             "boat5_motor_top2": boat5_motor_top2,
+                            "boat5_exhibition_time": boat5_exhibition_time,
+                            "boat6_exhibition_time": boat6_exhibition_time,
                             "boat4_ex_course": boat4_ex_course,
                             "boat4_exhibition_time": boat4_exhibition_time,
                             "boat4_ex_st": boat4_ex_st,
@@ -5797,7 +5804,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             all_dates = []
 
-        missing_dates = all_dates[:] if force_full_scan else [d for d in all_dates if d not in cached_by_date]
+        missing_dates = all_dates[:] if force_full_scan else [
+            d for d in all_dates
+            if d not in cached_by_date or d >= today_iso
+        ]
         # 当日分は常に再計算 (cache に保存しない、 リアルタイム性確保)
         # 過去日でも cache に無いものは今回 SQL で取得
         if not missing_dates:

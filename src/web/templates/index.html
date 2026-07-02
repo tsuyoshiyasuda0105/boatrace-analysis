@@ -269,6 +269,29 @@
           const unique = [...new Set((raceIds || []).filter(Boolean))].slice(0, 8);
           unique.forEach((rid, idx) => setTimeout(() => warmRaceDetail(rid), 120 + idx * 120));
         };
+
+        function isLegacyL4HighGradeSignal(l4Data, l4El) {
+          if (!l4Data && !l4El) return false;
+          const rawLevel = String(l4Data?.level || '');
+          const level = rawLevel.toUpperCase();
+          const text = `${l4El?.textContent || ''} ${l4El?.title || ''} ${l4Data?.label || ''}`.trim();
+          const isOfficialStrategy = Boolean(
+            l4Data?.is_morning_watch
+            || rawLevel.startsWith('morning_watch_')
+            || l4Data?.is_trifecta_niche
+            || l4Data?.is_exacta_niche
+            || l4Data?.is_ashiya_boat4_watch
+            || l4Data?.is_ashiya_boat4_lift
+            || l4Data?.is_miyajima_boat4_watch
+            || l4Data?.is_omura_123
+            || l4Data?.is_omura_132
+            || l4Data?.is_portfolio_strong
+          );
+          if (isOfficialStrategy) return false;
+          return ['SG', 'G1', 'G2', 'G3', 'L4_GENERAL_200'].includes(level)
+            || Boolean(l4Data?.is_l4_general_200)
+            || /\bL4\s+(?:SG|G[123])/.test(text);
+        }
         // 注: EV+ 自動判定 UI/API はユーザ指示 (backlog.md item 3) により削除済。
 
         // 市場非効率ベース +EV シグナル (誰でも閲覧可)
@@ -298,7 +321,7 @@
                 item.querySelectorAll('.l4-badge').forEach(el => el.remove());
 
                 // L4 マーク (該当時、市場バッジより優先表示)
-                if (sig.l4) {
+                if (sig.l4 && !isLegacyL4HighGradeSignal(sig.l4, null)) {
                   const l4Badge = document.createElement('span');
                   const rank = sig.l4.rank || 'base';
                   // rank クラスで色分け (plus_plus=金、plus=銀、base=従来)
@@ -1050,6 +1073,7 @@
             const l4 = el.querySelector('.l4-badge');
             if (!l4 && !l4Data) return;
             if (l4?.classList.contains('l4-venus') || l4Data?.is_venus) return;
+            if (isLegacyL4HighGradeSignal(l4Data, l4)) return;
             const labelText = `${l4?.textContent || ''} ${l4?.title || ''} ${l4Data?.label || ''}`.trim();
             const classList = Array.from(l4?.classList || []);
             const isMid132 = classList.includes('l4-obs_mid_132')
