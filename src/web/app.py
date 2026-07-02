@@ -30,6 +30,7 @@ if hasattr(time, "tzset"):
 from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 
 import config
+from src.collectors import openapi
 from src.db.connection import connect as db_connect
 from src.web.auth import (
     is_member, login_required, member_only_api,
@@ -1497,13 +1498,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or date.today().isoformat()
         races_list = _races_for_date(target_date)
         if not races_list:
-            return render_template(
-                "index.html",
-                target_date=target_date,
-                today_iso=date.today().isoformat(),
-                stadium_groups=[],
-                empty=True,
+            today_iso = date.today().isoformat()
+            should_self_heal = (
+                os.environ.get("RENDER")
+                and target_date == today_iso
+                and request.headers.get("X-Purpose") != "prefetch"
             )
+            if should_self_heal:
+                try:
+                    summary = openapi.collect_all(date.fromisoformat(target_date))
+                    logger.warning("self-heal collect_all for %s: %s", target_date, summary)
+                    races_list = _races_for_date(target_date)
+                except Exception as exc:
+                    logger.exception("self-heal collect_all failed for %s: %s", target_date, exc)
+            if not races_list:
+                return render_template(
+                    "index.html",
+                    target_date=target_date,
+                    today_iso=today_iso,
+                    stadium_groups=[],
+                    empty=True,
+                )
 
         # 会場別にグループ化
         stadium_groups: dict[int, dict] = {}
@@ -3632,6 +3647,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     return None
 
             cls = _to_int(ctx.get("class"))
+            stadium = _to_int(ctx.get("stadium"))
+            if stadium is None:
+                stadium = _to_int(ctx.get("stadium_number"))
             weather = _to_int(ctx.get("weather"))
             n_female = _to_int(ctx.get("n_female")) or 0
             boat2_ex_time = _to_float(ctx.get("boat2_exhibition_time"))
@@ -3686,21 +3704,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 })
             if (
                 None not in (boat2_ex_time, boat4_ex_time, boat2_top2, boat4_motor_top2)
+                and stadium in (5, 9, 24)
                 and boat2_top2 >= 40.0
                 and boat4_motor_top2 >= 40.0
                 and (_ex_rank(4) or 99) <= 2
             ):
                 matched.append({
                     "level": "trifecta_niche_124_a12",
-                    "label": "1-2-4 展示型",
+                    "label": "津/多摩川/大村 1-2-4",
                     "bet": "三連単 1-2-4",
                     "rank": "trifecta_niche",
                     "rank_label": "三連単ニッチ",
-                    "recovery": 254.0,
-                    "n": 65,
-                    "hit_rate": 20.0,
-                    "tag": "A1/A2 + 雨除外 + 女子戦除外 + 2号艇全国2連対率>=40 + 4号艇モーター2連率>=40 + 展示T4<=2",
-                    "name": "展示124",
+                    "recovery": 190.6,
+                    "n": 145,
+                    "hit_rate": 17.9,
+                    "tag": "津/多摩川/大村 + A1/A2 + 雨除外 + 女子戦除外 + 2号艇全国2連対率>=40 + 4号艇モーター2連率>=40 + 展示T4<=2",
+                    "name": "会場限定124",
                     "tetsuban_score": 8,
                 })
 
@@ -3739,6 +3758,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     return None
 
             cls = _to_int(ctx.get("class"))
+            stadium = _to_int(ctx.get("stadium"))
+            if stadium is None:
+                stadium = _to_int(ctx.get("stadium_number"))
             weather = _to_int(ctx.get("weather"))
             n_female = _to_int(ctx.get("n_female")) or 0
             boat3_natl_1 = _to_float(ctx.get("boat3_natl_1"))
@@ -3770,12 +3792,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if (
                 boat2_top2 is not None and boat2_top2 >= 40.0
                 and boat4_motor_top2 is not None and boat4_motor_top2 >= 40.0
+                and stadium in (5, 9, 24)
             ):
                 matched.append({
                     "level": "morning_watch_tri124_a12",
-                    "label": "朝監視 1-2-4",
-                    "recovery": 254.0,
-                    "n": 65,
+                    "label": "朝監視 津/多摩川/大村 1-2-4",
+                    "recovery": 190.6,
+                    "n": 145,
                     "bet": "3連単 1-2-4",
                 })
 
@@ -3801,6 +3824,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             qualifies_124 = (
                 boat2_top2 is not None and boat2_top2 >= 40.0
                 and boat4_motor_top2 is not None and boat4_motor_top2 >= 40.0
+                and stadium in (5, 9, 24)
                 and boat4_ex_time is not None
                 and (_ex_rank(4) or 99) <= 2
             )
@@ -5674,7 +5698,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     GENERAL200_CACHE_VERSION = "general200_v1"
     GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v1"
     TRI132_A12_CACHE_VERSION = "tri132_a12_v1"
-    TRI124_A12_CACHE_VERSION = "tri124_a12_v1"
+    TRI124_A12_CACHE_VERSION = "tri124_a12_v2"
     BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v3"
     TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v1"
     SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v1"
@@ -6215,12 +6239,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         int(pay_132 or 0),
                     )
                 if (
+                    stadium in (5, 9, 24)
+                    and
                     float(boat2_top2 or 0) >= 40.0
                     and b4_motor >= 40.0
                     and (ex_rank_by_boat.get(4) or 99) <= 2
                 ):
                     _record_adopted_signal(
-                        race_id, rdate, "tri124_a12_tri", 254.0,
+                        race_id, rdate, "tri124_a12_tri", 190.6,
                         w1 == 1 and w2 == 2 and w3 == 4,
                         int(pay_124 or 0),
                     )
