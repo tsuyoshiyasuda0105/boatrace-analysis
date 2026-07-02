@@ -3506,51 +3506,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_score": 8,
                 })
 
-            if (
-                stadium == 24
-                and b4_local_1_v <= 5.0
-                and b2_top2_v >= b3_top2_v
-                and wind_speed_v >= 5.0
-                and b3_ex_st_v is not None
-                and b3_ex_st_v <= 0.15
-                and b1_ex_v is not None
-                and best_ex_v is not None
-                and (b1_ex_v - best_ex_v) <= 0.10
-            ):
-                matched.append({
-                    "level": "omura_123_tri",
-                    "label": "大村 1-2-3",
-                    "bet": "3連単 1-2-3",
-                    "rank": "trifecta_niche",
-                    "rank_label": "3連単ニッチ",
-                    "recovery": 336.8,
-                    "n": 38,
-                    "hit_rate": 42.1,
-                    "name": "大村123",
-                    "tag": "大村 10-12R + 4号艇当地1着率<=5 + 1号艇展示順位<=2 + 3号艇展示ST<=0.15 + 風>=5m + 2号艇全国2連対率>=3号艇全国2連対率",
-                    "tetsuban_score": 8,
-                })
-            if (
-                stadium == 24
-                and local_1_v >= 8.0
-                and b1_motor_v >= 35.0
-                and b4_motor_v <= 35.0
-                and b3_top2_v >= b2_top2_v
-            ):
-                matched.append({
-                    "level": "omura_132_tri",
-                    "label": "大村 1-3-2",
-                    "bet": "3連単 1-3-2",
-                    "rank": "trifecta_niche",
-                    "rank_label": "3連単ニッチ",
-                    "recovery": 310.4,
-                    "n": 67,
-                    "hit_rate": 32.8,
-                    "name": "大村132",
-                    "tag": "大村 10-12R + 1号艇当地1着率>=8 + 1号艇モーター2連率>=35 + 4号艇モーター2連率<=35 + 3号艇全国2連対率>=2号艇全国2連対率",
-                    "tetsuban_score": 8,
-                })
-
             best = _pick_best_market_signal(*matched)
             if not best:
                 return None
