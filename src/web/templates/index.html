@@ -1150,6 +1150,7 @@
             }
 
             rows.forEach((u, idx) => {
+              try {
               const stadium = u.el.dataset.stadiumName || '';
               const rno = u.el.dataset.raceNumber || '';
               const rid = u.el.dataset.raceId || '';
@@ -1269,6 +1270,30 @@
                 <td class="pick-vote">${voteBtnHtml}</td>
               `;
               targetBody.appendChild(tr);
+              } catch (err) {
+                console.error('renderTodaysPicks row failed', u?.el?.dataset?.raceId, err);
+                const rid = u?.el?.dataset?.raceId || '';
+                const stadium = u?.el?.dataset?.stadiumName || '';
+                const rno = u?.el?.dataset?.raceNumber || '';
+                const hh = String(u.closedAt.getHours()).padStart(2, '0');
+                const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
+                const tr = document.createElement('tr');
+                tr.className = 'todays-pick-row is-fallback';
+                tr.innerHTML = `
+                  <td class="pick-idx">${idx + 1}</td>
+                  <td class="pick-time">${hh}:${mm}</td>
+                  <td class="pick-til">${u.isClosed ? '\u6761\u4ef6\u5f85\u3061' : fmtTimeTil(u.minutesUntil)}</td>
+                  <td class="pick-rank">\u5019\u88dc</td>
+                  <td class="pick-place"><strong>${stadium}</strong> ${rno}R</td>
+                  <td class="pick-type">${u?.l4Data?.label || '\u76e3\u8996\u4e2d'}</td>
+                  <td class="pick-racer">${u?.l4Data?.bet || u?.l4Data?.label || ''}</td>
+                  <td class="pick-rec"><strong>${u?.l4Data?.recovery != null ? `${u.l4Data.recovery}%` : '-'}</strong></td>
+                  <td class="pick-odds">-</td>
+                  <td class="pick-link"><a href="/race/${rid}">\u8a73\u7d30\u2192</a></td>
+                  <td class="pick-vote"><span class="vote-btn vote-btn-disabled">ERR</span></td>
+                `;
+                targetBody.appendChild(tr);
+              }
             });
           }
 
