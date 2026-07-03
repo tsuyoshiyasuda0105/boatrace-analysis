@@ -1072,6 +1072,660 @@ def _race_current_conditions(race_id: str) -> dict:
     return out
 
 
+_WATER_LABELS = {
+    "fresh": "淡水",
+    "brackish": "汽水",
+    "sea": "海水",
+}
+
+_WEATHER_LABELS = {
+    1: "晴れ",
+    2: "曇り",
+    3: "雨",
+    4: "雪",
+}
+
+_COURSE_TYPE_LABELS = {
+    "逃げ": "逃げ型",
+    "差し": "差し巧者",
+    "まくり": "まくり型",
+    "まくり差し": "まくり差し型",
+    "抜き": "さばき型",
+    "恵まれ": "展開待ち",
+}
+
+
+def _safe_float(value):
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value):
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _branch_label(branch_number: Any) -> str:
+    try:
+        n = int(branch_number)
+    except Exception:
+        return "-"
+    return f"支部{n}"
+
+
+def _class_label(class_number: Any) -> str:
+    return {1: "A1", 2: "A2", 3: "B1", 4: "B2"}.get(class_number, "-")
+
+
+def _diff_tone(value: Optional[float]) -> str:
+    if value is None:
+        return "flat"
+    if value >= 6.0:
+        return "up"
+    if value <= -6.0:
+        return "down"
+    return "flat"
+
+
+def _signed_text(value: Optional[float], digits: int = 1, suffix: str = "") -> str:
+    if value is None:
+        return "-"
+    return f"{value:+.{digits}f}{suffix}"
+
+
+def _pair_cell_tone(wins: int, losses: int) -> str:
+    diff = wins - losses
+    if diff >= 4:
+        return "up"
+    if diff <= -4:
+        return "down"
+    return "flat"
+
+
+def _water_difficulty_profile(
+    stadium_number: int,
+    stadium_water: Optional[str],
+    tide_effect: Optional[str],
+    conditions: dict[str, Any],
+    tide_row: dict[str, Any],
+) -> dict[str, Any]:
+    wind_speed = _safe_float(conditions.get("wind_speed")) or 0.0
+    wave_height = _safe_float(conditions.get("wave_height")) or 0.0
+    weather_number = _safe_int(conditions.get("weather_number"))
+    score = 36.0
+    if stadium_water == "sea":
+        score += 8.0
+    elif stadium_water == "brackish":
+        score += 6.0
+    if tide_effect == "high":
+        score += 5.0
+    elif tide_effect == "mid":
+        score += 2.0
+    if wind_speed >= 7.0:
+        score += 16.0
+    elif wind_speed >= 5.0:
+        score += 11.0
+    elif wind_speed >= 3.0:
+        score += 6.0
+    if wave_height >= 10.0:
+        score += 12.0
+    elif wave_height >= 5.0:
+        score += 6.0
+    if weather_number in (3, 4):
+        score += 6.0
+    if int(tide_row.get("is_high_tide_zone") or 0) == 1 or int(tide_row.get("is_low_tide_zone") or 0) == 1:
+        score += 5.0
+    if stadium_number in {2, 3, 4, 14}:
+        score += 10.0
+    elif stadium_number in {19, 21, 24}:
+        score -= 4.0
+    score = _clamp(score, 0.0, 100.0)
+    if score < 38:
+        grade = "S"
+        label = "かなり穏やか"
+    elif score < 50:
+        grade = "A"
+        label = "穏やか"
+    elif score < 62:
+        grade = "B"
+        label = "やや荒れ気味"
+    elif score < 74:
+        grade = "C"
+        label = "荒れ気味"
+    elif score < 86:
+        grade = "D"
+        label = "難水面"
+    else:
+        grade = "E"
+        label = "かなり難しい"
+    return {
+        "score": round(score, 1),
+        "grade": grade,
+        "label": label,
+    }
+
+
+def _build_type_label(top_kimarite: Optional[str], current_course: int, course_diff_points: Optional[float]) -> str:
+    if top_kimarite:
+        if top_kimarite == "逃げ" and current_course == 1:
+            return "堅実: 1C逃げ型"
+        if top_kimarite in ("まくり", "まくり差し") and current_course >= 4:
+            return f"尖り: {current_course}C攻め型"
+        mapped = _COURSE_TYPE_LABELS.get(top_kimarite)
+        if mapped:
+            return mapped
+    if course_diff_points is not None and course_diff_points >= 10:
+        return "得意コース"
+    if course_diff_points is not None and course_diff_points <= -10:
+        return "割引コース"
+    return "標準型"
+
+
+def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    if boat_number < 1 or boat_number > 6:
+        return None
+    info = info or _race_basic_info(race_id)
+    if not info:
+        return None
+
+    with db_connect() as conn:
+        current_row = conn.execute(
+            """
+            SELECT assigned_motor_number, assigned_motor_top_2_percent,
+                   assigned_motor_top_3_percent, racer_name, racer_number,
+                   NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                   pv.start_timing_exhibition
+              FROM race_entries
+              LEFT JOIN race_previews pv
+                ON pv.race_id = race_entries.race_id
+               AND pv.boat_number = race_entries.boat_number
+             WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
+            """,
+            (race_id, boat_number),
+        ).fetchone()
+
+    if not current_row:
+        return None
+
+    motor_no, motor_top2, motor_top3, current_racer, current_racer_number, current_ex_time, current_ex_st = current_row
+    cycle_start = _motor_cycle_start(info["race_date"], info["stadium_number"])
+    current = {
+        "race_id": race_id,
+        "race_date": info["race_date"],
+        "race_number": info["race_number"],
+        "boat_number": boat_number,
+        "racer_name": current_racer,
+        "racer_number": current_racer_number,
+        "stadium_number": info["stadium_number"],
+        "stadium_name": info.get("stadium_name", ""),
+        "motor_number": motor_no,
+        "motor_top_2_percent": motor_top2,
+        "motor_top_3_percent": motor_top3,
+        "motor_cycle_start": cycle_start,
+        "motor_replacement_month": _MOTOR_REPLACEMENT_MONTH.get(info["stadium_number"]),
+        "exhibition_time": current_ex_time,
+        "start_timing_exhibition": current_ex_st,
+    }
+    if motor_no is None:
+        return {
+            "current": current,
+            "summary": {},
+            "profile": _motor_profile_from_history([]),
+            "lift": _racer_lift_profile([], {}),
+            "live_signal": _motor_history_live_signal(current, [], {}),
+            "history": [],
+        }
+
+    cycle_filter_sql = "AND r.race_date >= ?" if cycle_start else ""
+    params: list[Any] = [
+        info["stadium_number"],
+        motor_no,
+        info["race_date"],
+        info["race_date"],
+        info["race_number"],
+    ]
+    if cycle_start:
+        params.append(cycle_start)
+
+    with db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            WITH hist AS (
+                SELECT r.race_id, r.race_date, r.race_number,
+                       e.boat_number, e.racer_name, e.racer_number,
+                       e.assigned_motor_top_2_percent,
+                       e.assigned_motor_top_3_percent,
+                       NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                       pv.start_timing_exhibition,
+                       rr.finishing_position, rr.course_number,
+                       rr.start_timing, NULLIF(rr.kimarite, '') AS boat_kimarite
+                  FROM races r
+                  JOIN race_entries e
+                    ON e.race_id = r.race_id
+                  JOIN race_results rr
+                    ON rr.race_id = e.race_id
+                   AND rr.boat_number = e.boat_number
+                  LEFT JOIN race_previews pv
+                    ON pv.race_id = e.race_id
+                   AND pv.boat_number = e.boat_number
+                 WHERE r.stadium_number = ?
+                   AND e.assigned_motor_number = ?
+                   AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+                   {cycle_filter_sql}
+                   AND rr.finishing_position IS NOT NULL
+                 ORDER BY r.race_date DESC, r.race_number DESC
+                 LIMIT 10
+            )
+            SELECT h.race_id, h.race_date, h.race_number,
+                   h.boat_number, h.racer_name, h.racer_number,
+                   h.assigned_motor_top_2_percent,
+                   h.assigned_motor_top_3_percent,
+                   h.exhibition_time, h.start_timing_exhibition,
+                   h.finishing_position, h.course_number,
+                   h.start_timing,
+                   COALESCE(
+                       h.boat_kimarite,
+                       (
+                           SELECT MAX(NULLIF(kimarite, ''))
+                             FROM race_results kr
+                            WHERE kr.race_id = h.race_id
+                              AND kr.kimarite IS NOT NULL
+                              AND kr.kimarite <> ''
+                       )
+                   ) AS kimarite
+              FROM hist h
+             ORDER BY h.race_date DESC, h.race_number DESC
+            """,
+            tuple(params),
+        ).fetchall()
+
+    keys = [
+        "race_id", "race_date", "race_number", "boat_number",
+        "racer_name", "racer_number", "motor_top_2_percent",
+        "motor_top_3_percent", "exhibition_time",
+        "start_timing_exhibition", "finishing_position",
+        "course_number", "start_timing", "kimarite",
+    ]
+    history = [dict(zip(keys, row)) for row in rows]
+
+    starts = len(history)
+    wins = sum(1 for r in history if r.get("finishing_position") == 1)
+    top2 = sum(1 for r in history if (r.get("finishing_position") or 99) <= 2)
+    top3 = sum(1 for r in history if (r.get("finishing_position") or 99) <= 3)
+    st_vals = [r["start_timing"] for r in history if r.get("start_timing") is not None]
+    ex_vals = [r["exhibition_time"] for r in history if r.get("exhibition_time") is not None]
+    ex_st_vals = [r["start_timing_exhibition"] for r in history if r.get("start_timing_exhibition") is not None]
+    summary = {
+        "starts": starts,
+        "wins": wins,
+        "top2": top2,
+        "top3": top3,
+        "win_rate": (wins / starts * 100.0) if starts else None,
+        "top2_rate": (top2 / starts * 100.0) if starts else None,
+        "top3_rate": (top3 / starts * 100.0) if starts else None,
+        "avg_start_timing": _mean_or_none([float(v) for v in st_vals]),
+        "avg_exhibition_time": _mean_or_none([float(v) for v in ex_vals]),
+        "avg_start_timing_exhibition": _mean_or_none([float(v) for v in ex_st_vals]),
+    }
+
+    with db_connect() as conn:
+        racer_rows = conn.execute(
+            """
+            SELECT NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                   pv.start_timing_exhibition,
+                   rr.start_timing,
+                   rr.finishing_position
+              FROM races r
+              JOIN race_entries e
+                ON e.race_id = r.race_id
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+              LEFT JOIN race_previews pv
+                ON pv.race_id = e.race_id
+               AND pv.boat_number = e.boat_number
+             WHERE e.racer_number = ?
+               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+               AND rr.finishing_position IS NOT NULL
+             ORDER BY r.race_date DESC, r.race_number DESC
+             LIMIT 20
+            """,
+            (current_racer_number, info["race_date"], info["race_date"], info["race_number"]),
+        ).fetchall()
+
+    racer_baseline = {
+        "starts": len(racer_rows),
+        "avg_exhibition_time": _mean_or_none([float(r[0]) for r in racer_rows if r[0] is not None]),
+        "avg_start_timing_exhibition": _mean_or_none([float(r[1]) for r in racer_rows if r[1] is not None]),
+        "avg_start_timing": _mean_or_none([float(r[2]) for r in racer_rows if r[2] is not None]),
+        "avg_finish_position": _mean_or_none([float(r[3]) for r in racer_rows if r[3] is not None]),
+    }
+
+    profile = _motor_profile_from_history(history)
+    lift = _racer_lift_profile(history, racer_baseline)
+    live_signal = _motor_history_live_signal(current, history, racer_baseline)
+    return {
+        "current": current,
+        "summary": summary,
+        "profile": profile,
+        "lift": lift,
+        "live_signal": live_signal,
+        "history": history,
+    }
+
+
+def _build_race_compat_analysis(race_id: str, info: dict[str, Any], preds: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    conditions = _race_current_conditions(race_id)
+    target_date = info["race_date"]
+    target_race_no = info["race_number"]
+
+    with db_connect() as conn:
+        current_rows = conn.execute(
+            """
+            SELECT e.boat_number, e.racer_number, e.racer_name, e.class_number, e.branch_number,
+                   e.assigned_motor_number, e.assigned_motor_top_2_percent,
+                   e.national_top_1_percent, e.local_top_1_percent,
+                   COALESCE(pv.course_number, e.boat_number) AS current_course,
+                   NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                   pv.start_timing_exhibition
+              FROM race_entries e
+              LEFT JOIN race_previews pv
+                ON pv.race_id = e.race_id
+               AND pv.boat_number = e.boat_number
+             WHERE e.race_id = ?
+             ORDER BY e.boat_number
+            """,
+            (race_id,),
+        ).fetchall()
+        if not current_rows:
+            return None
+
+        stadium_row = conn.execute(
+            """
+            SELECT s.water, s.in_strength, s.tide_effect,
+                   COALESCE(rt.tide_phase, '') AS tide_phase,
+                   rt.tide_height_cm, rt.tide_delta_60m_cm, rt.tide_range_cm,
+                   COALESCE(rt.is_high_tide_zone, 0) AS is_high_tide_zone,
+                   COALESCE(rt.is_low_tide_zone, 0) AS is_low_tide_zone,
+                   rt.minutes_from_high, rt.minutes_from_low
+              FROM races r
+              JOIN stadiums s ON s.stadium_number = r.stadium_number
+              LEFT JOIN race_tides rt ON rt.race_id = r.race_id
+             WHERE r.race_id = ?
+            """,
+            (race_id,),
+        ).fetchone()
+
+        entries = []
+        racer_numbers: list[int] = []
+        for row in current_rows:
+            entries.append(
+                {
+                    "boat_number": int(row[0]),
+                    "racer_number": int(row[1]) if row[1] is not None else None,
+                    "racer_name": row[2],
+                    "class_number": row[3],
+                    "branch_number": row[4],
+                    "assigned_motor_number": row[5],
+                    "assigned_motor_top_2_percent": row[6],
+                    "national_top_1_percent": row[7],
+                    "local_top_1_percent": row[8],
+                    "current_course": int(row[9]) if row[9] is not None else int(row[0]),
+                    "exhibition_time": _safe_float(row[10]),
+                    "start_timing_exhibition": _safe_float(row[11]),
+                }
+            )
+            if row[1] is not None:
+                racer_numbers.append(int(row[1]))
+        if not racer_numbers:
+            return None
+
+        placeholders = ",".join("?" for _ in racer_numbers)
+        cutoff_params = [target_date, target_date, target_race_no]
+
+        course_rows = conn.execute(
+            f"""
+            SELECT e.racer_number, rr.course_number,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+              FROM races r
+              JOIN race_entries e ON e.race_id = r.race_id
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+             WHERE e.racer_number IN ({placeholders})
+               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+               AND rr.course_number IS NOT NULL
+               AND rr.finishing_position IS NOT NULL
+             GROUP BY e.racer_number, rr.course_number
+            """,
+            (*racer_numbers, *cutoff_params),
+        ).fetchall()
+        course_stats = {
+            (int(racer_no), int(course_no)): {
+                "n": int(n or 0),
+                "wins": int(wins or 0),
+                "rate": (float(wins or 0) / float(n or 1) * 100.0) if n else None,
+            }
+            for racer_no, course_no, n, wins in course_rows
+        }
+
+        venue_rows = conn.execute(
+            """
+            SELECT rr.course_number,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+              FROM races r
+              JOIN race_results rr ON rr.race_id = r.race_id
+             WHERE r.stadium_number = ?
+               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+               AND rr.course_number IS NOT NULL
+               AND rr.finishing_position IS NOT NULL
+             GROUP BY rr.course_number
+            """,
+            (info["stadium_number"], *cutoff_params),
+        ).fetchall()
+        venue_course_rates = {
+            int(course_no): (float(wins or 0) / float(n or 1) * 100.0) if n else None
+            for course_no, n, wins in venue_rows
+        }
+
+        kim_rows = conn.execute(
+            f"""
+            SELECT e.racer_number, NULLIF(rr.kimarite, '') AS kimarite, COUNT(*) AS n
+              FROM races r
+              JOIN race_entries e ON e.race_id = r.race_id
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+             WHERE e.racer_number IN ({placeholders})
+               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+               AND rr.finishing_position = 1
+               AND rr.kimarite IS NOT NULL
+               AND rr.kimarite <> ''
+             GROUP BY e.racer_number, rr.kimarite
+             ORDER BY e.racer_number, n DESC, rr.kimarite
+            """,
+            (*racer_numbers, *cutoff_params),
+        ).fetchall()
+        top_kimarite_by_racer: dict[int, str] = {}
+        for racer_no, kimarite, _n in kim_rows:
+            racer_no = int(racer_no)
+            if racer_no not in top_kimarite_by_racer and kimarite:
+                top_kimarite_by_racer[racer_no] = str(kimarite)
+
+        pair_rows = conn.execute(
+            f"""
+            SELECT e1.racer_number, e2.racer_number,
+                   rr1.finishing_position, rr2.finishing_position
+              FROM races r
+              JOIN race_entries e1 ON e1.race_id = r.race_id
+              JOIN race_entries e2
+                ON e2.race_id = r.race_id
+               AND e2.racer_number <> e1.racer_number
+              JOIN race_results rr1
+                ON rr1.race_id = e1.race_id
+               AND rr1.boat_number = e1.boat_number
+              JOIN race_results rr2
+                ON rr2.race_id = e2.race_id
+               AND rr2.boat_number = e2.boat_number
+             WHERE e1.racer_number IN ({placeholders})
+               AND e2.racer_number IN ({placeholders})
+               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+               AND rr1.finishing_position IS NOT NULL
+               AND rr2.finishing_position IS NOT NULL
+            """,
+            (*racer_numbers, *racer_numbers, *cutoff_params),
+        ).fetchall()
+        pair_stats: dict[tuple[int, int], dict[str, int]] = {}
+        for r1, r2, p1, p2 in pair_rows:
+            key = (int(r1), int(r2))
+            rec = pair_stats.setdefault(key, {"meetings": 0, "wins": 0})
+            rec["meetings"] += 1
+            if int(p1) < int(p2):
+                rec["wins"] += 1
+
+    tide_row = {}
+    if stadium_row:
+        tide_keys = [
+            "water", "in_strength", "tide_effect", "tide_phase", "tide_height_cm",
+            "tide_delta_60m_cm", "tide_range_cm", "is_high_tide_zone", "is_low_tide_zone",
+            "minutes_from_high", "minutes_from_low",
+        ]
+        tide_row = dict(zip(tide_keys, stadium_row))
+
+    pred_rank_map = {int(p.get("boat_number")): idx + 1 for idx, p in enumerate(preds)}
+    built_entries = []
+    motor_rows = []
+    best_rise_boat = None
+    best_rise_score = -1.0
+    for entry in entries:
+        racer_no = entry["racer_number"]
+        current_course = entry["current_course"]
+        course_stat = course_stats.get((racer_no, current_course), {})
+        course_rate = course_stat.get("rate")
+        venue_avg = venue_course_rates.get(current_course)
+        diff_points = (course_rate - venue_avg) if (course_rate is not None and venue_avg is not None) else None
+        type_label = _build_type_label(top_kimarite_by_racer.get(racer_no), current_course, diff_points)
+        built_entries.append(
+            {
+                **entry,
+                "class_label": _class_label(entry["class_number"]),
+                "branch_label": _branch_label(entry["branch_number"]),
+                "pred_rank": pred_rank_map.get(entry["boat_number"]),
+                "course_win_rate": round(course_rate, 1) if course_rate is not None else None,
+                "course_diff_points": round(diff_points, 1) if diff_points is not None else None,
+                "course_diff_tone": _diff_tone(diff_points),
+                "type_label": type_label,
+                "top_kimarite": top_kimarite_by_racer.get(racer_no),
+            }
+        )
+        payload = _motor_history_payload(race_id, entry["boat_number"], info=info)
+        if not payload:
+            continue
+        profile = payload.get("profile") or {}
+        live_signal = payload.get("live_signal") or {}
+        trend_value = _safe_float(live_signal.get("trend_value")) or 0.0
+        lift_value = _safe_float(live_signal.get("lift_value")) or 0.0
+        dash_delta = trend_value * 0.60 + lift_value * 0.40
+        carry_delta = trend_value * 0.45 + lift_value * 0.35
+        stretch_delta = trend_value * 0.85 + lift_value * 0.15
+        turn_delta = trend_value * 0.25 + lift_value * 0.75
+        rise_score = _clamp(
+            ((_safe_float(live_signal.get("trend_score")) or 50.0) * 0.55)
+            + ((_safe_float(live_signal.get("lift_score")) or 50.0) * 0.45),
+            0.0,
+            100.0,
+        )
+        motor_eval = "中堅"
+        if rise_score >= 72 and (_safe_float(profile.get("stretch_score")) or 0.0) >= (_safe_float(profile.get("dash_score")) or 0.0) + 6.0:
+            motor_eval = "伸び特化"
+        elif rise_score >= 68 and (_safe_float(profile.get("dash_score")) or 0.0) >= (_safe_float(profile.get("stretch_score")) or 0.0) + 6.0:
+            motor_eval = "出足上位"
+        elif (_safe_float(profile.get("condition_score")) or 0.0) >= 62.0:
+            motor_eval = "中堅上位"
+        elif (_safe_float(profile.get("condition_score")) or 50.0) <= 44.0:
+            motor_eval = "劣勢"
+        row = {
+            "boat_number": entry["boat_number"],
+            "racer_name": entry["racer_name"],
+            "motor_number": entry["assigned_motor_number"],
+            "motor_top_2_percent": entry["assigned_motor_top_2_percent"],
+            "motor_eval": motor_eval,
+            "motor_eval_tone": live_signal.get("trend_tone") or profile.get("condition_tone") or "flat",
+            "dash_score": round(_safe_float(profile.get("dash_score")) or 50.0, 1),
+            "carry_score": round(_clamp(((_safe_float(profile.get("dash_score")) or 50.0) * 0.55) + ((_safe_float(profile.get("stretch_score")) or 50.0) * 0.20) + ((_safe_float(live_signal.get("trend_score")) or 50.0) * 0.25), 0.0, 100.0), 1),
+            "stretch_score": round(_safe_float(profile.get("stretch_score")) or 50.0, 1),
+            "turn_score": round(_safe_float(profile.get("turn_score")) or 50.0, 1),
+            "dash_delta": round(dash_delta, 2),
+            "carry_delta": round(carry_delta, 2),
+            "stretch_delta": round(stretch_delta, 2),
+            "turn_delta": round(turn_delta, 2),
+            "exhibition_time": _safe_float(entry["exhibition_time"]),
+            "exhibition_st": _safe_float(entry["start_timing_exhibition"]),
+            "rise_score": round(rise_score, 1),
+            "rise_label": "上昇" if rise_score >= 60.0 else ("割引" if rise_score <= 44.0 else "標準"),
+        }
+        if row["rise_score"] > best_rise_score:
+            best_rise_score = row["rise_score"]
+            best_rise_boat = row["boat_number"]
+        motor_rows.append(row)
+
+    matrix_rows = []
+    boat_order = [entry["boat_number"] for entry in built_entries]
+    racer_by_boat = {entry["boat_number"]: entry["racer_number"] for entry in built_entries}
+    for row_boat in boat_order:
+        row_racer = racer_by_boat.get(row_boat)
+        cells = []
+        for col_boat in boat_order:
+            if row_boat == col_boat:
+                cells.append({"text": "—", "tone": "self", "meetings": 0})
+                continue
+            stat = pair_stats.get((row_racer, racer_by_boat.get(col_boat)), {"meetings": 0, "wins": 0})
+            wins = int(stat.get("wins") or 0)
+            meetings = int(stat.get("meetings") or 0)
+            losses = max(meetings - wins, 0)
+            cells.append(
+                {
+                    "text": f"{wins}-{losses}" if meetings else "0-0",
+                    "tone": _pair_cell_tone(wins, losses),
+                    "meetings": meetings,
+                    "wins": wins,
+                    "losses": losses,
+                }
+            )
+        matrix_rows.append({"boat_number": row_boat, "cells": cells})
+
+    difficulty = _water_difficulty_profile(
+        info["stadium_number"],
+        tide_row.get("water"),
+        tide_row.get("tide_effect"),
+        conditions,
+        tide_row,
+    )
+    return {
+        "entries": built_entries,
+        "matrix_rows": matrix_rows,
+        "water": {
+            "water_label": _WATER_LABELS.get(tide_row.get("water"), "-"),
+            "wind_label": f"{int((_safe_float(conditions.get('wind_speed')) or 0))}m" if conditions.get("wind_speed") is not None else "-",
+            "wave_label": f"{int((_safe_float(conditions.get('wave_height')) or 0))}cm" if conditions.get("wave_height") is not None else "-",
+            "weather_label": _WEATHER_LABELS.get(_safe_int(conditions.get("weather_number")), "-"),
+            "tide_label": tide_row.get("tide_phase") or "-",
+            "tide_height_cm": _safe_float(tide_row.get("tide_height_cm")),
+            "difficulty_grade": difficulty["grade"],
+            "difficulty_label": difficulty["label"],
+            "difficulty_score": difficulty["score"],
+        },
+        "motor_rows": motor_rows,
+        "best_rise_boat": best_rise_boat,
+    }
+
+
 # ============================================================
 # Flask アプリ
 # ============================================================
@@ -1621,6 +2275,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # 市場非効率レース検出 (三連単1番人気の払戻に基づく +EV ゾーン)
         market_signal = _detect_market_inefficiency(race_id, preds, info=info)
+        compat_analysis = None
+        try:
+            compat_analysis = _build_race_compat_analysis(race_id, info, preds)
+        except Exception as exc:
+            logger.warning("compat analysis failed for %s: %s", race_id, exc)
 
         # 三連単予測 (本番 Render では heavy compute をスキップして OOM/timeout 防止)
         tri_pw = []
@@ -1652,6 +2311,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             actual_result=actual_result,
             niche_signals=niche_signals,
             market_signal=market_signal,
+            compat_analysis=compat_analysis,
             error=None,
         )
 
@@ -1727,193 +2387,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def race_motor_history(race_id: str, boat_number: int):
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
-
-        info = _race_basic_info(race_id)
-        if not info:
-            return jsonify({"error": "not found"}), 404
-
-        with db_connect() as conn:
-            current_row = conn.execute(
-                """
-                SELECT assigned_motor_number, assigned_motor_top_2_percent,
-                       assigned_motor_top_3_percent, racer_name, racer_number,
-                       NULLIF(pv.exhibition_time, 0) AS exhibition_time,
-                       pv.start_timing_exhibition
-                  FROM race_entries
-                  LEFT JOIN race_previews pv
-                    ON pv.race_id = race_entries.race_id
-                   AND pv.boat_number = race_entries.boat_number
-                 WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
-                """,
-                (race_id, boat_number),
-            ).fetchone()
-
-        if not current_row:
+        payload = _motor_history_payload(race_id, boat_number)
+        if payload is None:
             return jsonify({"error": "entry not found"}), 404
-
-        motor_no, motor_top2, motor_top3, current_racer, current_racer_number, current_ex_time, current_ex_st = current_row
-        cycle_start = _motor_cycle_start(info["race_date"], info["stadium_number"])
-        current = {
-            "race_id": race_id,
-            "race_date": info["race_date"],
-            "race_number": info["race_number"],
-            "boat_number": boat_number,
-            "racer_name": current_racer,
-            "racer_number": current_racer_number,
-            "stadium_number": info["stadium_number"],
-            "stadium_name": info.get("stadium_name", ""),
-            "motor_number": motor_no,
-            "motor_top_2_percent": motor_top2,
-            "motor_top_3_percent": motor_top3,
-            "motor_cycle_start": cycle_start,
-            "motor_replacement_month": _MOTOR_REPLACEMENT_MONTH.get(info["stadium_number"]),
-            "exhibition_time": current_ex_time,
-            "start_timing_exhibition": current_ex_st,
-        }
-        if motor_no is None:
-            return jsonify({"current": current, "summary": {}, "profile": _motor_profile_from_history([]), "lift": _racer_lift_profile([], {}), "history": []})
-
-        cycle_filter_sql = "AND r.race_date >= ?" if cycle_start else ""
-        params = [
-            info["stadium_number"],
-            motor_no,
-            info["race_date"],
-            info["race_date"],
-            info["race_number"],
-        ]
-        if cycle_start:
-            params.append(cycle_start)
-
-        with db_connect() as conn:
-            rows = conn.execute(
-                f"""
-                WITH hist AS (
-                    SELECT r.race_id, r.race_date, r.race_number,
-                           e.boat_number, e.racer_name, e.racer_number,
-                           e.assigned_motor_top_2_percent,
-                           e.assigned_motor_top_3_percent,
-                           NULLIF(pv.exhibition_time, 0) AS exhibition_time,
-                           pv.start_timing_exhibition,
-                           rr.finishing_position, rr.course_number,
-                           rr.start_timing, NULLIF(rr.kimarite, '') AS boat_kimarite
-                      FROM races r
-                      JOIN race_entries e
-                        ON e.race_id = r.race_id
-                      JOIN race_results rr
-                        ON rr.race_id = e.race_id
-                       AND rr.boat_number = e.boat_number
-                      LEFT JOIN race_previews pv
-                        ON pv.race_id = e.race_id
-                       AND pv.boat_number = e.boat_number
-                     WHERE r.stadium_number = ?
-                       AND e.assigned_motor_number = ?
-                       AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
-                       {cycle_filter_sql}
-                       AND rr.finishing_position IS NOT NULL
-                     ORDER BY r.race_date DESC, r.race_number DESC
-                     LIMIT 10
-                )
-                SELECT h.race_id, h.race_date, h.race_number,
-                       h.boat_number, h.racer_name, h.racer_number,
-                       h.assigned_motor_top_2_percent,
-                       h.assigned_motor_top_3_percent,
-                       h.exhibition_time, h.start_timing_exhibition,
-                       h.finishing_position, h.course_number,
-                       h.start_timing,
-                       COALESCE(
-                           h.boat_kimarite,
-                           (
-                               SELECT MAX(NULLIF(kimarite, ''))
-                                 FROM race_results kr
-                                WHERE kr.race_id = h.race_id
-                                  AND kr.kimarite IS NOT NULL
-                                  AND kr.kimarite <> ''
-                           )
-                       ) AS kimarite
-                  FROM hist h
-                 ORDER BY h.race_date DESC, h.race_number DESC
-                """,
-                tuple(params),
-            ).fetchall()
-
-        keys = [
-            "race_id", "race_date", "race_number", "boat_number",
-            "racer_name", "racer_number", "motor_top_2_percent",
-            "motor_top_3_percent", "exhibition_time",
-            "start_timing_exhibition", "finishing_position",
-            "course_number", "start_timing", "kimarite",
-        ]
-        history = [dict(zip(keys, row)) for row in rows]
-
-        starts = len(history)
-        wins = sum(1 for r in history if r.get("finishing_position") == 1)
-        top2 = sum(1 for r in history if (r.get("finishing_position") or 99) <= 2)
-        top3 = sum(1 for r in history if (r.get("finishing_position") or 99) <= 3)
-        st_vals = [r["start_timing"] for r in history if r.get("start_timing") is not None]
-        ex_vals = [r["exhibition_time"] for r in history if r.get("exhibition_time") is not None]
-        summary = {
-            "starts": starts,
-            "wins": wins,
-            "top2": top2,
-            "top3": top3,
-            "win_rate": (wins / starts * 100) if starts else None,
-            "top2_rate": (top2 / starts * 100) if starts else None,
-            "top3_rate": (top3 / starts * 100) if starts else None,
-            "avg_start_timing": (sum(st_vals) / len(st_vals)) if st_vals else None,
-            "avg_exhibition_time": (sum(ex_vals) / len(ex_vals)) if ex_vals else None,
-            "avg_start_timing_exhibition": (
-                sum(r["start_timing_exhibition"] for r in history if r.get("start_timing_exhibition") is not None)
-                / len([r for r in history if r.get("start_timing_exhibition") is not None])
-            ) if any(r.get("start_timing_exhibition") is not None for r in history) else None,
-        }
-
-        with db_connect() as conn:
-            racer_rows = conn.execute(
-                """
-                SELECT NULLIF(pv.exhibition_time, 0) AS exhibition_time,
-                       pv.start_timing_exhibition,
-                       rr.start_timing,
-                       rr.finishing_position
-                  FROM races r
-                  JOIN race_entries e
-                    ON e.race_id = r.race_id
-                  JOIN race_results rr
-                    ON rr.race_id = e.race_id
-                   AND rr.boat_number = e.boat_number
-                  LEFT JOIN race_previews pv
-                    ON pv.race_id = e.race_id
-                   AND pv.boat_number = e.boat_number
-                 WHERE e.racer_number = ?
-                   AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
-                   AND rr.finishing_position IS NOT NULL
-                 ORDER BY r.race_date DESC, r.race_number DESC
-                 LIMIT 20
-                """,
-                (current_racer_number, info["race_date"], info["race_date"], info["race_number"]),
-            ).fetchall()
-
-        racer_baseline = {
-            "starts": len(racer_rows),
-            "avg_exhibition_time": _mean_or_none([float(r[0]) for r in racer_rows if r[0] is not None]),
-            "avg_start_timing_exhibition": _mean_or_none([float(r[1]) for r in racer_rows if r[1] is not None]),
-            "avg_start_timing": _mean_or_none([float(r[2]) for r in racer_rows if r[2] is not None]),
-            "avg_finish_position": _mean_or_none([float(r[3]) for r in racer_rows if r[3] is not None]),
-        }
-
-        profile = _motor_profile_from_history(history)
-        lift = _racer_lift_profile(history, racer_baseline)
-        live_signal = _motor_history_live_signal(current, history, racer_baseline)
-
-        return jsonify(
-            {
-                "current": current,
-                "summary": summary,
-                "profile": profile,
-                "lift": lift,
-                "live_signal": live_signal,
-                "history": history,
-            }
-        )
+        return jsonify(payload)
 
 
     def _safe_float(value):
@@ -6248,6 +6725,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
                 "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
                 "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
+                "omura_tide_132_tri_bets": 0, "omura_tide_132_tri_hits": 0, "omura_tide_132_tri_pay": 0,
                 "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
                 "tri132_a12_tri_bets": 0, "tri132_a12_tri_hits": 0, "tri132_a12_tri_pay": 0,
                 "tri124_a12_tri_bets": 0, "tri124_a12_tri_hits": 0, "tri124_a12_tri_pay": 0,
@@ -6358,6 +6836,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
                 "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
                 "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
+                "omura_tide_132_tri_bets": 0, "omura_tide_132_tri_hits": 0, "omura_tide_132_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -6599,6 +7078,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if _tide_range >= 150.0 and 5.0 <= _tide_delta < 15.0 and _wind_speed <= 2.0:
                     _record_adopted_signal(
                         race_id, rdate, "fukuoka_tide_132_tri", 470.0,
+                        w1 == 1 and w2 == 3 and w3 == 2,
+                        int(pay_132 or 0),
+                    )
+
+            if is_done and stadium == 24 and _tide_delta is not None and _tide_range is not None and _wind_speed is not None:
+                if (
+                    int(is_high_tide_zone or 0) == 1
+                    and _tide_delta <= -15.0
+                    and 90.0 <= _tide_range < 120.0
+                    and _wind_speed <= 2.0
+                    and float(boat2_motor_top2 or 0) < 35.0
+                    and float(boat4_motor_top2 or 0) < 35.0
+                ):
+                    _record_adopted_signal(
+                        race_id, rdate, "omura_tide_132_tri", 357.9,
                         w1 == 1 and w2 == 3 and w3 == 2,
                         int(pay_132 or 0),
                     )
@@ -7722,6 +8216,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_gamagori_tide_132_tri_version"] = GAMAGORI_TIDE_132_TRI_CACHE_VERSION
                         day_d["_marugame_tide_123_tri_version"] = MARUGAME_TIDE_123_TRI_CACHE_VERSION
                         day_d["_fukuoka_tide_132_tri_version"] = FUKUOKA_TIDE_132_TRI_CACHE_VERSION
+                        day_d["_omura_tide_132_tri_version"] = OMURA_TIDE_132_TRI_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
@@ -8250,6 +8745,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "gamagori_tide_132_tri",
             "marugame_tide_123_tri",
             "fukuoka_tide_132_tri",
+            "omura_tide_132_tri",
             "tsu_123_tri",
             "suminoe_123_tri",
             "tri132_a12_tri",
@@ -8298,7 +8794,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-                    "marugame_tide_123_tri", "fukuoka_tide_132_tri",
+                    "marugame_tide_123_tri", "fukuoka_tide_132_tri", "omura_tide_132_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         for k in bet_keys:
@@ -8408,7 +8904,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-                    "marugame_tide_123_tri", "fukuoka_tide_132_tri",
+                    "marugame_tide_123_tri", "fukuoka_tide_132_tri", "omura_tide_132_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         adopted_keys = (
@@ -8422,6 +8918,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "gamagori_tide_132_tri",
             "marugame_tide_123_tri",
             "fukuoka_tide_132_tri",
+            "omura_tide_132_tri",
             "tsu_123_tri",
             "suminoe_123_tri",
             "tri132_a12_tri",
@@ -8526,7 +9023,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "omura_123_tri", "omura_132_tri",
             "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-            "marugame_tide_123_tri", "fukuoka_tide_132_tri",
+            "marugame_tide_123_tri", "fukuoka_tide_132_tri", "omura_tide_132_tri",
             "tri132_a12_tri", "tri124_a12_tri",
             "g23_optb_tri",
             "tsu_123_tri", "suminoe_123_tri",

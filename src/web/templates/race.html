@@ -178,6 +178,167 @@
       </div>
     </div>
 
+    {% if compat_analysis %}
+    <section class="compat-analysis">
+      <div class="compat-analysis-head">
+        <div>
+          <h3>過去対戦成績 / 立体相性分析</h3>
+          <div class="compat-analysis-sub">{{ info.race_date }} {{ info.stadium_name }} {{ info.race_number }}R</div>
+        </div>
+      </div>
+      <div class="compat-analysis-grid">
+        <div class="compat-card compat-entrants-card">
+          <div class="compat-card-title">選手別コース適性</div>
+          <table class="compat-entrants-table">
+            <thead>
+              <tr>
+                <th>枠</th>
+                <th class="left">選手名</th>
+                <th>級別</th>
+                <th>支部</th>
+                <th>当該コース勝率</th>
+                <th class="left">タイプ・特徴</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in compat_analysis.entries %}
+              <tr class="{% if compat_analysis.best_rise_boat == row.boat_number %}compat-highlight{% endif %}">
+                <td><span class="lane lane-{{ row.boat_number }}">{{ row.boat_number }}</span></td>
+                <td class="left">
+                  <div class="compat-racer-name">{{ row.racer_name }}</div>
+                  <div class="compat-racer-meta">No. {{ row.racer_number }}</div>
+                </td>
+                <td>{{ row.class_label }}</td>
+                <td>{{ row.branch_label }}</td>
+                <td>
+                  <div class="compat-win-rate">{{ '%.1f' | format(row.course_win_rate) if row.course_win_rate is not none else '-' }}%</div>
+                  <div class="compat-diff-chip {{ row.course_diff_tone }}">
+                    平均 {{ '%+.1f' | format(row.course_diff_points) if row.course_diff_points is not none else '-' }}pt
+                  </div>
+                </td>
+                <td class="left">
+                  <span class="compat-type-tag {{ row.course_diff_tone }}">{{ row.type_label }}</span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="compat-card compat-match-card">
+          <div class="compat-card-title">選手間 相性マップ <span>(勝ち-負け / 全対戦)</span></div>
+          <table class="compat-match-table">
+            <thead>
+              <tr>
+                <th>枠</th>
+                {% for row in compat_analysis.entries %}
+                <th><span class="lane lane-{{ row.boat_number }}">{{ row.boat_number }}</span></th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for matrix_row in compat_analysis.matrix_rows %}
+              <tr>
+                <th><span class="lane lane-{{ matrix_row.boat_number }}">{{ matrix_row.boat_number }}</span></th>
+                {% for cell in matrix_row.cells %}
+                <td class="compat-pair-cell {{ cell.tone }}" title="対戦数 {{ cell.meetings }}">
+                  {{ cell.text }}
+                </td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div class="compat-pair-legend">
+            <span class="legend-up">優勢 (差 +4以上)</span>
+            <span class="legend-flat">互角 (差 ±3以内)</span>
+            <span class="legend-down">劣勢 (差 -4以下)</span>
+          </div>
+        </div>
+
+        <div class="compat-card compat-water-card">
+          <div class="compat-card-title">水面コンディション</div>
+          <div class="compat-water-list">
+            <div><span>水質</span><b>{{ compat_analysis.water.water_label }}</b></div>
+            <div><span>風速</span><b>{{ compat_analysis.water.wind_label }}</b></div>
+            <div><span>波高</span><b>{{ compat_analysis.water.wave_label }}</b></div>
+            <div><span>降雨</span><b>{{ compat_analysis.water.weather_label }}</b></div>
+            <div><span>潮</span><b>{{ compat_analysis.water.tide_label }}</b></div>
+          </div>
+          <div class="compat-gauge">
+            <div class="compat-gauge-arc">
+              <div class="compat-gauge-fill compat-grade-{{ compat_analysis.water.difficulty_grade }}" style="width: {{ compat_analysis.water.difficulty_score }}%;"></div>
+            </div>
+            <div class="compat-gauge-grade compat-grade-{{ compat_analysis.water.difficulty_grade }}">{{ compat_analysis.water.difficulty_grade }}</div>
+            <div class="compat-gauge-scale">
+              {% for g in ['S', 'A', 'B', 'C', 'D', 'E'] %}
+              <span class="{% if compat_analysis.water.difficulty_grade == g %}active{% endif %}">{{ g }}</span>
+              {% endfor %}
+            </div>
+            <div class="compat-gauge-label">{{ compat_analysis.water.difficulty_label }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="compat-card compat-motor-card">
+        <div class="compat-card-title">展示から見た必要モーター指数</div>
+        <table class="compat-motor-table">
+          <thead>
+            <tr>
+              <th>枠</th>
+              <th class="left">選手名</th>
+              <th>モーター評価</th>
+              <th>出足</th>
+              <th>行き足</th>
+              <th>伸び足</th>
+              <th>回り足</th>
+              <th>展示T</th>
+              <th>展示ST</th>
+              <th>総合上昇指数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in compat_analysis.motor_rows %}
+            <tr class="{% if compat_analysis.best_rise_boat == row.boat_number %}compat-highlight{% endif %}">
+              <td><span class="lane lane-{{ row.boat_number }}">{{ row.boat_number }}</span></td>
+              <td class="left">
+                <div class="compat-racer-name">{{ row.racer_name }}</div>
+                <div class="compat-racer-meta">M{{ row.motor_number if row.motor_number is not none else '-' }}</div>
+              </td>
+              <td><span class="compat-type-tag {{ row.motor_eval_tone }}">{{ row.motor_eval }}</span></td>
+              {% for key in ['dash', 'carry', 'stretch', 'turn'] %}
+              <td>
+                <div class="compat-index-cell">
+                  <div class="compat-index-track">
+                    <span style="width: {{ row[key ~ '_score'] }}%;"></span>
+                  </div>
+                  <div class="compat-index-value {% if row[key ~ '_delta'] > 0 %}is-up{% elif row[key ~ '_delta'] < 0 %}is-down{% endif %}">
+                    {{ '%+.2f' | format(row[key ~ '_delta']) }}
+                  </div>
+                </div>
+              </td>
+              {% endfor %}
+              <td>{{ '%.2f' | format(row.exhibition_time) if row.exhibition_time is not none else '-' }}</td>
+              <td>{{ '%.2f' | format(row.exhibition_st) if row.exhibition_st is not none else '-' }}</td>
+              <td>
+                <div class="compat-rise-score {% if row.rise_score >= 60 %}is-up{% elif row.rise_score <= 44 %}is-down{% endif %}">
+                  {{ row.rise_label }} {{ '%.0f' | format(row.rise_score) }}pt
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="compat-analysis-legend">
+        <span>平均乖離: 各コース勝率の場平均からの差</span>
+        <span>水面補正: 風・波・潮の影響を難度に反映</span>
+        <span>展示補正: 展示タイム・展示STのモーター反応を反映</span>
+      </div>
+    </section>
+    {% endif %}
+
     {% if trifecta_pw or trifecta_unified %}
     <div class="trifecta-section">
       <h3 class="tri-heading">三連単 予測 (joint probability)</h3>
