@@ -2408,12 +2408,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e5.assigned_motor_top_2_percent AS boat5_motor_top2,
                                NULLIF(pv5.exhibition_time, 0) AS boat5_exhibition_time,
                                NULLIF(pv6.exhibition_time, 0) AS boat6_exhibition_time,
+                               pv.wave_height AS wave_height,
                                pv4.course_number AS boat4_ex_course,
                                NULLIF(pv4.exhibition_time, 0) AS boat4_exhibition_time,
                                pv4.start_timing_exhibition AS boat4_ex_st,
                                exall.best_exhibition_time,
                                exall.n_exhibition_times,
                                COALESCE(fem.n_female, 0) AS n_female,
+                               rt.tide_delta_60m_cm,
+                               rt.tide_range_cm,
+                               COALESCE(rt.is_high_tide_zone, 0) AS is_high_tide_zone,
+                               COALESCE(rt.is_low_tide_zone, 0) AS is_low_tide_zone,
                                COALESCE(pt.program_type, '') AS program_type,
                                COALESCE(pt.program_name, '') AS program_name,
                                COALESCE(pt.is_fixed_entry, 0) AS is_fixed_entry
@@ -2433,6 +2438,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         LEFT JOIN race_previews pv5 ON pv5.race_id = r.race_id AND pv5.boat_number = 5
                         LEFT JOIN race_previews pv6 ON pv6.race_id = r.race_id AND pv6.boat_number = 6
                         LEFT JOIN race_program_tags pt ON pt.race_id = r.race_id
+                        LEFT JOIN race_tides rt ON rt.race_id = r.race_id
                         LEFT JOIN (
                             SELECT race_id,
                                    MIN(NULLIF(exhibition_time, 0)) AS best_exhibition_time,
@@ -2456,10 +2462,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat3_exhibition_time, boat3_ex_st,
                          boat1_pred_top2, boat3_pred_top2, boat4_pred_top2, boat4_class,
                          boat4_racer, boat4_motor_number, boat4_local_1, boat4_natl_1, boat4_motor_top2, boat5_motor_top2,
-                         boat5_exhibition_time, boat6_exhibition_time,
+                         boat5_exhibition_time, boat6_exhibition_time, wave_height,
                          boat4_ex_course, boat4_exhibition_time, boat4_ex_st,
                          best_exhibition_time, n_exhibition_times,
-                         n_female, program_type, program_name, is_fixed_entry) in cur.fetchall():
+                         n_female, tide_delta_60m_cm, tide_range_cm, is_high_tide_zone, is_low_tide_zone,
+                         program_type, program_name, is_fixed_entry) in cur.fetchall():
                         all_race_info[rid] = {
                             "stadium": stadium, "grade": grade,
                             "race_number": race_no,
@@ -2494,12 +2501,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat5_motor_top2": boat5_motor_top2,
                             "boat5_exhibition_time": boat5_exhibition_time,
                             "boat6_exhibition_time": boat6_exhibition_time,
+                            "wave_height": wave_height,
                             "boat4_ex_course": boat4_ex_course,
                             "boat4_exhibition_time": boat4_exhibition_time,
                             "boat4_ex_st": boat4_ex_st,
                             "best_exhibition_time": best_exhibition_time,
                             "n_exhibition_times": n_exhibition_times,
                             "n_female": n_female,
+                            "tide_delta_60m_cm": tide_delta_60m_cm,
+                            "tide_range_cm": tide_range_cm,
+                            "is_high_tide_zone": is_high_tide_zone,
+                            "is_low_tide_zone": is_low_tide_zone,
                             "program_type": program_type,
                             "program_name": program_name,
                             "is_fixed_entry": is_fixed_entry,
@@ -3779,6 +3791,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             matched = []
             if (
+                stadium != 4
+                and
                 boat3_natl_1 is not None and boat3_natl_1 >= 6.0
                 and boat3_motor_top2 is not None and boat3_motor_top2 >= 40.0
             ):
@@ -4109,6 +4123,139 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "tetsuban_score": 4 if not display_confirmed else 5,
                 "tetsuban_label": "朝監視 大村123",
             }
+
+        def _evaluate_tide_tri_signal(
+            stadium,
+            weather=None,
+            wind_speed=None,
+            wave_height=None,
+            tide_delta_60m_cm=None,
+            tide_range_cm=None,
+            is_high_tide_zone=0,
+            is_low_tide_zone=0,
+        ):
+            try:
+                weather_v = int(weather) if weather is not None else None
+            except (TypeError, ValueError):
+                weather_v = None
+            try:
+                wind_v = float(wind_speed) if wind_speed is not None else None
+            except (TypeError, ValueError):
+                wind_v = None
+            try:
+                wave_v = float(wave_height) if wave_height is not None else None
+            except (TypeError, ValueError):
+                wave_v = None
+            try:
+                delta_v = float(tide_delta_60m_cm) if tide_delta_60m_cm is not None else None
+            except (TypeError, ValueError):
+                delta_v = None
+            try:
+                range_v = float(tide_range_cm) if tide_range_cm is not None else None
+            except (TypeError, ValueError):
+                range_v = None
+
+            matched = []
+            if (
+                stadium == 17
+                and wave_v is not None and wave_v >= 5.0
+                and wind_v is not None and 3.0 <= wind_v <= 4.0
+                and delta_v is not None and delta_v <= -15.0
+            ):
+                matched.append({
+                    "level": "miyajima_tide_132_tri",
+                    "label": "宮島 1-3-2 潮型",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "3連単 採用",
+                    "recovery": 1242.0,
+                    "n": 30,
+                    "hit_rate": 40.0,
+                    "name": "宮島132 潮型",
+                    "tag": "wave5+ + wind3-4 + fall15+",
+                    "tetsuban_score": 10,
+                })
+            if (
+                stadium == 7
+                and delta_v is not None and -15.0 < delta_v <= -5.0
+                and range_v is not None and range_v >= 150.0
+                and wind_v is not None and wind_v <= 2.0
+            ):
+                matched.append({
+                    "level": "gamagori_tide_132_tri",
+                    "label": "蒲郡 1-3-2 潮型",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "3連単 採用",
+                    "recovery": 718.6,
+                    "n": 132,
+                    "hit_rate": 27.3,
+                    "name": "蒲郡132 潮型",
+                    "tag": "fall5-14 + range150+ + wind0-2",
+                    "tetsuban_score": 8,
+                })
+            if (
+                stadium == 24
+                and is_high_tide_zone
+                and delta_v is not None and delta_v <= -15.0
+                and range_v is not None and 90.0 <= range_v < 120.0
+                and wind_v is not None and wind_v <= 2.0
+                and float(ctx.get("boat2_motor_top2") or 0) < 35.0
+                and float(ctx.get("boat4_motor_top2") or 0) < 35.0
+            ):
+                matched.append({
+                    "level": "omura_tide_132_tri",
+                    "label": "大村 1-3-2 潮型",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "3連単 採用",
+                    "recovery": 357.9,
+                    "n": 28,
+                    "hit_rate": 28.6,
+                    "name": "大村132 潮型",
+                    "tag": "high-tide + fall15+ + range90-119 + wind0-2 + weak2/4",
+                    "tetsuban_score": 9,
+                })
+            if (
+                stadium == 15
+                and range_v is not None and 90.0 <= range_v < 120.0
+                and wind_v is not None and 5.0 <= wind_v <= 6.0
+                and weather_v == 1
+            ):
+                matched.append({
+                    "level": "marugame_tide_123_tri",
+                    "label": "丸亀 1-2-3 潮型",
+                    "bet": "3連単 1-2-3",
+                    "rank": "trifecta_niche",
+                    "rank_label": "3連単 採用",
+                    "recovery": 431.4,
+                    "n": 42,
+                    "hit_rate": 28.6,
+                    "name": "丸亀123 潮型",
+                    "tag": "range90-119 + wind5-6 + sun",
+                    "tetsuban_score": 7,
+                })
+            if (
+                stadium == 22
+                and range_v is not None and range_v >= 150.0
+                and delta_v is not None and 5.0 <= delta_v < 15.0
+                and wind_v is not None and wind_v <= 2.0
+            ):
+                matched.append({
+                    "level": "fukuoka_tide_132_tri",
+                    "label": "福岡 1-3-2 潮型",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "3連単 採用",
+                    "recovery": 470.0,
+                    "n": 66,
+                    "hit_rate": 27.3,
+                    "name": "福岡132 潮型",
+                    "tag": "range150+ + rise5-14 + wind0-2",
+                    "tetsuban_score": 7,
+                })
+
+            return _pick_best_market_signal(*matched)
 
         def _evaluate_non_exhibition_core_signal(
             stadium,
@@ -5416,6 +5563,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 miyajima_watch = _evaluate_miyajima_boat4_watch(miyajima_boat4_watch.get(rid))
                 if miyajima_watch:
                     l4 = miyajima_watch
+                tide_tri = _evaluate_tide_tri_signal(
+                    stadium,
+                    weather=weather,
+                    wind_speed=wind_speed,
+                    wave_height=info.get("wave_height"),
+                    tide_delta_60m_cm=info.get("tide_delta_60m_cm"),
+                    tide_range_cm=info.get("tide_range_cm"),
+                    is_high_tide_zone=info.get("is_high_tide_zone"),
+                    is_low_tide_zone=info.get("is_low_tide_zone"),
+                )
                 win_niche = _evaluate_win_niche(
                     stadium,
                     boat1_top2=boat1_pred_top2,
@@ -5427,6 +5584,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     exacta_niche,
                     ashiya_exacta,
                     miyajima_watch,
+                    tide_tri,
                     win_niche,
                     tri124_132_niche,
                     non_exhibition_core,
@@ -5581,6 +5739,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                 miyajima_watch = _evaluate_miyajima_boat4_watch(miyajima_boat4_watch.get(rid))
+                tide_tri = _evaluate_tide_tri_signal(
+                    stadium,
+                    weather=weather,
+                    wind_speed=wind_speed,
+                    wave_height=info.get("wave_height"),
+                    tide_delta_60m_cm=info.get("tide_delta_60m_cm"),
+                    tide_range_cm=info.get("tide_range_cm"),
+                    is_high_tide_zone=info.get("is_high_tide_zone"),
+                    is_low_tide_zone=info.get("is_low_tide_zone"),
+                )
                 omura_123_watch = _evaluate_omura_123_watch(
                     stadium,
                     race_number=race_no_info,
@@ -5625,6 +5793,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ashiya_watch,
                     ashiya_exacta,
                     miyajima_watch,
+                    tide_tri,
                     omura_123_watch,
                     tri124_132_watch,
                     general_c_watch,
@@ -5707,7 +5876,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KOJIMA_124_TRI_CACHE_VERSION = "kojima_124_tri_v1"
     OMURA_123_TRI_CACHE_VERSION = "omura_123_tri_v1"
     OMURA_132_TRI_CACHE_VERSION = "omura_132_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v3"
+    MIYAJIMA_TIDE_132_TRI_CACHE_VERSION = "miyajima_tide_132_tri_v1"
+    GAMAGORI_TIDE_132_TRI_CACHE_VERSION = "gamagori_tide_132_tri_v1"
+    MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
+    FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
+    OMURA_TIDE_132_TRI_CACHE_VERSION = "omura_tide_132_tri_v1"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v6"
     BET_UNIT_MAP = {}
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
@@ -5772,6 +5946,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_omura_132_tri_version") != OMURA_132_TRI_CACHE_VERSION:
                             continue
+                        if day_d.get("_miyajima_tide_132_tri_version") != MIYAJIMA_TIDE_132_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_gamagori_tide_132_tri_version") != GAMAGORI_TIDE_132_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_marugame_tide_123_tri_version") != MARUGAME_TIDE_123_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_fukuoka_tide_132_tri_version") != FUKUOKA_TIDE_132_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_omura_tide_132_tri_version") != OMURA_TIDE_132_TRI_CACHE_VERSION:
+                            continue
                         if day_d.get("_adopted_daily_select_version") != ADOPTED_DAILY_SELECT_VERSION:
                             continue
                         cached_by_date[rdate] = day_d
@@ -5788,6 +5972,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "hamanako_14_exa",
                 "omura_14_exa",
                 "kiryu_win2",
+                "miyajima_tide_132_tri",
+                "gamagori_tide_132_tri",
+                "marugame_tide_123_tri",
+                "fukuoka_tide_132_tri",
+                "omura_tide_132_tri",
             )
             for d in stats_by_date.values():
                 for bet in niche_bet_keys:
@@ -5805,7 +5994,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "g23_optb_tri",
                             "tsu_123_tri", "suminoe_123_tri",
                             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
-                            "omura_123_tri", "omura_132_tri"):
+                            "omura_123_tri", "omura_132_tri",
+                            "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+                            "marugame_tide_123_tri", "fukuoka_tide_132_tri",
+                            "omura_tide_132_tri"):
                     n = d.get(f"{bet}_bets", 0)
                     pay = d.get(f"{bet}_pay", 0)
                     unit = BET_UNIT_MAP.get(bet, 100)
@@ -5920,6 +6112,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pt_124.payout AS pay_124,
                     pv.weather_number AS weather,
                     pv.wind_speed AS wind_speed,
+                    pv.wave_height AS wave_height,
                     pv.start_timing_exhibition AS ex_st,
                     NULLIF(pv.exhibition_time, 0) AS boat1_exhibition_time,
                     NULLIF(pv2.exhibition_time, 0) AS boat2_exhibition_time,
@@ -5928,7 +6121,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     NULLIF(pv4.exhibition_time, 0) AS boat4_exhibition_time,
                     NULLIF(pv5.exhibition_time, 0) AS boat5_exhibition_time,
                     NULLIF(pv6.exhibition_time, 0) AS boat6_exhibition_time,
-                    COALESCE(fem.n_female, 0) AS n_female
+                    COALESCE(fem.n_female, 0) AS n_female,
+                    rt.tide_delta_60m_cm AS tide_delta_60m_cm,
+                    rt.tide_range_cm AS tide_range_cm,
+                    COALESCE(rt.is_high_tide_zone, 0) AS is_high_tide_zone,
+                    COALESCE(rt.is_low_tide_zone, 0) AS is_low_tide_zone
                 FROM races r
                 LEFT JOIN race_entries e ON r.race_id = e.race_id AND e.boat_number = 1
                 LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
@@ -5989,6 +6186,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_previews pv4 ON pv4.race_id = r.race_id AND pv4.boat_number = 4
                 LEFT JOIN race_previews pv5 ON pv5.race_id = r.race_id AND pv5.boat_number = 5
                 LEFT JOIN race_previews pv6 ON pv6.race_id = r.race_id AND pv6.boat_number = 6
+                LEFT JOIN race_tides rt ON rt.race_id = r.race_id
                 LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position=1
                 LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position=2
                 LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
@@ -6046,6 +6244,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
                 "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
+                "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
+                "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
+                "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
+                "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
                 "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
                 "tri132_a12_tri_bets": 0, "tri132_a12_tri_hits": 0, "tri132_a12_tri_pay": 0,
                 "tri124_a12_tri_bets": 0, "tri124_a12_tri_hits": 0, "tri124_a12_tri_pay": 0,
@@ -6090,8 +6292,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
              boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_class, boat4_local_1, boat4_natl_1, boat4_motor_top2, boat5_motor_top2,
              boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
              fav_pay, fav_odds, any_in_l4, l4_odds, mid_132_odds, prob_first,
-             w1, w2, w3, win_pay, win2_pay, ex_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, weather, wind_speed, ex_st,
-             boat1_exhibition_time, boat2_exhibition_time, boat3_exhibition_time, boat3_ex_st, boat4_exhibition_time, boat5_exhibition_time, boat6_exhibition_time, n_female) = row
+             w1, w2, w3, win_pay, win2_pay, ex_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, weather, wind_speed, wave_height, ex_st,
+             boat1_exhibition_time, boat2_exhibition_time, boat3_exhibition_time, boat3_ex_st, boat4_exhibition_time, boat5_exhibition_time, boat6_exhibition_time, n_female,
+             tide_delta_60m_cm, tide_range_cm, is_high_tide_zone, is_low_tide_zone) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
             # weather NULL (= 直前情報未取得 or 古いデータ) は通常通り集計。
@@ -6151,6 +6354,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "kojima_124_tri_bets": 0, "kojima_124_tri_hits": 0, "kojima_124_tri_pay": 0,
                 "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
                 "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
+                "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
+                "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
+                "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
+                "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -6229,6 +6436,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 except (TypeError, ValueError):
                     b3_natl_1 = 0.0
                 if (
+                    stadium != 4
+                    and
                     b3_natl_1 >= 6.0
                     and b3_motor >= 40.0
                     and (ex_rank_by_boat.get(3) or 99) <= 2
@@ -6344,6 +6553,55 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         int(tri_pay or 0),
                     )
                 _update_tsu_suminoe_history(tsu_suminoe_seed, stadium, boat2_racer, boat3_racer, w1, w2, w3)
+
+            try:
+                _tide_delta = float(tide_delta_60m_cm) if tide_delta_60m_cm is not None else None
+            except (TypeError, ValueError):
+                _tide_delta = None
+            try:
+                _tide_range = float(tide_range_cm) if tide_range_cm is not None else None
+            except (TypeError, ValueError):
+                _tide_range = None
+            try:
+                _wind_speed = float(wind_speed) if wind_speed is not None else None
+            except (TypeError, ValueError):
+                _wind_speed = None
+            try:
+                _wave_height = float(wave_height) if wave_height is not None else None
+            except (TypeError, ValueError):
+                _wave_height = None
+
+            if is_done and stadium == 17 and _wave_height is not None and _wind_speed is not None and _tide_delta is not None:
+                if _wave_height >= 5.0 and 3.0 <= _wind_speed <= 4.0 and _tide_delta <= -15.0:
+                    _record_adopted_signal(
+                        race_id, rdate, "miyajima_tide_132_tri", 1242.0,
+                        w1 == 1 and w2 == 3 and w3 == 2,
+                        int(pay_132 or 0),
+                    )
+
+            if is_done and stadium == 7 and _tide_delta is not None and _tide_range is not None and _wind_speed is not None:
+                if -15.0 < _tide_delta <= -5.0 and _tide_range >= 150.0 and _wind_speed <= 2.0:
+                    _record_adopted_signal(
+                        race_id, rdate, "gamagori_tide_132_tri", 718.6,
+                        w1 == 1 and w2 == 3 and w3 == 2,
+                        int(pay_132 or 0),
+                    )
+
+            if is_done and stadium == 15 and _tide_range is not None and _wind_speed is not None:
+                if 90.0 <= _tide_range < 120.0 and 5.0 <= _wind_speed <= 6.0 and weather == 1:
+                    _record_adopted_signal(
+                        race_id, rdate, "marugame_tide_123_tri", 431.4,
+                        tri_hit,
+                        int(tri_pay or 0),
+                    )
+
+            if is_done and stadium == 22 and _tide_range is not None and _tide_delta is not None and _wind_speed is not None:
+                if _tide_range >= 150.0 and 5.0 <= _tide_delta < 15.0 and _wind_speed <= 2.0:
+                    _record_adopted_signal(
+                        race_id, rdate, "fukuoka_tide_132_tri", 470.0,
+                        w1 == 1 and w2 == 3 and w3 == 2,
+                        int(pay_132 or 0),
+                    )
 
             if is_rain_weather:
                 continue
@@ -7460,6 +7718,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_kojima_124_tri_version"] = KOJIMA_124_TRI_CACHE_VERSION
                         day_d["_omura_123_tri_version"] = OMURA_123_TRI_CACHE_VERSION
                         day_d["_omura_132_tri_version"] = OMURA_132_TRI_CACHE_VERSION
+                        day_d["_miyajima_tide_132_tri_version"] = MIYAJIMA_TIDE_132_TRI_CACHE_VERSION
+                        day_d["_gamagori_tide_132_tri_version"] = GAMAGORI_TIDE_132_TRI_CACHE_VERSION
+                        day_d["_marugame_tide_123_tri_version"] = MARUGAME_TIDE_123_TRI_CACHE_VERSION
+                        day_d["_fukuoka_tide_132_tri_version"] = FUKUOKA_TIDE_132_TRI_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
@@ -7984,6 +8246,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "kojima_124_tri",
             "omura_123_tri",
             "omura_132_tri",
+            "miyajima_tide_132_tri",
+            "gamagori_tide_132_tri",
+            "marugame_tide_123_tri",
+            "fukuoka_tide_132_tri",
             "tsu_123_tri",
             "suminoe_123_tri",
             "tri132_a12_tri",
@@ -8031,6 +8297,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
+                    "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+                    "marugame_tide_123_tri", "fukuoka_tide_132_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         for k in bet_keys:
@@ -8139,6 +8407,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
+                    "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+                    "marugame_tide_123_tri", "fukuoka_tide_132_tri",
                     "tri132_a12_tri", "tri124_a12_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         adopted_keys = (
@@ -8148,6 +8418,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "kojima_124_tri",
             "omura_123_tri",
             "omura_132_tri",
+            "miyajima_tide_132_tri",
+            "gamagori_tide_132_tri",
+            "marugame_tide_123_tri",
+            "fukuoka_tide_132_tri",
             "tsu_123_tri",
             "suminoe_123_tri",
             "tri132_a12_tri",
@@ -8251,6 +8525,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "omura_123_tri", "omura_132_tri",
+            "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+            "marugame_tide_123_tri", "fukuoka_tide_132_tri",
             "tri132_a12_tri", "tri124_a12_tri",
             "g23_optb_tri",
             "tsu_123_tri", "suminoe_123_tri",
