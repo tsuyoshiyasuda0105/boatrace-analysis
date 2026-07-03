@@ -245,6 +245,14 @@
         const targetDate = "{{ target_date }}";
         let marketSignalsLoading = false;
         let marketSignalsCache = {};
+        let marketSignalsDigest = '';
+        let odds123Digest = '';
+        let lastRenderedSignalsDigest = '';
+        let lastTodaysPicksRenderKey = '';
+        let lastNextRaceRenderKey = '';
+        let raceItemsCache = null;
+        let raceItemMapCache = null;
+        const BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const TODAYS_PICKS_TAB_KEY = 'boatrace:todays-picks-tab';
         let currentTodaysPicksTab = (() => {
           try {
@@ -269,6 +277,60 @@
           const unique = [...new Set((raceIds || []).filter(Boolean))].slice(0, 8);
           unique.forEach((rid, idx) => setTimeout(() => warmRaceDetail(rid), 120 + idx * 120));
         };
+
+        function getRaceItems() {
+          if (!raceItemsCache) {
+            raceItemsCache = Array.from(document.querySelectorAll('.race-item[data-race-id]'));
+          }
+          return raceItemsCache;
+        }
+
+        function getRaceItemMap() {
+          if (!raceItemMapCache) {
+            raceItemMapCache = new Map();
+            getRaceItems().forEach((item) => {
+              const raceId = item.dataset.raceId;
+              if (raceId) raceItemMapCache.set(raceId, item);
+            });
+          }
+          return raceItemMapCache;
+        }
+
+        function buildSignalsDigest(signals) {
+          const rows = Object.entries(signals || {}).map(([raceId, sig]) => {
+            const l4 = sig && sig.l4 ? sig.l4 : {};
+            return [
+              raceId,
+              l4.level || '',
+              l4.rank || '',
+              l4.bet || '',
+              l4.label || '',
+              l4.recovery ?? '',
+              l4.is_reference ? 1 : 0,
+              l4.is_morning_watch ? 1 : 0,
+              l4.is_after_exhibition_out ? 1 : 0,
+              l4.is_display_confirmed ? 1 : 0,
+              l4.promoted_from_morning_watch_st ? 1 : 0,
+            ].join(':');
+          });
+          rows.sort();
+          return rows.join('|');
+        }
+
+        function removeStrategyBadges(item) {
+          if (!item) return;
+          item.querySelectorAll(BADGE_SELECTOR).forEach((el) => el.remove());
+        }
+
+        function buildOddsDigest(oddsMap) {
+          const rows = [];
+          Object.entries(oddsMap || {}).forEach(([raceId, snap]) => {
+            const cells = ['T-120min', ...ODDS123_LABELS].map((label) => snap?.[label]?.odds ?? '');
+            rows.push(`${raceId}:${cells.join(':')}`);
+          });
+          rows.sort();
+          return rows.join('|');
+        }
 
         function isLegacyL4HighGradeSignal(l4Data, l4El) {
           if (!l4Data && !l4El) return false;
@@ -331,21 +393,19 @@
             if (!r.ok) return;
             const data = await r.json();
             const signals = data.signals || {};
+            const nextDigest = buildSignalsDigest(signals);
             marketSignalsCache = signals;
-            document.querySelectorAll(
-              '.race-item .l4-badge, .race-item .nuki-filter-badge, ' +
-              '.race-item .f1-prime-badge, .race-item .tetsuban-badge, ' +
-              '.race-item .ex-bonus-badge, .race-item .obs-badge, ' +
-              '.race-item .portfolio-strong-badge'
-            ).forEach(el => el.remove());
+            marketSignalsDigest = nextDigest;
+            if (nextDigest === lastRenderedSignalsDigest) {
+              return;
+            }
+            getRaceItems().forEach(removeStrategyBadges);
+            const raceItemMap = getRaceItemMap();
             for (const [raceId, sig] of Object.entries(signals)) {
               try {
-                const item = document.querySelector(`.race-item[data-race-id="${raceId}"]`);
+                const item = raceItemMap.get(raceId);
                 if (!item) continue;
-                // 既存の L4 バッジを削除 (再描画用)
-                item.querySelectorAll('.l4-badge').forEach(el => el.remove());
 
-                // L4 マーク (該当時、市場バッジより優先表示)
                 if (sig.l4 && !isLegacyL4HighGradeSignal(sig.l4, null) && isSupportedStrategySignal(sig.l4, null)) {
                   const l4Badge = document.createElement('span');
                   const rank = sig.l4.rank || 'base';
@@ -644,6 +704,7 @@
                 continue;
               }
             }
+            lastRenderedSignalsDigest = nextDigest;
           } catch (e) {
             console.warn('market-signals failed:', e);
           } finally {
@@ -680,7 +741,7 @@
 
         function updateNextRaces() {
           const now = new Date();
-          const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
+          const items = getRaceItems();
           // 各 race-item を分類
           const upcoming = [];
           items.forEach(el => {
@@ -726,8 +787,14 @@
           if (!panel || !cards) return;
           if (top.length === 0) {
             panel.hidden = true;
+            lastNextRaceRenderKey = '';
             return;
           }
+          const nextRaceKey = top.map((u, idx) => [u.el.dataset.raceId || '', idx === 0 ? '1' : '0', Math.max(-1, Math.floor(u.minutesUntil))].join(':')).join('|');
+          if (nextRaceKey === lastNextRaceRenderKey && !panel.hidden) {
+            return;
+          }
+          lastNextRaceRenderKey = nextRaceKey;
           panel.hidden = false;
           cards.innerHTML = '';
           top.forEach((u, idx) => {
@@ -770,8 +837,14 @@
             const r = await fetch(`/api/odds-123-timeline?date=${targetDate}`);
             if (!r.ok) return;
             const data = await r.json();
-            odds123Cache = data.odds || {};
-            // 取得後に再描画
+            const nextOdds = data.odds || {};
+            const nextOddsDigest = buildOddsDigest(nextOdds);
+            if (nextOddsDigest === odds123Digest) {
+              return;
+            }
+            odds123Cache = nextOdds;
+            odds123Digest = nextOddsDigest;
+            // ????????????
             renderTodaysPicks();
           } catch (e) {
             console.warn('odds-123-timeline failed:', e);
@@ -1074,7 +1147,13 @@
           if (!panel || !tbody || !tabs || !mainPanel) return;
           const hasBoat3WatchPanel = Boolean(watchTbody && watchPanel);
           const now = new Date();
-          const items = Array.from(document.querySelectorAll('.race-item[data-closed-at]'));
+          const renderMinuteBucket = Math.floor(now.getTime() / 60000);
+          const renderKey = `${marketSignalsDigest}|${odds123Digest}|${renderMinuteBucket}|${currentTodaysPicksTab}`;
+          if (renderKey === lastTodaysPicksRenderKey) {
+            return;
+          }
+          lastTodaysPicksRenderKey = renderKey;
+          const items = getRaceItems();
           const picks = [];
 
           function getRaceSignal(raceId) {
@@ -1378,7 +1457,7 @@
 
 function updateClosedRaceTiles() {
           const now = new Date();
-          document.querySelectorAll('.race-item').forEach(item => {
+          getRaceItems().forEach(item => {
             const closedAt = parseClosedAt(item.dataset.closedAt);
             if (!closedAt) return;
             if (closedAt < now) {
