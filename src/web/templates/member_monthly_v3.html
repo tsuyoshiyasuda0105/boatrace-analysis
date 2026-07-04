@@ -146,7 +146,7 @@
 
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
-    const xAt = (i) => padL + (data.length <= 1 ? plotW / 2 : (plotW * i) / (data.length - 1));
+    const groupW = data.length ? plotW / data.length : plotW;
     const yAt = (v) => padT + ((maxV - v) / (maxV - minV)) * plotH;
 
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
@@ -171,21 +171,29 @@
     }
 
     ctx.textAlign = 'center';
-    data.forEach((d, i) => ctx.fillText(String(d.ym).slice(2), xAt(i), H - 14));
+    data.forEach((d, i) => {
+      const x = padL + groupW * i + groupW / 2;
+      ctx.fillText(String(d.ym).slice(2), x, H - 14);
+    });
 
-    visible.forEach((s) => {
-      ctx.strokeStyle = s.color;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      let started = false;
+    const bars = visible.length || 1;
+    const innerGap = 4;
+    const usableW = Math.max(groupW - 10, 8);
+    const barW = Math.max((usableW - innerGap * (bars - 1)) / bars, 3);
+
+    visible.forEach((s, sIdx) => {
+      ctx.fillStyle = s.color;
       data.forEach((d, i) => {
         const v = d[s.key];
         if (v === null) return;
-        const x = xAt(i), y = yAt(v);
-        if (!started) { ctx.moveTo(x, y); started = true; }
-        else ctx.lineTo(x, y);
+        const x = padL + groupW * i + 5 + sIdx * (barW + innerGap);
+        const y = yAt(Math.max(v, 0));
+        const h = Math.max(Math.abs(yAt(v) - zeroY), 2);
+        const top = v >= 0 ? y : zeroY;
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(x, top, barW, h);
+        ctx.globalAlpha = 1;
       });
-      ctx.stroke();
     });
   }
 
