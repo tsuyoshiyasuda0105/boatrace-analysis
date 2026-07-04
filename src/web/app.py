@@ -6504,7 +6504,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     GAMAGORI_TIDE_132_TRI_CACHE_VERSION = "gamagori_tide_132_tri_v1"
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v7"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v8"
     BET_UNIT_MAP = {}
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
@@ -6584,6 +6584,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if day_d.get("_fukuoka_tide_132_tri_version") != FUKUOKA_TIDE_132_TRI_CACHE_VERSION:
                             continue
                         if day_d.get("_adopted_daily_select_version") != ADOPTED_DAILY_SELECT_VERSION:
+                            continue
+                        required_adopted_bet_keys = (
+                            "g23_optb_tri_bets",
+                            "general_c_tri_bets",
+                            "hamanako_14_exa_bets",
+                            "gamagori_tide_132_tri_bets",
+                            "tsu_123_tri_bets",
+                            "tsu_124_tri_bets",
+                            "suminoe_123_tri_bets",
+                            "amagasaki_143_tri_bets",
+                            "kojima_124_tri_bets",
+                            "miyajima_tide_132_tri_bets",
+                            "tokuyama_123_tri_bets",
+                            "shimonoseki_123_tri_bets",
+                            "shimonoseki_132_tri_bets",
+                            "fukuoka_tide_132_tri_bets",
+                            "ashiya_boat4_exa_bets",
+                            "marugame_tide_123_tri_bets",
+                            "omura_14_exa_bets",
+                            "omura_123_tri_bets",
+                            "omura_132_tri_bets",
+                        )
+                        if any(k not in day_d for k in required_adopted_bet_keys):
                             continue
                         cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
@@ -8899,8 +8922,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
-        # ROI 日次画面は「今日を含む直近 1 か月」を既定表示にする。
-        from_d = request.args.get("from") or (today - timedelta(days=29)).isoformat()
+        # ROI ????????????? 1 ???????????
+        from_d = request.args.get("from") or (today - timedelta(days=364)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
