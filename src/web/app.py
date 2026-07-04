@@ -6504,7 +6504,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     GAMAGORI_TIDE_132_TRI_CACHE_VERSION = "gamagori_tide_132_tri_v1"
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v8"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v9"
     BET_UNIT_MAP = {}
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
@@ -8328,6 +8328,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "mid_132_tier_a_tri_bets": m132ab or 0, "mid_132_tier_a_tri_hits": m132ah or 0, "mid_132_tier_a_tri_pay": m132ap or 0,
                         "amagasaki_motor_exa_bets": amagab or 0, "amagasaki_motor_exa_hits": amaga_h or 0, "amagasaki_motor_exa_pay": amaga_p or 0,
                         "ashiya_boat4_exa_bets": ashib or 0, "ashiya_boat4_exa_hits": ashih or 0, "ashiya_boat4_exa_pay": aship or 0,
+                        "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
+                        "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                         "kiryu_win2_bets": kiryub or 0, "kiryu_win2_hits": kiryuh or 0, "kiryu_win2_pay": kiryup or 0,
                         "general_c_tri_bets": gcb or 0, "general_c_tri_hits": gch or 0, "general_c_tri_pay": gcp or 0,
                         "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
@@ -8337,6 +8339,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
                         "tsu_124_tri_bets": 0, "tsu_124_tri_hits": 0, "tsu_124_tri_pay": 0,
                         "amagasaki_143_tri_bets": 0, "amagasaki_143_tri_hits": 0, "amagasaki_143_tri_pay": 0,
+                        "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
+                        "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
+                        "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
+                        "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
                         "grade_breakdown": {},
                         "_from_summary": True,
                     }
