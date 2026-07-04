@@ -7,24 +7,24 @@
 
 {% set strategies = [
   ('g23_optb_tri', 'G2/G3 1-2-3'),
-  ('shimonoseki_123_tri', '下関 1-2-3'),
-  ('tsu_124_tri', '津 1-2-4'),
-  ('amagasaki_143_tri', '尼崎 1-4-3'),
-  ('ashiya_boat4_exa', '芦屋 4-1'),
-  ('hamanako_14_exa', '浜名湖 1-4'),
-  ('omura_14_exa', '大村 1-4'),
-  ('tokuyama_123_tri', '徳山 1-2-3'),
-  ('shimonoseki_132_tri', '下関 1-3-2'),
-  ('kojima_124_tri', '児島 1-2-4'),
-  ('omura_123_tri', '大村 1-2-3'),
-  ('omura_132_tri', '大村 1-3-2'),
-  ('tsu_123_tri', '津 1-2-3'),
-  ('suminoe_123_tri', '住之江 1-2-3'),
   ('general_c_tri', '一般C 1-2-3'),
-  ('miyajima_tide_132_tri', '宮島 1-3-2 潮型'),
+  ('hamanako_14_exa', '浜名湖 1-4'),
   ('gamagori_tide_132_tri', '蒲郡 1-3-2 潮型'),
+  ('tsu_123_tri', '津 1-2-3'),
+  ('tsu_124_tri', '津 1-2-4'),
+  ('suminoe_123_tri', '住之江 1-2-3'),
+  ('amagasaki_143_tri', '尼崎 1-4-3'),
+  ('kojima_124_tri', '児島 1-2-4'),
+  ('miyajima_tide_132_tri', '宮島 1-3-2 潮型'),
+  ('tokuyama_123_tri', '徳山 1-2-3'),
+  ('shimonoseki_123_tri', '下関 1-2-3'),
+  ('shimonoseki_132_tri', '下関 1-3-2'),
+  ('fukuoka_tide_132_tri', '福岡 1-3-2 潮型'),
+  ('ashiya_boat4_exa', '芦屋 4-1'),
   ('marugame_tide_123_tri', '丸亀 1-2-3 潮型'),
-  ('fukuoka_tide_132_tri', '福岡 1-3-2 潮型')
+  ('omura_14_exa', '大村 1-4'),
+  ('omura_123_tri', '大村 1-2-3'),
+  ('omura_132_tri', '大村 1-3-2')
 ] %}
 
 {% macro roi_cell(value) -%}
@@ -42,7 +42,7 @@
 {% block content %}
 <div class="strategy-dashboard">
   <h2>ROIダッシュボード <span class="live-indicator">LIVE</span></h2>
-  <p class="dashboard-hint">採用手法の日別集計です。対象期間: {{ from_date }} - {{ to_date }}</p>
+  <p class="dashboard-hint">採用手法を日別で比較します。集計範囲: {{ from_date }} - {{ to_date }}</p>
 
   <form method="get" class="health-filter-form" style="margin:12px 0 18px;">
     <label>開始日

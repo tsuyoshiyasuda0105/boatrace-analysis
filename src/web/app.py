@@ -8899,8 +8899,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
-        # ROI 日次画面は「今日を含む直近 1 年」を既定表示にする。
-        from_d = request.args.get("from") or (today - timedelta(days=364)).isoformat()
+        # ROI 日次画面は「今日を含む直近 1 か月」を既定表示にする。
+        from_d = request.args.get("from") or (today - timedelta(days=29)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
