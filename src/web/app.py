@@ -6614,6 +6614,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception:  # noqa: BLE001
             # cache テーブル無い (= migration 前) → 既存 SQL で全部計算
             pass
+        if force_full_scan:
+            cached_by_date = {}
 
         def _finalize_l4_daily_rows(stats_by_date: dict[str, dict]) -> list[dict]:
             niche_bet_keys = (
@@ -8137,64 +8139,57 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 別途 l4_daily_summary に precompute して入れている。
         # 既に by_date にある日付 (raw データから集計済) は上書きしない。
         try:
-            with db_connect() as conn:
-                # L4-prime/12R 観察カラムは新カラム。古い DB では COLUMN 存在しないため
-                # try-except で graceful degradation
-                base_cols = ("date, n_total, n_l4, "
-                             "win_bets, win_hits, win_pay, "
-                             "exa_bets, exa_hits, exa_pay, "
-                             "tri_bets, tri_hits, tri_pay, "
-                             "c80_bets, c80_hits, c80_pay, "
-                             "pro_bets, pro_hits, pro_pay, "
-                             "sgg12_bets, sgg12_hits, sgg12_pay, "
-                             "gen_tri_bets, gen_tri_hits, gen_tri_pay, "
-                             "gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay, "
-                             "gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay")
-                obs_cols = ("prime_tri_bets, prime_tri_hits, prime_tri_pay, "
-                            "r12_tri_bets, r12_tri_hits, r12_tri_pay, "
-                            "gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay")
-                planned_cols = ("toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay, "
-                                "mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay, "
-                                "mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay")
-                niche_cols = ("amagasaki_motor_exa_bets, amagasaki_motor_exa_hits, amagasaki_motor_exa_pay, "
-                              "ashiya_boat4_exa_bets, ashiya_boat4_exa_hits, ashiya_boat4_exa_pay, "
-                              "kiryu_win2_bets, kiryu_win2_hits, kiryu_win2_pay, "
-                              "general_c_tri_bets, general_c_tri_hits, general_c_tri_pay, ")
-                has_obs_cols = True
-                has_planned_cols = True
-                has_niche_cols = True
-                # 注: base_cols/obs_cols は上で定義したハードコード定数のみで構成
-                # (ユーザー入力非依存)。動的部分は SQL placeholder (?) のみで、
-                # SQL injection リスクなし。f-string を避け、通常文字列連結で記述
-                # することでリグレッションガード (将来 cols が変数化されても
-                # SQLi にならない)。
-                sql_full = (
-                    "SELECT " + base_cols + ", " + obs_cols + ", " + planned_cols + ", " + niche_cols
-                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
-                )
-                sql_with_planned = (
-                    "SELECT " + base_cols + ", " + obs_cols + ", " + planned_cols
-                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
-                )
-                sql_with_obs = (
-                    "SELECT " + base_cols + ", " + obs_cols
-                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
-                )
-                sql_legacy = (
-                    "SELECT " + base_cols
-                    + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
-                )
-                try:
-                    cur = conn.execute(sql_full, (from_date, to_date))
-                    rows = cur.fetchall()
-                except Exception:
+            if force_full_scan:
+                rows = []
+            else:
+                with db_connect() as conn:
+                    # try-except で graceful degradation
+                    base_cols = ("date, n_total, n_l4, "
+                                 "win_bets, win_hits, win_pay, "
+                                 "exa_bets, exa_hits, exa_pay, "
+                                 "tri_bets, tri_hits, tri_pay, "
+                                 "c80_bets, c80_hits, c80_pay, "
+                                 "pro_bets, pro_hits, pro_pay, "
+                                 "sgg12_bets, sgg12_hits, sgg12_pay, "
+                                 "gen_tri_bets, gen_tri_hits, gen_tri_pay, "
+                                 "gen_plus_tri_bets, gen_plus_tri_hits, gen_plus_tri_pay, "
+                                 "gen_f1_tri_bets, gen_f1_tri_hits, gen_f1_tri_pay")
+                    obs_cols = ("prime_tri_bets, prime_tri_hits, prime_tri_pay, "
+                                "r12_tri_bets, r12_tri_hits, r12_tri_pay, "
+                                "gen_r12_tri_bets, gen_r12_tri_hits, gen_r12_tri_pay")
+                    planned_cols = ("toda_7r_tri_bets, toda_7r_tri_hits, toda_7r_tri_pay, "
+                                    "mid_132_tri_bets, mid_132_tri_hits, mid_132_tri_pay, "
+                                    "mid_132_tier_a_tri_bets, mid_132_tier_a_tri_hits, mid_132_tier_a_tri_pay")
+                    niche_cols = ("amagasaki_motor_exa_bets, amagasaki_motor_exa_hits, amagasaki_motor_exa_pay, "
+                                  "ashiya_boat4_exa_bets, ashiya_boat4_exa_hits, ashiya_boat4_exa_pay, "
+                                  "kiryu_win2_bets, kiryu_win2_hits, kiryu_win2_pay, "
+                                  "general_c_tri_bets, general_c_tri_hits, general_c_tri_pay, ")
+                    has_obs_cols = True
+                    has_planned_cols = True
+                    has_niche_cols = True
+                    # 注: base_cols/obs_cols は上で定義したハードコード定数のみで構成
+                    # (ユーザー入力非依存)。動的部分は SQL placeholder (?) のみで、
+                    # SQL injection リスクなし。f-string を避け、通常文字列連結で記述
+                    # することでリグレッションガード (将来 cols が変数化されても
+                    # SQLi にならない)。
+                    sql_full = (
+                        "SELECT " + base_cols + ", " + obs_cols + ", " + planned_cols + ", " + niche_cols
+                        + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                    )
+                    sql_with_planned = (
+                        "SELECT " + base_cols + ", " + obs_cols + ", " + planned_cols
+                        + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                    )
+                    sql_with_obs = (
+                        "SELECT " + base_cols + ", " + obs_cols
+                        + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                    )
+                    sql_legacy = (
+                        "SELECT " + base_cols
+                        + " FROM l4_daily_summary WHERE date BETWEEN ? AND ?"
+                    )
                     try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-                    try:
-                        has_niche_cols = False
-                        cur = conn.execute(sql_with_planned, (from_date, to_date))
+                        cur = conn.execute(sql_full, (from_date, to_date))
                         rows = cur.fetchall()
                     except Exception:
                         try:
@@ -8202,150 +8197,159 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         except Exception:
                             pass
                         try:
-                            has_planned_cols = False
-                            cur = conn.execute(sql_with_obs, (from_date, to_date))
+                            has_niche_cols = False
+                            cur = conn.execute(sql_with_planned, (from_date, to_date))
                             rows = cur.fetchall()
                         except Exception:
-                            has_obs_cols = False
                             try:
                                 conn.rollback()
                             except Exception:
                                 pass
-                            cur = conn.execute(sql_legacy, (from_date, to_date))
-                            rows = cur.fetchall()
-                for row in rows:
-                    # planned_cols (戸田7R/L4-Mid 1-3-2) → obs_cols (prime/r12) → 基本のみ
-                    if has_planned_cols and has_niche_cols:
-                        (sdate, n_tot, n_l4,
-                         wb, wh, wp, eb, eh, ep, tb, th, tp,
-                         c80b, c80h, c80p, prob, proh, prop,
-                         sgb, sgh, sgp,
-                         gtb, gth, gtp, gptb, gpth, gptp,
-                         gfb, gfh, gfp,
-                         prb, prh, prp, r12b, r12h, r12p,
-                         gr12b, gr12h, gr12p,
-                         td7b, td7h, td7p,
-                         m132b, m132h, m132p,
-                         m132ab, m132ah, m132ap,
-                         amagab, amaga_h, amaga_p,
-                         ashib, ashih, aship,
-                         kiryub, kiryuh, kiryup,
-                         karab, karah, karap,
-                         miyab, miyah, miyap,
-                         gcb, gch, gcp) = row
-                    elif has_planned_cols:
-                        (sdate, n_tot, n_l4,
-                         wb, wh, wp, eb, eh, ep, tb, th, tp,
-                         c80b, c80h, c80p, prob, proh, prop,
-                         sgb, sgh, sgp,
-                         gtb, gth, gtp, gptb, gpth, gptp,
-                         gfb, gfh, gfp,
-                         prb, prh, prp, r12b, r12h, r12p,
-                         gr12b, gr12h, gr12p,
-                         td7b, td7h, td7p,
-                         m132b, m132h, m132p,
-                         m132ab, m132ah, m132ap) = row
-                        amagab = amaga_h = amaga_p = 0
-                        ashib = ashih = aship = 0
-                        kiryub = kiryuh = kiryup = 0
-                        karab = karah = karap = 0
-                        miyab = miyah = miyap = 0
-                        gcb = gch = gcp = 0
-                    elif has_obs_cols:
-                        (sdate, n_tot, n_l4,
-                         wb, wh, wp, eb, eh, ep, tb, th, tp,
-                         c80b, c80h, c80p, prob, proh, prop,
-                         sgb, sgh, sgp,
-                         gtb, gth, gtp, gptb, gpth, gptp,
-                         gfb, gfh, gfp,
-                         prb, prh, prp, r12b, r12h, r12p,
-                         gr12b, gr12h, gr12p) = row
-                        td7b = td7h = td7p = 0
+                            try:
+                                has_planned_cols = False
+                                cur = conn.execute(sql_with_obs, (from_date, to_date))
+                                rows = cur.fetchall()
+                            except Exception:
+                                has_obs_cols = False
+                                try:
+                                    conn.rollback()
+                                except Exception:
+                                    pass
+                                cur = conn.execute(sql_legacy, (from_date, to_date))
+                                rows = cur.fetchall()
+                    for row in rows:
+                        # planned_cols (戸田7R/L4-Mid 1-3-2) → obs_cols (prime/r12) → 基本のみ
+                        if has_planned_cols and has_niche_cols:
+                            (sdate, n_tot, n_l4,
+                             wb, wh, wp, eb, eh, ep, tb, th, tp,
+                             c80b, c80h, c80p, prob, proh, prop,
+                             sgb, sgh, sgp,
+                             gtb, gth, gtp, gptb, gpth, gptp,
+                             gfb, gfh, gfp,
+                             prb, prh, prp, r12b, r12h, r12p,
+                             gr12b, gr12h, gr12p,
+                             td7b, td7h, td7p,
+                             m132b, m132h, m132p,
+                             m132ab, m132ah, m132ap,
+                             amagab, amaga_h, amaga_p,
+                             ashib, ashih, aship,
+                             kiryub, kiryuh, kiryup,
+                             karab, karah, karap,
+                             miyab, miyah, miyap,
+                             gcb, gch, gcp) = row
+                        elif has_planned_cols:
+                            (sdate, n_tot, n_l4,
+                             wb, wh, wp, eb, eh, ep, tb, th, tp,
+                             c80b, c80h, c80p, prob, proh, prop,
+                             sgb, sgh, sgp,
+                             gtb, gth, gtp, gptb, gpth, gptp,
+                             gfb, gfh, gfp,
+                             prb, prh, prp, r12b, r12h, r12p,
+                             gr12b, gr12h, gr12p,
+                             td7b, td7h, td7p,
+                             m132b, m132h, m132p,
+                             m132ab, m132ah, m132ap) = row
+                            amagab = amaga_h = amaga_p = 0
+                            ashib = ashih = aship = 0
+                            kiryub = kiryuh = kiryup = 0
+                            karab = karah = karap = 0
+                            miyab = miyah = miyap = 0
+                            gcb = gch = gcp = 0
+                        elif has_obs_cols:
+                            (sdate, n_tot, n_l4,
+                             wb, wh, wp, eb, eh, ep, tb, th, tp,
+                             c80b, c80h, c80p, prob, proh, prop,
+                             sgb, sgh, sgp,
+                             gtb, gth, gtp, gptb, gpth, gptp,
+                             gfb, gfh, gfp,
+                             prb, prh, prp, r12b, r12h, r12p,
+                             gr12b, gr12h, gr12p) = row
+                            td7b = td7h = td7p = 0
+                            m132b = m132h = m132p = 0
+                            m132ab = m132ah = m132ap = 0
+                            amagab = amaga_h = amaga_p = 0
+                            ashib = ashih = aship = 0
+                            kiryub = kiryuh = kiryup = 0
+                            karab = karah = karap = 0
+                            miyab = miyah = miyap = 0
+                            gcb = gch = gcp = 0
+                        else:
+                            (sdate, n_tot, n_l4,
+                             wb, wh, wp, eb, eh, ep, tb, th, tp,
+                             c80b, c80h, c80p, prob, proh, prop,
+                             sgb, sgh, sgp,
+                             gtb, gth, gtp, gptb, gpth, gptp,
+                             gfb, gfh, gfp) = row
+                            prb = prh = prp = 0
+                            r12b = r12h = r12p = 0
+                            gr12b = gr12h = gr12p = 0
+                            td7b = td7h = td7p = 0
+                            m132b = m132h = m132p = 0
+                            m132ab = m132ah = m132ap = 0
+                            amagab = amaga_h = amaga_p = 0
+                            ashib = ashih = aship = 0
+                            kiryub = kiryuh = kiryup = 0
+                            karab = karah = karap = 0
+                            miyab = miyah = miyap = 0
+                            gcb = gch = gcp = 0
+                        if sdate >= STRICT_ODDS_DAILY_START:
+                            # Recent live-operation stats must come from raw odds snapshots.
+                            # Legacy summaries may include final-payout proxy rows.
+                            continue
+                        # Tier A/B now requires 1-3-2 pre-race odds. Legacy summaries
+                        # used a different odds proxy, so do not reuse their Tier values.
                         m132b = m132h = m132p = 0
                         m132ab = m132ah = m132ap = 0
-                        amagab = amaga_h = amaga_p = 0
-                        ashib = ashih = aship = 0
-                        kiryub = kiryuh = kiryup = 0
-                        karab = karah = karap = 0
-                        miyab = miyah = miyap = 0
-                        gcb = gch = gcp = 0
-                    else:
-                        (sdate, n_tot, n_l4,
-                         wb, wh, wp, eb, eh, ep, tb, th, tp,
-                         c80b, c80h, c80p, prob, proh, prop,
-                         sgb, sgh, sgp,
-                         gtb, gth, gtp, gptb, gpth, gptp,
-                         gfb, gfh, gfp) = row
-                        prb = prh = prp = 0
-                        r12b = r12h = r12p = 0
-                        gr12b = gr12h = gr12p = 0
-                        td7b = td7h = td7p = 0
-                        m132b = m132h = m132p = 0
-                        m132ab = m132ah = m132ap = 0
-                        amagab = amaga_h = amaga_p = 0
-                        ashib = ashih = aship = 0
-                        kiryub = kiryuh = kiryup = 0
-                        karab = karah = karap = 0
-                        miyab = miyah = miyap = 0
-                        gcb = gch = gcp = 0
-                    if sdate >= STRICT_ODDS_DAILY_START:
-                        # Recent live-operation stats must come from raw odds snapshots.
-                        # Legacy summaries may include final-payout proxy rows.
-                        continue
-                    # Tier A/B now requires 1-3-2 pre-race odds. Legacy summaries
-                    # used a different odds proxy, so do not reuse their Tier values.
-                    m132b = m132h = m132p = 0
-                    m132ab = m132ah = m132ap = 0
-                    if force_full_scan and sdate in by_date:
-                        continue
-                    if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
-                        # 既に raw データから集計済 → スキップ (raw が「正」)
-                        continue
-                    by_date[sdate] = {
-                        "date": sdate,
-                        "n_total": n_tot or 0,
-                        "n_done": 0,
-                        "n_l4": n_l4 or 0,
-                        "win_bets": wb or 0, "win_hits": wh or 0, "win_pay": wp or 0,
-                        "exa_bets": eb or 0, "exa_hits": eh or 0, "exa_pay": ep or 0,
-                        "tri_bets": tb or 0, "tri_hits": th or 0, "tri_pay": tp or 0,
-                        "c80_bets": c80b or 0, "c80_hits": c80h or 0, "c80_pay": c80p or 0,
-                        "pro_bets": prob or 0, "pro_hits": proh or 0, "pro_pay": prop or 0,
-                        "sgg12_bets": sgb or 0, "sgg12_hits": sgh or 0, "sgg12_pay": sgp or 0,
-                        # 一般戦集計 (採用ベース = gen_f1, 観察 = gen / gen_plus)
-                        "gen_tri_bets": gtb or 0, "gen_tri_hits": gth or 0, "gen_tri_pay": gtp or 0,
-                        "gen_plus_tri_bets": gptb or 0, "gen_plus_tri_hits": gpth or 0, "gen_plus_tri_pay": gptp or 0,
-                        "gen_f1_tri_bets": gfb or 0, "gen_f1_tri_hits": gfh or 0, "gen_f1_tri_pay": gfp or 0,
-                        "gen_200_tri_bets": 0, "gen_200_tri_hits": 0, "gen_200_tri_pay": 0,
-                        # L4-prime / L4-12R / 一般戦×12R 観察
-                        "prime_tri_bets": prb or 0, "prime_tri_hits": prh or 0, "prime_tri_pay": prp or 0,
-                        "r12_tri_bets": r12b or 0, "r12_tri_hits": r12h or 0, "r12_tri_pay": r12p or 0,
-                        "gen_r12_tri_bets": gr12b or 0, "gen_r12_tri_hits": gr12h or 0, "gen_r12_tri_pay": gr12p or 0,
-                        # 戸田 7R 企画レース観察 (2026-05-19)
-                        "toda_7r_tri_bets": td7b or 0, "toda_7r_tri_hits": td7h or 0, "toda_7r_tri_pay": td7p or 0,
-                        # L4-Mid 1-3-2 観察 (2026-05-19)
-                        "mid_132_tri_bets": m132b or 0, "mid_132_tri_hits": m132h or 0, "mid_132_tri_pay": m132p or 0,
-                        "mid_132_tier_a_tri_bets": m132ab or 0, "mid_132_tier_a_tri_hits": m132ah or 0, "mid_132_tier_a_tri_pay": m132ap or 0,
-                        "amagasaki_motor_exa_bets": amagab or 0, "amagasaki_motor_exa_hits": amaga_h or 0, "amagasaki_motor_exa_pay": amaga_p or 0,
-                        "ashiya_boat4_exa_bets": ashib or 0, "ashiya_boat4_exa_hits": ashih or 0, "ashiya_boat4_exa_pay": aship or 0,
-                        "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
-                        "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
-                        "kiryu_win2_bets": kiryub or 0, "kiryu_win2_hits": kiryuh or 0, "kiryu_win2_pay": kiryup or 0,
-                        "general_c_tri_bets": gcb or 0, "general_c_tri_hits": gch or 0, "general_c_tri_pay": gcp or 0,
-                        "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
-                        "suminoe_123_tri_bets": 0, "suminoe_123_tri_hits": 0, "suminoe_123_tri_pay": 0,
-                        "shimonoseki_123_tri_bets": 0, "shimonoseki_123_tri_hits": 0, "shimonoseki_123_tri_pay": 0,
-                        "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
-                        "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
-                        "tsu_124_tri_bets": 0, "tsu_124_tri_hits": 0, "tsu_124_tri_pay": 0,
-                        "amagasaki_143_tri_bets": 0, "amagasaki_143_tri_hits": 0, "amagasaki_143_tri_pay": 0,
-                        "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
-                        "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
-                        "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
-                        "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
-                        "grade_breakdown": {},
-                        "_from_summary": True,
-                    }
+                        if force_full_scan and sdate in by_date:
+                            continue
+                        if sdate in by_date and by_date[sdate].get("n_l4", 0) > 0:
+                            # 既に raw データから集計済 → スキップ (raw が「正」)
+                            continue
+                        by_date[sdate] = {
+                            "date": sdate,
+                            "n_total": n_tot or 0,
+                            "n_done": 0,
+                            "n_l4": n_l4 or 0,
+                            "win_bets": wb or 0, "win_hits": wh or 0, "win_pay": wp or 0,
+                            "exa_bets": eb or 0, "exa_hits": eh or 0, "exa_pay": ep or 0,
+                            "tri_bets": tb or 0, "tri_hits": th or 0, "tri_pay": tp or 0,
+                            "c80_bets": c80b or 0, "c80_hits": c80h or 0, "c80_pay": c80p or 0,
+                            "pro_bets": prob or 0, "pro_hits": proh or 0, "pro_pay": prop or 0,
+                            "sgg12_bets": sgb or 0, "sgg12_hits": sgh or 0, "sgg12_pay": sgp or 0,
+                            # 一般戦集計 (採用ベース = gen_f1, 観察 = gen / gen_plus)
+                            "gen_tri_bets": gtb or 0, "gen_tri_hits": gth or 0, "gen_tri_pay": gtp or 0,
+                            "gen_plus_tri_bets": gptb or 0, "gen_plus_tri_hits": gpth or 0, "gen_plus_tri_pay": gptp or 0,
+                            "gen_f1_tri_bets": gfb or 0, "gen_f1_tri_hits": gfh or 0, "gen_f1_tri_pay": gfp or 0,
+                            "gen_200_tri_bets": 0, "gen_200_tri_hits": 0, "gen_200_tri_pay": 0,
+                            # L4-prime / L4-12R / 一般戦×12R 観察
+                            "prime_tri_bets": prb or 0, "prime_tri_hits": prh or 0, "prime_tri_pay": prp or 0,
+                            "r12_tri_bets": r12b or 0, "r12_tri_hits": r12h or 0, "r12_tri_pay": r12p or 0,
+                            "gen_r12_tri_bets": gr12b or 0, "gen_r12_tri_hits": gr12h or 0, "gen_r12_tri_pay": gr12p or 0,
+                            # 戸田 7R 企画レース観察 (2026-05-19)
+                            "toda_7r_tri_bets": td7b or 0, "toda_7r_tri_hits": td7h or 0, "toda_7r_tri_pay": td7p or 0,
+                            # L4-Mid 1-3-2 観察 (2026-05-19)
+                            "mid_132_tri_bets": m132b or 0, "mid_132_tri_hits": m132h or 0, "mid_132_tri_pay": m132p or 0,
+                            "mid_132_tier_a_tri_bets": m132ab or 0, "mid_132_tier_a_tri_hits": m132ah or 0, "mid_132_tier_a_tri_pay": m132ap or 0,
+                            "amagasaki_motor_exa_bets": amagab or 0, "amagasaki_motor_exa_hits": amaga_h or 0, "amagasaki_motor_exa_pay": amaga_p or 0,
+                            "ashiya_boat4_exa_bets": ashib or 0, "ashiya_boat4_exa_hits": ashih or 0, "ashiya_boat4_exa_pay": aship or 0,
+                            "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
+                            "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
+                            "kiryu_win2_bets": kiryub or 0, "kiryu_win2_hits": kiryuh or 0, "kiryu_win2_pay": kiryup or 0,
+                            "general_c_tri_bets": gcb or 0, "general_c_tri_hits": gch or 0, "general_c_tri_pay": gcp or 0,
+                            "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
+                            "suminoe_123_tri_bets": 0, "suminoe_123_tri_hits": 0, "suminoe_123_tri_pay": 0,
+                            "shimonoseki_123_tri_bets": 0, "shimonoseki_123_tri_hits": 0, "shimonoseki_123_tri_pay": 0,
+                            "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
+                            "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
+                            "tsu_124_tri_bets": 0, "tsu_124_tri_hits": 0, "tsu_124_tri_pay": 0,
+                            "amagasaki_143_tri_bets": 0, "amagasaki_143_tri_hits": 0, "amagasaki_143_tri_pay": 0,
+                            "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
+                            "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
+                            "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
+                            "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
+                            "grade_breakdown": {},
+                            "_from_summary": True,
+                        }
         except Exception as e:
             logger.warning("l4_daily_summary lookup failed: %s", e)
 
