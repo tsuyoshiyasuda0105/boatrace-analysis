@@ -6614,8 +6614,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception:  # noqa: BLE001
             # cache テーブル無い (= migration 前) → 既存 SQL で全部計算
             pass
-        if force_full_scan:
-            cached_by_date = {}
+        # force_full_scan は l4_daily_summary の補完を止める意図で使う。
+        # 検証済みの日別キャッシュまで全捨てすると、古い採用手法の月別実績が
+        # 生SQL再計算だけに寄って欠けやすくなるため、キャッシュは利用する。
 
         def _finalize_l4_daily_rows(stats_by_date: dict[str, dict]) -> list[dict]:
             niche_bet_keys = (
@@ -9095,7 +9096,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
-        monthly_from = (today - timedelta(days=548)).isoformat()
+        monthly_from = "2024-06-01"
         monthly_to   = today.isoformat()
         # keep visible near the top for source-regression coverage:
         # monthly_from=monthly_from / monthly_to=monthly_to
