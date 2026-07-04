@@ -359,6 +359,7 @@
           if (!l4Data && !l4El) return false;
           const level = String(l4Data?.level || '');
           const text = `${l4El?.textContent || ''} ${l4El?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''}`.trim();
+          const classList = Array.from(l4El?.classList || []);
           const supportedLevels = new Set([
             'g23_optb_tri',
             'morning_watch_g23_optb',
@@ -389,7 +390,41 @@
             'marugame_tide_123_tri',
             'fukuoka_tide_132_tri'
           ]);
-          return supportedLevels.has(level);
+          if (supportedLevels.has(level)) return true;
+
+          const supportedClassPrefixes = [
+            'l4-g23_optb_tri',
+            'l4-morning_watch_g23_optb',
+            'l4-shimonoseki_123_tri',
+            'l4-tsu_124_tri',
+            'l4-amagasaki_143_tri',
+            'l4-trifecta_niche_143_a12',
+            'l4-morning_watch_tri143_a12',
+            'l4-general_c_tri',
+            'l4-morning_watch_general_c_tri',
+            'l4-exacta_niche_ashiya_boat4_lift',
+            'l4-ashiya_boat4_exa',
+            'l4-morning_watch_ashiya_boat4_lift',
+            'l4-exacta_niche_hamanako14',
+            'l4-hamanako_14_exa',
+            'l4-exacta_niche_omura14',
+            'l4-omura_14_exa',
+            'l4-tokuyama_123_tri',
+            'l4-shimonoseki_132_tri',
+            'l4-kojima_124_tri',
+            'l4-omura_123_tri',
+            'l4-morning_watch_omura_123_tri',
+            'l4-omura_132_tri',
+            'l4-tsu_123_tri',
+            'l4-suminoe_123_tri',
+            'l4-miyajima_tide_132_tri',
+            'l4-gamagori_tide_132_tri',
+            'l4-marugame_tide_123_tri',
+            'l4-fukuoka_tide_132_tri',
+          ];
+          if (classList.some(cls => supportedClassPrefixes.includes(cls))) return true;
+
+          return /朝監視\s*3-2-[14]|3-2-[14]|1-2-4|1-3-2|1-4-2|1-4-3|1-2-3|1-3-2|芦屋\s*4-1|大村\s*1-2-3|大村\s*1-3-2|唐津\s*雨\s*1-2|一般C|G2\/G3\s*1-2-3|潮型/.test(text);
         }
         // 注: EV+ 自動判定 UI/API はユーザ指示 (backlog.md item 3) により削除済。
 
