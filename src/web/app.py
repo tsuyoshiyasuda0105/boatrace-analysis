@@ -6679,7 +6679,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             all_dates = []
 
-        missing_dates = all_dates[:] if force_full_scan else [
+        missing_dates = [
             d for d in all_dates
             if d not in cached_by_date or d >= today_iso
         ]
