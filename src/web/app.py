@@ -6505,6 +6505,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
     ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v9"
+    ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
+        "adopted_daily_select_v8",
+        ADOPTED_DAILY_SELECT_VERSION,
+    }
     BET_UNIT_MAP = {}
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
@@ -6583,31 +6587,33 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_fukuoka_tide_132_tri_version") != FUKUOKA_TIDE_132_TRI_CACHE_VERSION:
                             continue
-                        if day_d.get("_adopted_daily_select_version") != ADOPTED_DAILY_SELECT_VERSION:
+                        if day_d.get("_adopted_daily_select_version") not in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS:
                             continue
-                        required_adopted_bet_keys = (
-                            "g23_optb_tri_bets",
-                            "general_c_tri_bets",
-                            "hamanako_14_exa_bets",
-                            "gamagori_tide_132_tri_bets",
-                            "tsu_123_tri_bets",
-                            "tsu_124_tri_bets",
-                            "suminoe_123_tri_bets",
-                            "amagasaki_143_tri_bets",
-                            "kojima_124_tri_bets",
-                            "miyajima_tide_132_tri_bets",
-                            "tokuyama_123_tri_bets",
-                            "shimonoseki_123_tri_bets",
-                            "shimonoseki_132_tri_bets",
-                            "fukuoka_tide_132_tri_bets",
-                            "ashiya_boat4_exa_bets",
-                            "marugame_tide_123_tri_bets",
-                            "omura_14_exa_bets",
-                            "omura_123_tri_bets",
-                            "omura_132_tri_bets",
+                        adopted_metric_prefixes = (
+                            "g23_optb_tri",
+                            "general_c_tri",
+                            "hamanako_14_exa",
+                            "gamagori_tide_132_tri",
+                            "tsu_123_tri",
+                            "tsu_124_tri",
+                            "suminoe_123_tri",
+                            "amagasaki_143_tri",
+                            "kojima_124_tri",
+                            "miyajima_tide_132_tri",
+                            "tokuyama_123_tri",
+                            "shimonoseki_123_tri",
+                            "shimonoseki_132_tri",
+                            "fukuoka_tide_132_tri",
+                            "ashiya_boat4_exa",
+                            "marugame_tide_123_tri",
+                            "omura_14_exa",
+                            "omura_123_tri",
+                            "omura_132_tri",
                         )
-                        if any(k not in day_d for k in required_adopted_bet_keys):
-                            continue
+                        for prefix in adopted_metric_prefixes:
+                            day_d.setdefault(f"{prefix}_bets", 0)
+                            day_d.setdefault(f"{prefix}_hits", 0)
+                            day_d.setdefault(f"{prefix}_pay", 0)
                         cached_by_date[rdate] = day_d
                     except (TypeError, ValueError):
                         pass
