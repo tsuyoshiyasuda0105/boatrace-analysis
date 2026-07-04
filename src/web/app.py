@@ -9140,7 +9140,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "general_c_tri",
         )
         try:
-            monthly_daily = _l4_daily_stats(monthly_from, monthly_to, force_full_scan=True)
+            monthly_daily = _l4_daily_stats(monthly_from, monthly_to, force_full_scan=False)
         except Exception as e:
             logger.warning("monthly daily stats failed: %s", e)
             monthly_daily = []
