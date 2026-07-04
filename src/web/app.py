@@ -8932,8 +8932,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
-        # ROI ????????????? 1 ???????????
-        from_d = request.args.get("from") or (today - timedelta(days=364)).isoformat()
+        # ROI 画面の既定表示は 1年6か月分に拡張
+        from_d = request.args.get("from") or (today - timedelta(days=548)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
@@ -9164,6 +9164,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 m[f"{k}_bets"] += r.get(f"{k}_bets", 0) or 0
                 m[f"{k}_hits"] += r.get(f"{k}_hits", 0) or 0
                 m[f"{k}_pay"]  += r.get(f"{k}_pay", 0)  or 0
+
+        try:
+            month_cursor = date.fromisoformat(monthly_from).replace(day=1)
+            month_end = date.fromisoformat(monthly_to).replace(day=1)
+            while month_cursor <= month_end:
+                ym = month_cursor.strftime("%Y-%m")
+                monthly_map.setdefault(ym, {
+                    "ym": ym,
+                    "n_total": 0, "n_l4": 0,
+                    "actual_days": 0,
+                    "reference_days": 0,
+                    **{f"{k}_bets": 0 for k in bet_keys},
+                    **{f"{k}_hits": 0 for k in bet_keys},
+                    **{f"{k}_pay":  0 for k in bet_keys},
+                })
+                if month_cursor.month == 12:
+                    month_cursor = month_cursor.replace(year=month_cursor.year + 1, month=1)
+                else:
+                    month_cursor = month_cursor.replace(month=month_cursor.month + 1)
+        except ValueError:
+            pass
 
         current_ym = today.strftime("%Y-%m")
         for m in monthly_map.values():
