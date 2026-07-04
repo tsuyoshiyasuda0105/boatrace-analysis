@@ -8944,7 +8944,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
         # ROI 画面の既定表示は 1年6か月分に拡張
-        from_d = request.args.get("from") or (today - timedelta(days=548)).isoformat()
+        from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
