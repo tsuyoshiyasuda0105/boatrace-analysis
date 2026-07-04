@@ -4672,28 +4672,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_score": 8,
                 })
             if (
-                stadium == 24
-                and is_high_tide_zone
-                and delta_v is not None and delta_v <= -15.0
-                and range_v is not None and 90.0 <= range_v < 120.0
-                and wind_v is not None and wind_v <= 2.0
-                and float(ctx.get("boat2_motor_top2") or 0) < 35.0
-                and float(ctx.get("boat4_motor_top2") or 0) < 35.0
-            ):
-                matched.append({
-                    "level": "omura_tide_132_tri",
-                    "label": "大村 1-3-2 潮型",
-                    "bet": "3連単 1-3-2",
-                    "rank": "trifecta_niche",
-                    "rank_label": "3連単 採用",
-                    "recovery": 357.9,
-                    "n": 28,
-                    "hit_rate": 28.6,
-                    "name": "大村132 潮型",
-                    "tag": "high-tide + fall15+ + range90-119 + wind0-2 + weak2/4",
-                    "tetsuban_score": 9,
-                })
-            if (
                 stadium == 15
                 and range_v is not None and 90.0 <= range_v < 120.0
                 and wind_v is not None and 5.0 <= wind_v <= 6.0
@@ -5913,7 +5891,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # 若手女性混入で 96.3% (analyze_female_deep.py 分析4) に崩落。
             is_female_present = (n_female > 0)
             boat3_trifecta_niche = _evaluate_boat3_trifecta_niche(boat3_signal_ctx.get(rid))
-            tri124_132_niche = _evaluate_tri124_132_trifecta_niche(info)
+            tri124_132_niche = None
             candidate_l4 = _evaluate_candidate_134_signal(
                 stadium,
                 grade,
@@ -6063,7 +6041,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     miyajima_watch,
                     tide_tri,
                     win_niche,
-                    tri124_132_niche,
                     non_exhibition_core,
                     general_c,
                     g23_optb,
@@ -6237,7 +6214,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     boat1_exhibition_time=boat1_exhibition_time,
                     best_exhibition_time=info.get("best_exhibition_time"),
                 )
-                tri124_132_watch = _evaluate_tri124_132_trifecta_niche_watch(info)
+                tri124_132_watch = None
                 general_c_watch = _evaluate_general_c_watch(
                     stadium, grade, cls,
                     natl_1=natl_1,
@@ -6272,7 +6249,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     miyajima_watch,
                     tide_tri,
                     omura_123_watch,
-                    tri124_132_watch,
                     general_c_watch,
                     g23_watch,
                     tsu_suminoe_signal,
@@ -6343,8 +6319,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
     GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v1"
-    TRI132_A12_CACHE_VERSION = "tri132_a12_v1"
-    TRI124_A12_CACHE_VERSION = "tri124_a12_v2"
     BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v3"
     TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v1"
     SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v1"
@@ -6357,8 +6331,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     GAMAGORI_TIDE_132_TRI_CACHE_VERSION = "gamagori_tide_132_tri_v1"
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
-    OMURA_TIDE_132_TRI_CACHE_VERSION = "omura_tide_132_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v6"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v7"
     BET_UNIT_MAP = {}
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
@@ -6431,8 +6404,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_fukuoka_tide_132_tri_version") != FUKUOKA_TIDE_132_TRI_CACHE_VERSION:
                             continue
-                        if day_d.get("_omura_tide_132_tri_version") != OMURA_TIDE_132_TRI_CACHE_VERSION:
-                            continue
                         if day_d.get("_adopted_daily_select_version") != ADOPTED_DAILY_SELECT_VERSION:
                             continue
                         cached_by_date[rdate] = day_d
@@ -6453,7 +6424,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gamagori_tide_132_tri",
                 "marugame_tide_123_tri",
                 "fukuoka_tide_132_tri",
-                "omura_tide_132_tri",
             )
             for d in stats_by_date.values():
                 for bet in niche_bet_keys:
@@ -6467,14 +6437,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "toda_7r_tri", "mid_132_tri",
                             "mid_132_tier_a_tri", "venus_tri",
                             "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
-                            "tri132_a12_tri", "tri124_a12_tri",
                             "g23_optb_tri",
                             "tsu_123_tri", "suminoe_123_tri",
                             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                             "omura_123_tri", "omura_132_tri",
                             "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-                            "marugame_tide_123_tri", "fukuoka_tide_132_tri",
-                            "omura_tide_132_tri"):
+                            "marugame_tide_123_tri", "fukuoka_tide_132_tri",):
                     n = d.get(f"{bet}_bets", 0)
                     pay = d.get(f"{bet}_pay", 0)
                     unit = BET_UNIT_MAP.get(bet, 100)
@@ -6725,10 +6693,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
                 "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
                 "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
-                "omura_tide_132_tri_bets": 0, "omura_tide_132_tri_hits": 0, "omura_tide_132_tri_pay": 0,
                 "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
-                "tri132_a12_tri_bets": 0, "tri132_a12_tri_hits": 0, "tri132_a12_tri_pay": 0,
-                "tri124_a12_tri_bets": 0, "tri124_a12_tri_hits": 0, "tri124_a12_tri_pay": 0,
                 "boat3_321_tri_bets": 0, "boat3_321_tri_hits": 0, "boat3_321_tri_pay": 0,
                 "boat3_324_tri_bets": 0, "boat3_324_tri_hits": 0, "boat3_324_tri_pay": 0,
                 "g23_optb_tri_bets": 0, "g23_optb_tri_hits": 0, "g23_optb_tri_pay": 0,
@@ -6820,8 +6785,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
-                "tri132_a12_tri_bets": 0, "tri132_a12_tri_hits": 0, "tri132_a12_tri_pay": 0,
-                "tri124_a12_tri_bets": 0, "tri124_a12_tri_hits": 0, "tri124_a12_tri_pay": 0,
                 "boat3_321_tri_bets": 0, "boat3_321_tri_hits": 0, "boat3_321_tri_pay": 0,
                 "boat3_324_tri_bets": 0, "boat3_324_tri_hits": 0, "boat3_324_tri_pay": 0,
                 "g23_optb_tri_bets": 0, "g23_optb_tri_hits": 0, "g23_optb_tri_pay": 0,
@@ -6836,7 +6799,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
                 "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
                 "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
-                "omura_tide_132_tri_bets": 0, "omura_tide_132_tri_hits": 0, "omura_tide_132_tri_pay": 0,
                 "grade_breakdown": {},
             })
             # 確定済 (race_payouts trifecta あり) ならカウント
@@ -6914,30 +6876,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     b3_natl_1 = float(boat3_natl_1) if boat3_natl_1 is not None else 0.0
                 except (TypeError, ValueError):
                     b3_natl_1 = 0.0
-                if (
-                    stadium != 4
-                    and
-                    b3_natl_1 >= 6.0
-                    and b3_motor >= 40.0
-                    and (ex_rank_by_boat.get(3) or 99) <= 2
-                ):
-                    _record_adopted_signal(
-                        race_id, rdate, "tri132_a12_tri", 178.9,
-                        w1 == 1 and w2 == 3 and w3 == 2,
-                        int(pay_132 or 0),
-                    )
-                if (
-                    stadium in (5, 9, 24)
-                    and
-                    float(boat2_top2 or 0) >= 40.0
-                    and b4_motor >= 40.0
-                    and (ex_rank_by_boat.get(4) or 99) <= 2
-                ):
-                    _record_adopted_signal(
-                        race_id, rdate, "tri124_a12_tri", 190.6,
-                        w1 == 1 and w2 == 2 and w3 == 4,
-                        int(pay_124 or 0),
-                    )
                 if stadium == 18 and float(boat2_motor_top2 or 0) >= 40.0 and float(boat5_motor_top2 or 0) >= 45.0:
                     _record_adopted_signal(
                         race_id, rdate, "tokuyama_123_tri", 212.0,
@@ -7078,21 +7016,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if _tide_range >= 150.0 and 5.0 <= _tide_delta < 15.0 and _wind_speed <= 2.0:
                     _record_adopted_signal(
                         race_id, rdate, "fukuoka_tide_132_tri", 470.0,
-                        w1 == 1 and w2 == 3 and w3 == 2,
-                        int(pay_132 or 0),
-                    )
-
-            if is_done and stadium == 24 and _tide_delta is not None and _tide_range is not None and _wind_speed is not None:
-                if (
-                    int(is_high_tide_zone or 0) == 1
-                    and _tide_delta <= -15.0
-                    and 90.0 <= _tide_range < 120.0
-                    and _wind_speed <= 2.0
-                    and float(boat2_motor_top2 or 0) < 35.0
-                    and float(boat4_motor_top2 or 0) < 35.0
-                ):
-                    _record_adopted_signal(
-                        race_id, rdate, "omura_tide_132_tri", 357.9,
                         w1 == 1 and w2 == 3 and w3 == 2,
                         int(pay_132 or 0),
                     )
@@ -7956,9 +7879,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 niche_cols = ("amagasaki_motor_exa_bets, amagasaki_motor_exa_hits, amagasaki_motor_exa_pay, "
                               "ashiya_boat4_exa_bets, ashiya_boat4_exa_hits, ashiya_boat4_exa_pay, "
                               "kiryu_win2_bets, kiryu_win2_hits, kiryu_win2_pay, "
-                              "general_c_tri_bets, general_c_tri_hits, general_c_tri_pay, "
-                              "tri132_a12_tri_bets, tri132_a12_tri_hits, tri132_a12_tri_pay, "
-                              "tri124_a12_tri_bets, tri124_a12_tri_hits, tri124_a12_tri_pay")
+                              "general_c_tri_bets, general_c_tri_hits, general_c_tri_pay, ")
                 has_obs_cols = True
                 has_planned_cols = True
                 has_niche_cols = True
@@ -8031,9 +7952,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                          kiryub, kiryuh, kiryup,
                          karab, karah, karap,
                          miyab, miyah, miyap,
-                         gcb, gch, gcp,
-                         t132b, t132h, t132p,
-                         t124b, t124h, t124p) = row
+                         gcb, gch, gcp) = row
                     elif has_planned_cols:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -8052,8 +7971,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         karab = karah = karap = 0
                         miyab = miyah = miyap = 0
                         gcb = gch = gcp = 0
-                        t132b = t132h = t132p = 0
-                        t124b = t124h = t124p = 0
                     elif has_obs_cols:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -8072,8 +7989,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         karab = karah = karap = 0
                         miyab = miyah = miyap = 0
                         gcb = gch = gcp = 0
-                        t132b = t132h = t132p = 0
-                        t124b = t124h = t124p = 0
                     else:
                         (sdate, n_tot, n_l4,
                          wb, wh, wp, eb, eh, ep, tb, th, tp,
@@ -8093,8 +8008,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         karab = karah = karap = 0
                         miyab = miyah = miyap = 0
                         gcb = gch = gcp = 0
-                        t132b = t132h = t132p = 0
-                        t124b = t124h = t124p = 0
                     if sdate >= STRICT_ODDS_DAILY_START:
                         # Recent live-operation stats must come from raw odds snapshots.
                         # Legacy summaries may include final-payout proxy rows.
@@ -8137,8 +8050,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "ashiya_boat4_exa_bets": ashib or 0, "ashiya_boat4_exa_hits": ashih or 0, "ashiya_boat4_exa_pay": aship or 0,
                         "kiryu_win2_bets": kiryub or 0, "kiryu_win2_hits": kiryuh or 0, "kiryu_win2_pay": kiryup or 0,
                         "general_c_tri_bets": gcb or 0, "general_c_tri_hits": gch or 0, "general_c_tri_pay": gcp or 0,
-                        "tri132_a12_tri_bets": t132b or 0, "tri132_a12_tri_hits": t132h or 0, "tri132_a12_tri_pay": t132p or 0,
-                        "tri124_a12_tri_bets": t124b or 0, "tri124_a12_tri_hits": t124h or 0, "tri124_a12_tri_pay": t124p or 0,
                         "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
                         "suminoe_123_tri_bets": 0, "suminoe_123_tri_hits": 0, "suminoe_123_tri_pay": 0,
                         "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
@@ -8171,7 +8082,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "mid_132_tier_a_tri", "venus_tri",
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2",
                     "general_c_tri",
-                    "tri132_a12_tri", "tri124_a12_tri",
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
                     "g23_optb_tri",
@@ -8216,7 +8126,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_gamagori_tide_132_tri_version"] = GAMAGORI_TIDE_132_TRI_CACHE_VERSION
                         day_d["_marugame_tide_123_tri_version"] = MARUGAME_TIDE_123_TRI_CACHE_VERSION
                         day_d["_fukuoka_tide_132_tri_version"] = FUKUOKA_TIDE_132_TRI_CACHE_VERSION
-                        day_d["_omura_tide_132_tri_version"] = OMURA_TIDE_132_TRI_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
@@ -8745,11 +8654,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "gamagori_tide_132_tri",
             "marugame_tide_123_tri",
             "fukuoka_tide_132_tri",
-            "omura_tide_132_tri",
             "tsu_123_tri",
             "suminoe_123_tri",
-            "tri132_a12_tri",
-            "tri124_a12_tri",
             "ashiya_boat4_exa",
             "hamanako_14_exa",
             "omura_14_exa",
@@ -8794,8 +8700,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-                    "marugame_tide_123_tri", "fukuoka_tide_132_tri", "omura_tide_132_tri",
-                    "tri132_a12_tri", "tri124_a12_tri",
+                    "marugame_tide_123_tri", "fukuoka_tide_132_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         for k in bet_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
@@ -8904,8 +8809,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-                    "marugame_tide_123_tri", "fukuoka_tide_132_tri", "omura_tide_132_tri",
-                    "tri132_a12_tri", "tri124_a12_tri",
+                    "marugame_tide_123_tri", "fukuoka_tide_132_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         adopted_keys = (
             "g23_optb_tri",
@@ -8918,11 +8822,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "gamagori_tide_132_tri",
             "marugame_tide_123_tri",
             "fukuoka_tide_132_tri",
-            "omura_tide_132_tri",
             "tsu_123_tri",
             "suminoe_123_tri",
-            "tri132_a12_tri",
-            "tri124_a12_tri",
             "ashiya_boat4_exa",
             "hamanako_14_exa",
             "omura_14_exa",
@@ -9023,8 +8924,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "omura_123_tri", "omura_132_tri",
             "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-            "marugame_tide_123_tri", "fukuoka_tide_132_tri", "omura_tide_132_tri",
-            "tri132_a12_tri", "tri124_a12_tri",
+            "marugame_tide_123_tri", "fukuoka_tide_132_tri",
             "g23_optb_tri",
             "tsu_123_tri", "suminoe_123_tri",
             "prime_tri", "r12_tri", "gen_r12_tri",
