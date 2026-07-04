@@ -424,7 +424,7 @@
           ];
           if (classList.some(cls => supportedClassPrefixes.includes(cls))) return true;
 
-          return /朝監視\s*3-2-[14]|3-2-[14]|1-2-4|1-3-2|1-4-2|1-4-3|1-2-3|1-3-2|芦屋\s*4-1|大村\s*1-2-3|大村\s*1-3-2|唐津\s*雨\s*1-2|一般C|G2\/G3\s*1-2-3|潮型/.test(text);
+          return false;
         }
         // 注: EV+ 自動判定 UI/API はユーザ指示 (backlog.md item 3) により削除済。
 
