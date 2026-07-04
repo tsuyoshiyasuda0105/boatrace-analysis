@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+import sqlite3
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -41,6 +42,45 @@ import config
 from src.collectors.openapi import fetch_results, upsert_results
 from src.collectors.result_scraper import scrape_results_for_pending_races
 from src.db.connection import connect as db_connect
+
+
+def _parse_closed_at(value) -> datetime | None:
+    if value in (None, "", "-"):
+        return None
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+def _count_openapi_shell_races(conn: sqlite3.Connection, target_date: date) -> int:
+    rows = conn.execute(
+        """
+        SELECT r.race_id, r.race_closed_at
+          FROM races r
+         WHERE r.race_date = ?
+           AND r.race_closed_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM race_entries e WHERE e.race_id = r.race_id)
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM race_results rr
+                WHERE rr.race_id = r.race_id
+                  AND rr.finishing_position IS NOT NULL
+           )
+        """,
+        (target_date.isoformat(),),
+    ).fetchall()
+    now_local = datetime.now()
+    pending = 0
+    for _race_id, race_closed_at in rows:
+        closed_at = _parse_closed_at(race_closed_at)
+        if closed_at and closed_at + timedelta(minutes=5) <= now_local:
+            pending += 1
+    return pending
 
 
 def main():
@@ -73,73 +113,43 @@ def main():
 
     # スキップ判定: 最初のレース締切より前なら何もしない
     if not args.force:
-        with db_connect() as conn:
-            cur = conn.execute("""
-                SELECT MIN(race_closed_at), COUNT(*),
-                       SUM(CASE WHEN race_id IN (
-                         SELECT DISTINCT race_id FROM race_payouts WHERE bet_type='trifecta'
-                       ) THEN 1 ELSE 0 END) AS done_count
-                FROM races WHERE race_date = ?
-            """, (target_date.isoformat(),))
-            row = cur.fetchone()
-            min_close, n_races, n_done = row if row else (None, 0, 0)
-
-        if n_races == 0:
-            print(f"[{target_date}] レースなし、スキップ")
-            return
-        if min_close:
-            try:
-                first_close = datetime.fromisoformat(str(min_close))
-                # 最初のレース締切から 5 分経過していなければスキップ
-                if now < first_close + timedelta(minutes=5):
-                    print(f"[{target_date}] 最初のレース ({first_close}) 締切後 5分待ち中、スキップ")
-                    return
-            except Exception:
-                pass
-        if n_done >= n_races:
-            print(f"[{target_date}] 全 {n_races} レース確定済、スキップ")
-            return
-        print(f"[{target_date}] {n_done}/{n_races} レース確定済、結果取得開始")
-
-    # DB に書き込み (DATABASE_URL あれば Supabase に直書き)
-    #
-    # 順序: Layer 3 (速報) → Open API (上書き=正)
-    # 1. Layer 3 boatrace.jp スクレイプ
-    #    レース終了 ~5 分後にすぐ反映。L4 [A1] 候補のみ (BAN リスク低減)。
-    # 2. Open API (公式バッチ、数時間遅延)
-    #    全レース対象。Layer 3 が書いた値も同 race_id で上書きする
-    #    (Open API の数値が「正」)。
-    # → ROI 速報性を保ちつつ、最終的に Open API データに収束する。
+        shell_races = 0
     with db_connect() as conn:
-        # === Layer 3 (速報): L4 [A1] 候補のみ ===
+        # === Layer 3 (fallback scrape) ===
         try:
             scraped = scrape_results_for_pending_races(target_date, conn)
             n_scraped = len(scraped["results"])
             if n_scraped > 0:
-                print(f"[{target_date}] Layer3 scrape: {n_scraped} レースを boatrace.jp から取得 (速報)")
+                print(f"[{target_date}] Layer3 scrape: {n_scraped} races from boatrace.jp")
                 n_added = upsert_results(conn, scraped)
                 conn.commit()
-                print(f"  upsert_results (Layer3 速報): {n_added} 行")
+                print(f"  upsert_results (Layer3): {n_added}")
             else:
-                print(f"[{target_date}] Layer3 scrape: 補完対象なし")
+                print(f"[{target_date}] Layer3 scrape: no additional races")
         except Exception as e:
             print(f"  Layer3 ERROR: {e}")
 
-        # === Open API (公式バッチ): 全レース対象、上書き正 ===
+        # === Open API ===
         payload = fetch_results(target_date)
         if payload:
             n_openapi = len(payload.get("results", []))
-            print(f"[{target_date}] Open API: {n_openapi} レース分の結果")
+            print(f"[{target_date}] Open API: {n_openapi} races fetched")
             try:
                 n_results = upsert_results(conn, payload)
                 conn.commit()
-                print(f"  upsert_results (Open API 上書き): {n_results} 行")
+                print(f"  upsert_results (Open API): {n_results}")
             except Exception as e:
                 print(f"  Open API ERROR: {e}")
         else:
-            print(f"[{target_date}] Open API: レスポンスなし")
+            print(f"[{target_date}] Open API: no response")
 
-    print(f"[{target_date}] 完了")
+        shell_races = _count_openapi_shell_races(conn, target_date)
+
+    if shell_races > 0:
+        print(f"[{target_date}] WARN: {shell_races} races still have shell result data")
+        sys.exit(2)
+
+    print(f"[{target_date}] done")
 
 
 if __name__ == "__main__":
