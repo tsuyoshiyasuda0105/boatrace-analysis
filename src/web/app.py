@@ -4825,7 +4825,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "label": "蒲郡 1-3-2 潮型",
                     "bet": "3連単 1-3-2",
                     "rank": "trifecta_niche",
-                    "rank_label": "3連単 採用",
+                    "rank_label": "3連単採用",
                     "recovery": 718.6,
                     "n": 132,
                     "hit_rate": 27.3,
@@ -4872,6 +4872,82 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_score": 7,
                 })
 
+            return _pick_best_market_signal(*matched)
+
+        def _evaluate_gamagori_adopted_signal(ctx: dict | None):
+            if not ctx:
+                return None
+
+            def _to_float(value):
+                try:
+                    return float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _to_int(value):
+                try:
+                    return int(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            stadium = _to_int(ctx.get("stadium"))
+            if stadium is None:
+                stadium = _to_int(ctx.get("stadium_number"))
+            grade = _to_int(ctx.get("grade", ctx.get("race_grade_number")))
+            cls = _to_int(ctx.get("class", ctx.get("class_number")))
+            race_no = _to_int(ctx.get("race_number"))
+            weather = _to_int(ctx.get("weather"))
+            n_female = _to_int(ctx.get("n_female")) or 0
+            natl_1 = _to_float(ctx.get("natl_1"))
+            avg_st = _to_float(ctx.get("avg_st_180", ctx.get("avg_st")))
+            boat2_top2 = _to_float(ctx.get("boat2_top2"))
+            boat3_motor = _to_float(ctx.get("boat3_motor_top2"))
+            wind_v = _to_float(ctx.get("wind_speed"))
+            delta_v = _to_float(ctx.get("tide_delta_60m_cm"))
+            range_v = _to_float(ctx.get("tide_range_cm"))
+
+            if stadium != 7 or grade != 5 or cls != 1 or weather == 3 or n_female != 0:
+                return None
+
+            matched = []
+            if (
+                race_no is not None and race_no in (9, 10, 11, 12)
+                and avg_st is not None and avg_st < 0.16
+                and boat2_top2 is not None and boat2_top2 >= 35.0
+                and delta_v is not None and -15.0 < delta_v <= -5.0
+            ):
+                matched.append({
+                    "level": "gamagori_123_general_practical_tri",
+                    "label": "蒲郡 1-2-3 実戦型",
+                    "bet": "3連単 1-2-3",
+                    "rank": "trifecta_niche",
+                    "rank_label": "3連単採用",
+                    "recovery": 277.6,
+                    "n": 21,
+                    "hit_rate": 33.3,
+                    "name": "蒲郡123 実戦型",
+                    "tag": "一般 + 9-12R + 1号艇180日ST<0.16 + 2号艇全国2連対率>=35 + 60分潮位差(-15,-5]",
+                    "tetsuban_score": 7,
+                })
+            if (
+                natl_1 is not None and natl_1 >= 7.0
+                and boat3_motor is not None and boat3_motor >= 40.0
+                and wind_v is not None and wind_v <= 2.0
+                and range_v is not None and range_v >= 150.0
+            ):
+                matched.append({
+                    "level": "gamagori_13_exa",
+                    "label": "蒲郡 1-3",
+                    "bet": "2連単 1-3",
+                    "rank": "exacta_niche",
+                    "rank_label": "2連単採用",
+                    "recovery": 154.9,
+                    "n": 33,
+                    "hit_rate": 51.5,
+                    "name": "蒲郡13",
+                    "tag": "一般 + 1号艇全国1着率>=7 + 3号艇モーター2連率>=40 + 風速<=2 + 潮位レンジ>=150",
+                    "tetsuban_score": 5,
+                })
             return _pick_best_market_signal(*matched)
 
         def _evaluate_non_exhibition_core_signal(
@@ -6075,6 +6151,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             tsu_suminoe_signal = _evaluate_tsu_suminoe_123_signal(tsu_suminoe_live.get(rid))
             shimonoseki_123_signal = _evaluate_shimonoseki_123_signal(info)
+            gamagori_adopted_signal = _evaluate_gamagori_adopted_signal(info)
 
             g23_optb = _evaluate_g23_optb_signal(
                 stadium, grade, cls,
@@ -6212,6 +6289,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     g23_optb,
                     tsu_suminoe_signal,
                     candidate_l4,
+                    gamagori_adopted_signal,
                 )
                 if non_exhibition_core and l4 and l4.get("level") == "general_c_tri":
                     l4 = non_exhibition_core
@@ -6382,6 +6460,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 tri124_132_watch = _evaluate_tri124_132_trifecta_niche_watch(info)
                 shimonoseki_123_watch = _evaluate_shimonoseki_123_signal(info)
+                gamagori_watch = _evaluate_gamagori_adopted_signal(info)
                 general_c_watch = _evaluate_general_c_watch(
                     stadium, grade, cls,
                     natl_1=natl_1,
@@ -6424,6 +6503,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tsu_suminoe_signal,
                     win_niche,
                     candidate_l4,
+                    gamagori_watch,
                 )
                 if morning_l4:
                     if is_rain_excluded and (
@@ -6502,6 +6582,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     AMAGASAKI_143_TRI_CACHE_VERSION = "amagasaki_143_tri_v1"
     MIYAJIMA_TIDE_132_TRI_CACHE_VERSION = "miyajima_tide_132_tri_v1"
     GAMAGORI_TIDE_132_TRI_CACHE_VERSION = "gamagori_tide_132_tri_v1"
+    GAMAGORI_123_GENERAL_PRACTICAL_TRI_CACHE_VERSION = "gamagori_123_general_practical_tri_v1"
+    GAMAGORI_13_EXA_CACHE_VERSION = "gamagori_13_exa_v1"
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
     ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v9"
@@ -6583,6 +6665,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_gamagori_tide_132_tri_version") != GAMAGORI_TIDE_132_TRI_CACHE_VERSION:
                             continue
+                        if day_d.get("_gamagori_123_general_practical_tri_version") != GAMAGORI_123_GENERAL_PRACTICAL_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_gamagori_13_exa_version") != GAMAGORI_13_EXA_CACHE_VERSION:
+                            continue
                         if day_d.get("_marugame_tide_123_tri_version") != MARUGAME_TIDE_123_TRI_CACHE_VERSION:
                             continue
                         if day_d.get("_fukuoka_tide_132_tri_version") != FUKUOKA_TIDE_132_TRI_CACHE_VERSION:
@@ -6594,6 +6680,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "general_c_tri",
                             "hamanako_14_exa",
                             "gamagori_tide_132_tri",
+                            "gamagori_123_general_practical_tri",
+                            "gamagori_13_exa",
                             "tsu_123_tri",
                             "tsu_124_tri",
                             "suminoe_123_tri",
@@ -6656,6 +6744,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                             "omura_123_tri", "omura_132_tri",
                             "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+                    "gamagori_123_general_practical_tri", "gamagori_13_exa",
                             "marugame_tide_123_tri", "fukuoka_tide_132_tri",):
                     n = d.get(f"{bet}_bets", 0)
                     pay = d.get(f"{bet}_pay", 0)
@@ -6764,6 +6853,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pw.payout AS win_pay,
                     pw2.payout AS win2_pay,
                     pe.payout AS exacta_pay,
+                    pe13.payout AS exacta_13_pay,
                     pe14.payout AS exacta_14_pay,
                     pe41.payout AS exacta_41_pay,
                     pt.payout AS tri_pay,
@@ -6854,6 +6944,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_payouts pw ON pw.race_id = r.race_id AND pw.bet_type='win' AND pw.combination='1'
                 LEFT JOIN race_payouts pw2 ON pw2.race_id = r.race_id AND pw2.bet_type='win' AND pw2.combination='2'
                 LEFT JOIN race_payouts pe ON pe.race_id = r.race_id AND pe.bet_type='exacta' AND pe.combination='1-2'
+                LEFT JOIN race_payouts pe13 ON pe13.race_id = r.race_id AND pe13.bet_type='exacta' AND pe13.combination='1-3'
                 LEFT JOIN race_payouts pe14 ON pe14.race_id = r.race_id AND pe14.bet_type='exacta' AND pe14.combination='1-4'
                 LEFT JOIN race_payouts pe41 ON pe41.race_id = r.race_id AND pe41.bet_type='exacta' AND pe41.combination='4-1'
                 LEFT JOIN race_payouts pt ON pt.race_id = r.race_id AND pt.bet_type='trifecta' AND pt.combination='1-2-3'
@@ -6908,6 +6999,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
                 "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
                 "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
+                "gamagori_123_general_practical_tri_bets": 0, "gamagori_123_general_practical_tri_hits": 0, "gamagori_123_general_practical_tri_pay": 0,
+                "gamagori_13_exa_bets": 0, "gamagori_13_exa_hits": 0, "gamagori_13_exa_pay": 0,
                 "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
                 "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
                 "general_c_tri_bets": 0, "general_c_tri_hits": 0, "general_c_tri_pay": 0,
@@ -6950,16 +7043,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         for row in cur:
             row = tuple(row)
             if len(row) == 60:
-                # Backward-compatibility for older row shapes that predate pay_143.
-                row = row[:43] + (None,) + row[43:]
-            elif len(row) != 61:
+                # Backward-compatibility for older row shapes that predate pay_143 and exacta_13.
+                row = row[:43] + (None,) + row[43:] + (None,)
+            elif len(row) == 61:
+                # Backward-compatibility for row shapes that predate exacta_13.
+                row = row + (None,)
+            elif len(row) != 62:
                 logger.warning("unexpected _l4_daily_stats row length=%s race_id=%s", len(row), row[0] if row else None)
                 continue
             (race_id, rdate, stadium, grade, race_no, cls, natl_1, local_1_rt, age1_rt, avg_st_180,
              boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_class, boat4_local_1, boat4_natl_1, boat4_motor_top2, boat5_motor_top2,
              boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
              fav_pay, fav_odds, any_in_l4, l4_odds, mid_132_odds, prob_first,
-             w1, w2, w3, win_pay, win2_pay, ex_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, pay_143, weather, wind_speed, wave_height, ex_st,
+             w1, w2, w3, win_pay, win2_pay, ex_pay, ex13_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, pay_143, weather, wind_speed, wave_height, ex_st,
              boat1_exhibition_time, boat2_exhibition_time, boat3_exhibition_time, boat3_ex_st, boat4_exhibition_time, boat4_ex_st, boat5_exhibition_time, boat6_exhibition_time, n_female,
              tide_delta_60m_cm, tide_range_cm, is_high_tide_zone, is_low_tide_zone) = row
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
@@ -7024,6 +7120,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "amagasaki_143_tri_bets": 0, "amagasaki_143_tri_hits": 0, "amagasaki_143_tri_pay": 0,
                 "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
                 "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
+                "gamagori_123_general_practical_tri_bets": 0, "gamagori_123_general_practical_tri_hits": 0, "gamagori_123_general_practical_tri_pay": 0,
+                "gamagori_13_exa_bets": 0, "gamagori_13_exa_hits": 0, "gamagori_13_exa_pay": 0,
                 "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
                 "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
                 "grade_breakdown": {},
@@ -7291,6 +7389,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         race_id, rdate, "gamagori_tide_132_tri", 718.6,
                         w1 == 1 and w2 == 3 and w3 == 2,
                         int(pay_132 or 0),
+                    )
+                if rn in (9, 10, 11, 12) and float(avg_st_180 or 9) < 0.16 and float(boat2_top2 or 0) >= 35.0 and -15.0 < _tide_delta <= -5.0:
+                    _record_adopted_signal(
+                        race_id, rdate, "gamagori_123_general_practical_tri", 277.619,
+                        tri_hit,
+                        int(tri_pay_v or 0),
+                    )
+                if float(natl_1 or 0) >= 7.0 and b3_motor >= 40.0 and _tide_range >= 150.0 and _wind_speed <= 2.0:
+                    _record_adopted_signal(
+                        race_id, rdate, "gamagori_13_exa", 154.85,
+                        w1 == 1 and w2 == 3,
+                        int(ex13_pay or 0),
                     )
 
             if is_done and stadium == 15 and _tide_range is not None and _wind_speed is not None:
@@ -8427,6 +8537,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_amagasaki_143_tri_version"] = AMAGASAKI_143_TRI_CACHE_VERSION
                         day_d["_miyajima_tide_132_tri_version"] = MIYAJIMA_TIDE_132_TRI_CACHE_VERSION
                         day_d["_gamagori_tide_132_tri_version"] = GAMAGORI_TIDE_132_TRI_CACHE_VERSION
+                        day_d["_gamagori_123_general_practical_tri_version"] = GAMAGORI_123_GENERAL_PRACTICAL_TRI_CACHE_VERSION
+                        day_d["_gamagori_13_exa_version"] = GAMAGORI_13_EXA_CACHE_VERSION
                         day_d["_marugame_tide_123_tri_version"] = MARUGAME_TIDE_123_TRI_CACHE_VERSION
                         day_d["_fukuoka_tide_132_tri_version"] = FUKUOKA_TIDE_132_TRI_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
@@ -8963,6 +9075,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "amagasaki_143_tri",
             "miyajima_tide_132_tri",
             "gamagori_tide_132_tri",
+            "gamagori_123_general_practical_tri",
+            "gamagori_13_exa",
             "marugame_tide_123_tri",
             "fukuoka_tide_132_tri",
             "tsu_123_tri",
@@ -9011,6 +9125,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tokuyama_123_tri", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tsu_124_tri", "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+                    "gamagori_123_general_practical_tri", "gamagori_13_exa",
                     "marugame_tide_123_tri", "fukuoka_tide_132_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         for k in bet_keys:
@@ -9120,6 +9235,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tokuyama_123_tri", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tsu_124_tri", "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+                    "gamagori_123_general_practical_tri", "gamagori_13_exa",
                     "marugame_tide_123_tri", "fukuoka_tide_132_tri",
                     "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri")
         adopted_keys = (
@@ -9134,6 +9250,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "amagasaki_143_tri",
             "miyajima_tide_132_tri",
             "gamagori_tide_132_tri",
+            "gamagori_123_general_practical_tri",
+            "gamagori_13_exa",
             "marugame_tide_123_tri",
             "fukuoka_tide_132_tri",
             "tsu_123_tri",
@@ -9259,6 +9377,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "tokuyama_123_tri", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "omura_123_tri", "omura_132_tri",
             "miyajima_tide_132_tri", "gamagori_tide_132_tri",
+            "gamagori_123_general_practical_tri", "gamagori_13_exa",
             "marugame_tide_123_tri", "fukuoka_tide_132_tri",
             "g23_optb_tri",
             "tsu_123_tri", "suminoe_123_tri", "tsu_124_tri", "amagasaki_143_tri",
