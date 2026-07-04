@@ -8446,7 +8446,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # === D. cache hit 分と SQL 結果をマージ ===
         result_by_date = dict(by_date)  # SQL 結果をベース
         for rdate, day_d in cached_by_date.items():
-            if rdate not in result_by_date:  # cache hit のみ (SQL 結果が優先)
+            # 過去日は cache を正とする。to に今日が含まれて SQL 経路が走った場合でも、
+            # 歴史データまでゼロ初期化側で上書きしないようにする。
+            if rdate < today_iso:
+                result_by_date[rdate] = day_d
+            elif rdate not in result_by_date:
                 result_by_date[rdate] = day_d
 
         finalized_rows = _finalize_l4_daily_rows(result_by_date)
