@@ -6737,6 +6737,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pt.payout AS tri_pay,
                     pt_132.payout AS pay_132,
                     pt_124.payout AS pay_124,
+                    pt_143.payout AS pay_143,
                     pv.weather_number AS weather,
                     pv.wind_speed AS wind_speed,
                     pv.wave_height AS wave_height,
@@ -6915,6 +6916,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 adopted_signal_by_race[race_id] = payload
 
         for row in cur:
+            row = tuple(row)
+            if len(row) == 60:
+                # Backward-compatibility for older row shapes that predate pay_143.
+                row = row[:43] + (None,) + row[43:]
+            elif len(row) != 61:
+                logger.warning("unexpected _l4_daily_stats row length=%s race_id=%s", len(row), row[0] if row else None)
+                continue
             (race_id, rdate, stadium, grade, race_no, cls, natl_1, local_1_rt, age1_rt, avg_st_180,
              boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_class, boat4_local_1, boat4_natl_1, boat4_motor_top2, boat5_motor_top2,
              boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
@@ -7119,50 +7127,48 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         int(tri_pay_v or 0),
                     )
 
-                tri_niche_sig = _evaluate_tri124_132_trifecta_niche({
-                    "class": cls,
-                    "stadium": stadium,
-                    "race_number": race_no,
-                    "weather": weather,
-                    "n_female": n_female,
-                    "boat1_ex_st": ex_st,
-                    "boat2_top2": boat2_top2,
-                    "boat3_natl_1": boat3_natl_1,
-                    "boat3_motor_top2": boat3_motor_top2,
-                    "boat3_exhibition_time": boat3_exhibition_time,
-                    "boat3_ex_st": boat3_ex_st,
-                    "boat4_natl_1": boat4_natl_1,
-                    "boat4_motor_top2": boat4_motor_top2,
-                    "boat4_exhibition_time": boat4_exhibition_time,
-                    "boat4_ex_st": boat4_ex_st,
-                    "boat1_exhibition_time": boat1_exhibition_time,
-                    "boat2_exhibition_time": boat2_exhibition_time,
-                    "boat5_exhibition_time": boat5_exhibition_time,
-                    "boat6_exhibition_time": boat6_exhibition_time,
-                })
-                if tri_niche_sig:
-                    tri_level = str(tri_niche_sig.get("level") or "")
-                    tri_recovery = float(tri_niche_sig.get("recovery") or 0.0)
-                    tri_bet = str(tri_niche_sig.get("bet") or "")
-                    if tri_level == "trifecta_niche_132_a12":
-                        _record_adopted_signal(
-                            race_id, rdate, "omura_132_tri", tri_recovery,
-                            w1 == 1 and w2 == 3 and w3 == 2,
-                            int(pay_132 or 0),
-                        )
-                    elif tri_level == "trifecta_niche_124_a12":
-                        _record_adopted_signal(
-                            race_id, rdate, "tsu_124_tri", tri_recovery,
-                            w1 == 1 and w2 == 2 and w3 == 4,
-                            int(pay_124 or 0),
-                        )
-                    elif tri_level == "trifecta_niche_143_a12":
-                        _record_adopted_signal(
-                            race_id, rdate, "amagasaki_143_tri", tri_recovery,
-                            tri_bet == "三連単 1-4-3" and w1 == 1 and w2 == 4 and w3 == 3,
-                            int(pay_143 or 0),
-                        )
+                ex_times_for_143 = [
+                    float(v) for v in (
+                        boat1_exhibition_time,
+                        boat2_exhibition_time,
+                        boat3_exhibition_time,
+                        boat4_exhibition_time,
+                        boat5_exhibition_time,
+                        boat6_exhibition_time,
+                    )
+                    if v is not None and float(v) > 0
+                ]
+                if ex_times_for_143:
+                    boat4_rank = 1 + sum(1 for v in ex_times_for_143 if v < float(boat4_exhibition_time or 0)) if boat4_exhibition_time else None
+                    boat1_rank = 1 + sum(1 for v in ex_times_for_143 if v < float(boat1_exhibition_time or 0)) if boat1_exhibition_time else None
+                    boat4_fastest_diff = (float(boat4_exhibition_time) - min(ex_times_for_143)) if boat4_exhibition_time else None
+                else:
+                    boat4_rank = None
+                    boat1_rank = None
+                    boat4_fastest_diff = None
 
+                if (
+                    cls in (1, 2)
+                    and weather != 3
+                    and int(n_female or 0) == 0
+                    and stadium == 13
+                    and race_no is not None and 10 <= race_no <= 12
+                    and boat4_exhibition_time is not None
+                    and boat4_natl_1 is not None
+                    and boat4_motor_top2 is not None
+                    and boat4_ex_st is not None
+                    and float(boat4_natl_1) >= 5.0
+                    and float(boat4_motor_top2) >= 35.0
+                    and (boat4_rank or 99) == 1
+                    and (boat1_rank or 99) <= 3
+                    and float(boat4_ex_st) <= 0.10
+                    and (boat4_fastest_diff or 99) <= 0.05
+                ):
+                    _record_adopted_signal(
+                        race_id, rdate, "amagasaki_143_tri", 347.5,
+                        w1 == 1 and w2 == 4 and w3 == 3,
+                        int(pay_143 or 0),
+                    )
 
             if is_done and stadium in (9, 12):
                 tsu_ctx = _build_tsu_suminoe_ctx(
@@ -8893,7 +8899,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
-        from_d = request.args.get("from") or (today - timedelta(days=31)).isoformat()
+        # ROI 日次画面は「今日を含む直近 1 年」を既定表示にする。
+        from_d = request.args.get("from") or (today - timedelta(days=364)).isoformat()
         try:
             date.fromisoformat(to_d); date.fromisoformat(from_d)
         except ValueError:
