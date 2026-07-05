@@ -4708,6 +4708,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             grade,
             cls,
             min_payout,
+            l4_band_ok=None,
             natl_1=None,
             boat2_top2=None,
             race_number=None,
@@ -4741,13 +4742,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except (TypeError, ValueError):
                 b3_ex = None
 
+            in_l4_band = False
+            if l4_band_ok is not None:
+                in_l4_band = bool(l4_band_ok)
+            elif payout is not None:
+                in_l4_band = 500 <= payout < 1000
+
             if not (
                 grade == 5
                 and cls == 1
                 and stadium not in EXCLUDE_B_VENUES
                 and weather != 3
                 and n_female == 0
-                and payout is not None and 500 <= payout < 1000
+                and in_l4_band
                 and n1 >= 7.0
                 and b2 >= 40.0
                 and rn in (10, 11, 12)
@@ -6307,6 +6314,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 grade,
                 cls,
                 core_data["min_payout"] if core_data else None,
+                l4_band_ok=core_data.get("any_l4_in_window") if core_data else None,
                 natl_1=natl_1,
                 boat2_top2=boat2_top2,
                 race_number=race_no_info,
@@ -6707,7 +6715,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v2"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
-    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v1"
+    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v3"
     BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v3"
     TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v2"
     SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v2"
@@ -7750,8 +7758,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if tri_hit:
                             d["gen_200_tri_hits"] += 1
                             d["gen_200_tri_pay"] += tri_pay_v
+                    general_c_l4_band_ok = False
+                    try:
+                        if any_in_l4 is not None and int(any_in_l4) == 1:
+                            general_c_l4_band_ok = True
+                        elif any_in_l4 is None and fav_pay is not None and 500 <= int(fav_pay) < 1000:
+                            general_c_l4_band_ok = True
+                    except (TypeError, ValueError):
+                        general_c_l4_band_ok = False
+
                     if (
-                        n1 >= 7.0
+                        grade == 5
+                        and stadium not in EXCLUDE_B_VENUES
+                        and n_female == 0
+                        and weather != 3
+                        and general_c_l4_band_ok
+                        and n1 >= 7.0
                         and b2 >= 40.0
                         and rn in (10, 11, 12)
                         and boat2_exhibition_time is not None
