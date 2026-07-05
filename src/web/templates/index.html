@@ -1392,10 +1392,17 @@
               if (isExactaNiche && titleParts.length >= 3) racerInfo = titleParts[2];
               const strategyInfo = findPart(['条件:', '対象:', '監視:', '買い目:']);
               const edgeInfo = findPart(['優位性:', '的中率', '4C平均ST', '3号艇モーター2連率', '2号艇全国2連対率']);
+              const overlapLabels = Array.isArray(l4Data?.matched_labels)
+                ? l4Data.matched_labels.filter(Boolean)
+                : [];
+              const secondaryLabels = overlapLabels.filter(lbl => lbl && lbl !== (l4Data?.label || '') && lbl !== pickType);
               const strategyHtmlParts = [];
               if (racerInfo) strategyHtmlParts.push(`<div>${racerInfo}</div>`);
               if (strategyInfo) strategyHtmlParts.push(`<div class="pick-strategy-note"><small>${strategyInfo}</small></div>`);
               if (edgeInfo && edgeInfo !== strategyInfo) strategyHtmlParts.push(`<div class="pick-strategy-note"><small>${edgeInfo}</small></div>`);
+              if (secondaryLabels.length) {
+                strategyHtmlParts.push(`<div class="pick-strategy-note"><small>重複採用: ${secondaryLabels.join(' / ')}</small></div>`);
+              }
               const pickStrategyHtml = strategyHtmlParts.join('');
 
               if (u.isMorningWatch) rowClass += ' is-watch';
