@@ -10,6 +10,7 @@ Flask Web UI: 予測表示
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -178,6 +179,27 @@ def _write_page_html_cache(cache_key: str, html: str) -> None:
             conn.commit()
     except Exception:
         logger.exception("failed to write page_html_cache: %s", cache_key)
+
+
+def _read_json_cache(cache_key: str, max_age_sec: int) -> Optional[Any]:
+    raw = _read_page_html_cache(cache_key, max_age_sec)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        logger.exception("failed to decode json cache: %s", cache_key)
+        return None
+
+
+def _write_json_cache(cache_key: str, payload: Any) -> None:
+    try:
+        _write_page_html_cache(
+            cache_key,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        )
+    except Exception:
+        logger.exception("failed to encode json cache: %s", cache_key)
 
 
 def _format_race_id(race_id: str) -> tuple[str, int, int]:
@@ -2465,9 +2487,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def race_motor_history(race_id: str, boat_number: int):
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
-        payload = _motor_history_payload(race_id, boat_number)
+        info = _race_basic_info(race_id)
+        if not info:
+            return jsonify({"error": "entry not found"}), 404
+        today_iso = date.today().isoformat()
+        cache_key = f"motor_history:{race_id}:{boat_number}"
+        cached_payload = _read_json_cache(
+            cache_key,
+            1800 if info["race_date"] >= today_iso else 86400,
+        )
+        if cached_payload is not None:
+            return jsonify(cached_payload)
+        payload = _motor_history_payload(race_id, boat_number, info=info)
         if payload is None:
             return jsonify({"error": "entry not found"}), 404
+        _write_json_cache(cache_key, payload)
         return jsonify(payload)
 
 
