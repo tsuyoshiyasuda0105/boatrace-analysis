@@ -155,8 +155,50 @@ def run_morning(now: datetime) -> bool:
     return ok
 
 
+
+def tide_refresh_needed(run_date: str) -> bool:
+    from src.collectors.tide import load_tide_station_map
+
+    mapping = load_tide_station_map()
+    tide_stadiums = sorted(int(k) for k in mapping.keys() if str(k).isdigit())
+    if not tide_stadiums:
+        return False
+
+    placeholders = ",".join("?" for _ in tide_stadiums) or "NULL"
+    params = [run_date, *tide_stadiums]
+    with db_connect() as conn:
+        expected = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM races
+             WHERE race_date = ?
+               AND stadium_number IN ({placeholders})
+            """,
+            params,
+        ).fetchone()[0] or 0
+        if expected == 0:
+            return False
+        imported = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT rt.race_id)
+              FROM race_tides rt
+              JOIN races r ON r.race_id = rt.race_id
+             WHERE r.race_date = ?
+               AND r.stadium_number IN ({placeholders})
+            """,
+            params,
+        ).fetchone()[0] or 0
+    print(f"[tides] expected={expected} imported={imported}", flush=True)
+    return imported < expected
+
+
 def run_hourly(now: datetime) -> bool:
     ok = True
+    try:
+        if tide_refresh_needed(now.date().isoformat()):
+            print("[hourly] tide rows missing -> rerun import", flush=True)
+            ok &= run_tides(now)
+    except Exception as exc:
+        print(f"[hourly] tide check failed: {type(exc).__name__}: {exc}", flush=True)
     ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "3"], timeout=1800)
     ok &= run_py(["scripts/prewarm_strategy_pages.py"], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)

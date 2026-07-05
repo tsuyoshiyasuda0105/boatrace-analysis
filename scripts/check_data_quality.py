@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from src.db.connection import connect as db_connect
+from src.collectors.tide import load_tide_station_map
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -213,11 +214,94 @@ def check_results_count(conn, target_date: str) -> tuple[str, str, dict]:
     return "ok", f"結果 {n_results}/{n_closed} 取り込み済", detail
 
 
+
+_TIDE_MAP = load_tide_station_map()
+TIDE_STADIUMS = sorted(
+    int(k) for k in _TIDE_MAP.keys()
+    if str(k).isdigit()
+)
+
+
+def check_tides_count(conn, target_date: str) -> tuple[str, str, dict]:
+    """潮対象会場だけを見て race_tides の投入状況を監視する。"""
+    placeholders = ",".join("?" for _ in TIDE_STADIUMS) or "NULL"
+    if not TIDE_STADIUMS:
+        return "ok", "潮対象会場マスタなし", {"expected_races": 0, "tide_races": 0}
+
+    params = [target_date, *TIDE_STADIUMS]
+    cur = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM races
+         WHERE race_date = ?
+           AND stadium_number IN ({placeholders})
+        """,
+        params,
+    )
+    expected_races = cur.fetchone()[0] or 0
+
+    cur = conn.execute(
+        f"""
+        SELECT COUNT(DISTINCT rt.race_id)
+          FROM race_tides rt
+          JOIN races r ON r.race_id = rt.race_id
+         WHERE r.race_date = ?
+           AND r.stadium_number IN ({placeholders})
+        """,
+        params,
+    )
+    tide_races = cur.fetchone()[0] or 0
+
+    cur = conn.execute(
+        f"""
+        SELECT DISTINCT stadium_number
+          FROM races
+         WHERE race_date = ?
+           AND stadium_number IN ({placeholders})
+         ORDER BY stadium_number
+        """,
+        params,
+    )
+    target_stadiums = [row[0] for row in cur.fetchall()]
+
+    cur = conn.execute(
+        f"""
+        SELECT DISTINCT r.stadium_number
+          FROM race_tides rt
+          JOIN races r ON r.race_id = rt.race_id
+         WHERE r.race_date = ?
+           AND r.stadium_number IN ({placeholders})
+         ORDER BY r.stadium_number
+        """,
+        params,
+    )
+    imported_stadiums = [row[0] for row in cur.fetchall()]
+
+    detail = {
+        "expected_races": expected_races,
+        "tide_races": tide_races,
+        "target_stadiums": target_stadiums,
+        "imported_stadiums": imported_stadiums,
+    }
+    if expected_races == 0:
+        return "ok", "本日は潮対象会場なし", detail
+
+    coverage = tide_races / expected_races * 100 if expected_races else 0.0
+    now_hour = datetime.now().hour
+    if now_hour < 7 and coverage < 100:
+        return "ok", f"潮情報取り込み前 {tide_races}/{expected_races}", detail
+    if coverage == 100:
+        return "ok", f"潮情報 {tide_races}/{expected_races} (100%)", detail
+    if coverage >= 50:
+        return "warning", f"潮情報不足 {tide_races}/{expected_races} ({coverage:.0f}%)", detail
+    return "error", f"潮情報未投入に近い {tide_races}/{expected_races} ({coverage:.0f}%)", detail
+
+
 CHECKS = [
     ("races_count", check_races_count),
     ("entries_complete", check_entries_complete),
     ("predictions_count", check_predictions_count),
     ("previews_count", check_previews_count),
+    ("tides_count", check_tides_count),
     ("results_count", check_results_count),
 ]
 
