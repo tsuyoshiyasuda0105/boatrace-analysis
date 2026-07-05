@@ -7051,7 +7051,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v2"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
-    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v4"
+    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v5"
     BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v3"
     TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v2"
     SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v2"
@@ -7070,9 +7070,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
     TODA_42_FLOW_TRI_CACHE_VERSION = "toda_42_flow_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v9"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v10"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         "adopted_daily_select_v8",
+        "adopted_daily_select_v9",
         ADOPTED_DAILY_SELECT_VERSION,
     }
     BET_UNIT_MAP = {"toda_42_flow_tri": 400}
@@ -8105,7 +8106,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     try:
                         if any_in_l4 is not None and int(any_in_l4) == 1:
                             general_c_l4_band_ok = True
-                        elif any_in_l4 is None and fav_pay is not None and 500 <= int(fav_pay) < 1000:
+                        elif fav_pay is not None and 500 <= int(fav_pay) < 1000:
+                            # Keep historical adopted-signal counting aligned with
+                            # the live candidate list: if the snapshot flag is
+                            # missing or false, fall back to the confirmed
+                            # 500-1000 band when regenerating past-day stats.
                             general_c_l4_band_ok = True
                     except (TypeError, ValueError):
                         general_c_l4_band_ok = False
