@@ -4810,22 +4810,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ):
                 return None
             return {
-                "level": "morning_watch_g23_optb",
-                "label": "朝監視 G2/G3 1-2-3",
+                "level": "g23_optb_tri",
+                "label": "G2/G3 1-2-3",
                 "recovery": 190.3,
                 "n": 126,
                 "bet": "3連単 1-2-3",
                 "rank": "trifecta_niche",
-                "rank_label": "朝監視",
+                "rank_label": "3連単ニッチ",
                 "rank_emoji": "👀",
-                "is_reference": True,
-                "is_morning": True,
-                "is_morning_watch": True,
-                "watch_strategy_labels": ["朝監視 G2/G3 1-2-3"],
-                "watch_strategy_bets": ["3連単 1-2-3"],
-                "watch_strategy_count": 1,
+                "is_reference": False,
                 "tetsuban_score": 4,
-                "tetsuban_label": "朝監視 G2/G3",
+                "tetsuban_label": "G2/G3 1-2-3",
             }
 
         def _evaluate_general_c_signal(
