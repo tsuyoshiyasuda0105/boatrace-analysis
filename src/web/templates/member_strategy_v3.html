@@ -72,7 +72,7 @@
         {% set recovery = totals[key ~ '_recovery'] %}
         {% if recovery is not none %}{{ '%+.1f' | format(recovery - 100) }}%{% else %}-{% endif %}
       </div>
-      <div class="summary-sub">n={{ totals[key ~ '_bets'] }} HIT={{ totals[key ~ '_hits'] }} 損益={{ totals[key ~ '_profit'] | signed_comma }}</div>
+      <div class="summary-sub">該当={{ totals[key ~ '_bets'] }} 的中={{ totals[key ~ '_hits'] }} 損益={{ totals[key ~ '_profit'] | signed_comma }}</div>
     </article>
     {% endfor %}
   </section>
