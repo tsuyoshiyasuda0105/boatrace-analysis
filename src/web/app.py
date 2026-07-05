@@ -2282,6 +2282,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not info:
             abort(404)
 
+        today_iso = date.today().isoformat()
+        page_cache_key = f"race_detail:{race_id}"
+        cached_html = _read_page_html_cache(
+            page_cache_key,
+            180 if info["race_date"] >= today_iso else 21600,
+        )
+        if cached_html:
+            return cached_html
+
         try:
             preds = _race_predictions(predictor, race_id)
             _attach_kimarite_skill_tags(race_id, preds)
@@ -2299,7 +2308,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 user_msg = "データベース接続エラー。少し時間をおいてから再度アクセスしてください。"
             else:
                 user_msg = f"予測エラー: {err_str[:200]}"
-            return render_template(
+            html = render_template(
                 "race.html",
                 info=info,
                 preds=[],
@@ -2309,6 +2318,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 trifecta_unified=[],
                 conditions={},
             )
+            _write_page_html_cache(page_cache_key, html)
+            return html
 
         names = _racer_names(race_id)
         target_date = info["race_date"]
@@ -2363,7 +2374,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except Exception as e:
                 logger.warning("unified trifecta failed for %s: %s", race_id, e)
 
-        return render_template(
+        html = render_template(
             "race.html",
             info=info,
             preds=preds,
@@ -2379,6 +2390,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             compat_analysis=compat_analysis,
             error=None,
         )
+        _write_page_html_cache(page_cache_key, html)
+        return html
 
     @app.route("/api/race/<race_id>/value-bets")
     @member_only_api
