@@ -2286,9 +2286,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # backlog item 11: market-signals を HTTP/2 preload で先取り
         # ブラウザは HTML パース前に /api/market-signals に並列リクエストを
         # 飛ばすので、JS が呼ぶ頃には返答がキャッシュ済 → 体感速度向上
-        refresh_bucket = int(time.time() // 30)
         resp.headers["Link"] = (
-            f'</api/market-signals?date={target_date}&refresh={refresh_bucket}>; rel=preload; as=fetch; crossorigin'
+            f'</api/market-signals?date={target_date}>; rel=preload; as=fetch; crossorigin'
         )
         return resp
 
@@ -2843,6 +2842,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
           新設定: 中央値 ~12s, 最悪 ~50s。BAN リスクなし(自社 API のみ短縮)。
         """
         target_date = request.args.get("date") or date.today().isoformat()
+        today_iso = date.today().isoformat()
+        cache_ttl = 8 if target_date >= today_iso else 3600
+        cache_key = f"odds_123_timeline:{target_date}"
+        cached_payload = _read_json_cache(cache_key, cache_ttl)
+        if cached_payload is not None:
+            return jsonify(cached_payload)
         result: dict[str, dict] = {}
         try:
             with db_connect() as conn:
@@ -2877,7 +2882,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     conn.rollback()
             except Exception:
                 pass
-        return jsonify({"date": target_date, "odds": result})
+        payload = {"date": target_date, "odds": result}
+        _write_json_cache(cache_key, payload)
+        return jsonify(payload)
 
     @app.route("/api/market-signals")
     @member_only_api
@@ -2897,6 +2904,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         各レースのトリフェクタ1番人気の払戻を見て +EV/-EV ゾーンを判定
         """
         target_date = request.args.get("date") or date.today().isoformat()
+        today_iso = date.today().isoformat()
+        cache_ttl = 60 if target_date >= today_iso else 3600
+        cache_key = f"market_signals:{target_date}"
+        cached_payload = _read_json_cache(cache_key, cache_ttl)
+        if cached_payload is not None:
+            return jsonify(cached_payload)
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
@@ -6669,14 +6682,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "l4": morning_l4,
                     })
 
-        return jsonify({
+        payload = {
             "date": target_date,
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
             "signals": {s["race_id"]: s for s in signals},
-        })
+        }
+        _write_json_cache(cache_key, payload)
+        return jsonify(payload)
 
     # =====================================================
     # 会員プラン: L4 戦略 日別 ROI ダッシュボード

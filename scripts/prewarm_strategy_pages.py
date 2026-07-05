@@ -32,8 +32,10 @@ def main() -> int:
         sess["is_member"] = True
 
     targets = [
+        f"/api/market-signals?date={today.isoformat()}",
         f"/member/strategy?from={default_from}&to={default_to}&recompute=1",
         f"/member/strategy/monthly?recompute=1",
+        f"/api/market-signals?date={today.isoformat()}",
         f"/member/strategy?from={default_from}&to={default_to}",
         "/member/strategy/monthly",
     ]

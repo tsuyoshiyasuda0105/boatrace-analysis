@@ -437,9 +437,8 @@
           if (marketSignalsLoading) return;
           marketSignalsLoading = true;
           try {
-            const refreshBucket = Math.floor(Date.now() / 30000);
-            const r = await fetch(`/api/market-signals?date=${targetDate}&refresh=${refreshBucket}`, {
-              cache: 'no-store',
+            const r = await fetch(`/api/market-signals?date=${targetDate}`, {
+              cache: 'default',
             });
             if (!r.ok) return;
             const data = await r.json();
