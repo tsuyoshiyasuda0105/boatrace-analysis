@@ -6439,6 +6439,151 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if non_exhibition_core and l4 and l4.get("level") == "general_c_tri":
                     l4 = non_exhibition_core
 
+                if l4 is None:
+                    prob_first = morning_pred.get(rid)
+                    morning_l4 = _evaluate_morning_l4(
+                        stadium, grade, cls, prob_first,
+                        natl_1, local_1, race_id=rid,
+                        avg_st=avg_st, age=age, ex_st=ex_st,
+                        boat2_top2=boat2_top2,
+                        race_number=race_no_info,
+                    )
+                    l4_portfolio = _evaluate_l4_portfolio_strong(
+                        stadium, grade, cls, natl_1=natl_1,
+                        avg_st=avg_st, age=age,
+                        boat2_motor_top2=boat2_motor_top2,
+                        race_number=race_no_info, wind_speed=wind_speed,
+                        n_female=n_female, target_date_iso=target_date,
+                    )
+                    morning_l4 = _apply_l4_portfolio_strong(morning_l4, l4_portfolio)
+                    l4_general_200 = _evaluate_l4_general_200(
+                        stadium, grade, cls, natl_1=natl_1,
+                        boat2_top2=boat2_top2,
+                        boat2_exhibition_time=None,
+                        boat3_exhibition_time=None,
+                        ex_st=None,
+                    )
+                    morning_l4 = _apply_l4_general_200(morning_l4, l4_general_200)
+                    exacta_niche_watch = _evaluate_exacta_niche(
+                        stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
+                        boat2_motor_top2=boat2_motor_top2, boat4_motor_top2=boat4_motor_top2,
+                        boat1_natl_1=natl_1, boat4_natl_1=info.get("boat4_natl_1"), n_female=n_female,
+                        program_type=program_type,
+                        pair_affinity=exacta_pair_affinity.get(rid),
+                        grade=grade, weather=weather,
+                    )
+                    ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
+                    ashiya_exacta_watch = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
+                    miyajima_watch = _evaluate_miyajima_boat4_watch(miyajima_boat4_watch.get(rid))
+                    tide_tri_watch = _evaluate_tide_tri_signal(
+                        stadium,
+                        weather=weather,
+                        wind_speed=wind_speed,
+                        wave_height=info.get("wave_height"),
+                        tide_delta_60m_cm=info.get("tide_delta_60m_cm"),
+                        tide_range_cm=info.get("tide_range_cm"),
+                        is_high_tide_zone=info.get("is_high_tide_zone"),
+                        is_low_tide_zone=info.get("is_low_tide_zone"),
+                    )
+                    omura_123_watch = _evaluate_omura_123_watch(
+                        stadium,
+                        race_number=race_no_info,
+                        boat4_local_1=info.get("boat4_local_1"),
+                        boat2_top2=boat2_top2,
+                        boat3_top2=info.get("boat3_top2"),
+                        wind_speed=wind_speed,
+                        boat3_ex_st=info.get("boat3_ex_st"),
+                        boat1_exhibition_time=boat1_exhibition_time,
+                        best_exhibition_time=info.get("best_exhibition_time"),
+                    )
+                    tri124_132_watch = _evaluate_tri124_132_trifecta_niche_watch(info)
+                    shimonoseki_123_watch = _evaluate_shimonoseki_123_signal(info)
+                    gamagori_watch = _evaluate_gamagori_adopted_signal(info)
+                    general_c_watch = _evaluate_general_c_watch(
+                        stadium, grade, cls,
+                        natl_1=natl_1,
+                        boat2_top2=boat2_top2,
+                        race_number=race_no_info,
+                        weather=weather,
+                        boat2_exhibition_time=boat2_exhibition_time,
+                        boat3_exhibition_time=boat3_exhibition_time,
+                        n_female=n_female,
+                    )
+                    g23_watch = _evaluate_g23_optb_watch(
+                        stadium, grade, cls,
+                        natl_1=natl_1,
+                        local_1=local_1,
+                        avg_st=avg_st,
+                        age=age,
+                        boat2_motor_top2=boat2_motor_top2,
+                        weather=weather,
+                        n_female=n_female,
+                    )
+                    win_niche_watch = _evaluate_win_niche(
+                        stadium,
+                        boat1_top2=boat1_pred_top2,
+                        boat3_top2=boat3_pred_top2,
+                        boat4_top2=boat4_pred_top2,
+                    )
+                    morning_l4 = _pick_best_market_signal(
+                        morning_l4,
+                        exacta_niche_watch,
+                        ashiya_watch,
+                        ashiya_exacta_watch,
+                        miyajima_watch,
+                        tide_tri_watch,
+                        omura_123_watch,
+                        boat3_trifecta_niche,
+                        tri124_132_watch,
+                        general_c_watch,
+                        g23_watch,
+                        shimonoseki_123_watch,
+                        tsu_suminoe_signal,
+                        win_niche_watch,
+                        candidate_l4,
+                        gamagori_watch,
+                    )
+                    if morning_l4:
+                        if is_rain_excluded and (
+                            (not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche") and not morning_l4.get("is_trifecta_niche"))
+                            or morning_l4.get("is_ashiya_boat4_lift")
+                            or morning_l4.get("is_ashiya_boat4_watch")
+                            or morning_l4.get("uses_rain_filter")
+                        ):
+                            morning_l4["is_rain"] = True
+                            morning_l4["rain_exclusion_active"] = True
+                            morning_l4["is_reference"] = True
+                            morning_l4["label"] = f"☔{morning_l4['label']} (雨除外)"
+                        if is_female_present and not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche") and not morning_l4.get("is_trifecta_niche"):
+                            if n_female == 6:
+                                morning_l4["is_venus"] = True
+                                morning_l4["is_female_present"] = True
+                                morning_l4["label"] = "🌸 Venus L4"
+                                morning_l4["recovery"] = 175.5
+                                morning_l4["n"] = 502
+                            else:
+                                morning_l4["is_female_present"] = True
+                                morning_l4["is_reference"] = True
+                                morning_l4["label"] = f"🚫{morning_l4['label']} (女性{n_female}名混在)"
+                        signals.append({
+                            "race_id": rid,
+                            "tier": "morning_l4",
+                            "min_payout": None,
+                            "source": "morning_predict",
+                            "expected_roi": (morning_l4["recovery"] - 100) / 100,
+                            "title": morning_l4["label"],
+                            "is_positive_ev": morning_l4["recovery"] >= 130,
+                            "weather": weather,
+                            "weather_label": WEATHER_LABEL.get(weather),
+                            "is_rain": is_rain,
+                            "rain_exclusion_active": rain_exclusion_active,
+                            "is_rain_excluded": is_rain_excluded,
+                            "n_female": n_female,
+                            "is_female_present": is_female_present,
+                            "l4": morning_l4,
+                        })
+                    continue
+
                 if l4 is not None and not l4.get("is_exacta_niche") and not l4.get("is_win_niche") and not l4.get("is_trifecta_niche"):
                     prob_first = morning_pred.get(rid)
                     morning_l4 = _evaluate_morning_l4(
