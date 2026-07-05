@@ -146,7 +146,10 @@ def run_beforeinfo(now: datetime) -> bool:
 def run_morning(now: datetime) -> bool:
     today = now.date().isoformat()
     ok = True
+    ok &= run_py(["scripts/backfill_official.py", "--start", today, "--end", today], timeout=1800)
     ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
+    # Tide rows depend on races already existing, so import after daily race data is written.
+    ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     return ok
@@ -155,19 +158,39 @@ def run_morning(now: datetime) -> bool:
 def run_hourly(now: datetime) -> bool:
     ok = True
     ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "3"], timeout=1800)
+    ok &= run_py(["scripts/prewarm_strategy_pages.py"], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     ok &= run_py(["scripts/agent_monitor.py", "--quiet"], timeout=600)
     return ok
+
+
+def run_tides(now: datetime) -> bool:
+    year_from = now.year
+    year_to = (now.date() + timedelta(days=1)).year
+    args = [
+        "scripts/fetch_and_import_jma_tides.py",
+        "--year-from", str(year_from),
+        "--year-to", str(year_to),
+        "--only-missing",
+        "--timeout", "30",
+    ]
+    return run_py(args, timeout=1800)
 
 
 def run_nightly(now: datetime) -> bool:
     today = now.date().isoformat()
     tomorrow = (now.date() + timedelta(days=1)).isoformat()
     ok = True
+    ok &= run_py(["scripts/backfill_official.py", "--start", today, "--end", today], timeout=1800)
     ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
+    ok &= run_tides(now)
     ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "5"], timeout=1800)
+    ok &= run_py(["scripts/backfill_official.py", "--start", tomorrow, "--end", tomorrow], timeout=1800)
     ok &= run_py(["scripts/daily_collect.py", "--date", tomorrow], timeout=1800)
+    # Preload tomorrow after its races exist as well.
+    ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
+    ok &= run_py(["scripts/prewarm_strategy_pages.py"], timeout=1800)
     return ok
 
 
