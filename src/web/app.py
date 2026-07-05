@@ -2275,11 +2275,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # 市場非効率レース検出 (三連単1番人気の払戻に基づく +EV ゾーン)
         market_signal = _detect_market_inefficiency(race_id, preds, info=info)
+        # レース詳細の選手間相関マップ/相関集計は負荷が高く、
+        # 現行運用では費用対効果が低いため停止する。
         compat_analysis = None
-        try:
-            compat_analysis = _build_race_compat_analysis(race_id, info, preds)
-        except Exception as exc:
-            logger.warning("compat analysis failed for %s: %s", race_id, exc)
 
         # 三連単予測 (本番 Render では heavy compute をスキップして OOM/timeout 防止)
         tri_pw = []
@@ -4734,7 +4732,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ):
                 return None
 
-            has_followup = any(v is not None for v in (wind, b3st, b1ex, best_ex))
+            # OUT(圏外) へ落とすのは「展示後に必要な展示項目が実際に入った後」だけにする。
+            # 風速は展示前から取れているため、これだけで再判定済み扱いにすると
+            # 夜レースが朝の時点で圏外表示になってしまう。
+            has_followup = any(v is not None for v in (b3st, b1ex, best_ex))
             display_confirmed = (
                 wind is not None and wind >= 5.0
                 and b3st is not None and b3st <= 0.15
