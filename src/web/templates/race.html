@@ -761,21 +761,6 @@
         });
       });
 
-      const warmAllMotorHistories = () => {
-        document.querySelectorAll(".motor-history-btn").forEach((button, idx) => {
-          window.setTimeout(async () => {
-            try {
-              const data = await fetchHistory(button);
-              renderInlineSignals(document.querySelector(`[data-motor-inline-signals="${button.dataset.boatNumber}"]`), data);
-            } catch (_) {}
-          }, 180 * idx);
-        });
-      };
-      if ("requestIdleCallback" in window) {
-        window.requestIdleCallback(warmAllMotorHistories, { timeout: 1800 });
-      } else {
-        window.setTimeout(warmAllMotorHistories, 800);
-      }
     })();
   </script>
 {% endblock %}

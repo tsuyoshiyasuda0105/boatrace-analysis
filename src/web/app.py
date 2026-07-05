@@ -2216,7 +2216,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/race/<race_id>")
     @login_required
-    @cached(ttl=60, past_ttl=3600)
+    @cached(ttl=180, past_ttl=7200)
     def race_detail(race_id: str):
         # 過去レース (race_date が今日より前) は 1時間キャッシュ、当日は 60秒
         # cached デコレータは request.args["date"] を見るが、/race/<id> には
@@ -9069,11 +9069,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/member/strategy")
     @login_required
-    @cached(ttl=180, past_ttl=3600)  # 当日3分/期間終端が過去なら1時間
+    @cached(ttl=600, past_ttl=7200)  # 通常はキャッシュ表示、更新時だけ再集計
     def member_strategy():
         """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
         from datetime import timedelta
-        from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         to_d = request.args.get("to") or today.isoformat()
         # ROI 画面の既定表示は 1年6か月分に拡張
@@ -9218,12 +9217,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         totals["mid_132_tier_a_tri_recovery"] = totals.get("cand4_tri_recovery")
         totals["mid_132_tier_a_tri_profit"] = totals.get("cand4_tri_profit", 0)
 
-        try:
-            health_results = evaluate_all_strategies(from_d, to_d)
-        except Exception as e:
-            logger.warning("strategy health load failed: %s", e)
-            health_results = []
-
         return render_template(
             "member_strategy_v3.html",
             rows=rows,
@@ -9237,12 +9230,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/member/strategy/monthly")
     @login_required
-    @cached(ttl=180, past_ttl=3600)
+    @cached(ttl=600, past_ttl=7200)
     def member_strategy_monthly():
         """月別 ROI (長期推移) 専用ページ — テーブル + 推移グラフ。
         backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
         """
-        from src.evaluation.strategy_monitor import evaluate_all_strategies
         today = date.today()
         monthly_from = "2024-06-01"
         monthly_to   = today.isoformat()
@@ -9446,12 +9438,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_totals["gen_f1_tri"] = monthly_totals.get("cand1_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
         monthly_totals["gen_200_tri"] = monthly_totals.get("cand3_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
         monthly_totals["mid_132_tier_a_tri"] = monthly_totals.get("cand4_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
-
-        try:
-            health_results = evaluate_all_strategies(monthly_from, monthly_to)
-        except Exception as e:
-            logger.warning("monthly strategy health load failed: %s", e)
-            health_results = []
 
         return render_template(
             "member_monthly_v3.html",
