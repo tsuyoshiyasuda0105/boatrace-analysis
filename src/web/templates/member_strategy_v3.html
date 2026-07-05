@@ -2,7 +2,9 @@
 {% block title %}ROIダッシュボード{% endblock %}
 
 {% block head_extra %}
+  {% if to_date == today_iso %}
   <meta http-equiv="refresh" content="180">
+  {% endif %}
 {% endblock %}
 
 {% set strategies = [
@@ -43,8 +45,12 @@
 
 {% block content %}
 <div class="strategy-dashboard">
-  <h2>ROIダッシュボード <span class="live-indicator">LIVE</span></h2>
-  <p class="dashboard-hint">採用手法を日別で比較します。集計範囲: {{ from_date }} - {{ to_date }}</p>
+  <h2>ROIダッシュボード {% if to_date == today_iso %}<span class="live-indicator">LIVE</span>{% endif %}</h2>
+  <p class="dashboard-hint">
+    採用手法を日別で比較します。集計範囲: {{ from_date }} - {{ to_date }}<br>
+    <small>通常表示はキャッシュ済み集計を優先し、<strong>最新に更新</strong> のときだけ再集計します。</small>
+    {% if recomputed %}<small class="pos" style="margin-left:8px;">最新再集計を実行しました。</small>{% endif %}
+  </p>
 
   <form method="get" class="health-filter-form" style="margin:12px 0 18px;">
     <label>開始日
@@ -54,7 +60,8 @@
     <label>終了日
       <input type="date" name="to" value="{{ to_date }}">
     </label>
-    <button type="submit" class="detail-btn">更新</button>
+    <button type="submit" class="detail-btn">表示</button>
+    <button type="submit" name="recompute" value="1" class="detail-btn">最新に更新</button>
   </form>
 
   <section class="summary-grid" style="margin-bottom:16px;">

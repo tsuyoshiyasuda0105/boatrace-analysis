@@ -2,7 +2,9 @@
 {% block title %}月別 ROI 推移{% endblock %}
 
 {% block head_extra %}
+  {% if monthly_to == today_iso %}
   <meta http-equiv="refresh" content="180">
+  {% endif %}
 {% endblock %}
 
 {% set strategies = [
@@ -31,8 +33,16 @@
 
 {% block content %}
 <div class="strategy-dashboard">
-  <h2>月別 ROI 推移 <span class="live-indicator">LIVE</span></h2>
-  <p class="dashboard-hint">採用手法の月別推移です。集計期間: {{ monthly_from }} - {{ monthly_to }}</p>
+  <h2>月別 ROI 推移 {% if monthly_to == today_iso %}<span class="live-indicator">LIVE</span>{% endif %}</h2>
+  <p class="dashboard-hint">
+    採用手法の月別推移です。集計期間: {{ monthly_from }} - {{ monthly_to }}<br>
+    <small>通常表示はキャッシュ済み集計を優先し、<strong>最新に更新</strong> のときだけ再集計します。</small>
+    {% if recomputed %}<small class="pos" style="margin-left:8px;">最新再集計を実行しました。</small>{% endif %}
+  </p>
+  <form method="get" class="health-filter-form" style="margin:12px 0 18px;">
+    <button type="submit" class="detail-btn">表示</button>
+    <button type="submit" name="recompute" value="1" class="detail-btn">最新に更新</button>
+  </form>
 
   <section class="summary-grid" style="margin-bottom:16px;">
     {% for key, label, _, _ in strategies %}

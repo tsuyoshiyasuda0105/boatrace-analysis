@@ -61,11 +61,22 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
 
         @wraps(fn)
         def wrapper(*args, **kwargs):
+            force_recompute = False
+            filtered_qs = ""
             try:
-                qs = request.query_string.decode("utf-8") if request else ""
+                if request:
+                    force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+                    filtered_items = []
+                    for key in sorted(request.args.keys()):
+                        if key == "recompute":
+                            continue
+                        for value in request.args.getlist(key):
+                            filtered_items.append((key, value))
+                    filtered_qs = repr(filtered_items)
             except Exception:
-                qs = ""
-            key = f"{fn.__name__}:{args}:{kwargs}:{qs}"
+                filtered_qs = ""
+                force_recompute = False
+            key = f"{fn.__name__}:{args}:{kwargs}:{filtered_qs}"
             now = time.time()
             # 過去日リクエストは長期キャッシュ
             effective_ttl = ttl
@@ -91,7 +102,7 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
                                 break
             except Exception:
                 pass
-            if key in _CACHE:
+            if (not force_recompute) and key in _CACHE:
                 ts, val = _CACHE[key]
                 if now - ts < effective_ttl:
                     return val
@@ -3993,11 +4004,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
 
         def _pick_best_market_signal(*signals):
+            valid = []
             best = None
             best_recovery = float("-inf")
             for sig in signals:
                 if not sig:
                     continue
+                valid.append(sig)
                 try:
                     rec = float(sig.get("recovery")) if sig.get("recovery") is not None else float("-inf")
                 except (TypeError, ValueError):
@@ -4005,7 +4018,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if best is None or rec > best_recovery:
                     best = sig
                     best_recovery = rec
-            return best
+            if best is None:
+                return None
+            merged = dict(best)
+            merged["matched_levels"] = [s.get("level") for s in valid if s.get("level")]
+            merged["matched_labels"] = [s.get("label") for s in valid if s.get("label")]
+            merged["matched_bets"] = [s.get("bet") for s in valid if s.get("bet")]
+            merged["matched_recoveries"] = [s.get("recovery") for s in valid if s.get("recovery") is not None]
+            return merged
 
         def _evaluate_boat3_trifecta_niche(ctx: dict | None):
             if not ctx:
@@ -9063,7 +9083,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             return "Invalid date format", 400
 
-        rows = _l4_daily_stats(from_d, to_d, force_full_scan=True)
+        force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+        rows = _l4_daily_stats(from_d, to_d, force_full_scan=force_recompute)
         adopted_keys = (
             "g23_optb_tri",
             "tokuyama_123_tri",
@@ -9211,6 +9232,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             from_date=from_d,
             to_date=to_d,
             today_iso=date.today().isoformat(),
+            recomputed=force_recompute,
         )
 
     @app.route("/member/strategy/monthly")
@@ -9226,6 +9248,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_to   = today.isoformat()
         # keep visible near the top for source-regression coverage:
         # monthly_from=monthly_from / monthly_to=monthly_to
+
+        force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
 
         bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
                     "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
@@ -9263,7 +9287,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "general_c_tri",
         )
         try:
-            monthly_daily = _l4_daily_stats(monthly_from, monthly_to, force_full_scan=False)
+            monthly_daily = _l4_daily_stats(monthly_from, monthly_to, force_full_scan=force_recompute)
         except Exception as e:
             logger.warning("monthly daily stats failed: %s", e)
             monthly_daily = []
@@ -9439,6 +9463,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             monthly_to=monthly_to,
             strict_odds_daily_start=STRICT_ODDS_DAILY_START,
             today_iso=today.isoformat(),
+            recomputed=force_recompute,
         )
 
     @app.route("/member/health")
