@@ -14,6 +14,9 @@ from src.db.connection import connect as db_connect
 
 REPO = Path(__file__).resolve().parents[1]
 JST = timezone(timedelta(hours=9))
+BEFOREINFO_WINDOW_MIN = 5
+BEFOREINFO_WINDOW_MAX = 9
+BEFOREINFO_COOLDOWN_MIN = 8
 
 
 def jst_now() -> datetime:
@@ -103,7 +106,14 @@ def run_beforeinfo(now: datetime) -> bool:
     )
     from src.collectors import original_exhibition as original_exhibition_collector
 
-    due = find_due_races(now, window_min=5, window_max=30, cooldown_min=8)
+    # 実運用は「レース5分前取得」を基準にしつつ、
+    # cron の数分ズレを吸収するため 5-9 分前を取得窓にする。
+    due = find_due_races(
+        now,
+        window_min=BEFOREINFO_WINDOW_MIN,
+        window_max=BEFOREINFO_WINDOW_MAX,
+        cooldown_min=BEFOREINFO_COOLDOWN_MIN,
+    )
     print(f"[beforeinfo] due={len(due)}", flush=True)
     if not due:
         return True

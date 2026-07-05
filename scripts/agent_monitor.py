@@ -306,7 +306,7 @@ def work_odds_scheduler():
 
 def work_beforeinfo_live():
     """beforeinfo_live が締切間近のレースに live データを書いているか。
-    締切が 5-30 分後のレースを対象 (live スクレイパーの target window)。
+    締切が 5-9 分後のレースを対象 (live スクレイパーの target window)。
     そのレースに live_updated_at が無ければサボリ。"""
     if not (8 <= _hour_now() <= 22):
         return "ok", "稼働時間外"
@@ -314,11 +314,11 @@ def work_beforeinfo_live():
         return "ok", PC_PAUSED_MSG
     today = TODAY.isoformat()
     now_s = NOW.strftime("%Y-%m-%d %H:%M:%S")
-    later_s = (NOW + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    later_s = (NOW + timedelta(minutes=9)).strftime("%Y-%m-%d %H:%M:%S")
     soon_s = (NOW + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
     try:
         c = _local_conn()
-        # 締切まで 5-30 分のレース (target window)
+        # 締切まで 5-9 分のレース (target window)
         rows = c.execute(
             """SELECT r.race_id, MAX(pv.live_updated_at)
                  FROM races r
@@ -331,7 +331,7 @@ def work_beforeinfo_live():
     except Exception as e:  # noqa: BLE001
         return "error", f"DB エラー: {e}"
     if not rows:
-        return "ok", "対象レースなし (締切5-30分のレースが今ない)"
+        return "ok", "対象レースなし (締切5-9分のレースが今ない)"
     total = len(rows)
     no_live = [rid for rid, upd in rows if not upd]
     if no_live and len(no_live) == total:

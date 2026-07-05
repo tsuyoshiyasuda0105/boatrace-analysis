@@ -11,7 +11,7 @@
 # Strategy notes:
 #   - Runs every 10 min (PT10M) from 08:00 to 22:00 (race hours).
 #     Out of band runs early-exit because no races are "due".
-#   - 5-30 min window: per-race scrape happens at most once per 8-10 min.
+#   - 5-9 min window: per-race scrape happens at most once per 8-10 min.
 #     BAN risk is low because we only fetch races closing soon (1-3 races/run).
 #   - Re-predicts the full day after writes (predict_date is batch-style).
 #     ~30-90s of CPU per run during race hours.
@@ -43,7 +43,7 @@ Register-ScheduledTask -TaskName 'BoatraceBeforeinfoLive' `
                        -Action $action `
                        -Trigger $trigger `
                        -Settings $settings `
-                       -Description 'Live beforeinfo scrape (5-30min before close), overwrites race_previews wind/wave/weather, re-predicts, syncs to Supabase. Hidden via VBS.' `
+                       -Description 'Live beforeinfo scrape (5-9min before close), overwrites race_previews wind/wave/weather, re-predicts, syncs to Supabase. Hidden via VBS.' `
                        -Force | Out-Null
 
 Write-Host '[OK] BoatraceBeforeinfoLive registered' -ForegroundColor Green

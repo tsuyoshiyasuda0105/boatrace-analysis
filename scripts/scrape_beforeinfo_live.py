@@ -26,7 +26,7 @@
     python scripts/scrape_beforeinfo_live.py
     python scripts/scrape_beforeinfo_live.py --dry-run     # 取得して表示のみ
     python scripts/scrape_beforeinfo_live.py --no-predict  # スクレイプのみ
-    python scripts/scrape_beforeinfo_live.py --window 5 60 # 5-60分前を対象
+    python scripts/scrape_beforeinfo_live.py --window 5 9  # 5分前基準
 """
 from __future__ import annotations
 
@@ -332,9 +332,9 @@ def main():
                    help="取得して表示するだけ。DB に書かない、予測しない。")
     p.add_argument("--no-predict", action="store_true",
                    help="DB 書き込みは行うが、再予測 + sync をスキップ")
-    p.add_argument("--window", nargs=2, type=int, default=[5, 30],
+    p.add_argument("--window", nargs=2, type=int, default=[5, 9],
                    metavar=("MIN", "MAX"),
-                   help="締切までの分数ウィンドウ (デフォルト 5-30 分)")
+                   help="締切までの分数ウィンドウ (デフォルト 5-9 分)")
     p.add_argument("--cooldown-min", type=int, default=8,
                    help="同じレースを再取得する最短間隔 (分、デフォルト 8)")
     p.add_argument("--force-all", action="store_true",
