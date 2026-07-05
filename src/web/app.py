@@ -124,6 +124,62 @@ def invalidate_cache():
     _CACHE.clear()
 
 
+def _ensure_page_html_cache_table() -> None:
+    try:
+        with db_connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS page_html_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    html TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("failed to ensure page_html_cache table")
+
+
+def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
+    try:
+        _ensure_page_html_cache_table()
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT html, updated_at FROM page_html_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        if not row:
+            return None
+        html, updated_at = row[0], float(row[1] or 0)
+        if time.time() - updated_at > max_age_sec:
+            return None
+        return html
+    except Exception:
+        logger.exception("failed to read page_html_cache: %s", cache_key)
+        return None
+
+
+def _write_page_html_cache(cache_key: str, html: str) -> None:
+    try:
+        _ensure_page_html_cache_table()
+        now_ts = time.time()
+        with db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO page_html_cache (cache_key, html, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    html = excluded.html,
+                    updated_at = excluded.updated_at
+                """,
+                (cache_key, html, now_ts),
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("failed to write page_html_cache: %s", cache_key)
+
+
 def _format_race_id(race_id: str) -> tuple[str, int, int]:
     """'YYYYMMDD-SS-RR' → (date_str, stadium, race_no)"""
     parts = race_id.split("-")
@@ -9083,6 +9139,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+        page_cache_key = f"member_strategy:{from_d}:{to_d}"
+        if not force_recompute:
+            cached_html = _read_page_html_cache(
+                page_cache_key,
+                900 if to_d >= today.isoformat() else 3600,
+            )
+            if cached_html:
+                return cached_html
         rows = _l4_daily_stats(from_d, to_d, force_full_scan=force_recompute)
         adopted_keys = (
             "g23_optb_tri",
@@ -9217,7 +9281,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         totals["mid_132_tier_a_tri_recovery"] = totals.get("cand4_tri_recovery")
         totals["mid_132_tier_a_tri_profit"] = totals.get("cand4_tri_profit", 0)
 
-        return render_template(
+        html = render_template(
             "member_strategy_v3.html",
             rows=rows,
             totals=totals,
@@ -9227,6 +9291,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             today_iso=date.today().isoformat(),
             recomputed=force_recompute,
         )
+        _write_page_html_cache(page_cache_key, html)
+        return html
 
     @app.route("/member/strategy/monthly")
     @login_required
@@ -9242,6 +9308,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+        page_cache_key = f"member_strategy_monthly:{monthly_from}:{monthly_to}"
+        if not force_recompute:
+            cached_html = _read_page_html_cache(page_cache_key, 1800)
+            if cached_html:
+                return cached_html
 
         bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
                     "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
@@ -9439,7 +9510,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_totals["gen_200_tri"] = monthly_totals.get("cand3_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
         monthly_totals["mid_132_tier_a_tri"] = monthly_totals.get("cand4_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
 
-        return render_template(
+        html = render_template(
             "member_monthly_v3.html",
             monthly_rows=monthly_rows,
             monthly_rows_asc=monthly_rows_asc,
@@ -9451,6 +9522,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             today_iso=today.isoformat(),
             recomputed=force_recompute,
         )
+        _write_page_html_cache(page_cache_key, html)
+        return html
 
     @app.route("/member/health")
     @login_required
