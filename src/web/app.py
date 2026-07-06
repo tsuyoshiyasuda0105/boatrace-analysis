@@ -2943,6 +2943,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         course1_stats: dict[str, tuple[float, int]] = {}
         exacta_pair_affinity: dict[str, dict] = {}
         ashiya_boat4_lift: dict[str, dict] = {}
+        ashiya_4head_flow_ctx: dict[str, dict] = {}
         toda_42_flow_ctx: dict[str, dict] = {}
         miyajima_boat4_watch: dict[str, dict] = {}
         tsu_suminoe_live: dict[str, dict] = {}
@@ -3531,6 +3532,89 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             }
                 except Exception as e:
                     logger.warning("toda 4-2-all context failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
+                # === 6aa. Ashiya 4-head flow context (future-free, before target date only) ===
+                try:
+                    ashiya_targets = {
+                        rid: info for rid, info in all_race_info.items()
+                        if info.get("stadium") == 21
+                           and info.get("boat4_racer")
+                           and info.get("boat4_motor_number") is not None
+                    }
+                    if ashiya_targets:
+                        try:
+                            racer_cutoff_iso = (_dt.fromisoformat(target_date).date() - _td(days=730)).isoformat()
+                            motor_cutoff_iso = (_dt.fromisoformat(target_date).date() - _td(days=180)).isoformat()
+                        except Exception:
+                            racer_cutoff_iso = "1900-01-01"
+                            motor_cutoff_iso = "1900-01-01"
+
+                        target_racers = sorted({info.get("boat4_racer") for info in ashiya_targets.values()})
+                        racer_placeholders = ",".join("?" for _ in target_racers)
+                        racer_course4_rows: dict[int, list[tuple[float | None, int]]] = {}
+                        cur = conn.execute(f"""
+                            SELECT e.racer_number, rr.start_timing, rr.finishing_position
+                              FROM race_entries e
+                              JOIN races rh ON rh.race_id = e.race_id
+                              JOIN race_results rr ON rr.race_id = e.race_id AND rr.boat_number = e.boat_number
+                             WHERE rh.stadium_number = 21
+                               AND rh.race_date < ?
+                               AND rh.race_date >= ?
+                               AND e.racer_number IN ({racer_placeholders})
+                               AND rr.course_number = 4
+                             ORDER BY e.racer_number, rh.race_date DESC, rh.race_number DESC
+                        """, [target_date, racer_cutoff_iso, *target_racers])
+                        for racer, st, pos in cur.fetchall():
+                            rows = racer_course4_rows.setdefault(int(racer), [])
+                            if len(rows) < 128:
+                                try:
+                                    st_v = float(st) if st is not None else None
+                                except Exception:
+                                    st_v = None
+                                rows.append((st_v, int(pos or 0)))
+
+                        target_motors = sorted({info.get("boat4_motor_number") for info in ashiya_targets.values()})
+                        motor_placeholders = ",".join("?" for _ in target_motors)
+                        motor_course4_rows: dict[int, list[int]] = {}
+                        cur = conn.execute(f"""
+                            SELECT e.assigned_motor_number, rr.finishing_position
+                              FROM race_entries e
+                              JOIN races rh ON rh.race_id = e.race_id
+                              JOIN race_results rr ON rr.race_id = e.race_id AND rr.boat_number = e.boat_number
+                             WHERE rh.stadium_number = 21
+                               AND rh.race_date < ?
+                               AND rh.race_date >= ?
+                               AND e.assigned_motor_number IN ({motor_placeholders})
+                               AND rr.course_number = 4
+                             ORDER BY e.assigned_motor_number, rh.race_date DESC, rh.race_number DESC
+                        """, [target_date, motor_cutoff_iso, *target_motors])
+                        for motor_no, pos in cur.fetchall():
+                            rows = motor_course4_rows.setdefault(int(motor_no), [])
+                            if len(rows) < 128:
+                                rows.append(int(pos or 0))
+
+                        for rid, info in ashiya_targets.items():
+                            racer_rows = racer_course4_rows.get(int(info.get("boat4_racer")), [])
+                            motor_rows = motor_course4_rows.get(int(info.get("boat4_motor_number")), [])
+                            n180 = len(racer_rows)
+                            wins = sum(1 for _st, pos in racer_rows if pos == 1)
+                            st_vals = [st for st, _pos in racer_rows if st is not None]
+                            mn = len(motor_rows)
+                            mwins = sum(1 for pos in motor_rows if pos == 1)
+                            ashiya_4head_flow_ctx[rid] = {
+                                **info,
+                                "boat4_course4_n180": n180,
+                                "boat4_course4_avg_st_180": (sum(st_vals) / len(st_vals)) if st_vals else None,
+                                "boat4_course4_win_rate_180": (wins / n180) if n180 else None,
+                                "boat4_motor4_n180": mn,
+                                "boat4_motor4_win_rate_180": (mwins / mn) if mn else None,
+                            }
+                except Exception as e:
+                    logger.warning("ashiya 4-head flow context failed: %s", e)
                     try:
                         conn.rollback()
                     except Exception:
@@ -5746,6 +5830,68 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "tetsuban_label": "芦屋4C 点灯" if ready_now else "芦屋4C 朝監視",
             }
 
+        def _evaluate_ashiya_4head_flow(ctx: dict | None):
+            """Evaluate adopted Ashiya trifecta 4-head flow strategy."""
+            if not ctx:
+                return None
+
+            def _to_float(value):
+                try:
+                    return float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _to_int(value):
+                try:
+                    return int(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            stadium = _to_int(ctx.get("stadium"))
+            boat1_natl1 = _to_float(ctx.get("natl_1"))
+            boat1_motor = _to_float(ctx.get("boat1_motor_top2"))
+            boat2_motor = _to_float(ctx.get("boat2_motor_top2"))
+            boat3_motor = _to_float(ctx.get("boat3_motor_top2"))
+            n180 = _to_int(ctx.get("boat4_course4_n180")) or 0
+            avg_st_180 = _to_float(ctx.get("boat4_course4_avg_st_180"))
+            win_rate_180 = _to_float(ctx.get("boat4_course4_win_rate_180"))
+            motor_n180 = _to_int(ctx.get("boat4_motor4_n180")) or 0
+            motor_win_rate_180 = _to_float(ctx.get("boat4_motor4_win_rate_180"))
+            if not (
+                stadium == 21
+                and boat1_natl1 is not None and boat1_natl1 <= 6.5
+                and boat1_motor is not None and boat1_motor <= 35.0
+                and boat2_motor is not None and boat2_motor <= 40.0
+                and boat3_motor is not None and boat3_motor <= 35.0
+                and n180 >= 12
+                and avg_st_180 is not None and avg_st_180 <= 0.15
+                and win_rate_180 is not None and win_rate_180 >= 0.12
+                and motor_n180 >= 8
+                and motor_win_rate_180 is not None and motor_win_rate_180 >= 0.08
+            ):
+                return None
+            return {
+                "level": "ashiya_4head_flow_tri",
+                "label": "芦屋 4頭総流し",
+                "bet": "3連単 4-全-全 (20点)",
+                "rank": "trifecta_niche",
+                "rank_label": "3連単 採用",
+                "rank_emoji": "3連単",
+                "recovery": 154.5,
+                "n": 52,
+                "natl_1": None,
+                "local_1": None,
+                "is_trifecta_niche": True,
+                "trifecta_niche_name": "芦屋 4頭総流し",
+                "trifecta_niche_tag": "1号艇弱め + 4号艇4コース実績 + 4号艇現行モーター実績 + 2/3号艇モーター弱め",
+                "trifecta_niche_hit_rate": 51.9,
+                "trifecta_niche_recovery": 154.5,
+                "tetsuban_score": 6,
+                "tetsuban_label": "芦屋4頭",
+                "is_display_confirmed": True,
+                "uses_rain_filter": False,
+            }
+
         def _evaluate_toda_42_flow(ctx: dict | None):
             """Evaluate adopted Toda trifecta 4-2-all flow strategy."""
             if not ctx:
@@ -6575,6 +6721,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                 if ashiya_exacta:
                     l4 = ashiya_exacta
+                ashiya_4head_flow = _evaluate_ashiya_4head_flow(ashiya_4head_flow_ctx.get(rid))
+                if ashiya_4head_flow:
+                    l4 = ashiya_4head_flow
                 toda_42_flow = _evaluate_toda_42_flow(toda_42_flow_ctx.get(rid))
                 if toda_42_flow:
                     l4 = toda_42_flow
@@ -6601,6 +6750,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     l4,
                     exacta_niche,
                     ashiya_exacta,
+                    ashiya_4head_flow,
                     toda_42_flow,
                     miyajima_watch,
                     tide_tri,
@@ -6654,6 +6804,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     )
                     ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
                     ashiya_exacta_watch = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
+                    ashiya_4head_flow_watch = _evaluate_ashiya_4head_flow(ashiya_4head_flow_ctx.get(rid))
                     toda_42_flow_watch = _evaluate_toda_42_flow(toda_42_flow_ctx.get(rid))
                     miyajima_watch = _evaluate_miyajima_boat4_watch(miyajima_boat4_watch.get(rid))
                     tide_tri_watch = _evaluate_tide_tri_signal(
@@ -6711,6 +6862,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         exacta_niche_watch,
                         ashiya_watch,
                         ashiya_exacta_watch,
+                        ashiya_4head_flow_watch,
                         toda_42_flow_watch,
                         miyajima_watch,
                         tide_tri_watch,
@@ -6909,6 +7061,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
                 ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
+                ashiya_4head_flow_watch = _evaluate_ashiya_4head_flow(ashiya_4head_flow_ctx.get(rid))
                 toda_42_flow_watch = _evaluate_toda_42_flow(toda_42_flow_ctx.get(rid))
                 miyajima_watch = _evaluate_miyajima_boat4_watch(miyajima_boat4_watch.get(rid))
                 tide_tri = _evaluate_tide_tri_signal(
@@ -6966,6 +7119,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     exacta_niche,
                     ashiya_watch,
                     ashiya_exacta,
+                    ashiya_4head_flow_watch,
                     toda_42_flow_watch,
                     miyajima_watch,
                     tide_tri,
@@ -7042,6 +7196,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     AMAGASAKI_MOTOR_EXA_CACHE_VERSION = "amagasaki_motor_exa_v1"
     # 芦屋 4-1 は差分調査後に再集計したいので、キャッシュを強制無効化する。
     ASHIYA_BOAT4_EXA_CACHE_VERSION = "ashiya_boat4_exa_v2"
+    ASHIYA_4HEAD_FLOW_TRI_CACHE_VERSION = "ashiya_4head_flow_tri_v1"
     HAMANAKO_14_EXA_CACHE_VERSION = "hamanako_14_exa_v2"
     OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v2"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
@@ -7065,13 +7220,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
     TODA_42_FLOW_TRI_CACHE_VERSION = "toda_42_flow_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v10"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v11"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         "adopted_daily_select_v8",
         "adopted_daily_select_v9",
+        "adopted_daily_select_v10",
         ADOPTED_DAILY_SELECT_VERSION,
     }
-    BET_UNIT_MAP = {"toda_42_flow_tri": 400}
+    BET_UNIT_MAP = {"toda_42_flow_tri": 400, "ashiya_4head_flow_tri": 2000}
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
         """日別の L4 戦略統計を集計。
@@ -7108,6 +7264,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         if day_d.get("_amagasaki_motor_exa_version") != AMAGASAKI_MOTOR_EXA_CACHE_VERSION:
                             continue
                         if day_d.get("_ashiya_boat4_exa_version") != ASHIYA_BOAT4_EXA_CACHE_VERSION:
+                            continue
+                        if day_d.get("_ashiya_4head_flow_tri_version") != ASHIYA_4HEAD_FLOW_TRI_CACHE_VERSION:
                             continue
                         if day_d.get("_hamanako_14_exa_version") != HAMANAKO_14_EXA_CACHE_VERSION:
                             continue
@@ -7175,6 +7333,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "shimonoseki_132_tri",
                             "fukuoka_tide_132_tri",
                             "ashiya_boat4_exa",
+                "ashiya_4head_flow_tri",
+                            "ashiya_4head_flow_tri",
                             "marugame_tide_123_tri",
                             "omura_14_exa",
                             "omura_123_tri",
@@ -7222,7 +7382,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "prime_tri", "r12_tri", "gen_r12_tri",
                             "toda_7r_tri", "mid_132_tri",
                             "mid_132_tier_a_tri", "venus_tri",
-                            "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
+                            "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                             "g23_optb_tri",
                             "tsu_123_tri", "suminoe_123_tri", "shimonoseki_123_tri", "tsu_124_tri",
                             "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
@@ -7478,6 +7638,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
                 "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
                 "ashiya_boat4_exa_bets": 0, "ashiya_boat4_exa_hits": 0, "ashiya_boat4_exa_pay": 0,
+                "ashiya_4head_flow_tri_bets": 0, "ashiya_4head_flow_tri_hits": 0, "ashiya_4head_flow_tri_pay": 0,
                 "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
                 "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
@@ -7586,6 +7747,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "venus_tri_bets": 0, "venus_tri_hits": 0, "venus_tri_pay": 0,
                 "amagasaki_motor_exa_bets": 0, "amagasaki_motor_exa_hits": 0, "amagasaki_motor_exa_pay": 0,
                 "ashiya_boat4_exa_bets": 0, "ashiya_boat4_exa_hits": 0, "ashiya_boat4_exa_pay": 0,
+                "ashiya_4head_flow_tri_bets": 0, "ashiya_4head_flow_tri_hits": 0, "ashiya_4head_flow_tri_pay": 0,
                 "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
                 "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                 "kiryu_win2_bets": 0, "kiryu_win2_hits": 0, "kiryu_win2_pay": 0,
@@ -8540,6 +8702,136 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("ashiya boat4 exacta daily stats failed: %s", e)
 
+        # Ashiya 4-head flow tri (4-1/2/3/5/6 - all 20 tickets)
+        try:
+            from collections import defaultdict
+            from datetime import datetime as _wf_dt, timedelta as _wf_td
+            with db_connect() as conn:
+                candidate_rows = conn.execute(
+                """
+                SELECT r.race_id, r.race_date,
+                       e1.national_top_1_percent AS boat1_natl1,
+                       e1.assigned_motor_top_2_percent AS boat1_motor_top2,
+                       e2.assigned_motor_top_2_percent AS boat2_motor_top2,
+                       e3.assigned_motor_top_2_percent AS boat3_motor_top2,
+                       e4.racer_number AS boat4_racer,
+                       e4.assigned_motor_number AS boat4_motor_number,
+                       COALESCE(tp412.payout, 0) + COALESCE(tp413.payout, 0) + COALESCE(tp415.payout, 0) + COALESCE(tp416.payout, 0)
+                     + COALESCE(tp421.payout, 0) + COALESCE(tp423.payout, 0) + COALESCE(tp425.payout, 0) + COALESCE(tp426.payout, 0)
+                     + COALESCE(tp431.payout, 0) + COALESCE(tp432.payout, 0) + COALESCE(tp435.payout, 0) + COALESCE(tp436.payout, 0)
+                     + COALESCE(tp451.payout, 0) + COALESCE(tp452.payout, 0) + COALESCE(tp453.payout, 0) + COALESCE(tp456.payout, 0)
+                     + COALESCE(tp461.payout, 0) + COALESCE(tp462.payout, 0) + COALESCE(tp463.payout, 0) + COALESCE(tp465.payout, 0)
+                       AS tri4all_pay
+                  FROM races r
+                  JOIN race_entries e1 ON e1.race_id = r.race_id AND e1.boat_number = 1
+                  JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
+                  JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
+                  JOIN race_entries e4 ON e4.race_id = r.race_id AND e4.boat_number = 4
+                  LEFT JOIN race_payouts tp412 ON tp412.race_id = r.race_id AND tp412.bet_type='trifecta' AND tp412.combination='4-1-2'
+                  LEFT JOIN race_payouts tp413 ON tp413.race_id = r.race_id AND tp413.bet_type='trifecta' AND tp413.combination='4-1-3'
+                  LEFT JOIN race_payouts tp415 ON tp415.race_id = r.race_id AND tp415.bet_type='trifecta' AND tp415.combination='4-1-5'
+                  LEFT JOIN race_payouts tp416 ON tp416.race_id = r.race_id AND tp416.bet_type='trifecta' AND tp416.combination='4-1-6'
+                  LEFT JOIN race_payouts tp421 ON tp421.race_id = r.race_id AND tp421.bet_type='trifecta' AND tp421.combination='4-2-1'
+                  LEFT JOIN race_payouts tp423 ON tp423.race_id = r.race_id AND tp423.bet_type='trifecta' AND tp423.combination='4-2-3'
+                  LEFT JOIN race_payouts tp425 ON tp425.race_id = r.race_id AND tp425.bet_type='trifecta' AND tp425.combination='4-2-5'
+                  LEFT JOIN race_payouts tp426 ON tp426.race_id = r.race_id AND tp426.bet_type='trifecta' AND tp426.combination='4-2-6'
+                  LEFT JOIN race_payouts tp431 ON tp431.race_id = r.race_id AND tp431.bet_type='trifecta' AND tp431.combination='4-3-1'
+                  LEFT JOIN race_payouts tp432 ON tp432.race_id = r.race_id AND tp432.bet_type='trifecta' AND tp432.combination='4-3-2'
+                  LEFT JOIN race_payouts tp435 ON tp435.race_id = r.race_id AND tp435.bet_type='trifecta' AND tp435.combination='4-3-5'
+                  LEFT JOIN race_payouts tp436 ON tp436.race_id = r.race_id AND tp436.bet_type='trifecta' AND tp436.combination='4-3-6'
+                  LEFT JOIN race_payouts tp451 ON tp451.race_id = r.race_id AND tp451.bet_type='trifecta' AND tp451.combination='4-5-1'
+                  LEFT JOIN race_payouts tp452 ON tp452.race_id = r.race_id AND tp452.bet_type='trifecta' AND tp452.combination='4-5-2'
+                  LEFT JOIN race_payouts tp453 ON tp453.race_id = r.race_id AND tp453.bet_type='trifecta' AND tp453.combination='4-5-3'
+                  LEFT JOIN race_payouts tp456 ON tp456.race_id = r.race_id AND tp456.bet_type='trifecta' AND tp456.combination='4-5-6'
+                  LEFT JOIN race_payouts tp461 ON tp461.race_id = r.race_id AND tp461.bet_type='trifecta' AND tp461.combination='4-6-1'
+                  LEFT JOIN race_payouts tp462 ON tp462.race_id = r.race_id AND tp462.bet_type='trifecta' AND tp462.combination='4-6-2'
+                  LEFT JOIN race_payouts tp463 ON tp463.race_id = r.race_id AND tp463.bet_type='trifecta' AND tp463.combination='4-6-3'
+                  LEFT JOIN race_payouts tp465 ON tp465.race_id = r.race_id AND tp465.bet_type='trifecta' AND tp465.combination='4-6-5'
+                 WHERE r.race_date BETWEEN ? AND ?
+                   AND r.stadium_number = 21
+                   AND e4.racer_number IS NOT NULL
+                   AND e4.assigned_motor_number IS NOT NULL
+                 ORDER BY r.race_date, r.race_id
+                """, (from_date, to_date)).fetchall()
+                if candidate_rows:
+                    racer_cutoff = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=730)).isoformat()
+                    motor_cutoff = (_wf_dt.fromisoformat(from_date).date() - _wf_td(days=180)).isoformat()
+                    target_racers = sorted({int(row[6]) for row in candidate_rows if row[6] is not None})
+                    target_motors = sorted({int(row[7]) for row in candidate_rows if row[7] is not None})
+                    racer_placeholders = ",".join("?" for _ in target_racers)
+                    motor_placeholders = ",".join("?" for _ in target_motors)
+                    racer_rows_by_key: dict[int, list[tuple[float | None, int]]] = defaultdict(list)
+                    cur = conn.execute(f"""
+                        SELECT e.racer_number, rr.start_timing, rr.finishing_position
+                          FROM race_entries e
+                          JOIN races rh ON rh.race_id = e.race_id
+                          JOIN race_results rr ON rr.race_id = e.race_id AND rr.boat_number = e.boat_number
+                         WHERE rh.stadium_number = 21
+                           AND rh.race_date < ?
+                           AND rh.race_date >= ?
+                           AND e.racer_number IN ({racer_placeholders})
+                           AND rr.course_number = 4
+                         ORDER BY e.racer_number, rh.race_date DESC, rh.race_number DESC
+                    """, [to_date, racer_cutoff, *target_racers])
+                    for racer, st, pos in cur.fetchall():
+                        rows = racer_rows_by_key[int(racer)]
+                        if len(rows) < 256:
+                            try:
+                                st_v = float(st) if st is not None else None
+                            except Exception:
+                                st_v = None
+                            rows.append((st_v, int(pos or 0)))
+                    motor_rows_by_key: dict[int, list[int]] = defaultdict(list)
+                    cur = conn.execute(f"""
+                        SELECT e.assigned_motor_number, rr.finishing_position
+                          FROM race_entries e
+                          JOIN races rh ON rh.race_id = e.race_id
+                          JOIN race_results rr ON rr.race_id = e.race_id AND rr.boat_number = e.boat_number
+                         WHERE rh.stadium_number = 21
+                           AND rh.race_date < ?
+                           AND rh.race_date >= ?
+                           AND e.assigned_motor_number IN ({motor_placeholders})
+                           AND rr.course_number = 4
+                         ORDER BY e.assigned_motor_number, rh.race_date DESC, rh.race_number DESC
+                    """, [to_date, motor_cutoff, *target_motors])
+                    for motor_no, pos in cur.fetchall():
+                        rows = motor_rows_by_key[int(motor_no)]
+                        if len(rows) < 256:
+                            rows.append(int(pos or 0))
+                    for race_id, rdate, boat1_natl1, boat1_motor_top2, boat2_motor_top2, boat3_motor_top2, boat4_racer, boat4_motor_number, tri4all_pay in candidate_rows:
+                        racer_rows = [row for row in racer_rows_by_key.get(int(boat4_racer), []) if True]
+                        motor_rows = [row for row in motor_rows_by_key.get(int(boat4_motor_number), []) if True]
+                        n180 = len(racer_rows)
+                        wins = sum(1 for _st, pos in racer_rows if pos == 1)
+                        st_vals = [st for st, _pos in racer_rows if st is not None]
+                        mn = len(motor_rows)
+                        mwins = sum(1 for pos in motor_rows if pos == 1)
+                        try:
+                            boat1_natl1_v = float(boat1_natl1 or 0)
+                            boat1_motor_v = float(boat1_motor_top2 or 0)
+                            boat2_motor_v = float(boat2_motor_top2 or 0)
+                            boat3_motor_v = float(boat3_motor_top2 or 0)
+                        except Exception:
+                            continue
+                        avg_st_180 = (sum(st_vals) / len(st_vals)) if st_vals else None
+                        win_rate_180 = (wins / n180) if n180 else 0.0
+                        motor_win_rate_180 = (mwins / mn) if mn else 0.0
+                        if not (
+                            boat1_natl1_v <= 6.5
+                            and boat1_motor_v <= 35.0
+                            and boat2_motor_v <= 40.0
+                            and boat3_motor_v <= 35.0
+                            and n180 >= 12
+                            and avg_st_180 is not None and avg_st_180 <= 0.15
+                            and win_rate_180 >= 0.12
+                            and mn >= 8
+                            and motor_win_rate_180 >= 0.08
+                        ):
+                            continue
+                        _record_adopted_signal(race_id, rdate, "ashiya_4head_flow_tri", 154.5, int(tri4all_pay or 0) > 0, int(tri4all_pay or 0))
+        except Exception as e:
+            logger.warning("ashiya 4-head flow daily stats failed: %s", e)
+
         # Toda 4-2-all flow tri (4-2-1 / 4-2-3 / 4-2-5 / 4-2-6)
         try:
             from collections import defaultdict, deque
@@ -9053,6 +9345,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "mid_132_tier_a_tri_bets": m132ab or 0, "mid_132_tier_a_tri_hits": m132ah or 0, "mid_132_tier_a_tri_pay": m132ap or 0,
                             "amagasaki_motor_exa_bets": amagab or 0, "amagasaki_motor_exa_hits": amaga_h or 0, "amagasaki_motor_exa_pay": amaga_p or 0,
                             "ashiya_boat4_exa_bets": ashib or 0, "ashiya_boat4_exa_hits": ashih or 0, "ashiya_boat4_exa_pay": aship or 0,
+                            "ashiya_4head_flow_tri_bets": 0, "ashiya_4head_flow_tri_hits": 0, "ashiya_4head_flow_tri_pay": 0,
                             "hamanako_14_exa_bets": 0, "hamanako_14_exa_hits": 0, "hamanako_14_exa_pay": 0,
                             "omura_14_exa_bets": 0, "omura_14_exa_hits": 0, "omura_14_exa_pay": 0,
                             "kiryu_win2_bets": kiryub or 0, "kiryu_win2_hits": kiryuh or 0, "kiryu_win2_pay": kiryup or 0,
@@ -9095,7 +9388,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         "prime_tri", "r12_tri", "gen_r12_tri",
                         "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2",
+                    "amagasaki_motor_exa", "ashiya_boat4_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2",
                     "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "omura_123_tri", "omura_132_tri",
@@ -9124,6 +9417,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_mid132_odds_version"] = MID132_ODDS_CACHE_VERSION
                         day_d["_amagasaki_motor_exa_version"] = AMAGASAKI_MOTOR_EXA_CACHE_VERSION
                         day_d["_ashiya_boat4_exa_version"] = ASHIYA_BOAT4_EXA_CACHE_VERSION
+                        day_d["_ashiya_4head_flow_tri_version"] = ASHIYA_4HEAD_FLOW_TRI_CACHE_VERSION
                         day_d["_hamanako_14_exa_version"] = HAMANAKO_14_EXA_CACHE_VERSION
                         day_d["_omura_14_exa_version"] = OMURA_14_EXA_CACHE_VERSION
                         day_d["_kiryu_win2_version"] = KIRYU_WIN2_CACHE_VERSION
@@ -9697,6 +9991,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "tsu_123_tri",
             "suminoe_123_tri",
             "ashiya_boat4_exa",
+            "ashiya_4head_flow_tri",
             "hamanako_14_exa",
             "omura_14_exa",
             "general_c_tri",
@@ -9736,7 +10031,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
+                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tsu_124_tri", "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
@@ -9849,7 +10144,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
+                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tsu_124_tri", "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
@@ -9876,6 +10171,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "tsu_123_tri",
             "suminoe_123_tri",
             "ashiya_boat4_exa",
+            "ashiya_4head_flow_tri",
             "hamanako_14_exa",
             "omura_14_exa",
             "general_c_tri",
@@ -9991,7 +10287,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_totals = {}
         monthly_total_keys = (
             "win", "exa", "tri", "gen_f1_tri", "gen_200_tri",
-            "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa",
+            "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa", "ashiya_4head_flow_tri",
             "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
             "tokuyama_123_tri", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "omura_123_tri", "omura_132_tri",
