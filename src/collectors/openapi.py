@@ -400,9 +400,10 @@ def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
 
 def collect_all(target_date: date, db_path: str = None) -> dict:
     """指定日の出走表・直前情報・結果をすべて取得しDBに格納。"""
-    db_path = db_path or config.DB_PATH
     config.ensure_dirs()
 
+    # db_path ????????? SQLite ??????????????
+    # DATABASE_URL / SQLite ??????????
     conn = db_connect(db_path)
     summary = {"date": target_date.isoformat(), "programs": 0, "previews": 0, "results": 0}
     try:
