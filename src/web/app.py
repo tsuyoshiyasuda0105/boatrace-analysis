@@ -3312,6 +3312,99 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     except Exception:
                         pass
 
+                tokoname_12_signal_ctx: dict[str, dict] = {}
+                try:
+                    tokoname_targets = {
+                        rid: info for rid, info in all_race_info.items()
+                        if info.get("stadium") == 8
+                    }
+                    if tokoname_targets:
+                        boat2_venue_avg: dict[int, float] = {}
+                        cur = conn.execute("""
+                            SELECT r.stadium_number,
+                                   AVG(NULLIF(pv2.exhibition_time, 0)) AS avg_ex
+                              FROM races r
+                              JOIN race_previews pv2
+                                ON pv2.race_id = r.race_id
+                               AND pv2.boat_number = 2
+                             WHERE r.race_date < ?
+                               AND NULLIF(pv2.exhibition_time, 0) IS NOT NULL
+                             GROUP BY r.stadium_number
+                        """, (target_date,))
+                        for stadium_no, avg_ex in cur.fetchall():
+                            if avg_ex is not None:
+                                boat2_venue_avg[int(stadium_no)] = float(avg_ex)
+
+                        target_racers = sorted({
+                            info.get("boat1_racer") for info in tokoname_targets.values()
+                            if info.get("boat1_racer")
+                        })
+                        boat1_course1_stats: dict[int, tuple[float | None, float | None]] = {}
+                        if target_racers:
+                            racer_placeholders = ",".join("?" for _ in target_racers)
+                            cur = conn.execute(f"""
+                                SELECT e.racer_number,
+                                       COUNT(*) AS starts,
+                                       SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins,
+                                       SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = '逃げ' THEN 1 ELSE 0 END) AS escape_wins
+                                  FROM race_entries e
+                                  JOIN races rh ON rh.race_id = e.race_id
+                                  JOIN race_results rr
+                                    ON rr.race_id = e.race_id
+                                   AND rr.boat_number = e.boat_number
+                                 WHERE rh.race_date < ?
+                                   AND e.boat_number = 1
+                                   AND e.racer_number IN ({racer_placeholders})
+                                 GROUP BY e.racer_number
+                            """, [target_date, *target_racers])
+                            for racer_no, starts, wins, escape_wins in cur.fetchall():
+                                starts_v = int(starts or 0)
+                                if starts_v <= 0:
+                                    continue
+                                boat1_course1_stats[int(racer_no)] = (
+                                    float(wins or 0) / starts_v,
+                                    float(escape_wins or 0) / starts_v,
+                                )
+
+                        ordered_races = sorted(
+                            tokoname_targets.items(),
+                            key=lambda kv: (
+                                int(kv[1].get("stadium") or 0),
+                                int(kv[1].get("race_number") or 0),
+                                kv[0],
+                            ),
+                        )
+                        boat2_same_day_roll: dict[int, dict[str, float]] = {}
+                        for race_id, info in ordered_races:
+                            stadium_no = info.get("stadium")
+                            boat2_ex = info.get("boat2_exhibition_time")
+                            same_day_avg = None
+                            if stadium_no is not None and boat2_ex is not None:
+                                stat = boat2_same_day_roll.get(int(stadium_no))
+                                if stat and stat["n"] > 0:
+                                    same_day_avg = stat["sum"] / stat["n"]
+                            course1_win_rate, escape_share = boat1_course1_stats.get(
+                                int(info.get("boat1_racer") or 0),
+                                (None, None),
+                            )
+                            tokoname_12_signal_ctx[race_id] = {
+                                **info,
+                                "boat2_same_day_avg_ex": same_day_avg,
+                                "boat2_venue_avg_ex": boat2_venue_avg.get(int(stadium_no)) if stadium_no is not None else None,
+                                "boat1_course1_win_rate": course1_win_rate,
+                                "boat1_escape_share": escape_share,
+                            }
+                            if stadium_no is not None and boat2_ex is not None:
+                                stat = boat2_same_day_roll.setdefault(int(stadium_no), {"n": 0, "sum": 0.0})
+                                stat["n"] += 1
+                                stat["sum"] += float(boat2_ex)
+                except Exception as e:
+                    logger.warning("tokoname 1-2 context build failed: %s", e)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
                 used_cache = False
                 try:
                     cur = conn.execute("""
@@ -4565,6 +4658,169 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "is_after_exhibition_out": has_exhibition and not display_confirmed,
                 "tetsuban_score": 4 if len(matched) == 1 else 5,
                 "tetsuban_label": "朝監視 3-2",
+            }
+
+        def _evaluate_tokoname_12_exacta(ctx: dict | None):
+            if not ctx:
+                return None
+
+            def _to_float(value):
+                try:
+                    return float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _to_int(value):
+                try:
+                    return int(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            stadium = _to_int(ctx.get("stadium"))
+            n_female = _to_int(ctx.get("n_female")) or 0
+            boat2_top2 = _to_float(ctx.get("boat2_top2"))
+            boat2_ex_st = _to_float(ctx.get("ex_st"))
+            boat2_ex_time = _to_float(ctx.get("boat2_exhibition_time"))
+            same_day_avg = _to_float(ctx.get("boat2_same_day_avg_ex"))
+            venue_avg = _to_float(ctx.get("boat2_venue_avg_ex"))
+            course1_win_rate = _to_float(ctx.get("boat1_course1_win_rate"))
+            escape_share = _to_float(ctx.get("boat1_escape_share"))
+            ex_times = {
+                boat_no: _to_float(ctx.get(f"boat{boat_no}_exhibition_time"))
+                for boat_no in range(1, 7)
+            }
+
+            if not (
+                stadium == 8
+                and n_female == 0
+                and boat2_top2 is not None and boat2_top2 >= 25.0
+                and course1_win_rate is not None and course1_win_rate >= 0.55
+                and escape_share is not None and escape_share >= 0.35
+                and boat2_ex_st is not None and boat2_ex_st <= 0.10
+                and boat2_ex_time is not None and boat2_ex_time > 0
+            ):
+                return None
+
+            valid = [v for v in ex_times.values() if v is not None and v > 0]
+            if not valid:
+                return None
+            ex_rank2 = 1 + sum(1 for v in valid if v < boat2_ex_time)
+            fastest_diff2 = boat2_ex_time - min(valid)
+            same_day_gain = (same_day_avg - boat2_ex_time) if same_day_avg is not None else None
+            venue_gain = (venue_avg - boat2_ex_time) if venue_avg is not None else None
+            any_gap = max(
+                same_day_gain if same_day_gain is not None else float("-inf"),
+                venue_gain if venue_gain is not None else float("-inf"),
+            )
+            if ex_rank2 > 1 or fastest_diff2 > 0.05 or any_gap < 0.08:
+                return None
+
+            return {
+                "level": "tokoname_12_exa",
+                "label": "常滑 1-2",
+                "recovery": 164.8,
+                "n": 25,
+                "bet": "2連単 1-2",
+                "rank": "exacta_niche",
+                "rank_label": "2連単ニッチ",
+                "rank_emoji": "2連",
+                "natl_1": None,
+                "local_1": None,
+                "is_reference": False,
+                "is_exacta_niche": True,
+                "exacta_niche_tag": "常滑 + 1コース勝率55%+ + 逃げshare35%+ + 2号艇2連対率25%+ + 展示ST0.10以下 + 展示最速級",
+                "exacta_niche_hit_rate": 44.0,
+                "exacta_niche_recovery": 164.8,
+                "tokoname_12_same_day_gain": round(same_day_gain, 3) if same_day_gain is not None else None,
+                "tokoname_12_venue_gain": round(venue_gain, 3) if venue_gain is not None else None,
+                "tokoname_12_course1_win_rate": round(course1_win_rate * 100, 1),
+                "tokoname_12_escape_share": round(escape_share * 100, 1),
+                "tokoname_12_ex_rank": ex_rank2,
+                "tokoname_12_fastest_diff": round(fastest_diff2, 3),
+                "is_display_confirmed": True,
+                "tetsuban_score": 6,
+                "tetsuban_label": "常滑12",
+            }
+
+        def _evaluate_tokoname_12_exacta_watch(ctx: dict | None):
+            if not ctx:
+                return None
+
+            def _to_float(value):
+                try:
+                    return float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _to_int(value):
+                try:
+                    return int(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            stadium = _to_int(ctx.get("stadium"))
+            n_female = _to_int(ctx.get("n_female")) or 0
+            boat2_top2 = _to_float(ctx.get("boat2_top2"))
+            course1_win_rate = _to_float(ctx.get("boat1_course1_win_rate"))
+            escape_share = _to_float(ctx.get("boat1_escape_share"))
+            boat2_ex_st = _to_float(ctx.get("ex_st"))
+            boat2_ex_time = _to_float(ctx.get("boat2_exhibition_time"))
+            same_day_avg = _to_float(ctx.get("boat2_same_day_avg_ex"))
+            venue_avg = _to_float(ctx.get("boat2_venue_avg_ex"))
+            ex_times = {
+                boat_no: _to_float(ctx.get(f"boat{boat_no}_exhibition_time"))
+                for boat_no in range(1, 7)
+            }
+
+            if not (
+                stadium == 8
+                and n_female == 0
+                and boat2_top2 is not None and boat2_top2 >= 25.0
+                and course1_win_rate is not None and course1_win_rate >= 0.55
+                and escape_share is not None and escape_share >= 0.35
+            ):
+                return None
+
+            has_exhibition = any(v is not None for v in [boat2_ex_st, boat2_ex_time, same_day_avg, venue_avg, *ex_times.values()])
+            display_confirmed = False
+            if boat2_ex_st is not None and boat2_ex_time is not None and boat2_ex_time > 0:
+                valid = [v for v in ex_times.values() if v is not None and v > 0]
+                if valid:
+                    ex_rank2 = 1 + sum(1 for v in valid if v < boat2_ex_time)
+                    fastest_diff2 = boat2_ex_time - min(valid)
+                    same_day_gain = (same_day_avg - boat2_ex_time) if same_day_avg is not None else None
+                    venue_gain = (venue_avg - boat2_ex_time) if venue_avg is not None else None
+                    any_gap = max(
+                        same_day_gain if same_day_gain is not None else float("-inf"),
+                        venue_gain if venue_gain is not None else float("-inf"),
+                    )
+                    display_confirmed = (
+                        boat2_ex_st <= 0.10
+                        and ex_rank2 <= 1
+                        and fastest_diff2 <= 0.05
+                        and any_gap >= 0.08
+                    )
+
+            return {
+                "level": "morning_watch_tokoname_12_exa",
+                "label": "朝監視 常滑1-2",
+                "recovery": 164.8,
+                "n": 25,
+                "bet": "2連単 1-2",
+                "rank": "exacta_niche",
+                "rank_label": "朝監視",
+                "rank_emoji": "朝監視",
+                "is_reference": True,
+                "is_morning": True,
+                "is_morning_watch": True,
+                "is_exacta_niche": True,
+                "watch_strategy_labels": ["朝監視 常滑1-2"],
+                "watch_strategy_bets": ["2連単 1-2"],
+                "watch_strategy_count": 1,
+                "is_display_confirmed": display_confirmed,
+                "is_after_exhibition_out": has_exhibition and not display_confirmed,
+                "tetsuban_score": 4,
+                "tetsuban_label": "朝監視 常滑12",
             }
 
         def _evaluate_tri124_132_trifecta_niche(ctx: dict | None):
@@ -6670,8 +6926,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pair_affinity=exacta_pair_affinity.get(rid),
                     grade=grade, weather=weather,
                 )
+                tokoname_12_exacta = _evaluate_tokoname_12_exacta(tokoname_12_signal_ctx.get(rid))
                 if exacta_niche:
                     l4 = exacta_niche
+                if tokoname_12_exacta:
+                    l4 = tokoname_12_exacta
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                 if ashiya_exacta:
                     l4 = ashiya_exacta
@@ -6703,6 +6962,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 l4 = _pick_best_market_signal(
                     l4,
                     exacta_niche,
+                    tokoname_12_exacta,
                     ashiya_exacta,
                     ashiya_4head_flow,
                     toda_42_flow,
@@ -6757,6 +7017,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         pair_affinity=exacta_pair_affinity.get(rid),
                         grade=grade, weather=weather,
                     )
+                    tokoname_12_watch = _evaluate_tokoname_12_exacta_watch(tokoname_12_signal_ctx.get(rid))
                     ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
                     ashiya_exacta_watch = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                     ashiya_4head_flow_watch = _evaluate_ashiya_4head_flow(ashiya_4head_flow_ctx.get(rid))
@@ -6815,6 +7076,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     morning_l4 = _pick_best_market_signal(
                         morning_l4,
                         exacta_niche_watch,
+                        tokoname_12_watch,
                         ashiya_watch,
                         ashiya_exacta_watch,
                         ashiya_4head_flow_watch,
@@ -6848,30 +7110,34 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             if n_female == 6:
                                 morning_l4["is_venus"] = True
                                 morning_l4["is_female_present"] = True
-                                morning_l4["label"] = "🌸 Venus L4"
+                                morning_l4["label"] = "?? Venus L4"
                                 morning_l4["recovery"] = 175.5
                                 morning_l4["n"] = 502
                             else:
-                                morning_l4["is_female_present"] = True
-                                morning_l4["is_reference"] = True
-                                morning_l4["label"] = f"🚫{morning_l4['label']} (女性{n_female}名混在)"
-                        signals.append({
-                            "race_id": rid,
-                            "tier": "morning_l4",
-                            "min_payout": None,
-                            "source": "morning_predict",
-                            "expected_roi": (morning_l4["recovery"] - 100) / 100,
-                            "title": morning_l4["label"],
-                            "is_positive_ev": morning_l4["recovery"] >= 130,
-                            "weather": weather,
-                            "weather_label": WEATHER_LABEL.get(weather),
-                            "is_rain": is_rain,
-                            "rain_exclusion_active": rain_exclusion_active,
-                            "is_rain_excluded": is_rain_excluded,
-                            "n_female": n_female,
-                            "is_female_present": is_female_present,
-                            "l4": morning_l4,
-                        })
+                                if morning_l4.get("level") == "morning_watch_omura_123_tri":
+                                    morning_l4 = None
+                                else:
+                                    morning_l4["is_female_present"] = True
+                                    morning_l4["is_reference"] = True
+                                    morning_l4["label"] = f"??{morning_l4['label']} (??{n_female}???)"
+                        if morning_l4:
+                            signals.append({
+                                "race_id": rid,
+                                "tier": "morning_l4",
+                                "min_payout": None,
+                                "source": "morning_predict",
+                                "expected_roi": (morning_l4["recovery"] - 100) / 100,
+                                "title": morning_l4["label"],
+                                "is_positive_ev": morning_l4["recovery"] >= 130,
+                                "weather": weather,
+                                "weather_label": WEATHER_LABEL.get(weather),
+                                "is_rain": is_rain,
+                                "rain_exclusion_active": rain_exclusion_active,
+                                "is_rain_excluded": is_rain_excluded,
+                                "n_female": n_female,
+                                "is_female_present": is_female_present,
+                                "l4": morning_l4,
+                            })
                     continue
 
                 if l4 is not None and not l4.get("is_exacta_niche") and not l4.get("is_win_niche") and not l4.get("is_trifecta_niche"):
@@ -7014,6 +7280,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pair_affinity=exacta_pair_affinity.get(rid),
                     grade=grade, weather=weather,
                 )
+                tokoname_12_watch = _evaluate_tokoname_12_exacta_watch(tokoname_12_signal_ctx.get(rid))
                 ashiya_watch = _evaluate_ashiya_boat4_watch(ashiya_boat4_lift.get(rid))
                 ashiya_exacta = _evaluate_ashiya_boat4_lift(ashiya_boat4_lift.get(rid))
                 ashiya_4head_flow_watch = _evaluate_ashiya_4head_flow(ashiya_4head_flow_ctx.get(rid))
@@ -7072,6 +7339,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 morning_l4 = _pick_best_market_signal(
                     morning_l4,
                     exacta_niche,
+                    tokoname_12_watch,
                     ashiya_watch,
                     ashiya_exacta,
                     ashiya_4head_flow_watch,
@@ -7112,7 +7380,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             morning_l4["is_female_present"] = True
                             morning_l4["is_reference"] = True
                             morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
-                    signals.append({
+                    if morning_l4:
+                        signals.append({
                         "race_id": rid,
                         "tier": "morning_l4",
                         "min_payout": None,
@@ -7140,10 +7409,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         }
         _write_json_cache(cache_key, payload)
         return jsonify(payload)
-
-    # =====================================================
-    # 会員プラン: L4 戦略 日別 ROI ダッシュボード
-    # =====================================================
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
     STRICT_ODDS_DAILY_START = "2026-05-30"
@@ -10033,6 +10298,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "ashiya_4head_flow_tri",
             "hamanako_14_exa",
             "omura_14_exa",
+            "tokoname_12_exa",
             "general_c_tri",
         )
 
@@ -10070,7 +10336,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
+                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "tokoname_12_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tsu_124_tri", "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
@@ -10183,7 +10449,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "prime_tri", "r12_tri", "gen_r12_tri",
                     "toda_7r_tri", "mid_132_tri",
                     "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
+                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "tokoname_12_exa", "kiryu_win2", "general_c_tri",
                     "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
                     "tsu_124_tri", "omura_123_tri", "omura_132_tri",
                     "miyajima_tide_132_tri", "gamagori_tide_132_tri",
@@ -10215,6 +10481,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "ashiya_4head_flow_tri",
             "hamanako_14_exa",
             "omura_14_exa",
+            "tokoname_12_exa",
             "general_c_tri",
         )
         try:
@@ -10329,7 +10596,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_total_keys = (
             "win", "exa", "tri", "gen_f1_tri", "gen_200_tri",
             "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri",
-            "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
+            "hamanako_14_exa", "omura_14_exa", "tokoname_12_exa", "kiryu_win2", "general_c_tri",
             "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
             "omura_123_tri", "omura_132_tri",
             "miyajima_tide_132_tri", "gamagori_tide_132_tri",

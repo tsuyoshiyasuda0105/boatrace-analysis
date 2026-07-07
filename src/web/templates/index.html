@@ -344,7 +344,6 @@
             || l4Data?.is_exacta_niche
             || l4Data?.is_ashiya_boat4_watch
             || l4Data?.is_ashiya_boat4_lift
-            || l4Data?.is_miyajima_boat4_watch
             || l4Data?.is_omura_123
             || l4Data?.is_omura_132
             || l4Data?.is_portfolio_strong
@@ -368,8 +367,11 @@
             'amagasaki_143_tri',
             'trifecta_niche_143_a12',
             'morning_watch_tri143_a12',
+            'exacta_niche_amagasaki_motor',
             'general_c_tri',
             'morning_watch_general_c_tri',
+            'l4_general_200',
+            'morning_watch_l4_general_200',
             'gamagori_123_general_practical_tri',
             'gamagori_13_exa',
             'exacta_niche_ashiya_boat4_lift',
@@ -406,8 +408,11 @@
             'l4-amagasaki_143_tri',
             'l4-trifecta_niche_143_a12',
             'l4-morning_watch_tri143_a12',
+            'l4-exacta_niche_amagasaki_motor',
             'l4-general_c_tri',
             'l4-morning_watch_general_c_tri',
+            'l4-l4_general_200',
+            'l4-morning_watch_l4_general_200',
             'l4-gamagori_123_general_practical_tri',
             'l4-gamagori_13_exa',
             'l4-exacta_niche_ashiya_boat4_lift',
@@ -473,7 +478,6 @@
                   if (sig.l4.is_exacta_niche) l4Badge.className += ' l4-exacta-niche';
                   if (sig.l4.is_trifecta_niche) l4Badge.className += ' l4-trifecta-niche';
                   if (sig.l4.is_win_niche) l4Badge.className += ' l4-win-niche';
-                  if (sig.l4.is_miyajima_boat4_watch) l4Badge.className += ' l4-miyajima-boat4-watch';
                   if (sig.l4.is_exhibition_st_out) l4Badge.className += ' l4-exhibition-st-out';
                   if (sig.l4.is_ashiya_boat4_watch) l4Badge.className += ' l4-ashiya-watch';
                   if (sig.l4.ashiya_watch_ready) l4Badge.className += ' l4-ashiya-watch-ready';
@@ -557,7 +561,7 @@
                       title += ` | 展示ST ${Number(sig.l4.ashiya_boat4_ex_st).toFixed(2)}`;
                     }
                   }
-                  if (sig.l4.is_miyajima_boat4_watch) {
+                  if (false && sig.l4.is_miyajima_boat4_watch) {
                     title = `${sig.l4.label} | 宮島4コースまくり型 | 想定回収率 ${l4Rec}% (n=${l4N})`
                           + ` | 的中率 ${sig.l4.miyajima_boat4_hit_rate}%`
                           + ` | 買い目: ${sig.l4.bet || ''}`
@@ -617,7 +621,7 @@
                   const ashiyaWatchSuffix = sig.l4.is_ashiya_boat4_watch
                     ? ` ST${Number(sig.l4.ashiya_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.ashiya_boat4_course4_win_rate || 0).toFixed(1)}%`
                     : '';
-                  const miyajimaWatchSuffix = sig.l4.is_miyajima_boat4_watch
+                  const miyajimaWatchSuffix = false && sig.l4.is_miyajima_boat4_watch
                     ? ` ST${Number(sig.l4.miyajima_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.miyajima_boat4_course4_win_rate || 0).toFixed(1)}%`
                     : '';
                   const general200 = sig.l4.is_l4_general_200 ? ' 一般200' : '';
@@ -1256,7 +1260,7 @@
             const isExhibitionStOut = Boolean(l4Data?.is_exhibition_st_out) || classList.includes('l4-exhibition-st-out');
             const isAfterExhibitionOut = Boolean(l4Data?.is_after_exhibition_out) || classList.includes('l4-after-exhibition-out');
             const isDisplayConfirmed = Boolean(l4Data?.is_display_confirmed) || classList.includes('l4-display-confirmed');
-            if (isExhibitionStOut || isAfterExhibitionOut) isMorningWatch = false;
+            if (isDisplayConfirmed || isExhibitionStOut || isAfterExhibitionOut) isMorningWatch = false;
             const isPortfolioStrong = Boolean(l4Data?.is_portfolio_strong)
               || classList.includes('l4-portfolio_strong')
               || Boolean(el.querySelector('.portfolio-strong-badge'));
@@ -1271,8 +1275,8 @@
                 || l4Data?.level === 'morning_general'
                 || l4Data?.level === 'morning_default'
               );
-            if (isFemaleExclusion || isGeneralReference) return;
-            const isAnyExclusion = isOddsMismatch || isRainExclusion || isExhibitionStOut || isAfterExhibitionOut || isMorningOutOfRange || isMorningWatch;
+            if (isGeneralReference) return;
+            const isAnyExclusion = isOddsMismatch || isRainExclusion || isFemaleExclusion || isExhibitionStOut || isAfterExhibitionOut || isMorningOutOfRange || isMorningWatch;
             // 採用対象の手法は、展示後圏外や朝監視の状態でも一覧から落とさない。
             // ここで落とすと「さっきまでグレー表示されていたものが消える」挙動になる。
             const l4Actionable = true;
@@ -1412,7 +1416,7 @@
               }
               const pickStrategyHtml = strategyHtmlParts.join('');
 
-              if (u.isMorningWatch) rowClass += ' is-watch';
+              if (u.isMorningWatch && !u.isFemaleExclusion) rowClass += ' is-watch';
               if (u.isPortfolioStrong) rowClass += ' is-portfolio-strong';
               if (!u.isMorningWatch && !u.isPortfolioStrong && u.isAnyExclusion) {
                 rowClass += ' is-odds-mismatch';
@@ -1421,7 +1425,11 @@
               let excEmoji = 'WAIT';
               let excShort = '\u6761\u4ef6\u5f85\u3061';
               let excTitle = '\u76f4\u524d\u6761\u4ef6\u3084\u30aa\u30c3\u30ba\u5f85\u3061\u3067\u3059';
-              if (u.isMorningWatch) {
+              if (u.isFemaleExclusion) {
+                excEmoji = 'FEM';
+                excShort = '\u5973\u6027\u6df7\u5408';
+                excTitle = '\u5973\u6027\u6df7\u5408\u30ec\u30fc\u30b9\u306e\u305f\u3081\u672c\u65e5\u306f\u76e3\u8996\u306e\u307f\u3067\u3059';
+              } else if (u.isMorningWatch) {
                 excEmoji = 'MON';
                 excShort = '\u671d\u5019\u88dc';
                 excTitle = '\u5c55\u793a\u524d\u306e\u76e3\u8996\u5bfe\u8c61\u3067\u3059\u3002\u76f4\u524d\u6761\u4ef6\u304c\u63c3\u3063\u305f\u6642\u70b9\u3067\u5019\u88dc\u5316\u3057\u307e\u3059\u3002';
