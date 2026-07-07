@@ -1028,6 +1028,7 @@
               isRainExclusion = isRef && /雨除外/.test(labelText);
               isFemaleExclusion = isRef && /女性\d+名除外/.test(labelText);
               isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch
+                && !isDisplayConfirmed
                 && !isOddsMismatch && !isRainExclusion && !isFemaleExclusion;
               const isGeneralReference = isRef && isMorningBadge && !isMorningWatch
                 && (l4.classList.contains('l4-morning_general')
@@ -1267,7 +1268,7 @@
             const isOddsMismatch = isRef && /\(想定払/.test(labelText);
             const isRainExclusion = Boolean(l4Data?.rain_exclusion_active) || (isRef && /雨除外/.test(labelText));
             const isFemaleExclusion = Boolean(l4Data?.is_female_present) && isRef && !Boolean(l4Data?.is_venus);
-            const isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch && !isExhibitionStOut && !isAfterExhibitionOut;
+            const isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch && !isExhibitionStOut && !isAfterExhibitionOut && !isDisplayConfirmed;
             const isGeneralReference = isRef && isMorningBadge && !isMorningWatch
               && (
                 classList.includes('l4-morning_general')
