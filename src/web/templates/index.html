@@ -1276,8 +1276,9 @@
                 || l4Data?.level === 'morning_general'
                 || l4Data?.level === 'morning_default'
               );
-            if (isGeneralReference) return;
-            const isAnyExclusion = isOddsMismatch || isRainExclusion || isFemaleExclusion || isExhibitionStOut || isAfterExhibitionOut || isMorningOutOfRange || isMorningWatch;
+            const shouldHideFromRoiList = isGeneralReference || isFemaleExclusion;
+            if (shouldHideFromRoiList) return;
+            const isAnyExclusion = isOddsMismatch || isRainExclusion || isExhibitionStOut || isAfterExhibitionOut || isMorningOutOfRange || isMorningWatch;
             // 採用対象の手法は、展示後圏外や朝監視の状態でも一覧から落とさない。
             // ここで落とすと「さっきまでグレー表示されていたものが消える」挙動になる。
             const l4Actionable = true;
