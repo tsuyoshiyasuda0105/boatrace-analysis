@@ -7110,7 +7110,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             if n_female == 6:
                                 morning_l4["is_venus"] = True
                                 morning_l4["is_female_present"] = True
-                                morning_l4["label"] = "?? Venus L4"
+                                morning_l4["label"] = "🌸 Venus L4"
                                 morning_l4["recovery"] = 175.5
                                 morning_l4["n"] = 502
                             else:
@@ -7119,7 +7119,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 else:
                                     morning_l4["is_female_present"] = True
                                     morning_l4["is_reference"] = True
-                                    morning_l4["label"] = f"??{morning_l4['label']} (??{n_female}???)"
+                                    morning_l4["label"] = f"🚫{morning_l4['label']} (女性{n_female}名混在)"
                         if morning_l4:
                             signals.append({
                                 "race_id": rid,
@@ -7377,27 +7377,30 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             morning_l4["recovery"] = 175.5
                             morning_l4["n"] = 502
                         else:
-                            morning_l4["is_female_present"] = True
-                            morning_l4["is_reference"] = True
-                            morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
+                            if morning_l4.get("level") == "morning_watch_omura_123_tri":
+                                morning_l4 = None
+                            else:
+                                morning_l4["is_female_present"] = True
+                                morning_l4["is_reference"] = True
+                                morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
                     if morning_l4:
                         signals.append({
-                        "race_id": rid,
-                        "tier": "morning_l4",
-                        "min_payout": None,
-                        "source": "morning_predict",
-                        "expected_roi": (morning_l4["recovery"] - 100) / 100,
-                        "title": morning_l4["label"],
-                        "is_positive_ev": morning_l4["recovery"] >= 130,
-                        "weather": weather,
-                        "weather_label": WEATHER_LABEL.get(weather),
-                        "is_rain": is_rain,
-                        "rain_exclusion_active": rain_exclusion_active,
-                        "is_rain_excluded": is_rain_excluded,
-                        "n_female": n_female,
-                        "is_female_present": is_female_present,
-                        "l4": morning_l4,
-                    })
+                            "race_id": rid,
+                            "tier": "morning_l4",
+                            "min_payout": None,
+                            "source": "morning_predict",
+                            "expected_roi": (morning_l4["recovery"] - 100) / 100,
+                            "title": morning_l4["label"],
+                            "is_positive_ev": morning_l4["recovery"] >= 130,
+                            "weather": weather,
+                            "weather_label": WEATHER_LABEL.get(weather),
+                            "is_rain": is_rain,
+                            "rain_exclusion_active": rain_exclusion_active,
+                            "is_rain_excluded": is_rain_excluded,
+                            "n_female": n_female,
+                            "is_female_present": is_female_present,
+                            "l4": morning_l4,
+                        })
 
         payload = {
             "date": target_date,
