@@ -7444,7 +7444,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     MARUGAME_TIDE_123_TRI_CACHE_VERSION = "marugame_tide_123_tri_v1"
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
     TODA_42_FLOW_TRI_CACHE_VERSION = "toda_42_flow_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v11"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v12"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         "adopted_daily_select_v8",
         "adopted_daily_select_v9",
