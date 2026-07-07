@@ -30,6 +30,8 @@ services:
         sync: false
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+      - key: BOATRACE_DB_LIMIT_MB
+        value: "8192"
 
   - type: cron
     name: boatrace-odds-cron
@@ -53,6 +55,8 @@ services:
         value: "30"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+      - key: BOATRACE_DB_LIMIT_MB
+        value: "8192"
 
   - type: cron
     name: boatrace-regular-cron
@@ -76,6 +80,8 @@ services:
         value: "30"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+      - key: BOATRACE_DB_LIMIT_MB
+        value: "8192"
 
   - type: cron
     name: boatrace-roi-prewarm-cron
@@ -99,3 +105,5 @@ services:
         value: "30"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+      - key: BOATRACE_DB_LIMIT_MB
+        value: "8192"

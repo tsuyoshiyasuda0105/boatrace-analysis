@@ -229,6 +229,20 @@ def run_tides(now: datetime) -> bool:
     return run_py(args, timeout=1800)
 
 
+def run_db_maintenance() -> bool:
+    # Supabase keeps only recent operational odds data.
+    # Historical full archives remain on local SQLite / backfill workflows.
+    return run_py(
+        [
+            "scripts/db_size_check.py",
+            "--auto",
+            "--keep-days", "30",
+            "--keep-raw-days", "90",
+        ],
+        timeout=1800,
+    )
+
+
 def run_nightly(now: datetime) -> bool:
     today = now.date().isoformat()
     tomorrow = (now.date() + timedelta(days=1)).isoformat()
@@ -243,6 +257,7 @@ def run_nightly(now: datetime) -> bool:
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
     ok &= run_py(["scripts/prewarm_strategy_pages.py"], timeout=1800)
+    ok &= run_db_maintenance()
     return ok
 
 

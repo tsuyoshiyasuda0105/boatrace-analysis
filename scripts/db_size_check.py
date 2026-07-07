@@ -67,7 +67,8 @@ def total_size_postgres(conn) -> int:
 
 def cleanup_old_odds(conn, is_pg: bool, keep_days: int = 60,
                      dry_run: bool = False) -> dict:
-    """確定済レース × keep_days 日以前の odds_trifecta を削除。
+    """途中オッズのみ、keep_days 日以前の odds_trifecta を削除。
+    final オッズ (`is_final=1` または `snapshot_label='final'`) は保持する。
     現在進行中のレース (race_date >= 今日) は削除対象外。
 
     返り値: {'deleted_rows': N, 'cutoff_date': 'YYYY-MM-DD'}
@@ -79,6 +80,8 @@ def cleanup_old_odds(conn, is_pg: bool, keep_days: int = 60,
          WHERE o.race_id IN (
             SELECT race_id FROM races WHERE race_date < ?
          )
+           AND COALESCE(o.is_final, 0) = 0
+           AND COALESCE(o.snapshot_label, '') <> 'final'
     """
     cur = conn.execute(count_sql, (cutoff,))
     n_target = cur.fetchone()[0]
@@ -97,6 +100,8 @@ def cleanup_old_odds(conn, is_pg: bool, keep_days: int = 60,
          WHERE race_id IN (
             SELECT race_id FROM races WHERE race_date < ?
          )
+           AND COALESCE(is_final, 0) = 0
+           AND COALESCE(snapshot_label, '') <> 'final'
     """
     conn.execute(del_sql, (cutoff,))
     conn.commit()
@@ -255,15 +260,18 @@ def update_system_status(conn, total_bytes: int, sizes: list[dict],
     """システム状態テーブルに DB 使用量を記録"""
     today_iso = date.today().isoformat()
     total_mb = total_bytes / 1024 / 1024
-    # Supabase Free 500MB
-    LIMIT_MB = 500
-    pct = total_mb / LIMIT_MB * 100
-    if total_mb >= 480:
-        status, msg = "error", f"DB 容量逼迫: {total_mb:.0f} MB / 500 MB ({pct:.0f}%)"
-    elif total_mb >= 400:
-        status, msg = "warning", f"DB 容量 80% 超: {total_mb:.0f} MB / 500 MB ({pct:.0f}%)"
+    # Default was Supabase Free 500MB, but current deployments may run on a larger plan.
+    # Keep the threshold configurable from env so alerts match the real project capacity.
+    LIMIT_MB = float(os.getenv("BOATRACE_DB_LIMIT_MB", "500"))
+    pct = total_mb / LIMIT_MB * 100 if LIMIT_MB > 0 else 0
+    error_mb = LIMIT_MB * 0.96
+    warn_mb = LIMIT_MB * 0.80
+    if total_mb >= error_mb:
+        status, msg = "error", f"DB 容量逼迫: {total_mb:.0f} MB / {LIMIT_MB:.0f} MB ({pct:.0f}%)"
+    elif total_mb >= warn_mb:
+        status, msg = "warning", f"DB 容量 80% 超: {total_mb:.0f} MB / {LIMIT_MB:.0f} MB ({pct:.0f}%)"
     else:
-        status, msg = "ok", f"DB 容量 {total_mb:.0f} MB / 500 MB ({pct:.0f}%)"
+        status, msg = "ok", f"DB 容量 {total_mb:.0f} MB / {LIMIT_MB:.0f} MB ({pct:.0f}%)"
     detail = {
         "total_bytes": total_bytes, "total_mb": round(total_mb, 1),
         "limit_mb": LIMIT_MB, "pct": round(pct, 1),
