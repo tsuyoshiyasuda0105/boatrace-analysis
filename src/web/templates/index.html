@@ -1255,8 +1255,10 @@
               && !(l4Data?.is_after_exhibition_out || l4?.classList?.contains('l4-after-exhibition-out'));
           }
 
-          items.forEach(el => {
-            const sig = getRaceSignal(el.dataset.raceId);
+          const raceItemMap = getRaceItemMap();
+          Object.entries(marketSignalsCache || {}).forEach(([raceId, sig]) => {
+            const el = raceItemMap.get(raceId);
+            if (!el || !sig || typeof sig !== 'object') return;
             const l4Data = sig && sig.l4 ? sig.l4 : null;
             const l4 = el.querySelector('.l4-badge');
             if (!l4 && !l4Data) return;
