@@ -1221,8 +1221,26 @@
           const isMorningWatch = Boolean(l4Data?.is_morning_watch)
             || level.startsWith('morning_watch_')
             || classList.some((cls) => cls.startsWith('l4-morning_watch_'));
-          if (isMorningWatch) return 'preconfirmed';
-          return 'waiting';
+          if (!isMorningWatch) return 'waiting';
+
+          const displayOrSameDayWatchLevels = new Set([
+            'morning_watch_boat3_multi',
+            'morning_watch_tokoname_12_exa',
+            'morning_watch_tri143_a12',
+            'morning_watch_general_c_tri',
+            'morning_watch_omura_123_tri',
+            'morning_watch_ashiya_boat4_lift',
+          ]);
+          const isDisplayResolved = Boolean(l4Data?.is_display_confirmed)
+            || Boolean(l4Data?.is_after_exhibition_out)
+            || Boolean(l4Data?.is_exhibition_st_out)
+            || classList.includes('l4-display-confirmed')
+            || classList.includes('l4-after-exhibition-out')
+            || classList.includes('l4-exhibition-st-out');
+          if (displayOrSameDayWatchLevels.has(level) || isDisplayResolved) {
+            return 'waiting';
+          }
+          return 'preconfirmed';
         }
 
         
