@@ -203,6 +203,28 @@
             <tbody id="todays-picks-waiting-tbody"></tbody>
           </table>
         </section>
+        <section class="todays-picks-group" id="todays-picks-closed-panel">
+          <h4>本日終了した該当レース</h4>
+          <p class="todays-picks-subhint">本日中に該当したレースです。締切・終了後もグレー表示で残します。</p>
+          <table class="todays-picks-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>締切</th>
+                <th>残り</th>
+                <th>ランク</th>
+                <th>会場 R</th>
+                <th>候補</th>
+                <th>1号艇</th>
+                <th>回収</th>
+                <th class="pick-odds-head">1-2-3 推移 (T-5 → T-1)</th>
+                <th></th>
+                <th class="pick-vote-head">投票</th>
+              </tr>
+            </thead>
+            <tbody id="todays-picks-closed-tbody"></tbody>
+          </table>
+        </section>
       </div>
       <p class="todays-picks-footer">
         <small>本サービスは投資助言ではありません。最終判断はご自身で。</small>
@@ -1199,10 +1221,12 @@
           const panel = document.getElementById('todays-picks-panel');
           const preconfirmedTbody = document.getElementById('todays-picks-preconfirmed-tbody');
           const waitingTbody = document.getElementById('todays-picks-waiting-tbody');
+          const closedTbody = document.getElementById('todays-picks-closed-tbody');
           const preconfirmedPanel = document.getElementById('todays-picks-preconfirmed-panel');
           const waitingPanel = document.getElementById('todays-picks-waiting-panel');
+          const closedPanel = document.getElementById('todays-picks-closed-panel');
           
-          if (!panel || !preconfirmedTbody || !waitingTbody || !preconfirmedPanel || !waitingPanel) return;
+          if (!panel || !preconfirmedTbody || !waitingTbody || !closedTbody || !preconfirmedPanel || !waitingPanel || !closedPanel) return;
           
           const now = new Date();
           const renderMinuteBucket = Math.floor(now.getTime() / 60000);
@@ -1299,16 +1323,20 @@
           panel.hidden = false;
           preconfirmedTbody.innerHTML = '';
           waitingTbody.innerHTML = '';
+          closedTbody.innerHTML = '';
           warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
 
           const activePicks = picks.filter(p => !p.isBoat3WatchOnly);
-          const preconfirmedPicks = activePicks.filter(p => p.timingBucket === 'preconfirmed');
-          const waitingPicks = activePicks.filter(p => p.timingBucket !== 'preconfirmed');
+          const openPicks = activePicks.filter(p => !p.isClosed);
+          const closedPicks = activePicks.filter(p => p.isClosed);
+          const preconfirmedPicks = openPicks.filter(p => p.timingBucket === 'preconfirmed');
+          const waitingPicks = openPicks.filter(p => p.timingBucket !== 'preconfirmed');
 
           preconfirmedPanel.hidden = false;
           waitingPanel.hidden = false;
+          closedPanel.hidden = false;
 
-          if (preconfirmedPicks.length === 0 && waitingPicks.length === 0) {
+          if (preconfirmedPicks.length === 0 && waitingPicks.length === 0 && closedPicks.length === 0) {
             const tr = document.createElement('tr');
             tr.className = 'todays-pick-row is-empty';
             tr.innerHTML = '<td colspan="11" class="pick-empty">該当候補はありません</td>';
@@ -1337,7 +1365,7 @@
               const rid = u.el.dataset.raceId || '';
               const hh = String(u.closedAt.getHours()).padStart(2, '0');
               const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
-              const tilStr = u.isClosed ? '\u6761\u4ef6\u5f85\u3061' : fmtTimeTil(u.minutesUntil);
+              const tilStr = u.isClosed ? '締切済' : fmtTimeTil(u.minutesUntil);
               let rowClass = 'todays-pick-row';
               if (u.isClosed) rowClass += ' is-closed';
               else if (idx === firstUpcomingIdx) rowClass += ' is-next';
@@ -1468,7 +1496,7 @@
                 tr.innerHTML = `
                   <td class="pick-idx">${idx + 1}</td>
                   <td class="pick-time">${hh}:${mm}</td>
-                  <td class="pick-til">${u.isClosed ? '\u6761\u4ef6\u5f85\u3061' : fmtTimeTil(u.minutesUntil)}</td>
+                  <td class="pick-til">${u.isClosed ? '締切済' : fmtTimeTil(u.minutesUntil)}</td>
                   <td class="pick-rank">\u5019\u88dc</td>
                   <td class="pick-place"><strong>${stadium}</strong> ${rno}R</td>
                   <td class="pick-type">${u?.l4Data?.label || '\u76e3\u8996\u4e2d'}</td>
@@ -1485,6 +1513,7 @@
 
           renderPickRows(preconfirmedTbody, preconfirmedPicks);
           renderPickRows(waitingTbody, waitingPicks);
+          renderPickRows(closedTbody, closedPicks);
         }
 
         updateNextRaces();
