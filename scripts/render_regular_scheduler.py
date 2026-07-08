@@ -216,6 +216,22 @@ def run_hourly(now: datetime) -> bool:
     return ok
 
 
+def run_tide_self_heal(now: datetime) -> bool:
+    """5分周期の本体ループでも潮欠損を補修する。
+
+    朝バッチや毎時バッチが何らかの理由で取りこぼしても、
+    race が投入済みで race_tides だけ欠けているケースを拾い直す。
+    """
+    try:
+        if tide_refresh_needed(now.date().isoformat()):
+            print("[self-heal] tide rows missing -> rerun import", flush=True)
+            return run_tides(now)
+    except Exception as exc:
+        print(f"[self-heal] tide check failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    return True
+
+
 def run_tides(now: datetime) -> bool:
     year_from = now.year
     year_to = (now.date() + timedelta(days=1)).year
@@ -289,6 +305,10 @@ def main() -> int:
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
         run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
+
+    # Self-heal tide rows on every loop so missing imports do not survive until the next hour.
+    if 6 <= now.hour <= 23:
+        run_tide_self_heal(now)
 
     # Hourly summaries/health checks near the top of the hour.
     if now.minute < 5 and 9 <= now.hour <= 23:
