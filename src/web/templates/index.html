@@ -356,8 +356,7 @@
             || l4Data?.is_portfolio_strong
           );
           if (isOfficialStrategy) return false;
-          return ['SG', 'G1', 'G2', 'G3', 'L4_GENERAL_200'].includes(level)
-            || Boolean(l4Data?.is_l4_general_200)
+          return ['SG', 'G1', 'G2', 'G3'].includes(level)
             || /\bL4\s+(?:SG|G[123])/.test(text);
         }
 
@@ -376,8 +375,6 @@
             'morning_watch_tri143_a12',
             'general_c_tri',
             'morning_watch_general_c_tri',
-            'l4_general_200',
-            'morning_watch_l4_general_200',
             'gamagori_123_general_practical_tri',
             'gamagori_13_exa',
             'exacta_niche_ashiya_boat4_lift',
@@ -416,8 +413,6 @@
             'l4-morning_watch_tri143_a12',
             'l4-general_c_tri',
             'l4-morning_watch_general_c_tri',
-            'l4-l4_general_200',
-            'l4-morning_watch_l4_general_200',
             'l4-gamagori_123_general_practical_tri',
             'l4-gamagori_13_exa',
             'l4-exacta_niche_ashiya_boat4_lift',
@@ -629,8 +624,7 @@
                   const miyajimaWatchSuffix = false && sig.l4.is_miyajima_boat4_watch
                     ? ` ST${Number(sig.l4.miyajima_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.miyajima_boat4_course4_win_rate || 0).toFixed(1)}%`
                     : '';
-                  const general200 = sig.l4.is_l4_general_200 ? ' 一般200' : '';
-                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${portfolio}${general200}${exacta}${winNiche}`;
+                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${portfolio}${exacta}${winNiche}`;
                   item.appendChild(l4Badge);
                   if (sig.l4.is_portfolio_strong) {
                     const ps = document.createElement('span');
@@ -1102,10 +1096,6 @@
               const isExactaNiche = l4Badge && l4Badge.classList.contains('l4-exacta-niche');
               const isTrifectaNiche = l4Badge && l4Badge.classList.contains('l4-trifecta-niche');
               const isMiyajimaBoat4 = l4Badge && l4Badge.classList.contains('l4-miyajima-boat4-watch');
-              const isGeneral200 = l4Badge && (
-                l4Badge.classList.contains('l4-l4_general_200')
-                || l4Badge.classList.contains('l4-morning_watch_l4_general_200')
-              );
               // 鉄板度バッジから score 取り出し
               const tbEl = u.el.querySelector('.tetsuban-badge');
               const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
@@ -1123,7 +1113,6 @@
               if (!isExactaNiche && u.isPortfolioStrong) rankLabel = '🔥 強監視 ' + rankLabel;
               if (isTrifectaNiche) rankLabel = '🎯 3連単';
               if (tbStars) rankLabel = tbStars + rankLabel;
-              if (isGeneral200) rankLabel = '強 一般200';
               const l4Title = l4Badge ? (l4Badge.title || l4Badge.textContent || '') : '';
               const recMatch = l4Title.match(/回収率\s*([\d.]+%)/);
               recovery = recMatch ? recMatch[1] : '-';
@@ -1363,11 +1352,6 @@
               const isPro = Boolean(l4Data?.is_pro) || (l4Badge && l4Badge.classList.contains('l4-pro'));
               const isExactaNiche = Boolean(l4Data?.is_exacta_niche) || (l4Badge && l4Badge.classList.contains('l4-exacta-niche'));
               const isTrifectaNiche = Boolean(l4Data?.is_trifecta_niche) || (l4Badge && l4Badge.classList.contains('l4-trifecta-niche'));
-              const isGeneral200 = Boolean(l4Data?.level === 'l4_general_200' || l4Data?.level === 'morning_watch_l4_general_200')
-                || (l4Badge && (
-                  l4Badge.classList.contains('l4-l4_general_200')
-                  || l4Badge.classList.contains('l4-morning_watch_l4_general_200')
-                ));
               const tbEl = u.el.querySelector('.tetsuban-badge');
               const tbScore = tbEl ? parseInt(Array.from(tbEl.classList)
                 .find(c => c.startsWith('tetsuban-'))?.replace('tetsuban-', '') || '0', 10) : 0;
@@ -1383,7 +1367,6 @@
               if (!isExactaNiche && isPro) rankLabel = `PRO ${rankLabel}`;
               if (!isExactaNiche && u.isPortfolioStrong) rankLabel = `\u5f37\u76e3\u8996 ${rankLabel}`;
               if (tbStars) rankLabel = `${tbStars} ${rankLabel}`;
-              if (isGeneral200) rankLabel = '\u4e00\u822c200';
 
               const synthesizedTitle = l4Data ? [
                 l4Data.label || '',

@@ -6910,14 +6910,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     n_female=n_female, target_date_iso=target_date,
                 )
                 l4 = _apply_l4_portfolio_strong(l4, l4_portfolio)
-                l4_general_200 = _evaluate_l4_general_200(
-                    stadium, grade, cls, natl_1=natl_1,
-                    boat2_top2=boat2_top2,
-                    boat2_exhibition_time=boat2_exhibition_time,
-                    boat3_exhibition_time=boat3_exhibition_time,
-                    ex_st=ex_st,
-                )
-                l4 = _apply_l4_general_200(l4, l4_general_200)
                 exacta_niche = _evaluate_exacta_niche(
                     stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
                     boat2_motor_top2=boat2_motor_top2, boat4_motor_top2=boat4_motor_top2,
@@ -6980,7 +6972,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     candidate_l4,
                     gamagori_adopted_signal,
                 )
-                l4 = _prefer_adopted_signal_over_general200(l4, general_c)
                 if non_exhibition_core and l4 and l4.get("level") == "general_c_tri":
                     l4 = non_exhibition_core
 
@@ -7001,14 +6992,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         n_female=n_female, target_date_iso=target_date,
                     )
                     morning_l4 = _apply_l4_portfolio_strong(morning_l4, l4_portfolio)
-                    l4_general_200 = _evaluate_l4_general_200(
-                        stadium, grade, cls, natl_1=natl_1,
-                        boat2_top2=boat2_top2,
-                        boat2_exhibition_time=None,
-                        boat3_exhibition_time=None,
-                        ex_st=None,
-                    )
-                    morning_l4 = _apply_l4_general_200(morning_l4, l4_general_200)
                     exacta_niche_watch = _evaluate_exacta_niche(
                         stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
                         boat2_motor_top2=boat2_motor_top2, boat4_motor_top2=boat4_motor_top2,
@@ -7094,7 +7077,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         candidate_l4,
                         gamagori_watch,
                     )
-                    morning_l4 = _prefer_adopted_signal_over_general200(morning_l4, general_c_watch)
                     if morning_l4:
                         if is_rain_excluded and (
                             (not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche") and not morning_l4.get("is_trifecta_niche"))
@@ -7177,14 +7159,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         )
                         l4 = morning_l4
                         l4 = _apply_l4_portfolio_strong(l4, l4_portfolio)
-                        l4_general_200 = _evaluate_l4_general_200(
-                            stadium, grade, cls, natl_1=natl_1,
-                            boat2_top2=boat2_top2,
-                            boat2_exhibition_time=boat2_exhibition_time,
-                            boat3_exhibition_time=boat3_exhibition_time,
-                            ex_st=ex_st,
-                        )
-                        l4 = _apply_l4_general_200(l4, l4_general_200)
 
                 # ☔ 雨レースは L4 候補から除外 (ROI 100% で break-even)
                 # ただし最近のレースで「これから ROI 100% かもしれない」と分かるよう
@@ -7264,14 +7238,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     n_female=n_female, target_date_iso=target_date,
                 )
                 morning_l4 = _apply_l4_portfolio_strong(morning_l4, l4_portfolio)
-                l4_general_200 = _evaluate_l4_general_200(
-                    stadium, grade, cls, natl_1=natl_1,
-                    boat2_top2=boat2_top2,
-                    boat2_exhibition_time=None,
-                    boat3_exhibition_time=None,
-                    ex_st=None,
-                )
-                morning_l4 = _apply_l4_general_200(morning_l4, l4_general_200)
                 exacta_niche = _evaluate_exacta_niche(
                     stadium, race_no_info, boat1_motor_top2=boat1_motor_top2,
                     boat2_motor_top2=boat2_motor_top2, boat4_motor_top2=boat4_motor_top2,
@@ -7357,7 +7323,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     candidate_l4,
                     gamagori_watch,
                 )
-                morning_l4 = _prefer_adopted_signal_over_general200(morning_l4, general_c_watch)
                 if morning_l4:
                     if is_rain_excluded and (
                         (not morning_l4.get("is_exacta_niche") and not morning_l4.get("is_win_niche") and not morning_l4.get("is_trifecta_niche"))
