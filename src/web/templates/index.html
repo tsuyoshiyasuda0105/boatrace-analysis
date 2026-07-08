@@ -1216,6 +1216,9 @@
         }
 
         function getStrategyTimingBucket(l4Data, l4El) {
+          if (l4Data?.timing_bucket === 'preconfirmed' || l4Data?.timing_bucket === 'waiting') {
+            return l4Data.timing_bucket;
+          }
           const level = String(l4Data?.level || '');
           const classList = Array.from(l4El?.classList || []);
           const isMorningWatch = Boolean(l4Data?.is_morning_watch)
