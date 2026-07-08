@@ -160,8 +160,8 @@
       </p>
       <div class="todays-picks-groups">
         <section class="todays-picks-group" id="todays-picks-preconfirmed-panel">
-          <h4>前日確定</h4>
-          <p class="todays-picks-subhint">展示や直前オッズを待たず、前日の時点で条件が固まっている候補です。</p>
+          <h4 id="todays-picks-preconfirmed-title">前日確定</h4>
+          <p class="todays-picks-subhint" id="todays-picks-preconfirmed-subhint">展示や直前オッズを待たず、前日の時点で条件が固まっている候補です。</p>
           <table class="todays-picks-table">
             <thead>
               <tr>
@@ -1223,6 +1223,8 @@
           const waitingTbody = document.getElementById('todays-picks-waiting-tbody');
           const closedTbody = document.getElementById('todays-picks-closed-tbody');
           const preconfirmedPanel = document.getElementById('todays-picks-preconfirmed-panel');
+          const preconfirmedTitle = document.getElementById('todays-picks-preconfirmed-title');
+          const preconfirmedSubhint = document.getElementById('todays-picks-preconfirmed-subhint');
           const waitingPanel = document.getElementById('todays-picks-waiting-panel');
           const closedPanel = document.getElementById('todays-picks-closed-panel');
           
@@ -1331,10 +1333,22 @@
           const closedPicks = activePicks.filter(p => p.isClosed);
           const preconfirmedPicks = openPicks.filter(p => p.timingBucket === 'preconfirmed');
           const waitingPicks = openPicks.filter(p => p.timingBucket !== 'preconfirmed');
+          const closedOnlyMode = preconfirmedPicks.length === 0 && waitingPicks.length === 0 && closedPicks.length > 0;
 
           preconfirmedPanel.hidden = false;
           waitingPanel.hidden = false;
           closedPanel.hidden = false;
+          if (preconfirmedTitle) {
+            preconfirmedTitle.textContent = closedOnlyMode ? '本日終了した該当レース' : '前日確定';
+          }
+          if (preconfirmedSubhint) {
+            preconfirmedSubhint.textContent = closedOnlyMode
+              ? '本日中に該当したレースです。締切・終了後もグレー表示で残します。'
+              : '展示や直前オッズを待たず、前日の時点で条件が固まっている候補です。';
+          }
+          if (closedOnlyMode) {
+            closedPanel.hidden = true;
+          }
 
           if (preconfirmedPicks.length === 0 && waitingPicks.length === 0 && closedPicks.length === 0) {
             const tr = document.createElement('tr');
@@ -1511,9 +1525,13 @@
             });
           }
 
-          renderPickRows(preconfirmedTbody, preconfirmedPicks);
+          renderPickRows(preconfirmedTbody, closedOnlyMode ? closedPicks : preconfirmedPicks);
           renderPickRows(waitingTbody, waitingPicks);
-          renderPickRows(closedTbody, closedPicks);
+          if (!closedOnlyMode) {
+            renderPickRows(closedTbody, closedPicks);
+          } else {
+            closedTbody.innerHTML = '';
+          }
         }
 
         updateNextRaces();
