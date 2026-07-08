@@ -158,28 +158,51 @@
         右側「1-2-3 推移」: <b>2h</b>=締切2時間前オッズ / T-5〜T-1=締切直前推移 (青=20倍未満, 赤=上昇, 黄=下落, 末尾%=2h→直近の変動)<br>
         </small>
       </p>
-      <div class="todays-picks-tabs" id="todays-picks-tabs" hidden>
-        <button type="button" class="todays-picks-tab is-active" data-picks-tab="main">ROIが高いレース</button>
-      </div>
-      <div class="todays-picks-tabpanel is-active" id="todays-picks-main-panel" data-picks-panel="main">
-      <table class="todays-picks-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>締切</th>
-            <th>残り</th>
-            <th>ランク</th>
-            <th>会場 R</th>
-            <th>候補</th>
-            <th>1号艇</th>
-            <th>回収</th>
-            <th class="pick-odds-head">1-2-3 推移 (T-5 → T-1)</th>
-            <th></th>
-            <th class="pick-vote-head">投票</th>
-          </tr>
-        </thead>
-        <tbody id="todays-picks-tbody"></tbody>
-      </table>
+      <div class="todays-picks-groups">
+        <section class="todays-picks-group" id="todays-picks-preconfirmed-panel">
+          <h4>前日確定</h4>
+          <p class="todays-picks-subhint">展示や直前オッズを待たず、前日の時点で条件が固まっている候補です。</p>
+          <table class="todays-picks-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>締切</th>
+                <th>残り</th>
+                <th>ランク</th>
+                <th>会場 R</th>
+                <th>候補</th>
+                <th>1号艇</th>
+                <th>回収</th>
+                <th class="pick-odds-head">1-2-3 推移 (T-5 → T-1)</th>
+                <th></th>
+                <th class="pick-vote-head">投票</th>
+              </tr>
+            </thead>
+            <tbody id="todays-picks-preconfirmed-tbody"></tbody>
+          </table>
+        </section>
+        <section class="todays-picks-group" id="todays-picks-waiting-panel">
+          <h4>当日条件待ち</h4>
+          <p class="todays-picks-subhint">展示・直前オッズ・潮位など、当日の情報で採用可否が決まる候補です。</p>
+          <table class="todays-picks-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>締切</th>
+                <th>残り</th>
+                <th>ランク</th>
+                <th>会場 R</th>
+                <th>候補</th>
+                <th>1号艇</th>
+                <th>回収</th>
+                <th class="pick-odds-head">1-2-3 推移 (T-5 → T-1)</th>
+                <th></th>
+                <th class="pick-vote-head">投票</th>
+              </tr>
+            </thead>
+            <tbody id="todays-picks-waiting-tbody"></tbody>
+          </table>
+        </section>
       </div>
       <p class="todays-picks-footer">
         <small>本サービスは投資助言ではありません。最終判断はご自身で。</small>
@@ -253,22 +276,6 @@
         let raceItemsCache = null;
         let raceItemMapCache = null;
         const BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
-        const TODAYS_PICKS_TAB_KEY = 'boatrace:todays-picks-tab';
-        let currentTodaysPicksTab = (() => {
-          try {
-            return window.sessionStorage.getItem(TODAYS_PICKS_TAB_KEY) || 'main';
-          } catch (e) {
-            return 'main';
-          }
-        })();
-        function persistTodaysPicksTab(tabName) {
-          currentTodaysPicksTab = tabName || 'main';
-          try {
-            window.sessionStorage.setItem(TODAYS_PICKS_TAB_KEY, currentTodaysPicksTab);
-          } catch (e) {
-            // ignore storage failures
-          }
-        }
         const warmRaceDetail = (raceId) => {
           if (!raceId || !window.BoatraceSpeed) return;
           window.BoatraceSpeed.prefetchUrl(`/race/${encodeURIComponent(raceId)}`);
@@ -985,8 +992,8 @@
         // 本日 L4 候補レース 時系列リスト (締切済も含む全件を表示)
         function renderTodaysPicksLegacyUnused() {
           const panel = document.getElementById('todays-picks-panel');
-          const tbody = document.getElementById('todays-picks-tbody');
-          if (!panel || !tbody) return;
+          const preconfirmedTbody = document.getElementById('todays-picks-preconfirmed-tbody');
+          if (!panel || !preconfirmedTbody) return;
           const now = new Date();
           // L4 バッジが付いている全レースを抽出 (締切前後問わず)
           // ただし is_reference=true (一般戦) は ROI 対象外なので除外する
@@ -1057,7 +1064,7 @@
           // 時系列順 (締切時刻昇順)
           picks.sort((a, b) => a.closedAt - b.closedAt);
           panel.hidden = false;
-          tbody.innerHTML = '';
+          preconfirmedTbody.innerHTML = '';
           warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
 
           // 該当なし表示 (loadMarketSignals 完了前 or 本当に無い日)
@@ -1065,13 +1072,14 @@
             const tr = document.createElement('tr');
             tr.className = 'todays-pick-row is-empty';
             tr.innerHTML = '<td colspan="11" class="pick-empty">該当候補なし (候補1・3・4 条件を満たすレースがありません or バッジ読込中)</td>';
-            tbody.appendChild(tr);
+            preconfirmedTbody.appendChild(tr);
             return;
           }
 
           // 「次のレース」 = まだ締切前の最初のレース
           const firstUpcomingIdx = picks.findIndex(p => !p.isClosed);
 
+          const targetBody = preconfirmedTbody;
           picks.forEach((u, idx) => {
             const stadium = u.el.dataset.stadiumName || '';
             const rno = u.el.dataset.raceNumber || '';
@@ -1192,7 +1200,7 @@
               <td class="pick-link"><a href="/race/${rid}">詳細→</a></td>
               <td class="pick-vote">${voteBtnHtml}</td>
             `;
-            tbody.appendChild(tr);
+            targetBody.appendChild(tr);
           });
         }
 
@@ -1200,16 +1208,16 @@
         
         function renderTodaysPicks() {
           const panel = document.getElementById('todays-picks-panel');
-          const tbody = document.getElementById('todays-picks-tbody');
-          const watchTbody = document.getElementById('todays-picks-boat3watch-tbody');
-          const tabs = document.getElementById('todays-picks-tabs');
-          const mainPanel = document.getElementById('todays-picks-main-panel');
-          const watchPanel = document.getElementById('todays-picks-boat3watch-panel');
-          if (!panel || !tbody || !tabs || !mainPanel) return;
-          const hasBoat3WatchPanel = Boolean(watchTbody && watchPanel);
+          const preconfirmedTbody = document.getElementById('todays-picks-preconfirmed-tbody');
+          const waitingTbody = document.getElementById('todays-picks-waiting-tbody');
+          const preconfirmedPanel = document.getElementById('todays-picks-preconfirmed-panel');
+          const waitingPanel = document.getElementById('todays-picks-waiting-panel');
+          
+          if (!panel || !preconfirmedTbody || !waitingTbody || !preconfirmedPanel || !waitingPanel) return;
+          
           const now = new Date();
           const renderMinuteBucket = Math.floor(now.getTime() / 60000);
-          const renderKey = `${marketSignalsDigest}|${odds123Digest}|${renderMinuteBucket}|${currentTodaysPicksTab}`;
+          const renderKey = `${marketSignalsDigest}|${odds123Digest}|${renderMinuteBucket}`;
           if (renderKey === lastTodaysPicksRenderKey) {
             return;
           }
@@ -1294,40 +1302,32 @@
               signal: sig,
               l4Data,
               isBoat3WatchOnly: isBoat3WatchSignal(l4, l4Data),
+              timingBucket: getStrategyTimingBucket(l4Data, l4),
             });
           });
 
           picks.sort((a, b) => a.closedAt - b.closedAt);
           panel.hidden = false;
-          tbody.innerHTML = '';
-          if (hasBoat3WatchPanel) {
-            watchTbody.innerHTML = '';
-          }
+          preconfirmedTbody.innerHTML = '';
+          waitingTbody.innerHTML = '';
           warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
 
-          const mainPicks = picks.filter(p => !p.isBoat3WatchOnly);
-          const boat3WatchPicks = picks.filter(p => p.isBoat3WatchOnly);
-          const desiredTab = hasBoat3WatchPanel ? currentTodaysPicksTab : 'main';
-          const activeTab = (hasBoat3WatchPanel && desiredTab === 'boat3watch' && boat3WatchPicks.length > 0)
-            ? 'boat3watch'
-            : 'main';
+          const activePicks = picks.filter(p => !p.isBoat3WatchOnly);
+          const preconfirmedPicks = activePicks.filter(p => p.timingBucket === 'preconfirmed');
+          const waitingPicks = activePicks.filter(p => p.timingBucket !== 'preconfirmed');
 
-          tabs.hidden = !hasBoat3WatchPanel || boat3WatchPicks.length === 0;
-          mainPanel.hidden = activeTab !== 'main';
-          mainPanel.classList.toggle('is-active', activeTab === 'main');
-          if (hasBoat3WatchPanel) {
-            watchPanel.hidden = boat3WatchPicks.length === 0 || activeTab !== 'boat3watch';
-            watchPanel.classList.toggle('is-active', activeTab === 'boat3watch');
-          }
-          tabs.querySelectorAll('.todays-picks-tab').forEach(btn => {
-            btn.classList.toggle('is-active', btn.dataset.picksTab === activeTab);
-          });
+          preconfirmedPanel.hidden = false;
+          waitingPanel.hidden = false;
 
-          if (mainPicks.length === 0 && boat3WatchPicks.length === 0) {
+          if (preconfirmedPicks.length === 0 && waitingPicks.length === 0) {
             const tr = document.createElement('tr');
             tr.className = 'todays-pick-row is-empty';
-            tr.innerHTML = '<td colspan="11" class="pick-empty">該当レースはありません</td>';
-            tbody.appendChild(tr);
+            tr.innerHTML = '<td colspan="11" class="pick-empty">該当候補はありません</td>';
+            preconfirmedTbody.appendChild(tr);
+            const tr2 = document.createElement('tr');
+            tr2.className = 'todays-pick-row is-empty';
+            tr2.innerHTML = '<td colspan="11" class="pick-empty">該当候補はありません</td>';
+            waitingTbody.appendChild(tr2);
             return;
           }
 
@@ -1500,32 +1500,11 @@
             });
           }
 
-          renderPickRows(tbody, hasBoat3WatchPanel ? mainPicks : picks);
-          if (hasBoat3WatchPanel) {
-            renderPickRows(watchTbody, boat3WatchPicks);
-          }
-        }
-
-        function setupTodaysPickTabs() {
-          const tabs = Array.from(document.querySelectorAll('.todays-picks-tab'));
-          const panels = Array.from(document.querySelectorAll('.todays-picks-tabpanel'));
-          if (!tabs.length || !panels.length) return;
-          tabs.forEach(btn => {
-            btn.addEventListener('click', () => {
-              const target = btn.dataset.picksTab;
-              persistTodaysPicksTab(target);
-              tabs.forEach(b => b.classList.toggle('is-active', b === btn));
-              panels.forEach(panel => {
-                const active = panel.dataset.picksPanel === target;
-                panel.classList.toggle('is-active', active);
-                panel.hidden = !active;
-              });
-            });
-          });
+          renderPickRows(preconfirmedTbody, preconfirmedPicks);
+          renderPickRows(waitingTbody, waitingPicks);
         }
 
         updateNextRaces();
-        setupTodaysPickTabs();
         setInterval(updateNextRaces, 30000);
         setTimeout(updateNextRaces, 1500);
 
