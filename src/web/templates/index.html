@@ -1215,6 +1215,16 @@
           });
         }
 
+        function getStrategyTimingBucket(l4Data, l4El) {
+          const level = String(l4Data?.level || '');
+          const classList = Array.from(l4El?.classList || []);
+          const isMorningWatch = Boolean(l4Data?.is_morning_watch)
+            || level.startsWith('morning_watch_')
+            || classList.some((cls) => cls.startsWith('l4-morning_watch_'));
+          if (isMorningWatch) return 'preconfirmed';
+          return 'waiting';
+        }
+
         
         
         function renderTodaysPicks() {
