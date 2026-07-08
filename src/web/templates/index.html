@@ -1244,6 +1244,52 @@
             return (raceId && marketSignalsCache && marketSignalsCache[raceId]) ? marketSignalsCache[raceId] : null;
           }
 
+          function inferL4DataFromBadge(l4El) {
+            if (!l4El) return null;
+            const classList = Array.from(l4El.classList || []);
+            const strategyClass = classList.find((cls) =>
+              cls.startsWith('l4-')
+              && cls !== 'l4-badge'
+              && cls !== 'l4-reference'
+              && cls !== 'l4-female-excluded'
+              && cls !== 'l4-exacta-niche'
+              && cls !== 'l4-trifecta-niche'
+              && cls !== 'l4-win-niche'
+              && cls !== 'l4-1c80'
+              && cls !== 'l4-pro'
+              && cls !== 'l4-ashiya-watch'
+              && cls !== 'l4-ashiya-watch-ready'
+              && cls !== 'l4-after-exhibition-out'
+              && cls !== 'l4-display-confirmed'
+              && cls !== 'l4-exhibition-st-out'
+              && !cls.startsWith('l4-rank-')
+            );
+            const rankClass = classList.find((cls) => cls.startsWith('l4-rank-')) || '';
+            const rank = rankClass ? rankClass.replace('l4-rank-', '') : 'base';
+            const title = l4El.title || '';
+            const recMatch = title.match(/([0-9]+(?:\.[0-9]+)?)%/);
+            const nMatch = title.match(/\(n=(\d+)\)/i);
+            return {
+              level: strategyClass ? strategyClass.replace(/^l4-/, '') : '',
+              label: (l4El.textContent || '').trim(),
+              rank,
+              recovery: recMatch ? parseFloat(recMatch[1]) : null,
+              n: nMatch ? parseInt(nMatch[1], 10) : null,
+              is_reference: classList.includes('l4-reference'),
+              is_morning_watch: classList.some((cls) => cls.startsWith('l4-morning_watch_')),
+              is_morning: classList.some((cls) => cls.startsWith('l4-morning_')),
+              is_exhibition_st_out: classList.includes('l4-exhibition-st-out'),
+              is_after_exhibition_out: classList.includes('l4-after-exhibition-out'),
+              is_display_confirmed: classList.includes('l4-display-confirmed'),
+              is_female_present: classList.includes('l4-female-excluded'),
+              is_exacta_niche: classList.includes('l4-exacta-niche'),
+              is_trifecta_niche: classList.includes('l4-trifecta-niche'),
+              is_win_niche: classList.includes('l4-win-niche'),
+              is_1c80: classList.includes('l4-1c80'),
+              is_pro: classList.includes('l4-pro'),
+            };
+          }
+
           function isBoat3WatchSignal(l4, l4Data) {
             const text = `${l4?.textContent || ''} ${l4?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''}`;
             return /3-2-1|3-2-4/.test(text)
@@ -1255,12 +1301,11 @@
               && !(l4Data?.is_after_exhibition_out || l4?.classList?.contains('l4-after-exhibition-out'));
           }
 
-          const raceItemMap = getRaceItemMap();
-          Object.entries(marketSignalsCache || {}).forEach(([raceId, sig]) => {
-            const el = raceItemMap.get(raceId);
-            if (!el || !sig || typeof sig !== 'object') return;
-            const l4Data = sig && sig.l4 ? sig.l4 : null;
+          items.forEach((el) => {
+            const raceId = el.dataset.raceId || '';
+            const sig = getRaceSignal(raceId) || {};
             const l4 = el.querySelector('.l4-badge');
+            const l4Data = sig && sig.l4 ? sig.l4 : inferL4DataFromBadge(l4);
             if (!l4 && !l4Data) return;
             if (l4?.classList.contains('l4-venus') || l4Data?.is_venus) return;
             if (isLegacyL4HighGradeSignal(l4Data, l4)) return;
