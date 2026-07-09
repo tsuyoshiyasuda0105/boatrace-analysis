@@ -5072,11 +5072,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             min_payout,
             l4_band_ok=None,
             natl_1=None,
-            boat2_top2=None,
-            race_number=None,
+            local_1=None,
+            boat1_motor_top2=None,
+            boat2_motor_top2=None,
+            boat3_natl_1=None,
             weather=None,
-            boat2_exhibition_time=None,
-            boat3_exhibition_time=None,
             n_female=0,
         ):
             try:
@@ -5088,21 +5088,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except (TypeError, ValueError):
                 n1 = 0.0
             try:
-                b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
+                l1 = float(local_1) if local_1 is not None else 0.0
             except (TypeError, ValueError):
-                b2 = 0.0
+                l1 = 0.0
             try:
-                rn = int(race_number) if race_number is not None else 0
+                b1m = float(boat1_motor_top2) if boat1_motor_top2 is not None else 0.0
             except (TypeError, ValueError):
-                rn = 0
+                b1m = 0.0
             try:
-                b2_ex = float(boat2_exhibition_time) if boat2_exhibition_time is not None else None
+                b2m = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
             except (TypeError, ValueError):
-                b2_ex = None
+                b2m = 0.0
             try:
-                b3_ex = float(boat3_exhibition_time) if boat3_exhibition_time is not None else None
+                b3n1 = float(boat3_natl_1) if boat3_natl_1 is not None else 0.0
             except (TypeError, ValueError):
-                b3_ex = None
+                b3n1 = 0.0
 
             in_l4_band = False
             if l4_band_ok is True:
@@ -5122,31 +5122,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 and n_female == 0
                 and in_l4_band
                 and n1 >= 7.0
-                and b2 >= 40.0
-                and rn in (10, 11, 12)
-                and b2_ex is not None and b3_ex is not None and b2_ex <= b3_ex
+                and l1 >= 7.0
+                and b1m >= 35.0
+                and b2m < 35.0
+                and b3n1 >= 5.0
             ):
                 return None
 
             return {
                 "level": "general_c_tri",
-                "label": "一般C候補",
-                "recovery": 255.3,
-                "n": 148,
+                "label": "1号艇強+2号艇M弱+3号艇強",
+                "recovery": 240.8,
+                "n": 62,
                 "bet": "3連単 1-2-3",
                 "rank": "trifecta_niche",
-                "rank_label": "一般C",
-                "rank_emoji": "候補",
+                "rank_label": "1-2-3採用",
+                "rank_emoji": "採用",
                 "natl_1": natl_1,
-                "local_1": None,
+                "local_1": local_1,
                 "is_reference": False,
                 "is_trifecta_niche": True,
-                "trifecta_niche_name": "一般C 1-2-3",
-                "trifecta_niche_tag": "一般戦 + 10-12R + 1号艇全国1着率7%以上 + 2号艇全国2連対率40%以上 + 展示で2号艇<=3号艇",
-                "trifecta_niche_hit_rate": 37.2,
-                "trifecta_niche_recovery": 255.3,
+                "trifecta_niche_name": "1号艇強+2号艇M弱+3号艇強 1-2-3",
+                "trifecta_niche_tag": "一般戦 + 1号艇全国1着率>=7 + 当地1着率>=7 + 1号艇モーター>=35 + 2号艇モーター<35 + 3号艇全国1着率>=5",
+                "trifecta_niche_hit_rate": 19.4,
+                "trifecta_niche_recovery": 240.8,
                 "tetsuban_score": 6,
-                "tetsuban_label": "一般C",
+                "tetsuban_label": "1-2-3採用",
             }
 
         def _evaluate_general_c_watch(
@@ -5154,19 +5155,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             grade,
             cls,
             natl_1=None,
-            boat2_top2=None,
-            race_number=None,
+            local_1=None,
+            boat1_motor_top2=None,
+            boat2_motor_top2=None,
+            boat3_natl_1=None,
             weather=None,
-            boat2_exhibition_time=None,
-            boat3_exhibition_time=None,
             n_female=0,
         ):
             try:
                 n1 = float(natl_1) if natl_1 is not None else 0.0
-                b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
-                rn = int(race_number) if race_number is not None else 0
-                b2_ex = float(boat2_exhibition_time) if boat2_exhibition_time is not None else None
-                b3_ex = float(boat3_exhibition_time) if boat3_exhibition_time is not None else None
+                l1 = float(local_1) if local_1 is not None else 0.0
+                b1m = float(boat1_motor_top2) if boat1_motor_top2 is not None else 0.0
+                b2m = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+                b3n1 = float(boat3_natl_1) if boat3_natl_1 is not None else 0.0
             except (TypeError, ValueError):
                 return None
             if not (
@@ -5176,35 +5177,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 and weather != 3
                 and n_female == 0
                 and n1 >= 7.0
-                and b2 >= 40.0
-                and rn in (10, 11, 12)
+                and l1 >= 7.0
+                and b1m >= 35.0
+                and b2m < 35.0
+                and b3n1 >= 5.0
             ):
                 return None
-            has_exhibition = (b2_ex is not None) or (b3_ex is not None)
-            display_confirmed = (
-                b2_ex is not None
-                and b3_ex is not None
-                and b2_ex <= b3_ex
-            )
             return {
                 "level": "morning_watch_general_c_tri",
-                "label": "朝監視 一般C",
-                "recovery": 255.3,
-                "n": 148,
+                "label": "朝監視 1号艇強1-2-3",
+                "recovery": 240.8,
+                "n": 62,
                 "bet": "3連単 1-2-3",
                 "rank": "trifecta_niche",
                 "rank_label": "朝監視",
-                "rank_emoji": "👀",
+                "rank_emoji": "朝",
                 "is_reference": True,
                 "is_morning": True,
                 "is_morning_watch": True,
-                "watch_strategy_labels": ["朝監視 一般C"],
+                "watch_strategy_labels": ["朝監視 1号艇強1-2-3"],
                 "watch_strategy_bets": ["3連単 1-2-3"],
                 "watch_strategy_count": 1,
-                "is_display_confirmed": display_confirmed,
-                "is_after_exhibition_out": has_exhibition and not display_confirmed,
+                "is_display_confirmed": True,
+                "is_after_exhibition_out": False,
                 "tetsuban_score": 4,
-                "tetsuban_label": "朝監視 一般C",
+                "tetsuban_label": "朝監視 1号艇強1-2-3",
             }
 
         def _evaluate_omura_123_watch(
@@ -6843,11 +6840,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 core_data["min_payout"] if core_data else None,
                 l4_band_ok=core_data.get("any_l4_in_window") if core_data else None,
                 natl_1=natl_1,
-                boat2_top2=boat2_top2,
-                race_number=race_no_info,
+                local_1=local_1,
+                boat1_motor_top2=boat1_motor_top2,
+                boat2_motor_top2=boat2_motor_top2,
+                boat3_natl_1=info.get("boat3_natl_1"),
                 weather=weather,
-                boat2_exhibition_time=boat2_exhibition_time,
-                boat3_exhibition_time=boat3_exhibition_time,
                 n_female=n_female,
             )
             non_exhibition_core = _evaluate_non_exhibition_core_signal(
@@ -6972,8 +6969,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     candidate_l4,
                     gamagori_adopted_signal,
                 )
-                if non_exhibition_core and l4 and l4.get("level") == "general_c_tri":
-                    l4 = non_exhibition_core
 
                 if l4 is None:
                     prob_first = morning_pred.get(rid)
@@ -7033,11 +7028,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     general_c_watch = _evaluate_general_c_watch(
                         stadium, grade, cls,
                         natl_1=natl_1,
-                        boat2_top2=boat2_top2,
-                        race_number=race_no_info,
+                        local_1=local_1,
+                        boat1_motor_top2=boat1_motor_top2,
+                        boat2_motor_top2=boat2_motor_top2,
+                        boat3_natl_1=info.get("boat3_natl_1"),
                         weather=weather,
-                        boat2_exhibition_time=boat2_exhibition_time,
-                        boat3_exhibition_time=boat3_exhibition_time,
                         n_female=n_female,
                     )
                     g23_watch = _evaluate_g23_optb_watch(
@@ -7279,11 +7274,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 general_c_watch = _evaluate_general_c_watch(
                     stadium, grade, cls,
                     natl_1=natl_1,
-                    boat2_top2=boat2_top2,
-                    race_number=race_no_info,
+                    local_1=local_1,
+                    boat1_motor_top2=boat1_motor_top2,
+                    boat2_motor_top2=boat2_motor_top2,
+                    boat3_natl_1=info.get("boat3_natl_1"),
                     weather=weather,
-                    boat2_exhibition_time=boat2_exhibition_time,
-                    boat3_exhibition_time=boat3_exhibition_time,
                     n_female=n_female,
                 )
                 g23_watch = _evaluate_g23_optb_watch(
@@ -7389,7 +7384,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v2"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
-    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v5"
+    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v6"
     BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v3"
     TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v2"
     SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v2"
@@ -8507,14 +8502,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         and weather != 3
                         and general_c_l4_band_ok
                         and n1 >= 7.0
-                        and b2 >= 40.0
-                        and rn in (10, 11, 12)
-                        and boat2_exhibition_time is not None
-                        and boat3_exhibition_time is not None
-                        and float(boat2_exhibition_time) <= float(boat3_exhibition_time)
+                        and (local_1 or 0) >= 7.0
+                        and (boat1_motor_top2 or 0) >= 35.0
+                        and (boat2_motor_top2 or 0) < 35.0
+                        and (boat3_natl_1 or 0) >= 5.0
                     ):
                         _record_adopted_signal(
-                            race_id, rdate, "general_c_tri", 154.1,
+                            race_id, rdate, "general_c_tri", 240.8,
                             tri_hit,
                             int(tri_pay_v or 0),
                         )
@@ -10232,7 +10226,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v2:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -10406,7 +10400,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:{monthly_from}:{monthly_to}"
+        page_cache_key = f"member_strategy_monthly:v2:{monthly_from}:{monthly_to}"
         if not force_recompute:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:
