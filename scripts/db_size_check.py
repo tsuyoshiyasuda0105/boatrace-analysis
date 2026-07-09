@@ -255,26 +255,47 @@ def cleanup_old_raw_data(conn, is_pg: bool, keep_days: int = 90,
     }
 
 
+def _resolve_capacity_limit_mb(is_pg: bool) -> tuple[float, str]:
+    """Return the capacity baseline used for db_capacity alerts."""
+    raw = (os.getenv("BOATRACE_DB_LIMIT_MB", "") or "").strip()
+    if raw:
+        try:
+            limit = float(raw)
+            if limit > 0:
+                return limit, "env:BOATRACE_DB_LIMIT_MB"
+        except ValueError:
+            logger.warning("invalid BOATRACE_DB_LIMIT_MB=%r; fallback defaults will be used", raw)
+    if is_pg:
+        # Current production uses a managed Postgres plan far above the old 500MB free limit.
+        return 8192.0, "default:postgres_8gb"
+    # Local SQLite is kept for backtests and can legitimately exceed 500MB.
+    return 10240.0, "default:sqlite_10gb"
+
+
 def update_system_status(conn, total_bytes: int, sizes: list[dict],
-                          cleanup_result: dict | None = None):
+                          cleanup_result: dict | None = None,
+                          *, is_pg: bool = False):
     """システム状態テーブルに DB 使用量を記録"""
     today_iso = date.today().isoformat()
     total_mb = total_bytes / 1024 / 1024
-    # Default was Supabase Free 500MB, but current deployments may run on a larger plan.
-    # Keep the threshold configurable from env so alerts match the real project capacity.
-    LIMIT_MB = float(os.getenv("BOATRACE_DB_LIMIT_MB", "500"))
-    pct = total_mb / LIMIT_MB * 100 if LIMIT_MB > 0 else 0
-    error_mb = LIMIT_MB * 0.96
-    warn_mb = LIMIT_MB * 0.80
+    limit_mb, limit_source = _resolve_capacity_limit_mb(is_pg)
+    db_kind = "postgres" if is_pg else "sqlite"
+    db_label = "Supabase/Postgres" if is_pg else "local SQLite"
+    pct = total_mb / limit_mb * 100 if limit_mb > 0 else 0
+    error_mb = limit_mb * 0.96
+    warn_mb = limit_mb * 0.80
     if total_mb >= error_mb:
-        status, msg = "error", f"DB 容量逼迫: {total_mb:.0f} MB / {LIMIT_MB:.0f} MB ({pct:.0f}%)"
+        status, msg = "error", f"DB 容量逼迫 ({db_label}): {total_mb:.0f} MB / {limit_mb:.0f} MB ({pct:.0f}%)"
     elif total_mb >= warn_mb:
-        status, msg = "warning", f"DB 容量 80% 超: {total_mb:.0f} MB / {LIMIT_MB:.0f} MB ({pct:.0f}%)"
+        status, msg = "warning", f"DB 容量 80% 超 ({db_label}): {total_mb:.0f} MB / {limit_mb:.0f} MB ({pct:.0f}%)"
     else:
-        status, msg = "ok", f"DB 容量 {total_mb:.0f} MB / {LIMIT_MB:.0f} MB ({pct:.0f}%)"
+        status, msg = "ok", f"DB 容量 ({db_label}): {total_mb:.0f} MB / {limit_mb:.0f} MB ({pct:.0f}%)"
     detail = {
         "total_bytes": total_bytes, "total_mb": round(total_mb, 1),
-        "limit_mb": LIMIT_MB, "pct": round(pct, 1),
+        "limit_mb": limit_mb, "pct": round(pct, 1),
+        "db_kind": db_kind,
+        "db_label": db_label,
+        "limit_source": limit_source,
         "top_tables": [{"name": s["name"], "pretty": s["pretty"]} for s in sizes[:5]],
     }
     if cleanup_result:
@@ -380,7 +401,7 @@ def main():
     if raw_cleanup_result:
         merged_cleanup["raw_data"] = raw_cleanup_result
     status, msg = update_system_status(
-        conn, total_bytes, sizes, merged_cleanup if merged_cleanup else None
+        conn, total_bytes, sizes, merged_cleanup if merged_cleanup else None, is_pg=is_pg
     )
     print(f"\n[{status.upper()}] {msg}")
 
