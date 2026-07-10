@@ -8502,7 +8502,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         and weather != 3
                         and general_c_l4_band_ok
                         and n1 >= 7.0
-                        and (local_1 or 0) >= 7.0
+                        and (local_1_rt or 0) >= 7.0
                         and (boat1_motor_top2 or 0) >= 35.0
                         and (boat2_motor_top2 or 0) < 35.0
                         and (boat3_natl_1 or 0) >= 5.0
