@@ -340,6 +340,10 @@
     {% endif %}
 
     {% if trifecta_pw or trifecta_unified %}
+    <details class="collapsible-section">
+      <summary class="section-heading-collapsible">
+        <span>三連単予測 (joint probability)</span>
+      </summary>
     <div class="trifecta-section">
       <h3 class="tri-heading">三連単 予測 (joint probability)</h3>
       <div class="tri-grid">
@@ -391,9 +395,10 @@
         {% endif %}
       </div>
     </div>
+    </details>
     {% endif %}
 
-    <details class="collapsible-section" open>
+    <details class="collapsible-section">
       <summary class="section-heading-collapsible">
         <span>🚤 6艇詳細</span>
       </summary>
