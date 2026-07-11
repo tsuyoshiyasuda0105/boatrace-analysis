@@ -476,8 +476,7 @@ def _kimarite_skill_tags_for_race_cached(
 
 
 def _attach_kimarite_skill_tags(race_id: str, preds: list[dict]) -> None:
-    info = _race_basic_info(race_id)
-    tags = _kimarite_skill_tags_for_race_cached(race_id, info=info)
+    tags = _kimarite_skill_tags_for_race_cached(race_id)
     if not tags:
         return
     for p in preds:
@@ -2448,7 +2447,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             names = _racer_names(race_id)
         target_date = info["race_date"]
         t2 = time.perf_counter()
-        conditions = _race_current_conditions_cached(race_id, info=info)
+        conditions = _race_current_conditions_cached(race_id)
         t_conditions = time.perf_counter() - t2
         t3 = time.perf_counter()
         actual_result = None
@@ -2462,7 +2461,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except Exception:
                 should_check_result = True
         if should_check_result:
-            actual_result = _race_actual_result_cached(race_id, info=info)
+            actual_result = _race_actual_result_cached(race_id)
         t_result = time.perf_counter() - t3
 
         # 戦略タグ判定
@@ -2610,7 +2609,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return jsonify({
             "info": info,
             "predictions": preds,
-            "conditions": _race_current_conditions_cached(race_id, info=info),
+            "conditions": _race_current_conditions_cached(race_id),
         })
 
     @app.route("/api/race/<race_id>/signals")
@@ -2622,7 +2621,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return jsonify({"error": "not found"}), 404
         try:
             preds = _race_predictions(predictor, race_id)
-            conditions = _race_current_conditions_cached(race_id, info=info)
+            conditions = _race_current_conditions_cached(race_id)
             niche_signals = _detect_niche_signals(preds, conditions)
             market_signal = _detect_market_inefficiency(race_id, preds, info=info)
         except Exception as e:
