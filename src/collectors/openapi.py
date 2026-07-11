@@ -77,7 +77,13 @@ def fetch_programs(target_date: date) -> Optional[dict]:
 
 def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
     """programs APIの結果を races / race_entries に投入"""
-    races = programs_payload.get("programs", [])
+    races = programs_payload.get("programs")
+    if races is None:
+        races = ((programs_payload.get("today") or {}).get("programs"))
+    if races is None:
+        races = ((programs_payload.get("data") or {}).get("programs"))
+    if races is None:
+        races = []
     n_races = 0
     n_entries = 0
     n_skipped_holiday = 0
