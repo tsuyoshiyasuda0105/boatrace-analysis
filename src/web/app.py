@@ -15,6 +15,7 @@ import logging
 import os
 import time
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Optional, Any
 
 from datetime import timedelta
@@ -224,6 +225,7 @@ def _stadium_name_map() -> dict[int, str]:
     return _STADIUMS_CACHE
 
 
+@lru_cache(maxsize=20000)
 def _race_basic_info(race_id: str) -> Optional[dict]:
     # races テーブルのみ問い合わせ、stadium_name はメモリキャッシュから付加
     # (旧コードは毎回 JOIN stadiums していたが、stadiums は静的なので不要)
@@ -352,6 +354,7 @@ def _race_predictions(predictor: Predictor, race_id: str) -> list[dict]:
     return sub[available].to_dict(orient="records")
 
 
+@lru_cache(maxsize=20000)
 def _racer_names(race_id: str) -> dict[int, str]:
     with db_connect() as conn:
         rows = conn.execute("""
@@ -2365,7 +2368,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/race/<race_id>")
     @login_required
-    @cached(ttl=180, past_ttl=7200)
+    @cached(ttl=300, past_ttl=21600)
     def race_detail(race_id: str):
         # 過去レース (race_date が今日より前) は 1時間キャッシュ、当日は 60秒
         # cached デコレータは request.args["date"] を見るが、/race/<id> には
@@ -2379,7 +2382,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         page_cache_key = f"race_detail:{race_id}"
         cached_html = _read_page_html_cache(
             page_cache_key,
-            180 if info["race_date"] >= today_iso else 21600,
+            300 if info["race_date"] >= today_iso else 43200,
         )
         if cached_html:
             return cached_html
