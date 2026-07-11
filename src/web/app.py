@@ -3059,7 +3059,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or date.today().isoformat()
         today_iso = date.today().isoformat()
         cache_ttl = 60 if target_date >= today_iso else 3600
-        cache_key = f"market_signals:v2:{target_date}"
+        cache_key = f"market_signals:v3:{target_date}"
         cached_payload = _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None:
             return jsonify(cached_payload)
@@ -7956,7 +7956,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("data_status query failed: %s", e)
 
-        adopted_signal_levels = set(globals().get("ROI_STRATEGY_KEYS", ()) or ())
+        adopted_signal_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
         adopted_watch_levels = {
             "morning_watch_g23_optb",
             "morning_watch_ashiya_boat4_lift",
@@ -11183,6 +11183,35 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             d["mid_132_tier_a_tri_recovery"] = d.get("cand4_tri_recovery")
             d["mid_132_tier_a_tri_profit"] = d.get("cand4_tri_profit", 0)
         return rows
+
+    MARKET_SIGNAL_ADOPTED_LEVELS = (
+        "g23_optb_tri",
+        "gmkf_132_tri",
+        "shimonoseki_123_tri",
+        "tsu_124_tri",
+        "amagasaki_143_tri",
+        "amagasaki_13_exa",
+        "ashiya_boat4_exa",
+        "hamanako_14_exa",
+        "omura_14_exa",
+        "tokuyama_123_tri",
+        "shimonoseki_132_tri",
+        "kojima_124_tri",
+        "kojima_13_exa",
+        "marugame_123_tri",
+        "omura_123_tri",
+        "omura_132_tri",
+        "tsu_123_tri",
+        "suminoe_123_tri",
+        "miyajima_tide_132_tri",
+        "gamagori_tide_132_tri",
+        "marugame_tide_123_tri",
+        "fukuoka_tide_132_tri",
+        "gamagori_123_general_practical_tri",
+        "gamagori_13_exa",
+        "tokuyama_12a_exa",
+        "tokoname_12_exa",
+    )
 
     ROI_STRATEGIES = (
         {"key": "g23_optb_tri", "label": "G2/G3 1-2-3", "short": "g23", "color": "#ff006e", "timing": "same_day"},
