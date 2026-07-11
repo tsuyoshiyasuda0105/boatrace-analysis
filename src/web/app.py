@@ -128,6 +128,12 @@ def invalidate_cache():
     """全キャッシュクリア (デバッグ用)"""
     _CACHE.clear()
     _PAGE_HTML_MEM_CACHE.clear()
+    _race_basic_info.cache_clear()
+    _racer_names.cache_clear()
+    _race_predictions_from_cache.cache_clear()
+    _kimarite_skill_tags_for_race_cached.cache_clear()
+    _race_actual_result_cached.cache_clear()
+    _race_current_conditions_cached.cache_clear()
 
 
 def _ensure_page_html_cache_table() -> None:
@@ -294,6 +300,7 @@ def _races_for_date(target_date: str) -> list[dict]:
     return [dict(zip(keys, r)) for r in rows]
 
 
+@lru_cache(maxsize=20000)
 def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[dict]]:
     """predictions テーブルからキャッシュ済予測を取得。
     Supabase Free でも軽量に動作するため、まずキャッシュを試みる。
@@ -448,6 +455,7 @@ def _kimarite_skill_tags_for_race(race_id: str) -> dict[int, dict]:
     return tags
 
 
+@lru_cache(maxsize=20000)
 def _kimarite_skill_tags_for_race_cached(
     race_id: str,
     info: Optional[dict] = None,
@@ -1151,6 +1159,7 @@ def _race_actual_result(race_id: str) -> Optional[dict]:
     }
 
 
+@lru_cache(maxsize=20000)
 def _race_actual_result_cached(
     race_id: str,
     info: Optional[dict] = None,
@@ -1164,10 +1173,11 @@ def _race_actual_result_cached(
     cache_ttl = 120 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
     if cached_payload is not None:
+        if cached_payload == {"_none": True}:
+            return None
         return cached_payload
     payload = _race_actual_result(race_id)
-    if payload is not None:
-        _write_json_cache(cache_key, payload)
+    _write_json_cache(cache_key, payload if payload is not None else {"_none": True})
     return payload
 
 
@@ -1237,6 +1247,7 @@ def _race_current_conditions(race_id: str) -> dict:
     return out
 
 
+@lru_cache(maxsize=20000)
 def _race_current_conditions_cached(
     race_id: str,
     info: Optional[dict] = None,
@@ -2390,26 +2401,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     @cached(ttl=300, past_ttl=21600)
     def race_detail(race_id: str):
-        # 過去レース (race_date が今日より前) は 1時間キャッシュ、当日は 60秒
-        # cached デコレータは request.args["date"] を見るが、/race/<id> には
-        # クエリ無しなので race_id から日付を取り出して past_ttl を有効化する
-        # (cached 内部の effective_ttl をオーバーライドできないため、副作用なし)
+        started_at = time.perf_counter()
+        # ????? (race_date ??????) ? 1??????????? 60?
+        # cached ?????? request.args["date"] ?????/race/<id> ??
+        # ???????? race_id ?????????? past_ttl ??????
+        # (cached ??? effective_ttl ????????????????????)
         info = _race_basic_info(race_id)
         if not info:
             abort(404)
 
-        today_iso = date.today().isoformat()
-        page_cache_key = f"race_detail:{race_id}"
-        cached_html = _read_page_html_cache(
-            page_cache_key,
-            300 if info["race_date"] >= today_iso else 43200,
-        )
-        if cached_html:
-            return cached_html
-
         try:
+            t0 = time.perf_counter()
             preds = _race_predictions(predictor, race_id)
+            t_pred = time.perf_counter() - t0
+            t1 = time.perf_counter()
             _attach_kimarite_skill_tags(race_id, preds)
+            t_tags = time.perf_counter() - t1
         except Exception as e:
             logger.exception("prediction failed: %s", race_id)
             # エラーをユーザー向けメッセージに変換
@@ -2434,15 +2441,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 trifecta_unified=[],
                 conditions={},
             )
-            _write_page_html_cache(page_cache_key, html)
             return html
 
         names = _racer_names_from_preds(preds)
         if len(names) < len(preds):
             names = _racer_names(race_id)
         target_date = info["race_date"]
+        t2 = time.perf_counter()
         conditions = _race_current_conditions_cached(race_id, info=info)
-        actual_result = _race_actual_result_cached(race_id, info=info)
+        t_conditions = time.perf_counter() - t2
+        t3 = time.perf_counter()
+        actual_result = None
+        closed_at_raw = info.get("race_closed_at")
+        should_check_result = True
+        if info.get("race_date") >= date.today().isoformat() and closed_at_raw:
+            try:
+                closed_at = datetime.fromisoformat(str(closed_at_raw).replace(" ", "T"))
+                if closed_at > datetime.now():
+                    should_check_result = False
+            except Exception:
+                should_check_result = True
+        if should_check_result:
+            actual_result = _race_actual_result_cached(race_id, info=info)
+        t_result = time.perf_counter() - t3
 
         # 戦略タグ判定
         sn = info["stadium_number"]
@@ -2466,11 +2487,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if sn not in _LOSING_VENUES:
                 sweet_spot = True
 
-        # ニッチ大穴シグナル検出
-        niche_signals = _detect_niche_signals(preds, conditions)
-
-        # 市場非効率レース検出 (三連単1番人気の払戻に基づく +EV ゾーン)
-        market_signal = _detect_market_inefficiency(race_id, preds, info=info)
+        # 市場シグナル / ニッチシグナルは詳細表示後に Ajax で取得する。
+        niche_signals = []
+        market_signal = None
+        t_niche = 0.0
+        t_market = 0.0
         # レース詳細の選手間相関マップ/相関集計は負荷が高く、
         # 現行運用では費用対効果が低いため停止する。
         compat_analysis = None
@@ -2492,6 +2513,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except Exception as e:
                 logger.warning("unified trifecta failed for %s: %s", race_id, e)
 
+        t6 = time.perf_counter()
         html = render_template(
             "race.html",
             info=info,
@@ -2508,7 +2530,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             compat_analysis=compat_analysis,
             error=None,
         )
-        _write_page_html_cache(page_cache_key, html)
+        t_render = time.perf_counter() - t6
+        elapsed = time.perf_counter() - started_at
+        logger.info(
+            "race_detail built race_id=%s elapsed=%.3fs pred=%.3fs tags=%.3fs conditions=%.3fs result=%.3fs niche=%.3fs market=%.3fs render=%.3fs preds=%s",
+            race_id,
+            elapsed,
+            t_pred,
+            t_tags,
+            t_conditions,
+            t_result,
+            t_niche,
+            t_market,
+            t_render,
+            len(preds),
+        )
         return html
 
     @app.route("/api/race/<race_id>/value-bets")
@@ -2575,6 +2611,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "info": info,
             "predictions": preds,
             "conditions": _race_current_conditions_cached(race_id, info=info),
+        })
+
+    @app.route("/api/race/<race_id>/signals")
+    @member_only_api
+    @cached(ttl=300, past_ttl=21600)
+    def race_signals_api(race_id: str):
+        info = _race_basic_info(race_id)
+        if not info:
+            return jsonify({"error": "not found"}), 404
+        try:
+            preds = _race_predictions(predictor, race_id)
+            conditions = _race_current_conditions_cached(race_id, info=info)
+            niche_signals = _detect_niche_signals(preds, conditions)
+            market_signal = _detect_market_inefficiency(race_id, preds, info=info)
+        except Exception as e:
+            logger.exception("race signals failed: %s", race_id)
+            return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "race_id": race_id,
+            "market_signal": market_signal,
+            "niche_signals": niche_signals,
         })
 
     @app.route("/api/race/<race_id>/motor-history/<int:boat_number>")
@@ -7900,6 +7957,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("data_status query failed: %s", e)
 
+        adopted_signal_levels = set(globals().get("ROI_STRATEGY_KEYS", ()) or ())
+        adopted_watch_levels = {
+            "morning_watch_g23_optb",
+            "morning_watch_ashiya_boat4_lift",
+            "morning_watch_tokoname_12_exa",
+            "morning_watch_omura_123_tri",
+            "morning_watch_tri143_a12",
+            "morning_watch_gamagori_adopted",
+        }
+        if adopted_signal_levels:
+            filtered_signals = []
+            for s in signals:
+                l4 = s.get("l4") or {}
+                level = l4.get("level")
+                if level in adopted_signal_levels or level in adopted_watch_levels:
+                    filtered_signals.append(s)
+            signals = filtered_signals
+
         payload = {
             "date": target_date,
             "n_races": len(signals),
@@ -11111,6 +11186,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     ROI_STRATEGIES = (
         {"key": "g23_optb_tri", "label": "G2/G3 1-2-3", "short": "g23", "color": "#ff006e", "timing": "same_day"},
+        {"key": "gmkf_132_tri", "label": "蒲宮児福 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
         {"key": "shimonoseki_123_tri", "label": "下関 1-2-3", "short": "shm123", "color": "#22c55e", "timing": "previous_day"},
         {"key": "tsu_124_tri", "label": "津 1-2-4", "short": "tsu124", "color": "#0ea5e9", "timing": "previous_day"},
         {"key": "amagasaki_143_tri", "label": "尼崎 1-4-3", "short": "ama143", "color": "#f97316", "timing": "same_day"},
@@ -11127,7 +11203,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "omura_132_tri", "label": "大村 1-3-2", "short": "omu132", "color": "#d946ef", "timing": "previous_day"},
         {"key": "tsu_123_tri", "label": "津 1-2-3", "short": "tsu123", "color": "#06b6d4", "timing": "previous_day"},
         {"key": "suminoe_123_tri", "label": "住之江 1-2-3", "short": "sum123", "color": "#0891b2", "timing": "previous_day"},
-        {"key": "general_c_tri", "label": "一般C 1-2-3", "short": "genc123", "color": "#facc15", "timing": "same_day"},
         {"key": "miyajima_tide_132_tri", "label": "宮島 潮 1-3-2", "short": "myj132", "color": "#f43f5e", "timing": "same_day"},
         {"key": "gamagori_tide_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gama132", "color": "#fb923c", "timing": "same_day"},
         {"key": "marugame_tide_123_tri", "label": "丸亀 潮 1-2-3", "short": "mgmt123", "color": "#a855f7", "timing": "same_day"},
@@ -11136,7 +11211,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "gamagori_13_exa", "label": "蒲郡 1-3", "short": "gama13", "color": "#22d3ee", "timing": "same_day"},
         {"key": "tokuyama_12a_exa", "label": "徳山 1-2 A", "short": "tky12a", "color": "#60a5fa", "timing": "same_day"},
         {"key": "tokoname_12_exa", "label": "常滑 1-2", "short": "tok12", "color": "#3b82f6", "timing": "same_day"},
-        {"key": "gmkf_132_tri", "label": "蒲宮児福 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
     )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
 
@@ -11156,7 +11230,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v5:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v6:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -11292,7 +11366,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:v5:{monthly_from}:{monthly_to}"
+        page_cache_key = f"member_strategy_monthly:v6:{monthly_from}:{monthly_to}"
         if not force_recompute:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:

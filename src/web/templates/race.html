@@ -41,6 +41,9 @@
     </div>
   {% endif %}
 
+  <div id="race-signal-shell" data-race-id="{{ info.race_id }}">
+    <div class="motor-history-loading" data-race-signals-loading>シグナルを読み込み中...</div>
+    <div id="market-signal-container">
   {% if market_signal %}
     <div class="market-signal market-{{ market_signal.tier }}">
       <div class="ms-head">
@@ -72,7 +75,9 @@
       {% endif %}
     </div>
   {% endif %}
+    </div>
 
+    <div id="niche-signals-container">
   {% if niche_signals %}
     <div class="niche-signals">
       {% for sig in niche_signals %}
@@ -95,6 +100,8 @@
       {% endfor %}
     </div>
   {% endif %}
+    </div>
+  </div>
 
   {% if actual_result %}
     <div class="actual-result">
@@ -516,252 +523,5 @@
     </div>
     </details>
   {% endif %}
-  <script>
-    (() => {
-      const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      }[ch]));
-      const pct = (value) => value == null ? "-" : `${Number(value).toFixed(1)}%`;
-      const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
-      const posClass = (value) => value ? `f-${Number(value)}` : "";
-      const historyCache = new Map();
-      const signed = (value, digits = 2) => value == null ? "-" : `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(digits)}`;
-      const toneClass = (tone) => tone === "up" ? "is-up" : tone === "down" ? "is-down" : "is-flat";
-      const meter = (label, value) => {
-        const safeValue = value == null ? null : Math.max(0, Math.min(100, Number(value)));
-        return `
-          <div class="motor-meter">
-            <div class="motor-meter-head">
-              <span>${esc(label)}</span>
-              <b>${safeValue == null ? "-" : `${safeValue.toFixed(1)}pt`}</b>
-            </div>
-            <div class="motor-meter-track"><div class="motor-meter-fill" style="width:${safeValue == null ? 0 : safeValue}%;"></div></div>
-          </div>
-        `;
-      };
-      const trendToneClass = (label) => {
-        if (label === "上向き") return "is-up";
-        if (label === "弱め") return "is-down";
-        return "is-flat";
-      };
-      const signalLabel = (signal) => {
-        const tone = signal?.trend_tone || "flat";
-        const value = signal?.trend_value;
-        if (tone === "up") return `↑ 上昇${value == null ? "" : ` ${signed(value)}`}`;
-        if (tone === "down") return `↓ 下降${value == null ? "" : ` ${signed(value)}`}`;
-        return "→ 横ばい";
-      };
-      const liftLabel = (signal) => {
-        const label = signal?.lift_label || "C";
-        const value = signal?.lift_value;
-        return `引き出し${label}${value == null ? "" : ` ${signed(value)}`}`;
-      };
-      const renderHistory = (data) => {
-        const current = data.current || {};
-        const summary = data.summary || {};
-        const profile = data.profile || {};
-        const liveSignal = data.live_signal || {};
-        const rows = data.history || [];
-        const title = `M${esc(current.motor_number ?? "-")} 現行期の直近履歴`;
-        const cycleNote = current.motor_cycle_start
-          ? `現行モーター期: ${esc(current.motor_cycle_start)}以降`
-          : "現行モーター期: 取得中";
-        const summaryHtml = `
-          <div class="motor-history-summary">
-            <div><span>出走</span><b>${summary.starts ?? 0}</b></div>
-            <div><span>1着率</span><b>${pct(summary.win_rate)}</b></div>
-            <div><span>2連率</span><b>${pct(summary.top2_rate)}</b></div>
-            <div><span>3連率</span><b>${pct(summary.top3_rate)}</b></div>
-            <div><span>平均ST</span><b>${num(summary.avg_start_timing)}</b></div>
-            <div><span>平均展示</span><b>${num(summary.avg_exhibition_time)}</b></div>
-          </div>`;
-
-        const lift = data.lift || {};
-        const liftHtml = `
-          <div class="racer-lift-panel">
-            <div class="racer-lift-head">
-              <div class="racer-lift-title">
-                <strong>選手の引き出し力</strong>
-                <span>${esc(lift.note || "選手の過去平均との差で、今のモーターをどれだけ引き出せているかを見ます。")}</span>
-              </div>
-              <div class="motor-profile-badges">
-                <span class="motor-condition-badge ${toneClass(lift.tone)}">${esc(lift.label || "判定保留")} ${lift.value == null ? "" : signed(lift.value)}</span>
-                <span class="motor-style-chip is-score">比較 ${lift.sample_size ?? 0}走</span>
-                <span class="motor-style-chip is-score">${lift.score == null ? "-" : `${Number(lift.score).toFixed(1)}pt`}</span>
-              </div>
-            </div>
-            <div class="racer-lift-grid">
-              <div><span>展示差</span><b>${signed(lift.exhibition_delta)}</b></div>
-              <div><span>展示ST差</span><b>${signed(lift.exhibition_st_delta)}</b></div>
-              <div><span>本番ST差</span><b>${signed(lift.start_delta)}</b></div>
-              <div><span>着順差</span><b>${signed(lift.finish_delta)}</b></div>
-            </div>
-          </div>`;
-        const liveSummaryHtml = `
-          <div class="motor-live-summary">
-            <div class="motor-live-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</div>
-            <div class="motor-live-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</div>
-            <div class="motor-live-chip is-neutral">展示T ${num(current.exhibition_time)}</div>
-            <div class="motor-live-chip is-neutral">展示ST ${num(current.start_timing_exhibition)}</div>
-          </div>`;
-        const profileHtml = `
-          <div class="motor-profile">
-            <div class="motor-profile-head">
-              <div class="motor-profile-title">
-                <strong>推定モーター気配</strong>
-                <span>${esc(profile.note || "展示タイム・展示ST・着順効率からの推定です。")}</span>
-              </div>
-              <div class="motor-profile-badges">
-                <span class="motor-condition-badge ${profile.condition_tone === "up" ? "is-up" : profile.condition_tone === "down" ? "is-down" : "is-flat"}">${esc(profile.condition_label || "判定保留")}</span>
-                <span class="motor-style-chip">${esc(profile.style_label || "判定保留")}</span>
-                <span class="motor-style-chip is-score">総合 ${profile.condition_score == null ? "-" : `${Number(profile.condition_score).toFixed(1)}pt`}</span>
-              </div>
-            </div>
-            <div class="motor-profile-meters">
-              ${meter("出足", profile.dash_score)}
-              ${meter("行き足・伸び", profile.stretch_score)}
-              ${meter("回り足", profile.turn_score)}
-            </div>
-            <div class="motor-trend-strip">
-              ${(profile.recent_scores || []).map((item) => `
-                <div class="motor-trend-card ${trendToneClass(item.label)}">
-                  <span>${esc(item.race_date || "")} ${esc(item.race_number || "")}R</span>
-                  <b>${item.score == null ? "-" : `${Number(item.score).toFixed(1)}pt`}</b>
-                  <small>${esc(item.label || "")}</small>
-                </div>
-              `).join("")}
-            </div>
-          </div>`;
-
-        if (!rows.length) {
-          return `
-            <div class="motor-history-head">
-              <strong>${title}</strong>
-              <span>${esc(current.stadium_name)} / ${esc(current.racer_name)} / ${cycleNote}</span>
-            </div>
-            ${summaryHtml}
-            ${liveSummaryHtml}
-            ${liftHtml}
-            ${profileHtml}
-            <div class="motor-history-empty">この会場で同じモーターの過去結果がまだ見つかりません。</div>
-          `;
-        }
-
-        const body = rows.map((r) => `
-          <tr>
-            <td>${esc(r.race_date)}</td>
-            <td>${esc(r.race_number)}R</td>
-            <td><span class="lane lane-${esc(r.boat_number)} motor-mini-lane">${esc(r.boat_number)}</span></td>
-            <td class="left">${esc(r.racer_name)}<div class="racer-meta">No. ${esc(r.racer_number)}</div></td>
-            <td>${esc(r.course_number ?? "-")}</td>
-            <td>${num(r.start_timing)}</td>
-            <td>${num(r.exhibition_time)}</td>
-            <td>${num(r.start_timing_exhibition)}</td>
-            <td><span class="finish-badge ${posClass(r.finishing_position)}">${esc(r.finishing_position ?? "-")}着</span></td>
-            <td class="left">${esc(r.kimarite || "-")}</td>
-          </tr>
-        `).join("");
-        const currentRowHtml = `
-          <tr class="motor-history-current-row">
-            <td>${esc(current.race_date || "")}</td>
-            <td>${esc(current.race_number || "")}R</td>
-            <td><span class="lane lane-${esc(current.boat_number)} motor-mini-lane">${esc(current.boat_number)}</span></td>
-            <td class="left">${esc(current.racer_name || "")}<div class="racer-meta">No. ${esc(current.racer_number || "")}</div></td>
-            <td>-</td>
-            <td>-</td>
-            <td>${num(current.exhibition_time)}</td>
-            <td>${num(current.start_timing_exhibition)}</td>
-            <td><span class="motor-history-inline ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span></td>
-            <td class="left">-</td>
-          </tr>
-        `;
-
-        return `
-          <div class="motor-history-head">
-            <strong>${title}</strong>
-            <span>${esc(current.stadium_name)} / 今回 ${esc(current.boat_number)}号艇 ${esc(current.racer_name)} / ${cycleNote}</span>
-          </div>
-          ${summaryHtml}
-          ${liveSummaryHtml}
-          ${liftHtml}
-          ${profileHtml}
-          <div class="motor-history-table-wrap">
-            <table class="motor-history-table">
-              <thead>
-                <tr>
-                  <th>日付</th><th>R</th><th>艇</th><th class="left">選手</th>
-                  <th>進入</th><th>ST</th><th>展示T</th><th>展示ST</th><th>着</th><th class="left">決まり手</th>
-                </tr>
-              </thead>
-              <tbody>${currentRowHtml}${body}</tbody>
-            </table>
-          </div>
-        `;
-      };
-
-
-      const renderInlineSignals = (container, data) => {
-        if (!container) return;
-        const liveSignal = data.live_signal || {};
-        container.innerHTML = `
-          <span class="motor-inline-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span>
-          <span class="motor-inline-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</span>
-        `;
-      };
-
-      const fetchHistory = (button) => {
-        const boatNumber = button.dataset.boatNumber;
-        const raceId = button.dataset.raceId;
-        const key = `${raceId}:${boatNumber}`;
-        if (!historyCache.has(key)) {
-          historyCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}`, {
-            credentials: "same-origin",
-            headers: { "Accept": "application/json" },
-            cache: "force-cache",
-          }).then((res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.json();
-          }).catch((err) => {
-            historyCache.delete(key);
-            throw err;
-          }));
-        }
-        return historyCache.get(key);
-      };
-
-      document.querySelectorAll(".motor-history-btn").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const boatNumber = button.dataset.boatNumber;
-          const row = document.getElementById(`motor-history-row-${boatNumber}`);
-          const panel = row?.querySelector("[data-motor-history-panel]");
-          if (!row || !panel) return;
-
-          if (!row.hidden && panel.dataset.loaded === "1") {
-            row.hidden = true;
-            button.setAttribute("aria-expanded", "false");
-            return;
-          }
-
-          row.hidden = false;
-          button.setAttribute("aria-expanded", "true");
-          if (panel.dataset.loaded === "1") return;
-
-          panel.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
-          try {
-            const data = await fetchHistory(button);
-            panel.innerHTML = renderHistory(data);
-            renderInlineSignals(document.querySelector(`[data-motor-inline-signals="${boatNumber}"]`), data);
-            panel.dataset.loaded = "1";
-          } catch (err) {
-            panel.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました。${esc(err.message || "")}</div>`;
-          }
-        });
-      });
-
-    })();
-  </script>
+  <script src="{{ url_for('static', filename='race_detail.js') }}" defer></script>
 {% endblock %}
