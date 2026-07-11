@@ -142,6 +142,11 @@
     </p>
 
     <!-- 次のレース ハイライト (JS で動的更新) -->
+    <section class="next-race-panel" id="data-status-panel" hidden>
+      <h3>???????</h3>
+      <div class="next-race-cards" id="data-status-cards"></div>
+    </section>
+
     <section class="next-race-panel" id="next-race-panel" hidden>
       <h3>⏱ 直近の次のレース</h3>
       <div class="next-race-cards" id="next-race-cards"></div>
@@ -490,6 +495,7 @@
             if (!r.ok) return;
             const data = await r.json();
             const signals = data.signals || {};
+            renderDataStatus(data.data_status || {});
             const nextDigest = buildSignalsDigest(signals);
             marketSignalsCache = signals;
             marketSignalsDigest = nextDigest;
@@ -810,6 +816,31 @@
           try { renderTodaysPicks(); } catch (e) { /* renderTodaysPicks 未定義時は無視 */ }
           try { updateNextRaces(); } catch (e) { /* updateNextRaces 未定義時は無視 */ }
         }
+        function formatDataStatusLine(label, info) {
+          const total = Number(info?.total || 0);
+          const count = Number(info?.count || 0);
+          const latest = info?.latest || '-';
+          return `
+            <article class="next-race-card">
+              <div class="next-race-time">${label}</div>
+              <div class="next-race-venue">${count}/${total}</div>
+              <div class="next-race-remaining">????: ${latest}</div>
+            </article>
+          `;
+        }
+
+        function renderDataStatus(status) {
+          const panel = document.getElementById('data-status-panel');
+          const cards = document.getElementById('data-status-cards');
+          if (!panel || !cards) return;
+          cards.innerHTML = [
+            formatDataStatusLine('???????', status.race_basic || {}),
+            formatDataStatusLine('????', status.preview || {}),
+            formatDataStatusLine('???', status.tide || {}),
+          ].join('');
+          panel.hidden = false;
+        }
+
         loadMarketSignals();
         setInterval(loadMarketSignals, 30000);
 

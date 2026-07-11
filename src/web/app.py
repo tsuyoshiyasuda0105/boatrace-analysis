@@ -3185,12 +3185,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e4.assigned_motor_top_2_percent AS boat4_motor_top2,
                                (COALESCE(e4.flying_count, 0) + COALESCE(e4.late_count, 0)) AS boat4_fl_sum,
                                e5.assigned_motor_top_2_percent AS boat5_motor_top2,
-                    (COALESCE(e.flying_count, 0) + COALESCE(e.late_count, 0)) AS boat1_fl_sum,
-                    (COALESCE(e2.flying_count, 0) + COALESCE(e2.late_count, 0)) AS boat2_fl_sum,
-                    (COALESCE(e3.flying_count, 0) + COALESCE(e3.late_count, 0)) AS boat3_fl_sum,
-                    (COALESCE(e4.flying_count, 0) + COALESCE(e4.late_count, 0)) AS boat4_fl_sum,
-                    (COALESCE(e5.flying_count, 0) + COALESCE(e5.late_count, 0)) AS boat5_fl_sum,
-                    (COALESCE(e6.fl_sum, 0)) AS boat6_fl_sum,
                                (COALESCE(e5.flying_count, 0) + COALESCE(e5.late_count, 0)) AS boat5_fl_sum,
                                NULLIF(pv5.exhibition_time, 0) AS boat5_exhibition_time,
                                NULLIF(pv6.exhibition_time, 0) AS boat6_exhibition_time,
@@ -3223,7 +3217,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
                         LEFT JOIN race_entries e4 ON e4.race_id = r.race_id AND e4.boat_number = 4
                         LEFT JOIN race_entries e5 ON e5.race_id = r.race_id AND e5.boat_number = 5
-                LEFT JOIN (SELECT race_id, (COALESCE(flying_count, 0) + COALESCE(late_count, 0)) AS fl_sum FROM race_entries WHERE boat_number = 6) e6 ON e6.race_id = r.race_id
                         LEFT JOIN race_entries e6 ON e6.race_id = r.race_id AND e6.boat_number = 6
                         LEFT JOIN predictions p1 ON p1.race_id = r.race_id AND p1.boat_number = 1
                         LEFT JOIN predictions p3 ON p3.race_id = r.race_id AND p3.boat_number = 3
@@ -3253,13 +3246,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         WHERE r.race_date = ?
                     """, (target_date,))
                     for (rid, stadium, grade, race_no, race_closed_at, cls, natl1, loc1,
-                         avg_st, age, boat1_racer, boat1_motor_top2,
+                         avg_st, age, boat1_racer, boat1_motor_top2, boat1_fl_sum,
                          weather, ex_st, wind_speed, boat1_exhibition_time,
-                         boat2_racer, boat2_top2, boat2_motor_top2, boat2_exhibition_time, boat2_ex_st_rank,
-                         boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_number, boat3_motor_top2, boat3_exhibition_time, boat3_ex_st,
+                         boat2_racer, boat2_top2, boat2_motor_top2, boat2_fl_sum, boat2_exhibition_time, boat2_ex_st_rank,
+                         boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_number, boat3_motor_top2, boat3_fl_sum, boat3_exhibition_time, boat3_ex_st,
                          boat1_pred_top2, boat3_pred_top2, boat4_pred_top2, boat4_class,
-                         boat4_racer, boat4_motor_number, boat4_local_1, boat4_natl_1, boat4_avg_st, boat4_motor_top2, boat4_fl_sum, boat5_motor_top2, boat5_fl_sum,
-                         boat5_exhibition_time, boat6_exhibition_time, boat6_fl_sum, wave_height,
+                         boat4_racer, boat4_motor_number, boat4_local_1, boat4_natl_1, boat4_avg_st, boat4_motor_top2, boat4_fl_sum,
+                         boat5_motor_top2, boat5_fl_sum, boat5_exhibition_time, boat6_exhibition_time, boat6_fl_sum, wave_height,
                          boat4_ex_course, boat4_exhibition_time, boat4_ex_st,
                          best_exhibition_time, boat1_ex_rank, n_exhibition_times,
                          n_female, tide_delta_60m_cm, tide_range_cm, is_high_tide_zone, is_low_tide_zone,
@@ -5835,6 +5828,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except (TypeError, ValueError):
                 local_1_v = 0.0
             try:
+                n1_v = float(natl1) if natl1 is not None else 0.0
+            except (TypeError, ValueError):
+                n1_v = 0.0
+            try:
                 avg_st_v = float(avg_st) if avg_st is not None else None
             except (TypeError, ValueError):
                 avg_st_v = None
@@ -7841,12 +7838,52 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "l4": morning_l4,
                         })
 
+        data_status = {
+            "race_basic": {"latest": None, "count": 0, "total": 0},
+            "preview": {"latest": None, "count": 0, "total": 0},
+            "tide": {"latest": None, "count": 0, "total": 0},
+        }
+        try:
+            with db_connect() as conn:
+                row = conn.execute("""
+                    SELECT
+                        (SELECT COUNT(*) FROM races WHERE race_date = ?) AS race_total,
+                        (SELECT COUNT(DISTINCT p.race_id) FROM predictions p
+                          JOIN races r ON r.race_id = p.race_id
+                         WHERE r.race_date = ? AND p.boat_number = 1) AS basic_count,
+                        (SELECT MAX(p.predicted_at) FROM predictions p
+                          JOIN races r ON r.race_id = p.race_id
+                         WHERE r.race_date = ? AND p.boat_number = 1) AS basic_latest,
+                        (SELECT COUNT(DISTINCT pv.race_id) FROM race_previews pv
+                          JOIN races r ON r.race_id = pv.race_id
+                         WHERE r.race_date = ?) AS preview_count,
+                        (SELECT MAX(pv.live_updated_at) FROM race_previews pv
+                          JOIN races r ON r.race_id = pv.race_id
+                         WHERE r.race_date = ?) AS preview_latest,
+                        (SELECT COUNT(DISTINCT rt.race_id) FROM race_tides rt
+                          JOIN races r ON r.race_id = rt.race_id
+                         WHERE r.race_date = ?) AS tide_count,
+                        (SELECT MAX(rt.fetched_at) FROM race_tides rt
+                          JOIN races r ON r.race_id = rt.race_id
+                         WHERE r.race_date = ?) AS tide_latest
+                """, (target_date, target_date, target_date, target_date, target_date, target_date, target_date)).fetchone()
+                if row:
+                    race_total, basic_count, basic_latest, preview_count, preview_latest, tide_count, tide_latest = row
+                    data_status = {
+                        "race_basic": {"latest": basic_latest, "count": int(basic_count or 0), "total": int(race_total or 0)},
+                        "preview": {"latest": preview_latest, "count": int(preview_count or 0), "total": int(race_total or 0)},
+                        "tide": {"latest": tide_latest, "count": int(tide_count or 0), "total": int(race_total or 0)},
+                    }
+        except Exception as e:
+            logger.warning("data_status query failed: %s", e)
+
         payload = {
             "date": target_date,
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
+            "data_status": data_status,
             "signals": {s["race_id"]: s for s in signals},
         }
         _write_json_cache(cache_key, payload)
