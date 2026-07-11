@@ -393,11 +393,6 @@
           const text = `${l4El?.textContent || ''} ${l4El?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''}`.trim();
           const classList = Array.from(l4El?.classList || []);
           const supportedLevels = new Set([
-            'general',
-            'general_f1',
-            'morning_general',
-            'morning_general_f1',
-            'morning_obs_planned',
             'g23_optb_tri',
             'morning_watch_g23_optb',
             'shimonoseki_123_tri',
@@ -406,8 +401,6 @@
             'amagasaki_13_exa',
             'trifecta_niche_143_a12',
             'morning_watch_tri143_a12',
-            'general_c_tri',
-            'morning_watch_general_c_tri',
             'gamagori_123_general_practical_tri',
             'gamagori_13_exa',
             'exacta_niche_ashiya_boat4_lift',
@@ -442,11 +435,6 @@
           if (supportedLevels.has(level)) return true;
 
           const supportedClassPrefixes = [
-            'l4-general',
-            'l4-general_f1',
-            'l4-morning_general',
-            'l4-morning_general_f1',
-            'l4-morning_obs_planned',
             'l4-g23_optb_tri',
             'l4-morning_watch_g23_optb',
             'l4-shimonoseki_123_tri',
@@ -455,8 +443,6 @@
             'l4-amagasaki_13_exa',
             'l4-trifecta_niche_143_a12',
             'l4-morning_watch_tri143_a12',
-            'l4-general_c_tri',
-            'l4-morning_watch_general_c_tri',
             'l4-gamagori_123_general_practical_tri',
             'l4-gamagori_13_exa',
             'l4-exacta_niche_ashiya_boat4_lift',
@@ -1283,7 +1269,6 @@
             'morning_watch_boat3_multi',
             'morning_watch_tokoname_12_exa',
             'morning_watch_tri143_a12',
-            'morning_watch_general_c_tri',
             'morning_watch_omura_123_tri',
             'morning_watch_ashiya_boat4_lift',
           ]);
