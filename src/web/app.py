@@ -2616,11 +2616,26 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         try:
             preds = _race_predictions(predictor, race_id)
             conditions = _race_current_conditions_cached(race_id)
-            niche_signals = _detect_niche_signals(preds, conditions)
-            market_signal = _detect_market_inefficiency(race_id, preds, info=info)
         except Exception as e:
-            logger.exception("race signals failed: %s", race_id)
+            logger.exception("race signals base load failed: %s", race_id)
             return jsonify({"error": str(e)}), 500
+
+        niche_signals = []
+        market_signal = None
+        try:
+            niche_signals = _detect_niche_signals(preds, conditions)
+            if not isinstance(niche_signals, list):
+                niche_signals = []
+        except Exception:
+            logger.exception("niche signals failed: %s", race_id)
+            niche_signals = []
+        try:
+            market_signal = _detect_market_inefficiency(race_id, preds, info=info)
+            if market_signal is not None and not isinstance(market_signal, dict):
+                market_signal = None
+        except Exception:
+            logger.exception("market signal failed: %s", race_id)
+            market_signal = None
         return jsonify({
             "race_id": race_id,
             "market_signal": market_signal,
@@ -11253,7 +11268,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v6:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v7:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -11389,7 +11404,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:v6:{monthly_from}:{monthly_to}"
+        page_cache_key = f"member_strategy_monthly:v7:{monthly_from}:{monthly_to}"
         if not force_recompute:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:
