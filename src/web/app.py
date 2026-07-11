@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_DEFAULT_TTL = 300  # 5分
 
+_PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
+_PAGE_HTML_MEM_CACHE_MAX = 2000
+_PAGE_HTML_CACHE_TABLE_READY = False
 
 def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
     """Flask view 用 TTL キャッシュデコレータ。
@@ -124,9 +127,13 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
 def invalidate_cache():
     """全キャッシュクリア (デバッグ用)"""
     _CACHE.clear()
+    _PAGE_HTML_MEM_CACHE.clear()
 
 
 def _ensure_page_html_cache_table() -> None:
+    global _PAGE_HTML_CACHE_TABLE_READY
+    if _PAGE_HTML_CACHE_TABLE_READY:
+        return
     try:
         with db_connect() as conn:
             conn.execute(
@@ -139,12 +146,19 @@ def _ensure_page_html_cache_table() -> None:
                 """
             )
             conn.commit()
+        _PAGE_HTML_CACHE_TABLE_READY = True
     except Exception:
         logger.exception("failed to ensure page_html_cache table")
 
 
 def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
     try:
+        now_ts = time.time()
+        mem_row = _PAGE_HTML_MEM_CACHE.get(cache_key)
+        if mem_row:
+            updated_at, html = float(mem_row[0] or 0), mem_row[1]
+            if now_ts - updated_at <= max_age_sec:
+                return html
         _ensure_page_html_cache_table()
         with db_connect() as conn:
             row = conn.execute(
@@ -154,8 +168,13 @@ def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
         if not row:
             return None
         html, updated_at = row[0], float(row[1] or 0)
-        if time.time() - updated_at > max_age_sec:
+        if now_ts - updated_at > max_age_sec:
             return None
+        _PAGE_HTML_MEM_CACHE[cache_key] = (updated_at, html)
+        if len(_PAGE_HTML_MEM_CACHE) > _PAGE_HTML_MEM_CACHE_MAX:
+            items = sorted(_PAGE_HTML_MEM_CACHE.items(), key=lambda x: x[1][0])
+            for k, _ in items[:1000]:
+                _PAGE_HTML_MEM_CACHE.pop(k, None)
         return html
     except Exception:
         logger.exception("failed to read page_html_cache: %s", cache_key)
@@ -166,6 +185,7 @@ def _write_page_html_cache(cache_key: str, html: str) -> None:
     try:
         _ensure_page_html_cache_table()
         now_ts = time.time()
+        _PAGE_HTML_MEM_CACHE[cache_key] = (now_ts, html)
         with db_connect() as conn:
             conn.execute(
                 """

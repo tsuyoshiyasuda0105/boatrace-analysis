@@ -143,7 +143,7 @@
 
     <!-- 次のレース ハイライト (JS で動的更新) -->
     <section class="next-race-panel" id="data-status-panel" hidden>
-      <h3>???????</h3>
+      <h3>データ取得状況</h3>
       <div class="next-race-cards" id="data-status-cards"></div>
     </section>
 
@@ -393,6 +393,11 @@
           const text = `${l4El?.textContent || ''} ${l4El?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''}`.trim();
           const classList = Array.from(l4El?.classList || []);
           const supportedLevels = new Set([
+            'general',
+            'general_f1',
+            'morning_general',
+            'morning_general_f1',
+            'morning_obs_planned',
             'g23_optb_tri',
             'morning_watch_g23_optb',
             'shimonoseki_123_tri',
@@ -437,6 +442,11 @@
           if (supportedLevels.has(level)) return true;
 
           const supportedClassPrefixes = [
+            'l4-general',
+            'l4-general_f1',
+            'l4-morning_general',
+            'l4-morning_general_f1',
+            'l4-morning_obs_planned',
             'l4-g23_optb_tri',
             'l4-morning_watch_g23_optb',
             'l4-shimonoseki_123_tri',
@@ -824,7 +834,7 @@
             <article class="next-race-card">
               <div class="next-race-time">${label}</div>
               <div class="next-race-venue">${count}/${total}</div>
-              <div class="next-race-remaining">????: ${latest}</div>
+              <div class="next-race-remaining">最終取得: ${latest}</div>
             </article>
           `;
         }
@@ -834,9 +844,9 @@
           const cards = document.getElementById('data-status-cards');
           if (!panel || !cards) return;
           cards.innerHTML = [
-            formatDataStatusLine('???????', status.race_basic || {}),
-            formatDataStatusLine('????', status.preview || {}),
-            formatDataStatusLine('???', status.tide || {}),
+            formatDataStatusLine('レース基本情報', status.race_basic || {}),
+            formatDataStatusLine('展示情報', status.preview || {}),
+            formatDataStatusLine('潮状況', status.tide || {}),
           ].join('');
           panel.hidden = false;
         }
@@ -1124,7 +1134,7 @@
           picks.sort((a, b) => a.closedAt - b.closedAt);
           panel.hidden = false;
           preconfirmedTbody.innerHTML = '';
-          warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
+          warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 3).map(p => p.el.dataset.raceId));
 
           // 該当なし表示 (loadMarketSignals 完了前 or 本当に無い日)
           if (picks.length === 0) {
@@ -1447,7 +1457,7 @@
           preconfirmedTbody.innerHTML = '';
           waitingTbody.innerHTML = '';
           closedTbody.innerHTML = '';
-          warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 6).map(p => p.el.dataset.raceId));
+          warmRaceDetails(picks.filter(p => !p.isClosed).slice(0, 3).map(p => p.el.dataset.raceId));
 
           const activePicks = picks.filter(p => !p.isBoat3WatchOnly);
           const openPicks = activePicks.filter(p => !p.isClosed);
