@@ -7,53 +7,26 @@
   {% endif %}
 {% endblock %}
 
-{% set strategies = [
-  ('g23_optb_tri', 'G2/G3 1-2-3', 'g23', '#ff006e'),
-  ('shimonoseki_123_tri', '?? 1-2-3', 'shimonoseki123', '#22c55e'),
-  ('tsu_124_tri', '? 1-2-4', 'tsu124', '#0ea5e9'),
-  ('amagasaki_143_tri', '?? 1-4-3', 'amagasaki143', '#f97316'),
-  ('ashiya_boat4_exa', '?? 4-1', 'ashiya41', '#ef4444'),
-  ('ashiya_4head_flow_tri', '?? 4??', 'ashiya4head', '#fb923c'),
-  ('toda_42_flow_tri', '?? 4-2?', 'toda42all', '#f97316'),
-  ('hamanako_14_exa', '??? 1-4', 'hamanako14', '#f59e0b'),
-  ('omura_14_exa', '?? 1-4', 'omura14', '#fb7185'),
-  ('tokuyama_123_tri', '?? 1-2-3', 'tokuyama123', '#38bdf8'),
-  ('tokuyama_12a_exa', '?? 1-2 ??', 'tokuyama12a', '#60a5fa'),
-  ('shimonoseki_132_tri', '?? 1-3-2', 'shimonoseki132', '#84cc16'),
-  ('kojima_124_tri', '?? 1-2-4', 'kojima124', '#10b981'),
-  ('omura_123_tri', '?? 1-2-3', 'omura123', '#fb7185'),
-  ('omura_132_tri', '?? 1-3-2', 'omura132', '#e879f9'),
-  ('tsu_123_tri', '? 1-2-3', 'tsu123', '#38bdf8'),
-  ('suminoe_123_tri', '??? 1-2-3', 'suminoe123', '#06b6d4'),
-  ('general_c_tri', '??C 1-2-3', 'generalC', '#facc15'),
-  ('gamagori_123_general_practical_tri', '?? 1-2-3 ???', 'gamagori123Practical', '#fde047'),
-  ('gamagori_13_exa', '?? 1-3', 'gamagori13', '#22d3ee'),
-  ('miyajima_tide_132_tri', '?? 1-3-2 ??', 'miyajimaTide132', '#14b8a6'),
-  ('gamagori_tide_132_tri', '?? 1-3-2 ??', 'gamagoriTide132', '#f97316'),
-  ('marugame_tide_123_tri', '?? 1-2-3 ??', 'marugameTide123', '#a855f7'),
-  ('fukuoka_tide_132_tri', '?? 1-3-2 ??', 'fukuokaTide132', '#06b6d4'),
-  ('gmkf_132_tri', '???? 1-3-2', 'gmkf132', '#f43f5e')
-] %}
-
 {% block content %}
 <div class="strategy-dashboard">
-  <h2>月別 ROI 推移 {% if monthly_to == today_iso %}<span class="live-indicator">LIVE</span>{% endif %}</h2>
+  <h2>月別 ROI 推移{% if monthly_to == today_iso %}<span class="live-indicator">LIVE</span>{% endif %}</h2>
   <p class="dashboard-hint">
-    採用手法の月別推移です。集計期間: {{ monthly_from }} - {{ monthly_to }}<br>
-    <small>通常表示はキャッシュ済み集計を優先し、<strong>最新に更新</strong> のときだけ再集計します。</small>
-    {% if recomputed %}<small class="pos" style="margin-left:8px;">最新再集計を実行しました。</small>{% endif %}
+    採用手法を月別で比較します。集計範囲: {{ monthly_from }} - {{ monthly_to }}<br>
+    通常表示はキャッシュ済み集計を優先し、最新更新のときだけ再集計します。
+    {% if recomputed %}<small class="pos" style="margin-left:8px;">最新に更新しました</small>{% endif %}
   </p>
+
   <form method="get" class="health-filter-form" style="margin:12px 0 18px;">
     <button type="submit" class="detail-btn">表示</button>
     <button type="submit" name="recompute" value="1" class="detail-btn">最新に更新</button>
   </form>
 
   <section class="summary-grid" style="margin-bottom:16px;">
-    {% for key, label, _, _ in strategies %}
+    {% for s in strategies %}
     <article class="summary-card">
-      <div class="summary-label">{{ label }}</div>
-      <div class="summary-roi">{% if monthly_totals[key].roi is not none %}{{ '%+.1f' | format(monthly_totals[key].roi) }}%{% else %}-{% endif %}</div>
-      <div class="summary-sub">n={{ monthly_totals[key].bets }} HIT={{ monthly_totals[key].hits }}</div>
+      <div class="summary-label">{{ s.label }}</div>
+      <div class="summary-roi">{% if monthly_totals[s.key].roi is not none %}{{ '%+.1f' | format(monthly_totals[s.key].roi) }}%{% else %}-{% endif %}</div>
+      <div class="summary-sub">n={{ monthly_totals[s.key].bets }} HIT={{ monthly_totals[s.key].hits }}</div>
     </article>
     {% endfor %}
   </section>
@@ -73,12 +46,12 @@
           <tr>
             <th rowspan="2">年月</th>
             <th rowspan="2">L4該当</th>
-            {% for _, label, _, _ in strategies %}
-            <th colspan="2">{{ label }}</th>
+            {% for s in strategies %}
+            <th colspan="2">{{ s.label }}</th>
             {% endfor %}
           </tr>
           <tr>
-            {% for _ in strategies %}<th>HIT/n</th><th>ROI</th>{% endfor %}
+            {% for s in strategies %}<th>HIT/n</th><th>ROI</th>{% endfor %}
           </tr>
         </thead>
         <tbody>
@@ -90,9 +63,11 @@
               {% if m.is_current %}<span class="in-progress-badge">進行中</span>{% endif %}
             </td>
             <td class="num">{{ m.n_l4_display }}</td>
-            {% for key, _, _, _ in strategies %}
-            <td class="num">{{ m[key ~ '_hits'] }}/{{ m[key ~ '_bets'] }}</td>
-            <td class="num {% if m[key ~ '_roi'] is not none and m[key ~ '_roi'] >= 0 %}pos{% elif m[key ~ '_roi'] is not none %}neg{% endif %}">{% if m[key ~ '_roi'] is not none %}{{ '%+.0f' | format(m[key ~ '_roi']) }}%{% else %}-{% endif %}</td>
+            {% for s in strategies %}
+            <td class="num">{{ m[s.key ~ '_hits'] }}/{{ m[s.key ~ '_bets'] }}</td>
+            <td class="num {% if m[s.key ~ '_roi'] is not none and m[s.key ~ '_roi'] >= 0 %}pos{% elif m[s.key ~ '_roi'] is not none %}neg{% endif %}">
+              {% if m[s.key ~ '_roi'] is not none %}{{ '%+.0f' | format(m[s.key ~ '_roi']) }}%{% else %}-{% endif %}
+            </td>
             {% endfor %}
           </tr>
           {% endfor %}
@@ -103,21 +78,21 @@
 </div>
 
 <script>
-(function() {
-  const data = [
+(() => {
+  const MONTHLY_ROWS = [
     {% for m in monthly_rows_asc %}
     {
       ym: {{ m.ym | tojson }},
-      {% for key, _, short, _ in strategies %}
-      {{ short }}: {{ ('null' if m[key ~ '_roi'] is none else '%.1f' | format(m[key ~ '_roi'])) }}{% if not loop.last %},{% endif %}
+      {% for s in strategies %}
+      {{ s.short }}: {{ ('null' if m[s.key ~ '_roi'] is none else '%.1f' | format(m[s.key ~ '_roi'])) }}{% if not loop.last %},{% endif %}
       {% endfor %}
     }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
 
   const SERIES = [
-    {% for _, label, short, color in strategies %}
-    { key: '{{ short }}', label: {{ label | tojson }}, color: '{{ color }}' }{% if not loop.last %},{% endif %}
+    {% for s in strategies %}
+    { key: '{{ s.short }}', label: {{ s.label | tojson }}, color: '{{ s.color }}' }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
 
@@ -127,9 +102,14 @@
   if (!canvas || !legendEl) return;
 
   const ctx = canvas.getContext('2d');
-  const W = canvas.width;
-  const H = canvas.height;
-  const padL = 56, padR = 20, padT = 18, padB = 44;
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvas.width;
+  const cssHeight = canvas.height;
+  canvas.width = cssWidth * dpr;
+  canvas.height = cssHeight * dpr;
+  canvas.style.width = cssWidth + 'px';
+  canvas.style.height = cssHeight + 'px';
+  ctx.scale(dpr, dpr);
 
   function renderLegend() {
     legendEl.innerHTML = SERIES.map((s) => (
@@ -150,32 +130,45 @@
   }
 
   function draw() {
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
     const visible = SERIES.filter((s) => activeKeys.has(s.key));
     const vals = [];
-    visible.forEach((s) => data.forEach((d) => { if (d[s.key] !== null) vals.push(d[s.key]); }));
+    visible.forEach((s) => MONTHLY_ROWS.forEach((d) => { if (d[s.key] !== null) vals.push(d[s.key]); }));
     if (!vals.length) return;
 
     let minV = Math.min(0, ...vals);
     let maxV = Math.max(0, ...vals);
-    if (minV === maxV) { minV -= 10; maxV += 10; }
+    if (minV === maxV) {
+      minV -= 10;
+      maxV += 10;
+    }
 
-    const plotW = W - padL - padR;
-    const plotH = H - padT - padB;
-    const groupW = data.length ? plotW / data.length : plotW;
+    const padL = 56;
+    const padR = 20;
+    const padT = 18;
+    const padB = 44;
+    const plotW = cssWidth - padL - padR;
+    const plotH = cssHeight - padT - padB;
+    const groupW = MONTHLY_ROWS.length ? plotW / MONTHLY_ROWS.length : plotW;
     const yAt = (v) => padT + ((maxV - v) / (maxV - minV)) * plotH;
 
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.lineWidth = 1;
     for (let i = 0; i < 5; i += 1) {
       const y = padT + (plotH * i) / 4;
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(cssWidth - padR, y);
+      ctx.stroke();
     }
 
     const zeroY = yAt(0);
     ctx.strokeStyle = '#facc15';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(padL, zeroY); ctx.lineTo(W - padR, zeroY); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(padL, zeroY);
+    ctx.lineTo(cssWidth - padR, zeroY);
+    ctx.stroke();
 
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.font = '12px sans-serif';
@@ -187,9 +180,9 @@
     }
 
     ctx.textAlign = 'center';
-    data.forEach((d, i) => {
+    MONTHLY_ROWS.forEach((d, i) => {
       const x = padL + groupW * i + groupW / 2;
-      ctx.fillText(String(d.ym).slice(2), x, H - 14);
+      ctx.fillText(String(d.ym).slice(2), x, cssHeight - 14);
     });
 
     const bars = visible.length || 1;
@@ -199,7 +192,7 @@
 
     visible.forEach((s, sIdx) => {
       ctx.fillStyle = s.color;
-      data.forEach((d, i) => {
+      MONTHLY_ROWS.forEach((d, i) => {
         const v = d[s.key];
         if (v === null) return;
         const x = padL + groupW * i + 5 + sIdx * (barW + innerGap);

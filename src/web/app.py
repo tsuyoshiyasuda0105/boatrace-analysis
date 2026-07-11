@@ -7779,10 +7779,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
     GMKF_132_TRI_CACHE_VERSION = "gmkf_132_tri_v1"
     TODA_42_FLOW_TRI_CACHE_VERSION = "toda_42_flow_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v13"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v14"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
-        "adopted_daily_select_v8",
-        "adopted_daily_select_v9",
         ADOPTED_DAILY_SELECT_VERSION,
     }
     BET_UNIT_MAP = {"toda_42_flow_tri": 400, "ashiya_4head_flow_tri": 2000}
@@ -7964,12 +7962,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
                             "g23_optb_tri",
                             "tsu_123_tri", "suminoe_123_tri", "shimonoseki_123_tri", "tsu_124_tri",
-                            "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
+                            "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri", "kojima_13_exa",
                             "tokuyama_12a_exa",
                             "omura_123_tri", "omura_132_tri",
                             "miyajima_tide_132_tri", "miyajima_fl_132_tri", "gamagori_tide_132_tri",
                     "gamagori_123_general_practical_tri", "gamagori_13_exa",
-                            "marugame_tide_123_tri", "fukuoka_tide_132_tri", "fukuoka_wind_exa", "toda_42_flow_tri"):
+                            "marugame_123_tri", "marugame_tide_123_tri", "fukuoka_tide_132_tri", "fukuoka_wind_exa", "toda_42_flow_tri"):
                     n = d.get(f"{bet}_bets", 0)
                     pay = d.get(f"{bet}_pay", 0)
                     unit = BET_UNIT_MAP.get(bet, 100)
@@ -8062,6 +8060,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e4.national_top_1_percent AS boat4_natl_1,
                     e4.assigned_motor_top_2_percent AS boat4_motor_top2,
                     e5.assigned_motor_top_2_percent AS boat5_motor_top2,
+                    (COALESCE(e.flying_count, 0) + COALESCE(e.late_count, 0)) AS boat1_fl_sum,
+                    (COALESCE(e2.flying_count, 0) + COALESCE(e2.late_count, 0)) AS boat2_fl_sum,
+                    (COALESCE(e3.flying_count, 0) + COALESCE(e3.late_count, 0)) AS boat3_fl_sum,
+                    (COALESCE(e4.flying_count, 0) + COALESCE(e4.late_count, 0)) AS boat4_fl_sum,
+                    (COALESCE(e5.flying_count, 0) + COALESCE(e5.late_count, 0)) AS boat5_fl_sum,
+                    (COALESCE(e6.flying_count, 0) + COALESCE(e6.late_count, 0)) AS boat6_fl_sum,
                     p1t2.prob_top_2 AS boat1_pred_top2,
                     p3t2.prob_top_2 AS boat3_pred_top2,
                     p4t2.prob_top_2 AS boat4_pred_top2,
@@ -8123,6 +8127,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
                 LEFT JOIN race_entries e4 ON e4.race_id = r.race_id AND e4.boat_number = 4
                 LEFT JOIN race_entries e5 ON e5.race_id = r.race_id AND e5.boat_number = 5
+                LEFT JOIN race_entries e6 ON e6.race_id = r.race_id AND e6.boat_number = 6
                 LEFT JOIN predictions p1t2 ON p1t2.race_id = r.race_id AND p1t2.boat_number = 1
                 {_derived_join}
                 LEFT JOIN predictions p3t2 ON p3t2.race_id = r.race_id AND p3t2.boat_number = 3
@@ -8261,7 +8266,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "shimonoseki_132_tri_bets": 0, "shimonoseki_132_tri_hits": 0, "shimonoseki_132_tri_pay": 0,
                 "kojima_124_tri_bets": 0, "kojima_124_tri_hits": 0, "kojima_124_tri_pay": 0,
                 "kojima_13_exa_bets": 0, "kojima_13_exa_hits": 0, "kojima_13_exa_pay": 0,
-                "kojima_13_exa_bets": 0, "kojima_13_exa_hits": 0, "kojima_13_exa_pay": 0,
                 "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
                 "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
                 "grade_breakdown": {},
@@ -8368,6 +8372,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "tokuyama_12a_exa_bets": 0, "tokuyama_12a_exa_hits": 0, "tokuyama_12a_exa_pay": 0,
                 "shimonoseki_132_tri_bets": 0, "shimonoseki_132_tri_hits": 0, "shimonoseki_132_tri_pay": 0,
                 "kojima_124_tri_bets": 0, "kojima_124_tri_hits": 0, "kojima_124_tri_pay": 0,
+                "kojima_13_exa_bets": 0, "kojima_13_exa_hits": 0, "kojima_13_exa_pay": 0,
                 "tsu_124_tri_bets": 0, "tsu_124_tri_hits": 0, "tsu_124_tri_pay": 0,
                 "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
                 "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
@@ -10246,6 +10251,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
                             "tsu_124_tri_bets": 0, "tsu_124_tri_hits": 0, "tsu_124_tri_pay": 0,
                             "amagasaki_143_tri_bets": 0, "amagasaki_143_tri_hits": 0, "amagasaki_143_tri_pay": 0,
+                            "kojima_13_exa_bets": 0, "kojima_13_exa_hits": 0, "kojima_13_exa_pay": 0,
                             "miyajima_tide_132_tri_bets": 0, "miyajima_tide_132_tri_hits": 0, "miyajima_tide_132_tri_pay": 0,
                 "miyajima_fl_132_tri_bets": 0, "miyajima_fl_132_tri_hits": 0, "miyajima_fl_132_tri_pay": 0,
                             "miyajima_fl_132_tri_bets": 0, "miyajima_fl_132_tri_hits": 0, "miyajima_fl_132_tri_pay": 0,
@@ -10325,7 +10331,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "mid_132_tier_a_tri", "venus_tri",
                     "amagasaki_motor_exa", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2",
                     "general_c_tri",
-                    "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
+                    "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri", "kojima_13_exa",
                     "omura_123_tri", "omura_132_tri",
                     "g23_optb_tri",
                     "tsu_123_tri", "suminoe_123_tri", "tsu_124_tri", "amagasaki_143_tri", "toda_42_flow_tri"):
@@ -10366,6 +10372,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_shimonoseki_123_tri_version"] = SHIMONOSEKI_123_TRI_CACHE_VERSION
                         day_d["_shimonoseki_132_tri_version"] = SHIMONOSEKI_132_TRI_CACHE_VERSION
                         day_d["_kojima_124_tri_version"] = KOJIMA_124_TRI_CACHE_VERSION
+                        day_d["_kojima_13_exa_version"] = KOJIMA_13_EXA_CACHE_VERSION
                         day_d["_tsu_124_tri_version"] = TSU_124_TRI_CACHE_VERSION
                         day_d["_omura_123_tri_version"] = OMURA_123_TRI_CACHE_VERSION
                         day_d["_omura_132_tri_version"] = OMURA_132_TRI_CACHE_VERSION
@@ -10375,6 +10382,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_gamagori_tide_132_tri_version"] = GAMAGORI_TIDE_132_TRI_CACHE_VERSION
                         day_d["_gamagori_123_general_practical_tri_version"] = GAMAGORI_123_GENERAL_PRACTICAL_TRI_CACHE_VERSION
                         day_d["_gamagori_13_exa_version"] = GAMAGORI_13_EXA_CACHE_VERSION
+                        day_d["_marugame_123_tri_version"] = MARUGAME_123_TRI_CACHE_VERSION
                         day_d["_marugame_tide_123_tri_version"] = MARUGAME_TIDE_123_TRI_CACHE_VERSION
                         day_d["_fukuoka_tide_132_tri_version"] = FUKUOKA_TIDE_132_TRI_CACHE_VERSION
                         day_d["_gmkf_132_tri_version"] = GMKF_132_TRI_CACHE_VERSION
@@ -10884,6 +10892,36 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             d["mid_132_tier_a_tri_profit"] = d.get("cand4_tri_profit", 0)
         return rows
 
+    ROI_STRATEGIES = (
+        {"key": "g23_optb_tri", "label": "G2/G3 1-2-3", "short": "g23", "color": "#ff006e", "timing": "same_day"},
+        {"key": "shimonoseki_123_tri", "label": "下関 1-2-3", "short": "shm123", "color": "#22c55e", "timing": "previous_day"},
+        {"key": "tsu_124_tri", "label": "津 1-2-4", "short": "tsu124", "color": "#0ea5e9", "timing": "previous_day"},
+        {"key": "amagasaki_143_tri", "label": "尼崎 1-4-3", "short": "ama143", "color": "#f97316", "timing": "same_day"},
+        {"key": "ashiya_boat4_exa", "label": "芦屋 4-1", "short": "ashiya41", "color": "#ef4444", "timing": "same_day"},
+        {"key": "hamanako_14_exa", "label": "浜名湖 1-4", "short": "hama14", "color": "#f59e0b", "timing": "previous_day"},
+        {"key": "omura_14_exa", "label": "大村 1-4", "short": "omura14", "color": "#fb7185", "timing": "previous_day"},
+        {"key": "tokuyama_123_tri", "label": "徳山 1-2-3", "short": "tky123", "color": "#38bdf8", "timing": "previous_day"},
+        {"key": "shimonoseki_132_tri", "label": "下関 1-3-2", "short": "shm132", "color": "#84cc16", "timing": "previous_day"},
+        {"key": "kojima_124_tri", "label": "児島 1-2-4", "short": "koj124", "color": "#10b981", "timing": "previous_day"},
+        {"key": "kojima_13_exa", "label": "児島 1-3", "short": "koj13", "color": "#14b8a6", "timing": "same_day"},
+        {"key": "marugame_123_tri", "label": "丸亀 1-2-3", "short": "mgm123", "color": "#8b5cf6", "timing": "same_day"},
+        {"key": "omura_123_tri", "label": "大村 1-2-3", "short": "omu123", "color": "#ec4899", "timing": "same_day"},
+        {"key": "omura_132_tri", "label": "大村 1-3-2", "short": "omu132", "color": "#d946ef", "timing": "previous_day"},
+        {"key": "tsu_123_tri", "label": "津 1-2-3", "short": "tsu123", "color": "#06b6d4", "timing": "previous_day"},
+        {"key": "suminoe_123_tri", "label": "住之江 1-2-3", "short": "sum123", "color": "#0891b2", "timing": "previous_day"},
+        {"key": "general_c_tri", "label": "一般C 1-2-3", "short": "genc123", "color": "#facc15", "timing": "same_day"},
+        {"key": "miyajima_tide_132_tri", "label": "宮島 潮 1-3-2", "short": "myj132", "color": "#f43f5e", "timing": "same_day"},
+        {"key": "gamagori_tide_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gama132", "color": "#fb923c", "timing": "same_day"},
+        {"key": "marugame_tide_123_tri", "label": "丸亀 潮 1-2-3", "short": "mgmt123", "color": "#a855f7", "timing": "same_day"},
+        {"key": "fukuoka_tide_132_tri", "label": "福岡 潮 1-3-2", "short": "fkk132", "color": "#0f766e", "timing": "same_day"},
+        {"key": "gamagori_123_general_practical_tri", "label": "蒲郡 一般 1-2-3", "short": "gama123g", "color": "#fde047", "timing": "previous_day"},
+        {"key": "gamagori_13_exa", "label": "蒲郡 1-3", "short": "gama13", "color": "#22d3ee", "timing": "same_day"},
+        {"key": "tokuyama_12a_exa", "label": "徳山 1-2 A", "short": "tky12a", "color": "#60a5fa", "timing": "same_day"},
+        {"key": "tokoname_12_exa", "label": "常滑 1-2", "short": "tok12", "color": "#3b82f6", "timing": "same_day"},
+        {"key": "gmkf_132_tri", "label": "蒲宮児福 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
+    )
+    ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
+
     @app.route("/member/strategy")
     @login_required
     @cached(ttl=600, past_ttl=7200)  # 通常はキャッシュ表示、更新時だけ再集計
@@ -10900,7 +10938,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v2:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v5:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -10909,37 +10947,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if cached_html:
                 return cached_html
         rows = _l4_daily_stats(from_d, to_d, force_full_scan=force_recompute)
-        adopted_keys = (
-            "g23_optb_tri",
-            "tokuyama_123_tri",
-            "tokuyama_12a_exa",
-            "shimonoseki_123_tri",
-            "shimonoseki_132_tri",
-            "kojima_124_tri",
-            "tsu_124_tri",
-            "omura_123_tri",
-            "omura_132_tri",
-            "toda_42_flow_tri",
-            "amagasaki_143_tri",
-            "miyajima_tide_132_tri",
-            "miyajima_fl_132_tri",
-            "miyajima_fl_132_tri",
-            "gamagori_tide_132_tri",
-            "gamagori_123_general_practical_tri",
-            "gamagori_13_exa",
-            "marugame_tide_123_tri",
-            "fukuoka_tide_132_tri",
-            "gmkf_132_tri",
-            "tsu_123_tri",
-            "suminoe_123_tri",
-            "ashiya_boat4_exa",
-            "fukuoka_wind_exa",
-            "ashiya_4head_flow_tri",
-            "hamanako_14_exa",
-            "omura_14_exa",
-            "tokoname_12_exa",
-            "general_c_tri",
-        )
+        adopted_keys = ROI_STRATEGY_KEYS
 
         for r in rows:
             for key in adopted_keys:
@@ -10970,19 +10978,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
         }
-        bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
-                    "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
-                    "prime_tri", "r12_tri", "gen_r12_tri",
-                    "toda_7r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "tokoname_12_exa", "kiryu_win2", "general_c_tri",
-                    "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
-                    "tsu_124_tri", "omura_123_tri", "omura_132_tri",
-                    "miyajima_tide_132_tri", "miyajima_fl_132_tri", "gamagori_tide_132_tri",
-                    "gamagori_123_general_practical_tri", "gamagori_13_exa",
-                    "marugame_tide_123_tri", "fukuoka_tide_132_tri", "gmkf_132_tri",
-                    "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri", "fukuoka_wind_exa", "toda_42_flow_tri")
-        for k in bet_keys:
+        for k in adopted_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
             totals[f"{k}_pay"]  = sum(r.get(f"{k}_pay", 0)  for r in rows)
@@ -11054,6 +11050,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "member_strategy_v3.html",
             rows=rows,
             totals=totals,
+            strategies=ROI_STRATEGIES,
             health_results=[],
             from_date=from_d,
             to_date=to_d,
@@ -11077,55 +11074,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:v2:{monthly_from}:{monthly_to}"
+        page_cache_key = f"member_strategy_monthly:v5:{monthly_from}:{monthly_to}"
         if not force_recompute:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:
                 return cached_html
 
-        bet_keys = ("win", "exa", "tri", "c80", "pro", "sgg12",
-                    "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
-                    "prime_tri", "r12_tri", "gen_r12_tri",
-                    "toda_7r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "tokoname_12_exa", "kiryu_win2", "general_c_tri",
-                    "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
-                    "tsu_124_tri", "omura_123_tri", "omura_132_tri",
-                    "miyajima_tide_132_tri", "miyajima_fl_132_tri", "gamagori_tide_132_tri",
-                    "gamagori_123_general_practical_tri", "gamagori_13_exa",
-                    "marugame_tide_123_tri", "fukuoka_tide_132_tri", "gmkf_132_tri",
-                    "g23_optb_tri", "tsu_123_tri", "suminoe_123_tri", "fukuoka_wind_exa", "toda_42_flow_tri")
-        adopted_keys = (
-            "g23_optb_tri",
-            "tokuyama_123_tri",
-            "tokuyama_12a_exa",
-            "shimonoseki_123_tri",
-            "shimonoseki_132_tri",
-            "kojima_124_tri",
-            "tsu_124_tri",
-            "omura_123_tri",
-            "omura_132_tri",
-            "toda_42_flow_tri",
-            "amagasaki_143_tri",
-            "miyajima_tide_132_tri",
-            "miyajima_fl_132_tri",
-            "miyajima_fl_132_tri",
-            "gamagori_tide_132_tri",
-            "gamagori_123_general_practical_tri",
-            "gamagori_13_exa",
-            "marugame_tide_123_tri",
-            "fukuoka_tide_132_tri",
-            "gmkf_132_tri",
-            "tsu_123_tri",
-            "suminoe_123_tri",
-            "ashiya_boat4_exa",
-            "fukuoka_wind_exa",
-            "ashiya_4head_flow_tri",
-            "hamanako_14_exa",
-            "omura_14_exa",
-            "tokoname_12_exa",
-            "general_c_tri",
-        )
+        bet_keys = ROI_STRATEGY_KEYS
+        adopted_keys = ROI_STRATEGY_KEYS
         try:
             monthly_daily = _l4_daily_stats(monthly_from, monthly_to, force_full_scan=force_recompute)
         except Exception as e:
@@ -11235,22 +11191,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 表示用は新しい順
         monthly_rows = list(reversed(monthly_rows_asc))
         monthly_totals = {}
-        monthly_total_keys = (
-            "win", "exa", "tri", "gen_f1_tri", "gen_200_tri",
-            "mid_132_tier_a_tri", "amagasaki_motor_exa", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri",
-            "hamanako_14_exa", "omura_14_exa", "tokoname_12_exa", "kiryu_win2", "general_c_tri",
-            "tokuyama_123_tri", "tokuyama_12a_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri",
-            "omura_123_tri", "omura_132_tri",
-            "miyajima_tide_132_tri", "gamagori_tide_132_tri",
-            "gamagori_123_general_practical_tri", "gamagori_13_exa",
-            "marugame_tide_123_tri", "fukuoka_tide_132_tri",
-            "gmkf_132_tri",
-            "toda_42_flow_tri",
-            "g23_optb_tri",
-            "tsu_123_tri", "suminoe_123_tri", "tsu_124_tri", "amagasaki_143_tri",
-            "prime_tri", "r12_tri", "gen_r12_tri",
-        )
-        for k in monthly_total_keys:
+        for k in adopted_keys:
             bets = sum((m.get(f"{k}_bets", 0) or 0) for m in monthly_rows_asc)
             hits = sum((m.get(f"{k}_hits", 0) or 0) for m in monthly_rows_asc)
             pay = sum((m.get(f"{k}_pay", 0) or 0) for m in monthly_rows_asc)
@@ -11264,36 +11205,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
 
         monthly_totals["n_l4_display"] = sum((m.get("n_l4_display", 0) or 0) for m in monthly_rows_asc)
-        tri_bets = int(monthly_totals.get("tri", {}).get("bets", 0) or 0)
-        tri_hits = int(monthly_totals.get("tri", {}).get("hits", 0) or 0)
-        tri_pay = int(monthly_totals.get("tri", {}).get("pay", 0) or 0)
-        monthly_totals["tri_core"] = {
-            "bets": tri_bets,
-            "hits": tri_hits,
-            "pay": tri_pay,
-            "profit": tri_pay - 100 * tri_bets if tri_bets else 0,
-            "roi": ((tri_pay - 100 * tri_bets) / (100 * tri_bets) * 100) if tri_bets else None,
-        }
-        for key in ("cand1_tri", "cand3_tri", "cand4_tri"):
-            bets = sum((m.get(f"{key}_bets", 0) or 0) for m in monthly_rows_asc)
-            hits = sum((m.get(f"{key}_hits", 0) or 0) for m in monthly_rows_asc)
-            pay = sum((m.get(f"{key}_pay", 0) or 0) for m in monthly_rows_asc)
-            monthly_totals[key] = {
-                "bets": bets,
-                "hits": hits,
-                "pay": pay,
-                "profit": pay - 100 * bets if bets else 0,
-                "roi": ((pay - 100 * bets) / (100 * bets) * 100) if bets else None,
-            }
-        monthly_totals["gen_f1_tri"] = monthly_totals.get("cand1_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
-        monthly_totals["gen_200_tri"] = monthly_totals.get("cand3_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
-        monthly_totals["mid_132_tier_a_tri"] = monthly_totals.get("cand4_tri", {"bets": 0, "hits": 0, "pay": 0, "profit": 0, "roi": None})
-
         html = render_template(
             "member_monthly_v3.html",
             monthly_rows=monthly_rows,
             monthly_rows_asc=monthly_rows_asc,
             monthly_totals=monthly_totals,
+            strategies=ROI_STRATEGIES,
             health_results=[],
             monthly_from=monthly_from,
             monthly_to=monthly_to,
