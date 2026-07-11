@@ -729,10 +729,6 @@
       };
 
       document.querySelectorAll(".motor-history-btn").forEach((button) => {
-        const warm = () => { fetchHistory(button).catch(() => {}); };
-        button.addEventListener("pointerenter", warm, { passive: true });
-        button.addEventListener("focus", warm);
-        button.addEventListener("touchstart", warm, { passive: true });
         button.addEventListener("click", async () => {
           const boatNumber = button.dataset.boatNumber;
           const row = document.getElementById(`motor-history-row-${boatNumber}`);
