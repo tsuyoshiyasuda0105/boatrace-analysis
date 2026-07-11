@@ -458,10 +458,8 @@ def _kimarite_skill_tags_for_race(race_id: str) -> dict[int, dict]:
 @lru_cache(maxsize=20000)
 def _kimarite_skill_tags_for_race_cached(
     race_id: str,
-    info: Optional[dict] = None,
 ) -> dict[int, dict]:
-    if info is None:
-        info = _race_basic_info(race_id)
+    info = _race_basic_info(race_id)
     if not info:
         return {}
     today_iso = date.today().isoformat()
@@ -1161,10 +1159,8 @@ def _race_actual_result(race_id: str) -> Optional[dict]:
 @lru_cache(maxsize=20000)
 def _race_actual_result_cached(
     race_id: str,
-    info: Optional[dict] = None,
 ) -> Optional[dict]:
-    if info is None:
-        info = _race_basic_info(race_id)
+    info = _race_basic_info(race_id)
     if not info:
         return None
     today_iso = date.today().isoformat()
@@ -1249,10 +1245,8 @@ def _race_current_conditions(race_id: str) -> dict:
 @lru_cache(maxsize=20000)
 def _race_current_conditions_cached(
     race_id: str,
-    info: Optional[dict] = None,
 ) -> dict:
-    if info is None:
-        info = _race_basic_info(race_id)
+    info = _race_basic_info(race_id)
     if not info:
         return _race_current_conditions(race_id)
     today_iso = date.today().isoformat()
