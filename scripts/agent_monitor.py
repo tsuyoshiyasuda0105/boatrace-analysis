@@ -59,13 +59,40 @@ ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / "logs"
 NOW = datetime.now()
 TODAY = NOW.date()
-PC_SCHEDULE_PAUSED = (
-    (ROOT / ".pc_schedule_paused").exists()
-    or bool(os.getenv("RENDER", "").strip())
-    or os.getenv("BOATRACE_PC_SCHEDULE_PAUSED", "").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
 PC_PAUSED_MSG = "PC-local checks skipped; Render cron is primary"
+
+
+def _has_local_pause_flag() -> bool:
+    return (
+        (ROOT / ".pc_schedule_paused").exists()
+        or bool(os.getenv("RENDER", "").strip())
+        or os.getenv("BOATRACE_PC_SCHEDULE_PAUSED", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
+
+def _local_table_exists(table_name: str) -> bool:
+    try:
+        conn = sqlite3.connect(config.DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            ).fetchone()
+            return bool(row)
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def _pc_schedule_paused() -> bool:
+    if _has_local_pause_flag():
+        return True
+    core_tables = ("races", "predictions")
+    if not all(_local_table_exists(name) for name in core_tables):
+        return True
+    return False
 
 # 期待スケジュール (task_runs ベース)
 #   ok_h    : この時間以内なら ok
@@ -104,7 +131,7 @@ def _in_active(active):
 
 
 def check_task(task: dict):
-    if PC_SCHEDULE_PAUSED:
+    if _pc_schedule_paused():
         return "ok", PC_PAUSED_MSG
     if not _in_active(task["active"]):
         return "ok", f"稼働時間外 (現在 {_hour_now():.1f}h)"
@@ -125,7 +152,7 @@ def check_task(task: dict):
 
 
 def check_log(spec: dict):
-    if PC_SCHEDULE_PAUSED:
+    if _pc_schedule_paused():
         return "ok", PC_PAUSED_MSG
     if not _in_active(spec["active"]):
         return "ok", f"稼働時間外 (現在 {_hour_now():.1f}h)"
@@ -196,7 +223,7 @@ def _local_conn():
 
 
 def _local_checks_paused():
-    if PC_SCHEDULE_PAUSED:
+    if _pc_schedule_paused():
         return True
     return False
 
