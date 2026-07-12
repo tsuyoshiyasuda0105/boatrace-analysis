@@ -562,6 +562,56 @@ main h2 {
   background: var(--line);
 }
 
+.stadium-env {
+  margin: -2px 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+.stadium-env-inside {
+  border-color: rgba(52, 232, 144, 0.28);
+  background: linear-gradient(180deg, rgba(52, 232, 144, 0.10), rgba(52, 232, 144, 0.03));
+}
+.stadium-env-outside {
+  border-color: rgba(255, 181, 71, 0.30);
+  background: linear-gradient(180deg, rgba(255, 181, 71, 0.10), rgba(255, 181, 71, 0.03));
+}
+.stadium-env-windy,
+.stadium-env-rough {
+  border-color: rgba(0, 212, 255, 0.28);
+  background: linear-gradient(180deg, rgba(0, 212, 255, 0.09), rgba(0, 212, 255, 0.03));
+}
+.stadium-env-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.stadium-env-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.stadium-env-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.stadium-env-note {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .race-list {
   list-style: none;
   margin: 0;

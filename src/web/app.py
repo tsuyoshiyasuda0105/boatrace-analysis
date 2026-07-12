@@ -300,6 +300,173 @@ def _races_for_date(target_date: str) -> list[dict]:
     return [dict(zip(keys, r)) for r in rows]
 
 
+def _parse_local_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace(" ", "T"))
+    except Exception:
+        return None
+
+
+def _venue_trend_summary(
+    stadium_water: Optional[str],
+    tide_phase: Optional[str],
+    tide_delta_60m_cm: Optional[float],
+    wind_speed: Optional[float],
+    wave_height: Optional[float],
+    weather_number: Optional[int],
+) -> tuple[str, str]:
+    delta_v = _safe_float(tide_delta_60m_cm)
+    wind_v = _safe_float(wind_speed) or 0.0
+    wave_v = _safe_float(wave_height) or 0.0
+    weather_v = _safe_int(weather_number)
+    water_v = stadium_water or ""
+    tide_v = str(tide_phase or "")
+
+    tone = "neutral"
+    parts: list[str] = []
+
+    if water_v == "fresh":
+        parts.append("淡水水面。潮より風と展示を重視")
+    else:
+        if delta_v is not None and delta_v >= 10:
+            tone = "inside"
+            parts.append("満ち潮寄り。イン残りを少し意識")
+        elif delta_v is not None and delta_v <= -10:
+            tone = "outside"
+            parts.append("引き潮寄り。差しや外の残りに注意")
+        elif tide_v:
+            parts.append("潮は中立域。枠と展示を素直に確認")
+        else:
+            parts.append("潮データ薄め。風と波を優先確認")
+
+    if wind_v >= 5:
+        tone = "windy"
+        parts.append("風強め。スタート乱れと隊形変化に注意")
+    elif wind_v >= 3:
+        parts.append("風あり。外の仕掛けが効く余地あり")
+
+    if wave_v >= 5:
+        if tone == "neutral":
+            tone = "rough"
+        parts.append("波あり。旋回力と乗り心地の差が出やすい")
+
+    if weather_v in (3, 4):
+        parts.append("天候悪化。足色比較をいつもより重視")
+
+    if not parts:
+        parts.append("水面は標準域。展示とST比較を重視")
+    return tone, " / ".join(parts[:3])
+
+
+def _venue_environment_summaries_for_date(target_date: str) -> dict[int, dict[str, Any]]:
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.race_id,
+                       r.stadium_number,
+                       r.race_number,
+                       r.race_closed_at,
+                       s.water,
+                       pv.weather_number,
+                       pv.wind_speed,
+                       pv.wave_height,
+                       COALESCE(rt.tide_phase, '') AS tide_phase,
+                       rt.tide_height_cm,
+                       rt.tide_delta_60m_cm,
+                       rt.tide_range_cm,
+                       COALESCE(rt.is_high_tide_zone, 0) AS is_high_tide_zone,
+                       COALESCE(rt.is_low_tide_zone, 0) AS is_low_tide_zone
+                  FROM races r
+                  JOIN stadiums s ON s.stadium_number = r.stadium_number
+                  LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
+                  LEFT JOIN race_tides rt ON rt.race_id = r.race_id
+                 WHERE r.race_date = ?
+                 ORDER BY r.stadium_number, r.race_number
+                """,
+                (target_date,),
+            ).fetchall()
+    except Exception:
+        logger.exception("venue environment summary query failed: %s", target_date)
+        return {}
+
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    keys = [
+        "race_id", "stadium_number", "race_number", "race_closed_at", "water",
+        "weather_number", "wind_speed", "wave_height", "tide_phase",
+        "tide_height_cm", "tide_delta_60m_cm", "tide_range_cm",
+        "is_high_tide_zone", "is_low_tide_zone",
+    ]
+    for row in rows:
+        d = dict(zip(keys, row))
+        grouped.setdefault(int(d["stadium_number"]), []).append(d)
+
+    now_dt = datetime.now()
+    is_today = target_date == date.today().isoformat()
+    out: dict[int, dict[str, Any]] = {}
+
+    def _data_score(row: dict[str, Any]) -> int:
+        score = 0
+        for key in ("weather_number", "wind_speed", "wave_height", "tide_phase", "tide_delta_60m_cm", "tide_range_cm"):
+            val = row.get(key)
+            if val not in (None, "", 0):
+                score += 1
+        return score
+
+    for stadium_number, items in grouped.items():
+        chosen: Optional[dict[str, Any]] = None
+        if is_today:
+            future_rows = []
+            for row in items:
+                closed_at = _parse_local_datetime(row.get("race_closed_at"))
+                if not closed_at:
+                    continue
+                diff_min = (closed_at - now_dt).total_seconds() / 60.0
+                if diff_min >= -15:
+                    future_rows.append((diff_min, -_data_score(row), row))
+            if future_rows:
+                future_rows.sort(key=lambda x: (x[0], x[1]))
+                chosen = future_rows[0][2]
+        if chosen is None:
+            rows_by_quality = []
+            for row in items:
+                closed_at = _parse_local_datetime(row.get("race_closed_at"))
+                ts = closed_at.timestamp() if closed_at else 0.0
+                rows_by_quality.append((_data_score(row), ts, row))
+            rows_by_quality.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            chosen = rows_by_quality[0][2] if rows_by_quality else None
+        if not chosen:
+            continue
+
+        tone, trend_note = _venue_trend_summary(
+            chosen.get("water"),
+            chosen.get("tide_phase"),
+            chosen.get("tide_delta_60m_cm"),
+            chosen.get("wind_speed"),
+            chosen.get("wave_height"),
+            chosen.get("weather_number"),
+        )
+        delta_v = _safe_float(chosen.get("tide_delta_60m_cm"))
+        tide_v = str(chosen.get("tide_phase") or "").strip()
+        tide_label = tide_v or "潮データなし"
+        if delta_v is not None:
+            tide_label = f"{tide_label} ({delta_v:+.0f}cm/h)"
+
+        out[stadium_number] = {
+            "race_number": chosen.get("race_number"),
+            "reference_label": f"次走 {chosen.get('race_number')}R 基準" if is_today else f"{chosen.get('race_number')}R 基準",
+            "weather_label": _WEATHER_LABELS.get(_safe_int(chosen.get("weather_number")), "天候 -"),
+            "wind_label": f"風 {_safe_float(chosen.get('wind_speed')):.0f}m" if chosen.get("wind_speed") is not None else "風 -",
+            "wave_label": f"波 {_safe_float(chosen.get('wave_height')):.0f}cm" if chosen.get("wave_height") is not None else "波 -",
+            "tide_label": tide_label,
+            "trend_tone": tone,
+            "trend_note": trend_note,
+        }
+    return out
+
+
 @lru_cache(maxsize=20000)
 def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[dict]]:
     """predictions テーブルからキャッシュ済予測を取得。
@@ -2372,6 +2539,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def races():
         target_date = request.args.get("date") or date.today().isoformat()
         races_list = _races_for_date(target_date)
+        venue_environment = _venue_environment_summaries_for_date(target_date)
         if not races_list:
             today_iso = date.today().isoformat()
             should_self_heal = (
@@ -2404,6 +2572,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "stadium_number": sn,
                     "stadium_name": r["stadium_name"],
                     "races": [],
+                    "environment": venue_environment.get(sn, {}),
                 }
             stadium_groups[sn]["races"].append(r)
 

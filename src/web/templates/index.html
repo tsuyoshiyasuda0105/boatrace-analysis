@@ -262,6 +262,18 @@
       {% for g in stadium_groups %}
         <section class="stadium-card">
           <h3>{{ g.stadium_number }}: {{ g.stadium_name }}</h3>
+          {% if g.environment %}
+            <div class="stadium-env stadium-env-{{ g.environment.trend_tone or 'neutral' }}">
+              <div class="stadium-env-meta">{{ g.environment.reference_label }}</div>
+              <div class="stadium-env-chips">
+                <span class="stadium-env-chip">{{ g.environment.tide_label }}</span>
+                <span class="stadium-env-chip">{{ g.environment.weather_label }}</span>
+                <span class="stadium-env-chip">{{ g.environment.wind_label }}</span>
+                <span class="stadium-env-chip">{{ g.environment.wave_label }}</span>
+              </div>
+              <div class="stadium-env-note">{{ g.environment.trend_note }}</div>
+            </div>
+          {% endif %}
           <ul class="race-list">
             {% for r in g.races %}
               <li class="race-item {% if r.results_count > 0 %}done{% endif %}"
