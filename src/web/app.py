@@ -8210,7 +8210,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v2"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
-    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v6"
+    GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v7"
     BOAT3_NICHE_CACHE_VERSION = "boat3_niche_v3"
     TSU_123_TRI_CACHE_VERSION = "tsu_123_tri_v2"
     SUMINOE_123_TRI_CACHE_VERSION = "suminoe_123_tri_v2"
@@ -8234,7 +8234,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     FUKUOKA_TIDE_132_TRI_CACHE_VERSION = "fukuoka_tide_132_tri_v1"
     GMKF_132_TRI_CACHE_VERSION = "gmkf_132_tri_v1"
     TODA_42_FLOW_TRI_CACHE_VERSION = "toda_42_flow_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v14"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v15"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -8733,7 +8733,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "grade_breakdown": {},
             }
 
-        adopted_signal_by_race: dict[str, dict] = {}
+        adopted_signal_by_race_and_key: dict[tuple[str, str], dict] = {}
 
         def _record_adopted_signal(
             race_id: str | None,
@@ -8745,8 +8745,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         ) -> None:
             if not race_id:
                 return
-            prev = adopted_signal_by_race.get(race_id)
+            signal_key = (race_id, key)
+            prev = adopted_signal_by_race_and_key.get(signal_key)
             payload = {
+                "race_id": race_id,
                 "date": rdate,
                 "key": key,
                 "recovery": float(recovery),
@@ -8754,7 +8756,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "pay": int(pay or 0),
             }
             if prev is None or payload["recovery"] > prev["recovery"]:
-                adopted_signal_by_race[race_id] = payload
+                adopted_signal_by_race_and_key[signal_key] = payload
 
         for row in cur:
             row = tuple(row)
@@ -10814,7 +10816,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("fukuoka wind exacta daily stats failed: %s", e)
 
-        for adopted in adopted_signal_by_race.values():
+        for adopted in adopted_signal_by_race_and_key.values():
             rdate = adopted["date"]
             d = by_date.get(rdate)
             if d is None:
@@ -11470,7 +11472,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v7:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v8:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -11606,7 +11608,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:v7:{monthly_from}:{monthly_to}"
+        page_cache_key = f"member_strategy_monthly:v8:{monthly_from}:{monthly_to}"
         if not force_recompute:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:
