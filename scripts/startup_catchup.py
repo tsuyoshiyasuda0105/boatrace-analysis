@@ -47,14 +47,17 @@ SCRIPTS = ROOT / "scripts"
 #     windows    : 直近に過ぎた枠より後の成功が無ければ実行 (hourly)
 #     interval   : 稼働時間内で、最後の成功が stale_min 分より古ければ実行 (poll_results)
 TASKS = [
-    {"name": "daily_collect", "label": "日次データ収集", "bat": "run_daily_collect.bat",
+    {"name": "daily_collect", "label": "daily_collect", "bat": "run_daily_collect.bat",
      "strategy": "daily_once", "times": ["06:00"]},
-    {"name": "morning", "label": "朝L4候補", "bat": "run_morning_task.bat",
+    {"name": "morning", "label": "morning", "bat": "run_morning_task.bat",
      "strategy": "daily_once", "times": ["06:30"]},
-    {"name": "hourly", "label": "時間別結果取得", "bat": "run_hourly_task.bat",
+    {"name": "hourly", "label": "hourly", "bat": "run_hourly_task.bat",
      "strategy": "windows",
      "times": ["09:00", "11:00", "13:00", "15:00", "17:00", "19:00", "21:00", "23:00"]},
-    {"name": "poll_results", "label": "結果ポーリング", "bat": "run_poll_results.bat",
+    {"name": "beforeinfo_live", "label": "beforeinfo_live", "bat": "run_beforeinfo_live.bat",
+     "strategy": "log_interval", "active": ["08:00", "22:00"], "stale_min": 20,
+     "log_glob": "beforeinfo_live_*.log"},
+    {"name": "poll_results", "label": "poll_results", "bat": "run_poll_results.bat",
      "strategy": "interval", "active": ["08:30", "23:00"], "stale_min": 15},
 ]
 
@@ -63,6 +66,23 @@ def _at(hhmm: str, base: datetime) -> datetime:
     """base と同じ日付の hh:mm を返す。"""
     h, m = (int(x) for x in hhmm.split(":"))
     return base.replace(hour=h, minute=m, second=0, microsecond=0)
+
+
+def last_log_update(task: dict) -> datetime | None:
+    """Return the latest log mtime for a task."""
+    log_glob = task.get("log_glob")
+    if not log_glob:
+        return None
+    log_dir = ROOT / "logs"
+    latest = None
+    for p in log_dir.glob(log_glob):
+        try:
+            dt = datetime.fromtimestamp(p.stat().st_mtime)
+        except OSError:
+            continue
+        if latest is None or dt > latest:
+            latest = dt
+    return latest
 
 
 def needs_catchup(task: dict, now: datetime):
@@ -91,15 +111,28 @@ def needs_catchup(task: dict, now: datetime):
         start = _at(task["active"][0], now)
         end = _at(task["active"][1], now)
         if not (start <= now <= end):
-            return False, "稼働時間外"
+            return False, "outside active window"
         if last is None:
-            return True, "本日未取得"
+            return True, "not run today"
         gap_min = (now - last).total_seconds() / 60
         if gap_min > task.get("stale_min", 15):
-            return True, f"最終取得が{gap_min:.0f}分前 (鮮度切れ)"
-        return False, f"直近取得済 ({last:%H:%M})"
+            return True, f"last success {gap_min:.0f} min ago (stale)"
+        return False, f"recent success exists ({last:%H:%M})"
 
-    return False, f"未知のstrategy={strat}"
+    if strat == "log_interval":
+        start = _at(task["active"][0], now)
+        end = _at(task["active"][1], now)
+        if not (start <= now <= end):
+            return False, "outside active window"
+        last_log = last_log_update(task)
+        if last_log is None:
+            return True, "log missing"
+        gap_min = (now - last_log).total_seconds() / 60
+        if gap_min > task.get("stale_min", 20):
+            return True, f"last update {gap_min:.0f} min ago (log stale)"
+        return False, f"recent log exists ({last_log:%H:%M})"
+
+    return False, f"unknown strategy={strat}"
 
 
 def run_task(task: dict, log) -> bool:
