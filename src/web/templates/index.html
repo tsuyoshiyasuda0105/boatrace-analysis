@@ -300,6 +300,7 @@
         let lastRenderedSignalsDigest = '';
         let lastTodaysPicksRenderKey = '';
         let lastNextRaceRenderKey = '';
+        let marketDataStatusCache = {};
         let raceItemsCache = null;
         let raceItemMapCache = null;
         const BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
@@ -583,6 +584,7 @@
             if (!r.ok) return;
             const data = await r.json();
             const signals = data.signals || {};
+            marketDataStatusCache = data.data_status || {};
             renderDataStatus(data.data_status || {});
             const nextDigest = buildSignalsDigest(signals);
             marketSignalsCache = signals;
@@ -927,6 +929,13 @@
             formatDataStatusLine('潮状況', status.tide || {}),
           ].join('');
           panel.hidden = false;
+        }
+
+        function hasInsufficientDayData(status) {
+          const raceTotal = Number(status?.race_basic?.total || 0);
+          const basicCount = Number(status?.race_basic?.count || 0);
+          if (raceTotal <= 0) return false;
+          return basicCount < raceTotal;
         }
 
         loadMarketSignals();
@@ -1353,7 +1362,10 @@ function renderTodaysPicks() {
           if (preconfirmedPicks.length === 0 && waitingPicks.length === 0 && closedPicks.length === 0) {
             const tr = document.createElement('tr');
             tr.className = 'todays-pick-row is-empty';
-            tr.innerHTML = '<td colspan="11" class="pick-empty">\u8a72\u5f53\u5019\u88dc\u306f\u3042\u308a\u307e\u305b\u3093</td>';
+            const pendingText = hasInsufficientDayData(marketDataStatusCache)
+              ? '\u5f53\u65e5\u30c7\u30fc\u30bf\u304c\u307e\u3060\u63c3\u3063\u3066\u3044\u306a\u3044\u305f\u3081\u5224\u5b9a\u4e0d\u80fd\u3067\u3059'
+              : '\u8a72\u5f53\u5019\u88dc\u306f\u3042\u308a\u307e\u305b\u3093';
+            tr.innerHTML = `<td colspan="11" class="pick-empty">${pendingText}</td>`;
             preconfirmedTbody.appendChild(tr);
             return;
           }

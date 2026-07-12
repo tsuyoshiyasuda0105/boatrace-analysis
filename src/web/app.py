@@ -2318,6 +2318,39 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 status_info["status"] = "warning"
         except Exception as e:
             status_info["checks"]["data_quality"] = f"unknown: {e}"
+
+        # 当日投入件数の軽量サマリを返す。候補ゼロとデータ未投入を切り分けるための補助。
+        try:
+            today_iso = date.today().isoformat()
+            with db_connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM races WHERE race_date = ?) AS race_total,
+                        (SELECT COUNT(DISTINCT p.race_id)
+                           FROM predictions p
+                           JOIN races r ON r.race_id = p.race_id
+                          WHERE r.race_date = ? AND p.boat_number = 1) AS prediction_races,
+                        (SELECT COUNT(DISTINCT pv.race_id)
+                           FROM race_previews pv
+                           JOIN races r ON r.race_id = pv.race_id
+                          WHERE r.race_date = ?) AS preview_races,
+                        (SELECT COUNT(DISTINCT rt.race_id)
+                           FROM race_tides rt
+                           JOIN races r ON r.race_id = rt.race_id
+                          WHERE r.race_date = ?) AS tide_races
+                    """,
+                    (today_iso, today_iso, today_iso, today_iso),
+                ).fetchone()
+            if row:
+                status_info["checks"]["today_counts"] = {
+                    "races": int(row[0] or 0),
+                    "predictions": int(row[1] or 0),
+                    "previews": int(row[2] or 0),
+                    "tides": int(row[3] or 0),
+                }
+        except Exception as e:
+            status_info["checks"]["today_counts"] = {"error": str(e)}
         return status_info, http_status
 
     @app.route("/")
