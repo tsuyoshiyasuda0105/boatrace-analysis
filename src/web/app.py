@@ -3270,7 +3270,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or date.today().isoformat()
         today_iso = date.today().isoformat()
         cache_ttl = 60 if target_date >= today_iso else 3600
-        cache_key = f"market_signals:v3:{target_date}"
+        cache_key = f"market_signals:v4:{target_date}"
         cached_payload = _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None:
             return jsonify(cached_payload)
