@@ -602,8 +602,9 @@
           if (marketSignalsLoading) return;
           marketSignalsLoading = true;
           try {
-            const r = await fetch(`/api/market-signals?date=${targetDate}`, {
-              cache: 'default',
+            const marketSignalsUrl = `/api/market-signals?date=${targetDate}&_=${encodeURIComponent(targetDate)}`;
+            const r = await fetch(marketSignalsUrl, {
+              cache: 'no-store',
             });
             if (!r.ok) return;
             const data = await r.json();
