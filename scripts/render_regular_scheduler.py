@@ -105,6 +105,7 @@ def run_beforeinfo(now: datetime) -> bool:
         write_updates,
     )
     from src.collectors import original_exhibition as original_exhibition_collector
+    from src.collectors import tide as tide_collector
 
     # 実運用は「レース5分前取得」を基準にしつつ、
     # cron の数分ズレを吸収するため 5-9 分前を取得窓にする。
@@ -117,6 +118,20 @@ def run_beforeinfo(now: datetime) -> bool:
     print(f"[beforeinfo] due={len(due)}", flush=True)
     if not due:
         return True
+
+    try:
+        tide_summary = tide_collector.refresh_tides_for_races(
+            [race_id for race_id, _stadium, _race_no, _close in due]
+        )
+        print(
+            "[beforeinfo-tides] "
+            f"target={tide_summary.get('target_races', 0)} "
+            f"rows={tide_summary.get('rows', 0)} "
+            f"stations={tide_summary.get('stations', 0)}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[beforeinfo-tides] failed: {type(exc).__name__}: {exc}", flush=True)
 
     try:
         s = original_exhibition_collector.collect_for_races(
@@ -251,6 +266,7 @@ def run_db_maintenance() -> bool:
     return run_py(
         [
             "scripts/db_size_check.py",
+            "--cleanup",
             "--auto",
             "--keep-days", "30",
             "--keep-raw-days", "90",
