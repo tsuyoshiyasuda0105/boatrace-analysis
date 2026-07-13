@@ -157,16 +157,8 @@
       <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}ROIが高いレース候補
         {% if target_date != today_iso %}<span class="past-tag">過去日 (全レース締切済)</span>{% endif %}
       </h3>
-      <p class="todays-picks-hint">
-        ★ 締切までの分数つき / ⭐L4 / 🥈L4+ / 🥇L4++ / 🌟 L4 G++ (一般戦 F1) を時刻順に表示<br>
-        <small>条件: 1号艇A1 + 本命500-1000円 + B除外会場 + SG/G1/G2/G3 または 一般戦 F1 (国1%≥7 ∧ 2号 国2連率≥40)<br>
-        右側「1-2-3 推移」: <b>2h</b>=締切2時間前オッズ / T-5〜T-1=締切直前推移 (青=20倍未満, 赤=上昇, 黄=下落, 末尾%=2h→直近の変動)<br>
-        </small>
-      </p>
       <div class="todays-picks-groups">
         <section class="todays-picks-group" id="todays-picks-preconfirmed-panel">
-          <h4 id="todays-picks-preconfirmed-title">前日確定</h4>
-          <p class="todays-picks-subhint" id="todays-picks-preconfirmed-subhint">展示や直前オッズを待たず、前日の時点で条件が固まっている候補です。</p>
           <table class="todays-picks-table">
             <thead>
               <tr>
@@ -380,8 +372,8 @@
             'ashiya_boat4_exa',
             'morning_watch_ashiya_boat4_lift',
             'tokuyama_12a_exa',
-            'tokoname_12_exa',
-            'morning_watch_tokoname_12_exa',
+            'tokoname_123_late_exst_tri',
+            'morning_watch_tokoname_123_late_exst_tri',
             'trifecta_niche_143_a12',
             'morning_watch_tri143_a12',
             'hamanako_14_exa',
@@ -562,6 +554,17 @@
 
           const supportedClassPrefixes = [
             'l4-g23_optb_tri',
+            'l4-morning_SG',
+            'l4-morning_G1',
+            'l4-morning_G2',
+            'l4-morning_general',
+            'l4-morning_general_f1',
+            'l4-morning_watch_SG',
+            'l4-morning_watch_G1',
+            'l4-morning_watch_G2',
+            'l4-morning_watch_st_SG',
+            'l4-morning_watch_st_G1',
+            'l4-morning_watch_st_G2',
             'l4-morning_watch_g23_optb',
             'l4-shimonoseki_123_tri',
             'l4-tsu_124_tri',
@@ -582,6 +585,10 @@
             'l4-omura_14_exa',
             'l4-tokuyama_123_tri',
             'l4-tokuyama_12a_exa',
+            'l4-tokoname_12_late_a_exa',
+            'l4-tokoname_14_winter_exa',
+            'l4-tokoname_123_late_exst_tri',
+            'l4-morning_watch_tokoname_123_late_exst_tri',
             'l4-shimonoseki_132_tri',
             'l4-kojima_124_tri',
             'l4-kojima_13_exa',
