@@ -317,17 +317,21 @@
           unique.forEach((rid, idx) => setTimeout(() => warmRaceDetail(rid), 120 + idx * 120));
         };
 
-        function getRaceItems() {
-          if (!raceItemsCache) {
+        function getRaceItems(forceRefresh = false) {
+          if (forceRefresh || !raceItemsCache || raceItemsCache.length === 0) {
             raceItemsCache = Array.from(document.querySelectorAll('.race-item[data-race-id]'));
+            if (raceItemMapCache && raceItemMapCache.size !== raceItemsCache.length) {
+              raceItemMapCache = null;
+            }
           }
           return raceItemsCache;
         }
 
-        function getRaceItemMap() {
-          if (!raceItemMapCache) {
+        function getRaceItemMap(forceRefresh = false) {
+          const items = getRaceItems(forceRefresh);
+          if (forceRefresh || !raceItemMapCache || raceItemMapCache.size !== items.length) {
             raceItemMapCache = new Map();
-            getRaceItems().forEach((item) => {
+            items.forEach((item) => {
               const raceId = item.dataset.raceId;
               if (raceId) raceItemMapCache.set(raceId, item);
             });
@@ -648,8 +652,8 @@
             if (nextDigest === lastRenderedSignalsDigest) {
               return;
             }
-            getRaceItems().forEach(removeStrategyBadges);
-            const raceItemMap = getRaceItemMap();
+            getRaceItems(true).forEach(removeStrategyBadges);
+            const raceItemMap = getRaceItemMap(true);
             for (const [raceId, sig] of Object.entries(signals)) {
               try {
                 const item = raceItemMap.get(raceId);
@@ -1020,7 +1024,7 @@
 
         function updateNextRaces() {
           const now = new Date();
-          const items = getRaceItems();
+          const items = getRaceItems(true);
           // 各 race-item を分類
           const upcoming = [];
           items.forEach(el => {
