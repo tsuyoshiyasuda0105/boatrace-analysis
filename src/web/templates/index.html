@@ -636,7 +636,7 @@
           if (marketSignalsLoading) return;
           marketSignalsLoading = true;
           try {
-            const forceRecompute = (targetDate === todayIso) ? '&recompute=1' : '';
+            const forceRecompute = '&recompute=1';
             const marketSignalsUrl = `/api/market-signals?date=${targetDate}${forceRecompute}&_=${Date.now()}`;
             const r = await fetch(marketSignalsUrl, {
               cache: 'no-store',
@@ -1325,12 +1325,18 @@ function renderTodaysPicks() {
             const l4 = el.querySelector('.l4-badge');
             const l4Data = sig && sig.l4 ? sig.l4 : inferL4DataFromBadge(l4);
             if (!l4 && !l4Data) return;
+            const classList = Array.from(l4?.classList || []);
+            const isRef = Boolean(l4Data?.is_reference) || classList.includes('l4-reference');
+            const level = String(l4Data?.level || '');
+            if (isRef && (level === 'morning_general' || level === 'general')) {
+              hiddenReferenceCount += 1;
+              return;
+            }
             if (l4?.classList.contains('l4-venus') || l4Data?.is_venus) return;
             if (isLegacyL4HighGradeSignal(l4Data, l4)) return;
             if (!isSupportedStrategySignal(l4Data, l4)) return;
 
             const labelText = `${l4?.textContent || ''} ${l4?.title || ''} ${l4Data?.label || ''}`.trim();
-            const classList = Array.from(l4?.classList || []);
             const isMid132 = classList.includes('l4-obs_mid_132')
               || classList.includes('l4-obs_mid_132_tier_a')
               || Boolean(l4Data?.is_obs_mid_132)
@@ -1338,12 +1344,6 @@ function renderTodaysPicks() {
               || /L4-Mid/.test(labelText);
             if (isMid132) return;
 
-            const isRef = Boolean(l4Data?.is_reference) || classList.includes('l4-reference');
-            const level = String(l4Data?.level || '');
-            if (isRef && (level === 'morning_general' || level === 'general')) {
-              hiddenReferenceCount += 1;
-              return;
-            }
             const isMorningBadge = Boolean(l4Data?.is_morning)
               || Boolean(level.startsWith('morning_'))
               || classList.some(c => c.startsWith('l4-morning_'));

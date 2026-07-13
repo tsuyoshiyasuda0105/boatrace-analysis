@@ -3273,8 +3273,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         today_iso = date.today().isoformat()
         cache_ttl = 60 if target_date >= today_iso else 3600
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        # v5: avoid serving stale empty same-day signals after morning data catches up.
-        cache_key = f"market_signals:v5:{target_date}"
+        # v6: avoid serving stale empty signals after race data catches up.
+        cache_key = f"market_signals:v6:{target_date}"
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None:
             return jsonify(cached_payload)
@@ -8716,10 +8716,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "data_status": data_status,
             "signals": {s["race_id"]: s for s in signals},
         }
-        # Same-day data can arrive in stages. If an early run sees zero signals,
-        # do not persist that empty result to the DB cache; keep only the short
-        # in-memory route cache and let the next recompute rebuild from fresh DB.
-        if signals or target_date < today_iso:
+        # Race data can arrive in stages. If an early run sees zero signals,
+        # do not persist that empty result to the DB cache; later recomputes
+        # must be able to rebuild from fresh DB even for yesterday/recent days.
+        if signals:
             _write_json_cache(cache_key, payload)
         return jsonify(payload)
 
