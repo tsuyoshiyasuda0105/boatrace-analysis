@@ -153,7 +153,7 @@
     </section>
 
     <!-- 本日の L4 投票候補リスト (時系列、 JS で動的更新) -->
-    <section class="todays-picks-panel" id="todays-picks-panel" hidden>
+    <section class="todays-picks-panel" id="todays-picks-panel" data-initial-pick-count="{{ initial_pick_rows|length }}" {% if not initial_pick_rows %}hidden{% endif %}>
       <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}ROIが高いレース候補
         {% if target_date != today_iso %}<span class="past-tag">過去日 (全レース締切済)</span>{% endif %}
       </h3>
@@ -175,7 +175,29 @@
                 <th class="pick-vote-head">投票</th>
               </tr>
             </thead>
-            <tbody id="todays-picks-preconfirmed-tbody"></tbody>
+            <tbody id="todays-picks-preconfirmed-tbody">
+              {% for p in initial_pick_rows %}
+              <tr class="todays-pick-row {% if p.closed %}is-closed{% endif %}">
+                <td class="pick-idx">{{ loop.index }}</td>
+                <td class="pick-time">{{ p.time }}</td>
+                <td class="pick-til">{{ p.remaining or "-" }}</td>
+                <td class="pick-rank">{{ p.rank }}</td>
+                <td class="pick-place"><strong>{{ p.place }}</strong></td>
+                <td class="pick-type">{{ p.label }}{% if p.bet %} / {{ p.bet }}{% endif %}</td>
+                <td class="pick-racer">{{ p.condition or "-" }}</td>
+                <td class="pick-rec"><strong>{% if p.recovery is not none %}{{ p.recovery }}%{% else %}-{% endif %}</strong></td>
+                <td class="pick-odds">-</td>
+                <td class="pick-link"><a href="{{ url_for('race_detail', race_id=p.race_id) }}">詳細→</a></td>
+                <td class="pick-vote">
+                  {% if p.closed %}
+                    <span class="vote-btn vote-btn-disabled">終了</span>
+                  {% else %}
+                    <a href="https://ib.mbrace.or.jp/" target="_blank" rel="noopener noreferrer" class="vote-btn">投票</a>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
           </table>
         </section>
         <section class="todays-picks-group" id="todays-picks-waiting-panel">
@@ -298,6 +320,7 @@
       (function() {
         const targetDate = "{{ target_date }}";
         let marketSignalsLoading = false;
+        let marketSignalsLoaded = false;
         let marketSignalsCache = {};
         let marketSignalsDigest = '';
         let odds123Digest = '';
@@ -654,6 +677,7 @@
             if (!r.ok) return;
             const data = await r.json();
             const signals = data.signals || {};
+            marketSignalsLoaded = true;
             marketDataStatusCache = data.data_status || {};
             renderDataStatus(data.data_status || {});
             const nextDigest = buildSignalsDigest(signals);
@@ -1256,6 +1280,13 @@ function renderTodaysPicks() {
           const closedPanel = document.getElementById('todays-picks-closed-panel');
 
           if (!panel || !preconfirmedTbody || !waitingTbody || !closedTbody || !preconfirmedPanel || !waitingPanel || !closedPanel) return;
+          const initialPickCount = Number(panel.dataset.initialPickCount || '0');
+          if (!marketSignalsLoaded) {
+            return;
+          }
+          if (initialPickCount > 0 && Object.keys(marketSignalsCache || {}).length === 0) {
+            return;
+          }
 
           const now = new Date();
           const renderMinuteBucket = Math.floor(now.getTime() / 60000);

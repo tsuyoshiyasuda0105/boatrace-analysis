@@ -2560,6 +2560,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     target_date=target_date,
                     today_iso=today_iso,
                     stadium_groups=[],
+                    initial_pick_rows=[],
                     empty=True,
                 )
 
@@ -2576,12 +2577,65 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             stadium_groups[sn]["races"].append(r)
 
+        initial_pick_rows = []
+        try:
+            race_by_id = {str(r.get("race_id")): r for r in races_list}
+            with app.test_request_context(f"/api/market-signals?date={target_date}&recompute=1"):
+                session["is_member"] = True
+                signal_resp = market_signals_for_date()
+                signal_payload = signal_resp.get_json(silent=True) if hasattr(signal_resp, "get_json") else {}
+            signals = (signal_payload or {}).get("signals") or {}
+            adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
+            adopted_watch_levels = {
+                "morning_watch_SG",
+                "morning_watch_G1",
+                "morning_watch_G2",
+                "morning_watch_st_SG",
+                "morning_watch_st_G1",
+                "morning_watch_st_G2",
+                "morning_watch_g23_optb",
+                "morning_watch_ashiya_boat4_lift",
+                "morning_watch_tokoname_123_late_exst_tri",
+                "morning_watch_omura_123_tri",
+                "morning_watch_tri143_a12",
+                "morning_watch_gmkf_132_tri",
+                "morning_watch_gamagori_adopted",
+            }
+            for race_id, sig in signals.items():
+                l4 = (sig or {}).get("l4") or {}
+                level = str(l4.get("level") or "")
+                if level not in adopted_levels and level not in adopted_watch_levels:
+                    continue
+                if l4.get("is_reference") and level in ("morning_general", "general"):
+                    continue
+                race = race_by_id.get(str(race_id))
+                if not race:
+                    continue
+                closed_at = str(race.get("race_closed_at") or "")
+                initial_pick_rows.append({
+                    "race_id": race_id,
+                    "closed_at": closed_at,
+                    "time": closed_at[-8:-3] if len(closed_at) >= 8 else closed_at,
+                    "remaining": "締切済" if int(race.get("results_count") or 0) > 0 else "",
+                    "rank": l4.get("rank_label") or l4.get("rank") or "候補",
+                    "place": f"{race.get('stadium_name') or ''} {race.get('race_number')}R",
+                    "label": l4.get("label") or "",
+                    "bet": l4.get("bet") or "",
+                    "condition": l4.get("tag") or l4.get("trifecta_niche_tag") or l4.get("exacta_niche_tag") or "",
+                    "recovery": l4.get("recovery"),
+                    "closed": int(race.get("results_count") or 0) > 0,
+                })
+            initial_pick_rows.sort(key=lambda row: row.get("closed_at") or "")
+        except Exception as exc:
+            logger.exception("failed to build initial pick rows for %s: %s", target_date, exc)
+
         resp = make_response(render_template(
             "index.html",
             target_date=target_date,
             today_iso=date.today().isoformat(),
             stadium_groups=sorted(stadium_groups.values(),
                                   key=lambda g: g["stadium_number"]),
+            initial_pick_rows=initial_pick_rows,
             empty=False,
         ))
         # backlog item 11: market-signals を HTTP/2 preload で先取り
