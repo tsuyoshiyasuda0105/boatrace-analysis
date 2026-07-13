@@ -8913,11 +8913,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         adopted_signal_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
         adopted_watch_levels = {
-            "morning_SG",
-            "morning_G1",
-            "morning_G2",
-            "morning_general",
-            "morning_general_f1",
             "morning_watch_SG",
             "morning_watch_G1",
             "morning_watch_G2",
