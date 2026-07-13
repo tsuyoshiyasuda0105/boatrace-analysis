@@ -1320,15 +1320,15 @@ function renderTodaysPicks() {
             const isOddsMismatch = isRef && /\(\u60f3\u5b9a\u6255/.test(labelText);
             const isRainExclusion = Boolean(l4Data?.rain_exclusion_active) || (isRef && /\u96e8\u9664\u5916/.test(labelText));
             const isFemaleExclusion = Boolean(l4Data?.is_female_present) && isRef && !Boolean(l4Data?.is_venus);
+            const isMorningReference = isRef && isMorningBadge
+              && !isMorningWatch
+              && !isExhibitionStOut
+              && !isAfterExhibitionOut
+              && !isDisplayConfirmed
+              && !isRainExclusion
+              && !isFemaleExclusion;
+            if (isMorningReference) isMorningWatch = true;
             const isMorningOutOfRange = isRef && isMorningBadge && !isMorningWatch && !isExhibitionStOut && !isAfterExhibitionOut && !isDisplayConfirmed;
-            const isGeneralReference = isRef && isMorningBadge && !isMorningWatch
-              && (
-                classList.includes('l4-morning_general')
-                || classList.includes('l4-morning_default')
-                || l4Data?.level === 'morning_general'
-                || l4Data?.level === 'morning_default'
-              );
-            if (isGeneralReference || isFemaleExclusion) return;
 
             const closedAt = parseClosedAt(el.dataset.closedAt);
             if (!closedAt) return;
