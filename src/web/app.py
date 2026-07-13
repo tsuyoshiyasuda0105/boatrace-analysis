@@ -2590,6 +2590,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         resp.headers["Link"] = (
             f'</api/market-signals?date={target_date}>; rel=preload; as=fetch; crossorigin'
         )
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
         return resp
 
     @app.route("/race/<race_id>")

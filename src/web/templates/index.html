@@ -491,6 +491,7 @@
           const classList = Array.from(l4El?.classList || []);
           const supportedLevels = new Set([
             'g23_optb_tri',
+            'general_c_tri',
             'morning_SG',
             'morning_G1',
             'morning_G2',
@@ -503,10 +504,12 @@
             'morning_watch_st_G1',
             'morning_watch_st_G2',
             'morning_watch_g23_optb',
+            'morning_watch_general_c_tri',
             'shimonoseki_123_tri',
             'tsu_124_tri',
             'amagasaki_143_tri',
             'amagasaki_13_exa',
+            'omura_13_exa',
             'trifecta_niche_143_a12',
             'morning_watch_tri143_a12',
             'gamagori_123_general_practical_tri',
@@ -522,6 +525,7 @@
             'omura_14_exa',
             'tokuyama_123_tri',
             'tokuyama_12a_exa',
+            'tokuyama_13_exa',
             'tokoname_12_late_a_exa',
             'tokoname_14_winter_exa',
             'tokoname_123_late_exst_tri',
@@ -566,10 +570,12 @@
             'l4-morning_watch_st_G1',
             'l4-morning_watch_st_G2',
             'l4-morning_watch_g23_optb',
+            'l4-morning_watch_general_c_tri',
             'l4-shimonoseki_123_tri',
             'l4-tsu_124_tri',
             'l4-amagasaki_143_tri',
             'l4-amagasaki_13_exa',
+            'l4-omura_13_exa',
             'l4-trifecta_niche_143_a12',
             'l4-morning_watch_tri143_a12',
             'l4-gamagori_123_general_practical_tri',
@@ -585,6 +591,7 @@
             'l4-omura_14_exa',
             'l4-tokuyama_123_tri',
             'l4-tokuyama_12a_exa',
+            'l4-tokuyama_13_exa',
             'l4-tokoname_12_late_a_exa',
             'l4-tokoname_14_winter_exa',
             'l4-tokoname_123_late_exst_tri',
@@ -612,6 +619,7 @@
             'l4-gamagori_123_tri',
             'l4-naruto_123_tri',
             'l4-karatsu_132_tri',
+            'l4-general_c_tri',
           ];
           if (classList.some(cls => supportedClassPrefixes.includes(cls))) return true;
 
