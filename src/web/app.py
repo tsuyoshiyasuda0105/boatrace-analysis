@@ -2580,7 +2580,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         initial_pick_rows = []
         try:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
-            with app.test_request_context(f"/api/market-signals?date={target_date}&recompute=1"):
+            with app.test_request_context(f"/api/market-signals?date={target_date}"):
                 session["is_member"] = True
                 signal_resp = market_signals_for_date()
                 signal_payload = signal_resp.get_json(silent=True) if hasattr(signal_resp, "get_json") else {}
