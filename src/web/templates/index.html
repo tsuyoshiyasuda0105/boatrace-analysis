@@ -1256,6 +1256,7 @@ function renderTodaysPicks() {
           lastTodaysPicksRenderKey = renderKey;
           const items = getRaceItems();
           const picks = [];
+          let hiddenReferenceCount = 0;
 
           function getRaceSignal(raceId) {
             return (raceId && marketSignalsCache && marketSignalsCache[raceId]) ? marketSignalsCache[raceId] : null;
@@ -1338,8 +1339,13 @@ function renderTodaysPicks() {
             if (isMid132) return;
 
             const isRef = Boolean(l4Data?.is_reference) || classList.includes('l4-reference');
+            const level = String(l4Data?.level || '');
+            if (isRef && (level === 'morning_general' || level === 'general')) {
+              hiddenReferenceCount += 1;
+              return;
+            }
             const isMorningBadge = Boolean(l4Data?.is_morning)
-              || Boolean(l4Data?.level?.startsWith('morning_'))
+              || Boolean(level.startsWith('morning_'))
               || classList.some(c => c.startsWith('l4-morning_'));
             let isMorningWatch = Boolean(l4Data?.is_morning_watch)
               || Boolean(l4Data?.level?.startsWith('morning_watch_'))
@@ -1424,6 +1430,8 @@ function renderTodaysPicks() {
             tr.className = 'todays-pick-row is-empty';
             const pendingText = hasInsufficientDayData(marketDataStatusCache)
               ? '\u5f53\u65e5\u30c7\u30fc\u30bf\u304c\u307e\u3060\u63c3\u3063\u3066\u3044\u306a\u3044\u305f\u3081\u5224\u5b9a\u4e0d\u80fd\u3067\u3059'
+              : hiddenReferenceCount > 0
+                ? `\u6b63\u5f0f\u63a1\u7528\u5019\u88dc\u306f\u3042\u308a\u307e\u305b\u3093\uff08\u53c2\u8003L4 ${hiddenReferenceCount}\u4ef6\u306f\u975e\u8868\u793a\uff09`
               : '\u8a72\u5f53\u5019\u88dc\u306f\u3042\u308a\u307e\u305b\u3093';
             tr.innerHTML = `<td colspan="11" class="pick-empty">${pendingText}</td>`;
             preconfirmedTbody.appendChild(tr);
