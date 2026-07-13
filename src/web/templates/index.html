@@ -1268,8 +1268,14 @@ function renderTodaysPicks() {
           const picks = [];
           let hiddenReferenceCount = 0;
 
-          function getRaceSignal(raceId) {
-            return (raceId && marketSignalsCache && marketSignalsCache[raceId]) ? marketSignalsCache[raceId] : null;
+          function parseRaceKey(raceId) {
+            const m = String(raceId || '').match(/^(\d{8})-(\d{1,2})-(\d{1,2})$/);
+            if (!m) return null;
+            return {
+              stadiumNumber: String(parseInt(m[2], 10)),
+              raceNumber: String(parseInt(m[3], 10)),
+              fallbackKey: `${parseInt(m[2], 10)}-${parseInt(m[3], 10)}`,
+            };
           }
 
           function inferL4DataFromBadge(l4El) {
@@ -1329,9 +1335,19 @@ function renderTodaysPicks() {
               && !(l4Data?.is_after_exhibition_out || l4?.classList?.contains('l4-after-exhibition-out'));
           }
 
+          const raceItemById = new Map();
+          const raceItemByFallbackKey = new Map();
           items.forEach((el) => {
             const raceId = el.dataset.raceId || '';
-            const sig = getRaceSignal(raceId) || {};
+            if (raceId) raceItemById.set(raceId, el);
+            const parsed = parseRaceKey(raceId);
+            if (parsed) raceItemByFallbackKey.set(parsed.fallbackKey, el);
+          });
+
+          Object.entries(marketSignalsCache || {}).forEach(([raceId, sig]) => {
+            const parsed = parseRaceKey(raceId);
+            const el = raceItemById.get(raceId) || (parsed ? raceItemByFallbackKey.get(parsed.fallbackKey) : null);
+            if (!el) return;
             const l4 = el.querySelector('.l4-badge');
             const l4Data = sig && sig.l4 ? sig.l4 : inferL4DataFromBadge(l4);
             if (!l4 && !l4Data) return;
