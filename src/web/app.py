@@ -229,6 +229,34 @@ def _write_json_cache(cache_key: str, payload: Any) -> None:
         logger.exception("failed to encode json cache: %s", cache_key)
 
 
+def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
+    """Read a JSON cache entry without TTL checks.
+
+    This is used as a resilience fallback for expensive pages/APIs so we can
+    return the last known-good payload instead of blocking the UI on a full
+    recomputation.
+    """
+    try:
+        _ensure_page_html_cache_table()
+        raw = None
+        mem_entry = _PAGE_HTML_MEM_CACHE.get(cache_key)
+        if mem_entry:
+            _, raw = mem_entry
+        if raw is None:
+            with db_connect() as conn:
+                row = conn.execute(
+                    "SELECT html FROM page_html_cache WHERE cache_key = ?",
+                    (cache_key,),
+                ).fetchone()
+            raw = row[0] if row else None
+        if not raw:
+            return None
+        return json.loads(raw)
+    except Exception:
+        logger.exception("failed to read stale json cache: %s", cache_key)
+        return None
+
+
 def _format_race_id(race_id: str) -> tuple[str, int, int]:
     """'YYYYMMDD-SS-RR' → (date_str, stadium, race_no)"""
     parts = race_id.split("-")
@@ -2594,7 +2622,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
             today_iso = date.today().isoformat()
             cache_ttl = 60 if target_date >= today_iso else 3600
-            signal_payload = _read_json_cache(f"market_signals:v7:{target_date}", cache_ttl) or {}
+            signal_cache_key = f"market_signals:v7:{target_date}"
+            signal_payload = (
+                _read_json_cache(signal_cache_key, cache_ttl)
+                or _read_json_cache_stale(signal_cache_key)
+                or {}
+            )
             signals = (signal_payload or {}).get("signals") or {}
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
             adopted_watch_levels = {
@@ -2673,9 +2706,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # backlog item 11: market-signals を HTTP/2 preload で先取り
         # ブラウザは HTML パース前に /api/market-signals に並列リクエストを
         # 飛ばすので、JS が呼ぶ頃には返答がキャッシュ済 → 体感速度向上
-        resp.headers["Link"] = (
+        link_headers = [
             f'</api/market-signals?date={target_date}>; rel=preload; as=fetch; crossorigin'
-        )
+        ]
+        upcoming_races = []
+        for r in races_list:
+            if int(r.get("results_count") or 0) > 0:
+                continue
+            closed_at = str(r.get("race_closed_at") or "")
+            upcoming_races.append((closed_at, str(r.get("race_id") or "")))
+        for _, rid in sorted(upcoming_races)[:3]:
+            if rid:
+                link_headers.append(f'</race/{rid}>; rel=prefetch; as=document')
+        resp.headers["Link"] = ", ".join(link_headers)
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         resp.headers["Pragma"] = "no-cache"
         return resp
@@ -3363,7 +3406,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         cache_key = f"market_signals:v7:{target_date}"
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None:
-            return jsonify(cached_payload)
+            resp = jsonify(cached_payload)
+            resp.headers["X-Boatrace-Cache"] = "fresh"
+            return resp
+        stale_payload = None if force_recompute else _read_json_cache_stale(cache_key)
+        if stale_payload is not None:
+            resp = jsonify(stale_payload)
+            resp.headers["X-Boatrace-Cache"] = "stale"
+            return resp
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
@@ -9164,7 +9214,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # must be able to rebuild from fresh DB even for yesterday/recent days.
         if signals:
             _write_json_cache(cache_key, payload)
-        return jsonify(payload)
+        resp = jsonify(payload)
+        resp.headers["X-Boatrace-Cache"] = "recomputed"
+        return resp
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
     STRICT_ODDS_DAILY_START = "2026-05-30"
