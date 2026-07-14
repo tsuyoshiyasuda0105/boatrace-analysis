@@ -706,8 +706,7 @@
           if (marketSignalsLoading) return;
           marketSignalsLoading = true;
           try {
-            const forceRecompute = '&recompute=1';
-            const marketSignalsUrl = `/api/market-signals?date=${targetDate}${forceRecompute}&_=${Date.now()}`;
+            const marketSignalsUrl = `/api/market-signals?date=${targetDate}&_=${Date.now()}`;
             const r = await fetch(marketSignalsUrl, {
               cache: 'no-store',
             });
