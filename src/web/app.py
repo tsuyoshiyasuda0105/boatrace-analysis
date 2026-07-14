@@ -2594,7 +2594,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
             today_iso = date.today().isoformat()
             cache_ttl = 60 if target_date >= today_iso else 3600
-            signal_payload = _read_json_cache(f"market_signals:v6:{target_date}", cache_ttl) or {}
+            signal_payload = _read_json_cache(f"market_signals:v7:{target_date}", cache_ttl) or {}
             signals = (signal_payload or {}).get("signals") or {}
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
             adopted_watch_levels = {
@@ -2613,6 +2613,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_gamagori_adopted",
                 "morning_watch_tri134_acc2_ex3_tri",
                 "morning_watch_omura_132_weak2_ex3_tri",
+                "morning_watch_fukuoka_tide_132_tri",
+                "morning_watch_miyajima_tide_132_tri",
+                "morning_watch_gamagori_tide_132_tri",
+                "morning_watch_marugame_tide_123_tri",
             }
             for race_id, sig in signals.items():
                 if not roi_picks_visible:
@@ -3356,7 +3360,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         cache_ttl = 60 if target_date >= today_iso else 3600
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
         # v6: avoid serving stale empty signals after race data catches up.
-        cache_key = f"market_signals:v6:{target_date}"
+        cache_key = f"market_signals:v7:{target_date}"
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None:
             return jsonify(cached_payload)
@@ -6374,6 +6378,40 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_score": 10,
                 })
             if (
+                stadium == 17
+                and delta_v is not None and delta_v <= -15.0
+                and not (
+                    wave_v is not None and wave_v >= 5.0
+                    and wind_v is not None and 3.0 <= wind_v <= 4.0
+                )
+            ):
+                condition_out = (
+                    (wave_v is not None and wave_v < 5.0)
+                    or (wind_v is not None and not (3.0 <= wind_v <= 4.0))
+                )
+                matched.append({
+                    "level": "morning_watch_miyajima_tide_132_tri",
+                    "label": "朝監視 宮島 1-3-2 潮型",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "朝監視",
+                    "recovery": 1242.0,
+                    "n": 30,
+                    "hit_rate": 40.0,
+                    "name": "宮島132 潮型",
+                    "tag": "宮島 + 60分潮位差-15以下 / 波5cm以上 + 風3-4m待ち",
+                    "tetsuban_score": 4,
+                    "is_reference": True,
+                    "is_morning": True,
+                    "is_morning_watch": True,
+                    "is_after_exhibition_out": condition_out,
+                    "is_display_confirmed": False,
+                    "timing_bucket": "preconfirmed",
+                    "watch_strategy_labels": ["宮島 1-3-2 潮型"],
+                    "watch_strategy_bets": ["3連単 1-3-2"],
+                    "watch_strategy_count": 1,
+                })
+            if (
                 stadium == 7
                 and delta_v is not None and -15.0 < delta_v <= -5.0
                 and range_v is not None and range_v >= 150.0
@@ -6391,6 +6429,35 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "name": "蒲郡132 潮型",
                     "tag": "fall5-14 + range150+ + wind0-2",
                     "tetsuban_score": 8,
+                })
+            if (
+                stadium == 7
+                and delta_v is not None and -15.0 < delta_v <= -5.0
+                and range_v is not None and range_v >= 150.0
+                and not (wind_v is not None and wind_v <= 2.0)
+            ):
+                wind_out = wind_v is not None and wind_v > 2.0
+                matched.append({
+                    "level": "morning_watch_gamagori_tide_132_tri",
+                    "label": "朝監視 蒲郡 1-3-2 潮型",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "朝監視",
+                    "recovery": 718.6,
+                    "n": 132,
+                    "hit_rate": 27.3,
+                    "name": "蒲郡132 潮型",
+                    "tag": "蒲郡 + 潮位レンジ150以上 + 下げ潮5-14 / 風速2m以下待ち",
+                    "tetsuban_score": 4,
+                    "is_reference": True,
+                    "is_morning": True,
+                    "is_morning_watch": True,
+                    "is_after_exhibition_out": wind_out,
+                    "is_display_confirmed": False,
+                    "timing_bucket": "preconfirmed",
+                    "watch_strategy_labels": ["蒲郡 1-3-2 潮型"],
+                    "watch_strategy_bets": ["3連単 1-3-2"],
+                    "watch_strategy_count": 1,
                 })
             if (
                 stadium == 15
@@ -6412,6 +6479,40 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_score": 7,
                 })
             if (
+                stadium == 15
+                and range_v is not None and 90.0 <= range_v < 120.0
+                and not (
+                    wind_v is not None and 5.0 <= wind_v <= 6.0
+                    and weather_v == 1
+                )
+            ):
+                condition_out = (
+                    (wind_v is not None and not (5.0 <= wind_v <= 6.0))
+                    or (weather_v is not None and weather_v != 1)
+                )
+                matched.append({
+                    "level": "morning_watch_marugame_tide_123_tri",
+                    "label": "朝監視 丸亀 1-2-3 潮型",
+                    "bet": "3連単 1-2-3",
+                    "rank": "trifecta_niche",
+                    "rank_label": "朝監視",
+                    "recovery": 431.4,
+                    "n": 42,
+                    "hit_rate": 28.6,
+                    "name": "丸亀123 潮型",
+                    "tag": "丸亀 + 潮位レンジ90-119 / 風5-6m + 晴れ待ち",
+                    "tetsuban_score": 4,
+                    "is_reference": True,
+                    "is_morning": True,
+                    "is_morning_watch": True,
+                    "is_after_exhibition_out": condition_out,
+                    "is_display_confirmed": False,
+                    "timing_bucket": "preconfirmed",
+                    "watch_strategy_labels": ["丸亀 1-2-3 潮型"],
+                    "watch_strategy_bets": ["3連単 1-2-3"],
+                    "watch_strategy_count": 1,
+                })
+            if (
                 stadium == 22
                 and range_v is not None and range_v >= 150.0
                 and delta_v is not None and 5.0 <= delta_v < 15.0
@@ -6429,6 +6530,35 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "name": "福岡132 潮型",
                     "tag": "range150+ + rise5-14 + wind0-2",
                     "tetsuban_score": 7,
+                })
+            if (
+                stadium == 22
+                and range_v is not None and range_v >= 150.0
+                and delta_v is not None and 5.0 <= delta_v < 15.0
+                and not (wind_v is not None and wind_v <= 2.0)
+            ):
+                wind_out = wind_v is not None and wind_v > 2.0
+                matched.append({
+                    "level": "morning_watch_fukuoka_tide_132_tri",
+                    "label": "朝監視 福岡 1-3-2 潮型",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "朝監視",
+                    "recovery": 470.0,
+                    "n": 66,
+                    "hit_rate": 27.3,
+                    "name": "福岡132 潮型",
+                    "tag": "福岡 + 潮位レンジ150以上 + 上げ潮5-14 / 風速2m以下待ち",
+                    "tetsuban_score": 4,
+                    "is_reference": True,
+                    "is_morning": True,
+                    "is_morning_watch": True,
+                    "is_after_exhibition_out": wind_out,
+                    "is_display_confirmed": False,
+                    "timing_bucket": "preconfirmed",
+                    "watch_strategy_labels": ["福岡 1-3-2 潮型"],
+                    "watch_strategy_bets": ["3連単 1-3-2"],
+                    "watch_strategy_count": 1,
                 })
 
             return _pick_best_market_signal(*matched)
@@ -8424,6 +8554,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 tokoname_12_late_a = _safe_signal_eval("tokoname_12_late_a", _evaluate_tokoname_12_late_a_exacta, tokoname_12_signal_ctx.get(rid))
                 tokoname_14_winter = _safe_signal_eval("tokoname_14_winter", _evaluate_tokoname_14_winter_exacta, tokoname_12_signal_ctx.get(rid))
                 tokoname_123_exst = _safe_signal_eval("tokoname_123_exst", _evaluate_tokoname_123_late_exst, tokoname_12_signal_ctx.get(rid))
+                tokoname_123_watch = _safe_signal_eval("tokoname_123_watch_preselect", _evaluate_tokoname_123_late_exst_watch, tokoname_12_signal_ctx.get(rid))
                 omura_tokuyama_13_exacta = _safe_signal_eval("omura_tokuyama_13_exacta", _evaluate_omura_tokuyama_13_exacta, omura_tokuyama_13_signal_ctx.get(rid))
                 if exacta_niche:
                     l4 = exacta_niche
@@ -8474,6 +8605,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tokoname_12_late_a,
                     tokoname_14_winter,
                     tokoname_123_exst,
+                    tokoname_123_watch,
                     omura_tokuyama_13_exacta,
                     ashiya_exacta,
                     ashiya_4head_flow,
@@ -9004,6 +9136,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "morning_watch_gamagori_adopted",
             "morning_watch_tri134_acc2_ex3_tri",
             "morning_watch_omura_132_weak2_ex3_tri",
+            "morning_watch_fukuoka_tide_132_tri",
+            "morning_watch_miyajima_tide_132_tri",
+            "morning_watch_gamagori_tide_132_tri",
+            "morning_watch_marugame_tide_123_tri",
         }
         if adopted_signal_levels:
             filtered_signals = []
@@ -12929,10 +13065,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "omura_132_tri", "label": "大村 1-3-2", "short": "omu132", "color": "#d946ef", "timing": "previous_day"},
         {"key": "tsu_123_tri", "label": "津 1-2-3", "short": "tsu123", "color": "#06b6d4", "timing": "previous_day"},
         {"key": "suminoe_123_tri", "label": "住之江 1-2-3", "short": "sum123", "color": "#0891b2", "timing": "previous_day"},
-        {"key": "miyajima_tide_132_tri", "label": "宮島 潮 1-3-2", "short": "myj132", "color": "#f43f5e", "timing": "same_day"},
-        {"key": "gamagori_tide_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gama132", "color": "#fb923c", "timing": "same_day"},
-        {"key": "marugame_tide_123_tri", "label": "丸亀 潮 1-2-3", "short": "mgmt123", "color": "#a855f7", "timing": "same_day"},
-        {"key": "fukuoka_tide_132_tri", "label": "福岡 潮 1-3-2", "short": "fkk132", "color": "#0f766e", "timing": "same_day"},
+        {"key": "miyajima_tide_132_tri", "label": "宮島 潮 1-3-2", "short": "myj132", "color": "#f43f5e", "timing": "previous_day"},
+        {"key": "gamagori_tide_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gama132", "color": "#fb923c", "timing": "previous_day"},
+        {"key": "marugame_tide_123_tri", "label": "丸亀 潮 1-2-3", "short": "mgmt123", "color": "#a855f7", "timing": "previous_day"},
+        {"key": "fukuoka_tide_132_tri", "label": "福岡 潮 1-3-2", "short": "fkk132", "color": "#0f766e", "timing": "previous_day"},
         {"key": "gamagori_123_general_practical_tri", "label": "蒲郡 一般 1-2-3", "short": "gama123g", "color": "#fde047", "timing": "previous_day"},
         {"key": "gamagori_13_exa", "label": "蒲郡 1-3", "short": "gama13", "color": "#22d3ee", "timing": "same_day"},
         {"key": "tokuyama_12a_exa", "label": "徳山 1-2 A", "short": "tky12a", "color": "#60a5fa", "timing": "same_day"},
