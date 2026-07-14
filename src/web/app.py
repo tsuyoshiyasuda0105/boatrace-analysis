@@ -5280,6 +5280,75 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
 
         def _pick_best_market_signal(*signals):
+            adopted_priority_levels = {
+                "g23_optb_tri",
+                "gmkf_132_tri",
+                "shimonoseki_123_tri",
+                "tsu_124_tri",
+                "amagasaki_143_tri",
+                "amagasaki_13_exa",
+                "omura_13_exa",
+                "ashiya_boat4_exa",
+                "hamanako_14_exa",
+                "omura_14_exa",
+                "tokuyama_123_tri",
+                "tokuyama_13_exa",
+                "shimonoseki_132_tri",
+                "kojima_124_tri",
+                "kojima_13_exa",
+                "marugame_123_tri",
+                "omura_123_tri",
+                "omura_132_tri",
+                "tsu_123_tri",
+                "suminoe_123_tri",
+                "miyajima_tide_132_tri",
+                "gamagori_tide_132_tri",
+                "marugame_tide_123_tri",
+                "fukuoka_tide_132_tri",
+                "gamagori_123_general_practical_tri",
+                "gamagori_13_exa",
+                "tokuyama_12a_exa",
+                "tokoname_12_late_a_exa",
+                "tokoname_14_winter_exa",
+                "tokoname_123_late_exst_tri",
+                "toda_123_tri",
+                "tsu_143_tri",
+                "kojima_123_tri",
+                "gamagori_123_tri",
+                "naruto_123_tri",
+                "karatsu_132_tri",
+                "tri134_acc2_ex3_tri",
+                "omura_132_weak2_ex3_tri",
+                "wakamatsu_13_weak2_strong3_exa",
+                "heiwajima_13_acc2_late_exa",
+                "tamagawa_13_weak_sashi2_exa",
+            }
+            adopted_priority_levels.update({
+                "morning_watch_SG",
+                "morning_watch_G1",
+                "morning_watch_G2",
+                "morning_watch_st_SG",
+                "morning_watch_st_G1",
+                "morning_watch_st_G2",
+                "morning_watch_g23_optb",
+                "morning_watch_ashiya_boat4_lift",
+                "morning_watch_tokoname_123_late_exst_tri",
+                "morning_watch_omura_123_tri",
+                "morning_watch_tri143_a12",
+                "morning_watch_gmkf_132_tri",
+                "morning_watch_gamagori_adopted",
+                "morning_watch_tri134_acc2_ex3_tri",
+                "morning_watch_omura_132_weak2_ex3_tri",
+                "morning_watch_fukuoka_tide_132_tri",
+                "morning_watch_miyajima_tide_132_tri",
+                "morning_watch_gamagori_tide_132_tri",
+                "morning_watch_marugame_tide_123_tri",
+            })
+
+            def _is_adopted_priority_signal(sig):
+                level = sig.get("level") if sig else None
+                return level in adopted_priority_levels
+
             valid = []
             best = None
             best_recovery = float("-inf")
@@ -5287,6 +5356,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if not sig:
                     continue
                 valid.append(sig)
+            if not valid:
+                return None
+            preferred = [sig for sig in valid if _is_adopted_priority_signal(sig)]
+            candidate_pool = preferred or valid
+            for sig in candidate_pool:
                 try:
                     rec = float(sig.get("recovery")) if sig.get("recovery") is not None else float("-inf")
                 except (TypeError, ValueError):
