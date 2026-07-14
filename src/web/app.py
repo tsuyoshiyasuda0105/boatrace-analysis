@@ -576,6 +576,64 @@ def _race_predictions(predictor: Predictor, race_id: str) -> list[dict]:
     return sub[available].to_dict(orient="records")
 
 
+def _race_entry_fallback_rows(race_id: str) -> list[dict]:
+    """Build a lightweight race-detail fallback from race_entries/race_previews.
+
+    This keeps the race detail page usable even when predictions are not yet
+    populated on production. Probabilities are left at 0 and rows are ordered
+    by boat number.
+    """
+    with db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.boat_number,
+                   e.racer_number,
+                   e.racer_name,
+                   e.class_number,
+                   e.national_top_2_percent,
+                   e.local_top_2_percent,
+                   e.assigned_motor_number,
+                   e.assigned_motor_top_2_percent,
+                   NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                   pv.start_timing_exhibition,
+                   res.finishing_position
+              FROM race_entries e
+              LEFT JOIN race_previews pv
+                ON pv.race_id = e.race_id
+               AND pv.boat_number = e.boat_number
+              LEFT JOIN race_results res
+                ON res.race_id = e.race_id
+               AND res.boat_number = e.boat_number
+             WHERE e.race_id = ?
+             ORDER BY e.boat_number
+            """,
+            (race_id,),
+        ).fetchall()
+    fallback = []
+    for idx, row in enumerate(rows, 1):
+        fallback.append(
+            {
+                "boat_number": row[0],
+                "racer_number": row[1],
+                "racer_name": row[2],
+                "class_number": row[3],
+                "national_top_2_percent": row[4],
+                "local_top_2_percent": row[5],
+                "assigned_motor_number": row[6],
+                "assigned_motor_top_2_percent": row[7],
+                "exhibition_time": row[8],
+                "start_timing_exhibition": row[9],
+                "finishing_position": row[10],
+                "prob_first": 0.0,
+                "prob_top_2": 0.0,
+                "prob_top_3": 0.0,
+                "pred_rank": idx,
+                "is_prediction_fallback": True,
+            }
+        )
+    return fallback
+
+
 @lru_cache(maxsize=20000)
 def _racer_names(race_id: str) -> dict[int, str]:
     with db_connect() as conn:
@@ -2736,11 +2794,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not info:
             abort(404)
 
+        fallback_notice = None
         try:
             t0 = time.perf_counter()
             preds = _race_predictions(predictor, race_id)
             t_pred = time.perf_counter() - t0
             t1 = time.perf_counter()
+            if not preds:
+                preds = _race_entry_fallback_rows(race_id)
+                if preds:
+                    fallback_notice = "予測データ未投入のため、出走表ベースの詳細を表示しています。"
             _attach_kimarite_skill_tags(race_id, preds)
             t_tags = time.perf_counter() - t1
         except Exception as e:
@@ -2757,6 +2820,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 user_msg = "データベース接続エラー。少し時間をおいてから再度アクセスしてください。"
             else:
                 user_msg = f"予測エラー: {err_str[:200]}"
+            preds = _race_entry_fallback_rows(race_id)
+            if preds:
+                _attach_kimarite_skill_tags(race_id, preds)
+                html = render_template(
+                    "race.html",
+                    info=info,
+                    preds=preds,
+                    error=None,
+                    notice="予測データの読み込みに失敗したため、出走表ベースの詳細を表示しています。",
+                    racer_names=_racer_names_from_preds(preds) or _racer_names(race_id),
+                    trifecta_pw=[],
+                    trifecta_unified=[],
+                    conditions=_race_current_conditions_cached(race_id),
+                    niche_signals=[],
+                    market_signal=None,
+                    compat_analysis=None,
+                    actual_result=None,
+                    venue_warning=None,
+                    sweet_spot=False,
+                )
+                return html
             html = render_template(
                 "race.html",
                 info=info,
@@ -2855,6 +2939,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             market_signal=market_signal,
             compat_analysis=compat_analysis,
             error=None,
+            notice=fallback_notice,
         )
         t_render = time.perf_counter() - t6
         elapsed = time.perf_counter() - started_at
@@ -2948,6 +3033,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return jsonify({"error": "not found"}), 404
         try:
             preds = _race_predictions(predictor, race_id)
+            if not preds:
+                preds = _race_entry_fallback_rows(race_id)
             conditions = _race_current_conditions_cached(race_id)
         except Exception as e:
             logger.exception("race signals base load failed: %s", race_id)

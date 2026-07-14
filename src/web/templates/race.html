@@ -162,6 +162,10 @@
     </div>
   {% endif %}
 
+  {% if notice %}
+    <div class="notice-box">{{ notice }}</div>
+  {% endif %}
+
   {% if error %}
     <div class="error-box">予測エラー: {{ error }}</div>
   {% elif not preds %}
