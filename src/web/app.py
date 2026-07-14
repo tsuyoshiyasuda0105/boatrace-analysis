@@ -2465,6 +2465,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             http_status = 503
             return status_info, http_status
 
+        # Keep Render's health check cheap. The heavier diagnostic counts below
+        # are useful for humans, but they add several DB reads to every health
+        # probe and can make transient Supabase latency look like an app outage.
+        if request.args.get("full") != "1":
+            return status_info, http_status
+
         # データ品質 (今日の system_status 集計) は 200 のまま JSON のみ
         try:
             today_iso = date.today().isoformat()
@@ -2586,10 +2592,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         initial_pick_rows = []
         try:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
-            with app.test_request_context(f"/api/market-signals?date={target_date}"):
-                session["is_member"] = True
-                signal_resp = market_signals_for_date()
-                signal_payload = signal_resp.get_json(silent=True) if hasattr(signal_resp, "get_json") else {}
+            today_iso = date.today().isoformat()
+            cache_ttl = 60 if target_date >= today_iso else 3600
+            signal_payload = _read_json_cache(f"market_signals:v6:{target_date}", cache_ttl) or {}
             signals = (signal_payload or {}).get("signals") or {}
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
             adopted_watch_levels = {
@@ -2606,6 +2611,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_tri143_a12",
                 "morning_watch_gmkf_132_tri",
                 "morning_watch_gamagori_adopted",
+                "morning_watch_tri134_acc2_ex3_tri",
+                "morning_watch_omura_132_weak2_ex3_tri",
             }
             for race_id, sig in signals.items():
                 if not roi_picks_visible:
@@ -6678,10 +6685,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             wind_ok = wind is not None and wind <= 3.0
             ex3_le_ex2 = boat2_ex is not None and boat3_ex is not None and boat3_ex <= boat2_ex
 
-            if (
+            tri134_pre_ok = (
                 natl_1 is not None and natl_1 >= 7.5
                 and boat2_fl >= 1
                 and boat3_natl_1 is not None and boat3_natl_1 >= 6.0
+            )
+            if (
+                tri134_pre_ok
                 and wind_ok
                 and ex3_le_ex2
             ):
@@ -6700,12 +6710,33 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tetsuban_score": 7,
                     "timing_bucket": "same_day",
                 })
+            elif tri134_pre_ok:
+                matched.append({
+                    "level": "morning_watch_tri134_acc2_ex3_tri",
+                    "label": "朝監視 1-3-4 全場型",
+                    "bet": "3連単 1-3-4",
+                    "rank": "trifecta_niche",
+                    "rank_label": "朝監視",
+                    "rank_emoji": "3連単",
+                    "recovery": 296.5,
+                    "n": 31,
+                    "hit_rate": 32.3,
+                    "name": "1-3-4 全場型 朝監視",
+                    "tag": "事前条件OK: 1号艇全国1着率>=7.5 + 2号艇F/Lあり + 3号艇全国1着率>=6 / 待ち: 風<=3m + 展示T3<=T2",
+                    "tetsuban_score": 7,
+                    "timing_bucket": "preconfirmed",
+                    "is_morning_watch": True,
+                    "is_reference": True,
+                })
 
-            if (
+            omura_132_pre_ok = (
                 stadium == 24
                 and natl_1 is not None and natl_1 >= 7.0
                 and boat2_motor is not None and boat2_motor < 35.0
                 and boat3_natl_1 is not None and boat3_natl_1 >= 6.0
+            )
+            if (
+                omura_132_pre_ok
                 and wind_ok
                 and ex3_le_ex2
             ):
@@ -6723,6 +6754,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "tag": "大村 + 1号艇全国1着率>=7 + 2号艇モーター<35 + 3号艇全国1着率>=6 + 風<=3m + 展示T3<=T2",
                     "tetsuban_score": 7,
                     "timing_bucket": "same_day",
+                })
+            elif omura_132_pre_ok:
+                matched.append({
+                    "level": "morning_watch_omura_132_weak2_ex3_tri",
+                    "label": "朝監視 大村 1-3-2 弱2展示",
+                    "bet": "3連単 1-3-2",
+                    "rank": "trifecta_niche",
+                    "rank_label": "朝監視",
+                    "rank_emoji": "3連単",
+                    "recovery": 264.0,
+                    "n": 35,
+                    "hit_rate": 31.4,
+                    "name": "大村132 弱2展示型 朝監視",
+                    "tag": "事前条件OK: 大村 + 1号艇全国1着率>=7 + 2号艇モーター<35 + 3号艇全国1着率>=6 / 待ち: 風<=3m + 展示T3<=T2",
+                    "tetsuban_score": 7,
+                    "timing_bucket": "preconfirmed",
+                    "is_morning_watch": True,
+                    "is_reference": True,
                 })
 
             if (
@@ -8793,6 +8842,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     _evaluate_current_motor_adopted_signal,
                     info,
                 )
+                series13_adopted_watch = _safe_signal_eval(
+                    "series13_adopted_watch_no_data",
+                    _evaluate_13_series_adopted_signal,
+                    info,
+                )
                 general_c_watch = _safe_signal_eval(
                     "general_c_watch_no_data",
                     _evaluate_general_c_watch,
@@ -8845,6 +8899,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     shimonoseki_123_watch,
                     tsu_suminoe_signal,
                     current_motor_adopted_watch,
+                    series13_adopted_watch,
                     win_niche,
                     candidate_l4,
                     gamagori_watch,
@@ -8947,6 +9002,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "morning_watch_tri143_a12",
             "morning_watch_gmkf_132_tri",
             "morning_watch_gamagori_adopted",
+            "morning_watch_tri134_acc2_ex3_tri",
+            "morning_watch_omura_132_weak2_ex3_tri",
         }
         if adopted_signal_levels:
             filtered_signals = []
@@ -9051,6 +9108,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 for rdate, sjson in cur_c.fetchall():
                     try:
                         day_d = _json.loads(sjson)
+                        if not force_full_scan:
+                            # 通常表示は速度優先で既存の日別キャッシュをそのまま使う。
+                            # 採用手法の追加や条件変更を厳密に反映したい場合は
+                            # ROI画面の「最新に更新」から force_full_scan=True で再集計する。
+                            cached_by_date[rdate] = day_d
+                            continue
                         # 2026-05-30 以降は実運用ROIとして扱うため、締切前オッズ
                         # ベースで再計算した cache のみ使う。古い cache は確定払戻
                         # 代理を含み、実際に買えた案件とズレる。
@@ -9297,6 +9360,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         ]
         # 当日分は常に再計算 (cache に保存しない、 リアルタイム性確保)
         # 過去日でも cache に無いものは今回 SQL で取得
+        if missing_dates and not force_full_scan and cached_by_date:
+            # 通常表示では、数日の cache 欠損だけで欠損範囲全体を
+            # 重い SQL 再集計に回さない。厳密な再集計は「最新に更新」で行う。
+            n_total_by_missing: dict[str, int] = {}
+            try:
+                placeholders = ",".join("?" for _ in missing_dates)
+                with db_connect() as conn_m:
+                    for rdate, n_total in conn_m.execute(
+                        f"SELECT race_date, COUNT(*) FROM races WHERE race_date IN ({placeholders}) GROUP BY race_date",
+                        tuple(missing_dates),
+                    ).fetchall():
+                        n_total_by_missing[str(rdate)] = int(n_total or 0)
+            except Exception:  # noqa: BLE001
+                n_total_by_missing = {}
+            for d in missing_dates:
+                cached_by_date.setdefault(
+                    d,
+                    {
+                        "date": d,
+                        "n_total": n_total_by_missing.get(d, 0),
+                        "n_l4": 0,
+                    },
+                )
+            return _finalize_l4_daily_rows(cached_by_date)
+
         if not missing_dates:
             # 完全 cache hit でも派生指標を補完して返す
             return _finalize_l4_daily_rows(cached_by_date)
@@ -12857,8 +12945,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "gamagori_123_tri", "label": "蒲郡 1-2-3", "short": "gama123", "color": "#f59e0b", "timing": "same_day"},
         {"key": "naruto_123_tri", "label": "鳴門 1-2-3", "short": "nar123", "color": "#818cf8", "timing": "same_day"},
         {"key": "karatsu_132_tri", "label": "唐津 1-3-2", "short": "kar132", "color": "#2dd4bf", "timing": "same_day"},
-        {"key": "tri134_acc2_ex3_tri", "label": "1-3-4 全場型", "short": "tri134", "color": "#f97316", "timing": "same_day"},
-        {"key": "omura_132_weak2_ex3_tri", "label": "大村 1-3-2 弱2展示", "short": "omu132w", "color": "#d946ef", "timing": "same_day"},
+        {"key": "tri134_acc2_ex3_tri", "label": "1-3-4 全場型", "short": "tri134", "color": "#f97316", "timing": "previous_day"},
+        {"key": "omura_132_weak2_ex3_tri", "label": "大村 1-3-2 弱2展示", "short": "omu132w", "color": "#d946ef", "timing": "previous_day"},
         {"key": "wakamatsu_13_weak2_strong3_exa", "label": "若松 1-3", "short": "waka13", "color": "#0ea5e9", "timing": "previous_day"},
         {"key": "heiwajima_13_acc2_late_exa", "label": "平和島 1-3", "short": "hei13", "color": "#38bdf8", "timing": "previous_day"},
         {"key": "tamagawa_13_weak_sashi2_exa", "label": "多摩川 1-3", "short": "tama13", "color": "#14b8a6", "timing": "previous_day"},
@@ -12881,7 +12969,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v10:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v12:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -12889,7 +12977,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             )
             if cached_html:
                 return cached_html
-        rows = _l4_daily_stats(from_d, to_d, force_full_scan=True)
+        # 通常表示は日別集計キャッシュを使う。ここで毎回 force_full_scan=True にすると
+        # ROI 画面の初回表示が全日付の重い SQL 再集計になり、体感がかなり遅くなる。
+        # 「最新に更新」ボタンを押した時だけ強制再集計する。
+        rows = _l4_daily_stats(from_d, to_d, force_full_scan=force_recompute)
         adopted_keys = ROI_STRATEGY_KEYS
 
         for r in rows:
