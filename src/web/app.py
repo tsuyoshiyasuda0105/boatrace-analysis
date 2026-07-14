@@ -2687,7 +2687,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
             today_iso = date.today().isoformat()
             cache_ttl = 60 if target_date >= today_iso else 3600
-            signal_cache_key = f"market_signals:v8:{target_date}"
+            signal_cache_key = f"market_signals:v9:{target_date}"
             signal_payload = (
                 _read_json_cache(signal_cache_key, cache_ttl)
                 or _read_json_cache_stale(signal_cache_key)
@@ -3497,7 +3497,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         cache_ttl = 60 if target_date >= today_iso else 3600
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
         # v6: avoid serving stale empty signals after race data catches up.
-        cache_key = f"market_signals:v8:{target_date}"
+        cache_key = f"market_signals:v9:{target_date}"
         recent_signal_date = target_date >= (date.today() - timedelta(days=1)).isoformat()
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None and not (recent_signal_date and _is_empty_market_signals_payload(cached_payload)):
