@@ -2540,6 +2540,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or date.today().isoformat()
         races_list = _races_for_date(target_date)
         venue_environment = _venue_environment_summaries_for_date(target_date)
+        roi_picks_visible = (
+            is_member()
+            and str(os.environ.get("BOATRACE_SHOW_ROI_PICKS", "1")).strip().lower()
+            not in {"0", "false", "no", "off"}
+        )
         if not races_list:
             today_iso = date.today().isoformat()
             should_self_heal = (
@@ -2561,6 +2566,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     today_iso=today_iso,
                     stadium_groups=[],
                     initial_pick_rows=[],
+                    roi_picks_visible=roi_picks_visible,
                     empty=True,
                 )
 
@@ -2602,6 +2608,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_gamagori_adopted",
             }
             for race_id, sig in signals.items():
+                if not roi_picks_visible:
+                    break
                 l4 = (sig or {}).get("l4") or {}
                 level = str(l4.get("level") or "")
                 if level not in adopted_levels and level not in adopted_watch_levels:
@@ -2612,6 +2620,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if not race:
                     continue
                 closed_at = str(race.get("race_closed_at") or "")
+                strategy_labels = [str(x) for x in (l4.get("watch_strategy_labels") or []) if x]
+                strategy_bets = [str(x) for x in (l4.get("watch_strategy_bets") or []) if x]
+                condition = (
+                    l4.get("tag")
+                    or l4.get("trifecta_niche_tag")
+                    or l4.get("exacta_niche_tag")
+                    or (" / ".join(strategy_labels) if strategy_labels else "")
+                    or ""
+                )
+                bet = l4.get("bet") or (" / ".join(strategy_bets) if strategy_bets else "")
                 initial_pick_rows.append({
                     "race_id": race_id,
                     "closed_at": closed_at,
@@ -2620,9 +2638,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "rank": l4.get("rank_label") or l4.get("rank") or "候補",
                     "place": f"{race.get('stadium_name') or ''} {race.get('race_number')}R",
                     "label": l4.get("label") or "",
-                    "bet": l4.get("bet") or "",
-                    "condition": l4.get("tag") or l4.get("trifecta_niche_tag") or l4.get("exacta_niche_tag") or "",
+                    "bet": bet,
+                    "condition": condition,
                     "recovery": l4.get("recovery"),
+                    "n": l4.get("n"),
+                    "hit_rate": l4.get("hit_rate") or l4.get("hitRate") or l4.get("win_rate"),
                     "closed": int(race.get("results_count") or 0) > 0,
                 })
             initial_pick_rows.sort(key=lambda row: row.get("closed_at") or "")
@@ -2636,6 +2656,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             stadium_groups=sorted(stadium_groups.values(),
                                   key=lambda g: g["stadium_number"]),
             initial_pick_rows=initial_pick_rows,
+            roi_picks_visible=roi_picks_visible,
             empty=False,
         ))
         # backlog item 11: market-signals を HTTP/2 preload で先取り

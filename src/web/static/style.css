@@ -4307,7 +4307,19 @@ main h2 {
 .todays-picks-table tbody tr.is-next .pick-til { color: #fff7a1; font-weight: bold; text-shadow: 0 0 6px rgba(255,215,0,0.7); }
 .pick-rank { font-size: 12px; font-weight: bold; width: 70px; color: #ffd700; }
 .pick-place { white-space: nowrap; color: #ffe680; }
-.pick-type { font-size: 11px; color: rgba(255, 230, 160, 0.80); }
+.pick-type { font-size: 11px; color: rgba(255, 230, 160, 0.80); min-width: 210px; }
+.pick-candidate-main {
+  color: #fff1a8;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.pick-candidate-sub {
+  margin-top: 3px;
+  color: rgba(255, 230, 160, 0.68);
+  font-size: 10px;
+  line-height: 1.35;
+}
 .pick-racer { font-size: 11px; color: rgba(255, 230, 160, 0.70); }
 .pick-rec { font-family: monospace; font-size: 13px; color: #ffd700; font-weight: bold; text-shadow: 0 0 5px rgba(255, 215, 0, 0.45); }
 .pick-link a {

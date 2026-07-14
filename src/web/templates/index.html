@@ -153,6 +153,7 @@
     </section>
 
     <!-- 本日の L4 投票候補リスト (時系列、 JS で動的更新) -->
+    {% if roi_picks_visible %}
     <section class="todays-picks-panel" id="todays-picks-panel" data-initial-pick-count="{{ initial_pick_rows|length }}" {% if not initial_pick_rows %}hidden{% endif %}>
       <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}ROIが高いレース候補
         {% if target_date != today_iso %}<span class="past-tag">過去日 (全レース締切済)</span>{% endif %}
@@ -183,7 +184,15 @@
                 <td class="pick-til">{{ p.remaining or "-" }}</td>
                 <td class="pick-rank">{{ p.rank }}</td>
                 <td class="pick-place"><strong>{{ p.place }}</strong></td>
-                <td class="pick-type">{{ p.label }}{% if p.bet %} / {{ p.bet }}{% endif %}</td>
+                <td class="pick-type">
+                  <div class="pick-candidate-main">{{ p.label or "候補" }}{% if p.bet %} / {{ p.bet }}{% endif %}</div>
+                  {% if p.condition %}<div class="pick-candidate-sub">条件: {{ p.condition }}</div>{% endif %}
+                  <div class="pick-candidate-sub">
+                    {% if p.recovery is not none %}検証回収率 {{ p.recovery }}%{% endif %}
+                    {% if p.n is not none %} (n={{ p.n }}){% endif %}
+                    {% if p.hit_rate is not none %} / 的中率 {{ p.hit_rate }}%{% endif %}
+                  </div>
+                </td>
                 <td class="pick-racer">{{ p.condition or "-" }}</td>
                 <td class="pick-rec"><strong>{% if p.recovery is not none %}{{ p.recovery }}%{% else %}-{% endif %}</strong></td>
                 <td class="pick-odds">-</td>
@@ -272,6 +281,8 @@
       </div>
     </section>
 
+    {% endif %}
+
     <div class="stadium-grid">
       {% for g in stadium_groups %}
         <section class="stadium-card">
@@ -319,6 +330,7 @@
     <script>
       (function() {
         const targetDate = "{{ target_date }}";
+        const roiPicksVisible = {{ roi_picks_visible|default(false)|tojson }};
         let marketSignalsLoading = false;
         let marketSignalsLoaded = false;
         let marketSignalsCache = {};
@@ -338,6 +350,41 @@
         const warmRaceDetails = (raceIds) => {
           const unique = [...new Set((raceIds || []).filter(Boolean))].slice(0, 8);
           unique.forEach((rid, idx) => setTimeout(() => warmRaceDetail(rid), 120 + idx * 120));
+        };
+
+        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        }[ch]));
+
+        function buildPickCandidateHtml(l4Data, pickLabel, buyText, strategyInfo, edgeInfo, secondaryLabels) {
+          const label = String(pickLabel || l4Data?.label || '候補').trim();
+          const bet = String(buyText || l4Data?.bet || '').trim();
+          const condition = String(
+            l4Data?.tag
+            || l4Data?.trifecta_niche_tag
+            || l4Data?.exacta_niche_tag
+            || strategyInfo
+            || ''
+          ).trim();
+          const recovery = l4Data?.recovery != null ? `検証回収率 ${l4Data.recovery}%` : '';
+          const sampleSize = l4Data?.n != null ? `(n=${l4Data.n})` : '';
+          const hitRate = (l4Data?.hit_rate ?? l4Data?.hitRate ?? l4Data?.win_rate);
+          const hitRateText = hitRate != null ? `的中率 ${hitRate}%` : '';
+          const extras = [
+            condition ? `条件: ${condition}` : '',
+            edgeInfo && edgeInfo !== condition ? edgeInfo : '',
+            [recovery, sampleSize, hitRateText].filter(Boolean).join(' '),
+            Array.isArray(secondaryLabels) && secondaryLabels.length ? `重複採用: ${secondaryLabels.join(' / ')}` : '',
+          ].filter(Boolean);
+          const main = `${label}${bet ? ` / ${bet}` : ''}`;
+          return [
+            `<div class="pick-candidate-main">${escapeHtml(main)}</div>`,
+            ...extras.map((line) => `<div class="pick-candidate-sub">${escapeHtml(line)}</div>`),
+          ].join('');
         };
 
         function getRaceItems(forceRefresh = false) {
@@ -1269,6 +1316,10 @@ function renderTodaysPicks() {
           const waitingPanel = document.getElementById('todays-picks-waiting-panel');
           const closedPanel = document.getElementById('todays-picks-closed-panel');
 
+          if (!roiPicksVisible) {
+            if (panel) panel.hidden = true;
+            return;
+          }
           if (!panel || !preconfirmedTbody || !waitingTbody || !closedTbody || !preconfirmedPanel || !waitingPanel || !closedPanel) return;
           const initialPickCount = Number(panel.dataset.initialPickCount || '0');
           if (!marketSignalsLoaded) {
@@ -1569,6 +1620,14 @@ function renderTodaysPicks() {
                   strategyHtmlParts.push(`<div class="pick-strategy-note"><small>\u91cd\u8907\u63a1\u7528: ${secondaryLabels.join(' / ')}</small></div>`);
                 }
                 const pickStrategyHtml = strategyHtmlParts.join('');
+                const candidateHtml = buildPickCandidateHtml(
+                  l4Data,
+                  l4Badge ? l4Badge.textContent.trim() : (l4Data?.label || pickType),
+                  buyText,
+                  strategyInfo,
+                  edgeInfo,
+                  secondaryLabels
+                );
 
                 const badgeClass = state.adopted ? 'mismatch-tag is-adopted' : 'mismatch-tag';
                 const statusTagHtml = `<span class="${badgeClass}" title="${state.tagTitle}">${state.tagLabel}</span>`;
@@ -1591,7 +1650,7 @@ function renderTodaysPicks() {
                   <td class="pick-til">${tilStr}</td>
                   <td class="pick-rank">${finalRankLabel}</td>
                   <td class="pick-place"><strong>${stadium}</strong> ${rno}R</td>
-                  <td class="pick-type">${pickType}</td>
+                  <td class="pick-type">${candidateHtml}</td>
                   <td class="pick-racer">${pickStrategyHtml || racerInfo}</td>
                   <td class="pick-rec"><strong>${recovery}</strong></td>
                   <td class="pick-odds">${oddsCellHtml}</td>
