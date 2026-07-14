@@ -41,7 +41,7 @@
     </div>
   {% endif %}
 
-  <div id="race-signal-shell" data-race-id="{{ info.race_id }}">
+  <div id="race-signal-shell" data-race-id="{{ info.race_id }}" data-static-version="{{ static_version }}">
     <div class="motor-history-loading" data-race-signals-loading>シグナルを読み込み中...</div>
     <div id="market-signal-container">
   {% if market_signal %}
@@ -527,5 +527,5 @@
     </div>
     </details>
   {% endif %}
-  <script src="{{ url_for('static', filename='race_detail.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='race_detail.js') }}?v={{ static_version }}" defer></script>
 {% endblock %}

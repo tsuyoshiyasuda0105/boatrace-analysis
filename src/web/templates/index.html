@@ -385,7 +385,7 @@
             `<div class="pick-candidate-main">${escapeHtml(main)}</div>`,
             ...extras.map((line) => `<div class="pick-candidate-sub">${escapeHtml(line)}</div>`),
           ].join('');
-        };
+        }
 
         function getRaceItems(forceRefresh = false) {
           if (forceRefresh || !raceItemsCache || raceItemsCache.length === 0) {
@@ -435,9 +435,13 @@
           const title = `${l4El?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''} ${l4Data?.tag || ''} ${l4Data?.exacta_niche_tag || ''} ${l4Data?.trifecta_niche_tag || ''}`;
           const tideLevels = new Set([
             'miyajima_tide_132_tri',
+            'morning_watch_miyajima_tide_132_tri',
             'gamagori_tide_132_tri',
+            'morning_watch_gamagori_tide_132_tri',
             'marugame_tide_123_tri',
+            'morning_watch_marugame_tide_123_tri',
             'fukuoka_tide_132_tri',
+            'morning_watch_fukuoka_tide_132_tri',
             'gamagori_123_general_practical_tri',
             'gamagori_13_exa',
           ]);
@@ -450,6 +454,8 @@
             'morning_watch_tokoname_123_late_exst_tri',
             'trifecta_niche_143_a12',
             'morning_watch_tri143_a12',
+            'morning_watch_tri134_acc2_ex3_tri',
+            'morning_watch_omura_132_weak2_ex3_tri',
             'hamanako_14_exa',
             'omura_14_exa',
           ]);
@@ -608,11 +614,15 @@
             'tsu_123_tri',
             'suminoe_123_tri',
             'miyajima_tide_132_tri',
+            'morning_watch_miyajima_tide_132_tri',
             'miyajima_fl_132_tri',
             'gamagori_tide_132_tri',
+            'morning_watch_gamagori_tide_132_tri',
             'marugame_123_tri',
             'marugame_tide_123_tri',
+            'morning_watch_marugame_tide_123_tri',
             'fukuoka_tide_132_tri',
+            'morning_watch_fukuoka_tide_132_tri',
             'gmkf_132_tri',
             'morning_watch_gmkf_132_tri',
             'toda_42_flow_tri',
@@ -622,6 +632,8 @@
             'gamagori_123_tri',
             'naruto_123_tri',
             'karatsu_132_tri',
+            'morning_watch_tri134_acc2_ex3_tri',
+            'morning_watch_omura_132_weak2_ex3_tri',
             'tri134_acc2_ex3_tri',
             'omura_132_weak2_ex3_tri',
             'wakamatsu_13_weak2_strong3_exa',
@@ -674,11 +686,15 @@
             'l4-tsu_123_tri',
             'l4-suminoe_123_tri',
             'l4-miyajima_tide_132_tri',
+            'l4-morning_watch_miyajima_tide_132_tri',
             'l4-miyajima_fl_132_tri',
             'l4-gamagori_tide_132_tri',
+            'l4-morning_watch_gamagori_tide_132_tri',
             'l4-marugame_123_tri',
             'l4-marugame_tide_123_tri',
+            'l4-morning_watch_marugame_tide_123_tri',
             'l4-fukuoka_tide_132_tri',
+            'l4-morning_watch_fukuoka_tide_132_tri',
             'l4-gmkf_132_tri',
             'l4-morning_watch_gmkf_132_tri',
             'l4-toda_42_flow_tri',
@@ -688,6 +704,8 @@
             'l4-gamagori_123_tri',
             'l4-naruto_123_tri',
             'l4-karatsu_132_tri',
+            'l4-morning_watch_tri134_acc2_ex3_tri',
+            'l4-morning_watch_omura_132_weak2_ex3_tri',
             'l4-tri134_acc2_ex3_tri',
             'l4-omura_132_weak2_ex3_tri',
             'l4-wakamatsu_13_weak2_strong3_exa',
@@ -706,12 +724,25 @@
           if (marketSignalsLoading) return;
           marketSignalsLoading = true;
           try {
-            const marketSignalsUrl = `/api/market-signals?date=${targetDate}&_=${Date.now()}`;
-            const r = await fetch(marketSignalsUrl, {
-              cache: 'no-store',
-            });
-            if (!r.ok) return;
-            const data = await r.json();
+            async function fetchSignals(forceRecompute = false) {
+              const qs = forceRecompute ? `&recompute=1` : '';
+              const marketSignalsUrl = `/api/market-signals?date=${targetDate}${qs}&_=${Date.now()}`;
+              const r = await fetch(marketSignalsUrl, {
+                cache: 'no-store',
+              });
+              if (!r.ok) return null;
+              return r.json();
+            }
+            let data = await fetchSignals(false);
+            if (!data) return;
+            const todayIso = new Date().toISOString().slice(0, 10);
+            const isRecentTarget = targetDate >= todayIso;
+            const initialSignals = data.signals || {};
+            const hasBasicData = Number(data?.data_status?.race_basic?.count || 0) > 0;
+            if (isRecentTarget && Object.keys(initialSignals).length === 0 && hasBasicData) {
+              const refreshed = await fetchSignals(true);
+              if (refreshed) data = refreshed;
+            }
             const signals = data.signals || {};
             marketSignalsLoaded = true;
             marketDataStatusCache = data.data_status || {};

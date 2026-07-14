@@ -1,4 +1,6 @@
 (() => {
+  const shell = document.getElementById("race-signal-shell");
+  const staticVersion = shell?.dataset?.staticVersion || "v1";
   const esc = (value) => String(value ?? "").replace(/[&<>\"']/g, (ch) => ({
     "&": "&amp;",
     "<": "&lt;",
@@ -59,7 +61,7 @@
     const raceId = button.dataset.raceId;
     const key = `${raceId}:${boatNumber}`;
     if (!historyCache.has(key)) {
-      historyCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}`, {
+      historyCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}?v=${encodeURIComponent(staticVersion)}`, {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
         cache: "force-cache",
@@ -155,7 +157,6 @@
   };
 
   const loadRaceSignals = async () => {
-    const shell = document.getElementById("race-signal-shell");
     if (!shell) return;
     const raceId = shell.dataset.raceId;
     if (!raceId) return;
@@ -163,7 +164,7 @@
     const marketContainer = document.getElementById("market-signal-container");
     const nicheContainer = document.getElementById("niche-signals-container");
     try {
-      const res = await fetch(`/api/race/${encodeURIComponent(raceId)}/signals`, {
+      const res = await fetch(`/api/race/${encodeURIComponent(raceId)}/signals?v=${encodeURIComponent(staticVersion)}`, {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
         cache: "force-cache",
