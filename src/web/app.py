@@ -2703,6 +2703,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_st_G1",
                 "morning_watch_st_G2",
                 "morning_watch_g23_optb",
+                "morning_watch_shimonoseki_123_tri",
                 "morning_watch_ashiya_boat4_lift",
                 "morning_watch_tokoname_123_late_exst_tri",
                 "morning_watch_omura_123_tri",
@@ -2715,6 +2716,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_miyajima_tide_132_tri",
                 "morning_watch_gamagori_tide_132_tri",
                 "morning_watch_marugame_tide_123_tri",
+                "morning_watch_tsu_123_tri",
+                "morning_watch_suminoe_123_tri",
             }
             for race_id, sig in signals.items():
                 if not roi_picks_visible:
@@ -3254,17 +3257,80 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         b3v_rate = _safe_float(ctx.get("boat3_venue_rate"))
         v123_rate = _safe_float(ctx.get("venue123_rate"))
 
+        def _base_signal(is_watch: bool, is_out: bool = False):
+            is_tsu = stadium == 9
+            level = "morning_watch_tsu_123_tri" if is_tsu else "morning_watch_suminoe_123_tri"
+            label = "朝監視 津 1-2-3" if is_tsu else "朝監視 住之江 1-2-3"
+            rank_label = "朝監視"
+            if not is_watch:
+                level = "tsu_123_tri" if is_tsu else "suminoe_123_tri"
+                label = "津 1-2-3" if is_tsu else "住之江 1-2-3"
+                rank_label = "3連単ニッチ"
+            recovery = 305.0 if is_tsu else 212.9
+            n = 20 if is_tsu else 24
+            hit_rate = 30.0 if is_tsu else 29.2
+            tag = (
+                "1号艇A1 + 全国1着率>=7 + 平均ST<=0.16 + 2号艇2連対率>=35 + "
+                "2号艇モーター<=35 + 展示1/2位以内 + 展示ST<=0.15"
+            )
+            if not is_tsu:
+                tag = (
+                    "1号艇A1 + 全国1着率>=7 + 当地1着率>=6 + 平均ST<=0.16 + "
+                    "2号艇2連対率>=35 + 2号艇モーター<=35 + 展示1/2位以内 + 展示ST<=0.15"
+                )
+            sig = {
+                "level": level,
+                "label": label,
+                "bet": "3連単 1-2-3",
+                "rank": "trifecta_niche",
+                "rank_label": rank_label,
+                "recovery": recovery,
+                "n": n,
+                "hit_rate": hit_rate,
+                "tetsuban_score": 6 if is_tsu else 7,
+                "tetsuban_label": "津123" if is_tsu else "住之江123",
+                "is_trifecta_niche": True,
+                "trifecta_niche_name": "津123" if is_tsu else "住之江123",
+                "trifecta_niche_tag": tag,
+                "trifecta_niche_hit_rate": hit_rate,
+                "trifecta_niche_recovery": recovery,
+                "watch_strategy_labels": ["津 1-2-3" if is_tsu else "住之江 1-2-3"],
+                "watch_strategy_bets": ["3連単 1-2-3"],
+                "watch_strategy_count": 1,
+                "is_morning_watch": bool(is_watch),
+                "is_display_confirmed": not is_watch,
+                "timing_bucket": "same_day" if is_watch else "adopted",
+            }
+            if is_watch:
+                sig["is_reference"] = True
+            if is_out:
+                sig["is_after_exhibition_out"] = True
+                sig["is_display_confirmed"] = False
+                sig["out_reason"] = "展示STまたは展示順位が条件外"
+            return sig
+
         if stadium not in (9, 12) or cls != 1:
             return None
         if natl_1 is None or natl_1 < 7.0:
             return None
         if avg_st is None or avg_st > 0.16:
             return None
-        if boat1_ex_st is None or boat1_ex_st > 0.15:
-            return None
+        if stadium == 9:
+            if boat2_motor is None or boat2_motor > 35.0:
+                return None
+            if boat2_top2 is None or boat2_top2 < 35.0:
+                return None
+        else:
+            if local_1 is None or local_1 < 6.0:
+                return None
+            if boat2_motor is None or boat2_motor > 35.0:
+                return None
+            if boat2_top2 is None or boat2_top2 < 35.0:
+                return None
+
         valid = [v for v in ex_times.values() if v is not None and v > 0]
-        if boat1_ex_time is None or boat1_ex_time <= 0 or not valid:
-            return None
+        if boat1_ex_st is None or boat1_ex_time is None or boat1_ex_time <= 0 or not valid:
+            return _base_signal(is_watch=True)
 
         def _ex_rank(boat_no: int) -> int | None:
             target = ex_times.get(boat_no)
@@ -3272,57 +3338,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 return None
             return 1 + sum(1 for v in valid if v < target)
 
-        if (_ex_rank(1) or 99) > 2 or (_ex_rank(2) or 99) > 2:
-            return None
+        if boat1_ex_st > 0.15 or (_ex_rank(1) or 99) > 2 or (_ex_rank(2) or 99) > 2:
+            return _base_signal(is_watch=True, is_out=True)
 
-        if stadium == 9:
-            if boat2_motor is None or boat2_motor > 35.0:
-                return None
-            if boat2_top2 is None or boat2_top2 < 35.0:
-                return None
-            return {
-                "level": "tsu_123_tri",
-                "label": "津 1-2-3",
-                "bet": "3連単 1-2-3",
-                "rank": "trifecta_niche",
-                "rank_label": "3連単ニッチ",
-                "recovery": 305.0,
-                "n": 20,
-                "hit_rate": 30.0,
-                "tetsuban_score": 6,
-                "tetsuban_label": "津123",
-                "is_trifecta_niche": True,
-                "trifecta_niche_name": "津123",
-                "trifecta_niche_tag": "A1 + 1号艇全国1着率>=7 + 展示1/2<=2位 + 展示ST<=0.15 + 2号艇モーター<=35",
-                "trifecta_niche_hit_rate": 30.0,
-                "trifecta_niche_recovery": 305.0,
-                "watch_strategy_bets": ["3連単 1-2-3"],
-            }
-
-        if local_1 is None or local_1 < 6.0:
-            return None
-        if boat2_motor is None or boat2_motor > 35.0:
-            return None
-        if boat2_top2 is None or boat2_top2 < 35.0:
-            return None
-        return {
-            "level": "suminoe_123_tri",
-            "label": "住之江 1-2-3",
-            "bet": "3連単 1-2-3",
-            "rank": "trifecta_niche",
-            "rank_label": "3連単ニッチ",
-            "recovery": 212.9,
-            "n": 24,
-            "hit_rate": 29.2,
-            "tetsuban_score": 7,
-            "tetsuban_label": "住之江123",
-            "is_trifecta_niche": True,
-            "trifecta_niche_name": "住之江123",
-            "trifecta_niche_tag": "A1 + 当地1着率>=6 + 展示1/2<=2位 + 展示ST<=0.15 + 2号艇モーター<=35",
-            "trifecta_niche_hit_rate": 29.2,
-            "trifecta_niche_recovery": 212.9,
-            "watch_strategy_bets": ["3連単 1-2-3"],
-        }
+        return _base_signal(is_watch=False)
 
     def _evaluate_shimonoseki_123_signal(ctx: dict | None):
         if not ctx:
@@ -3351,17 +3370,54 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             boat_no: _to_float(ctx.get(f"boat{boat_no}_exhibition_time"))
             for boat_no in range(1, 7)
         }
+
+        def _base_signal(is_watch: bool, is_out: bool = False):
+            level = "morning_watch_shimonoseki_123_tri" if is_watch else "shimonoseki_123_tri"
+            sig = {
+                "level": level,
+                "label": "\u671d\u76e3\u8996 \u4e0b\u95a2 1-2-3" if is_watch else "\u4e0b\u95a2 1-2-3",
+                "bet": "3\u9023\u5358 1-2-3",
+                "rank": "trifecta_niche",
+                "rank_label": "\u671d\u76e3\u8996" if is_watch else "3\u9023\u5358\u30cb\u30c3\u30c1",
+                "recovery": 157.3,
+                "n": 22,
+                "hit_rate": 31.8,
+                "tetsuban_score": 6,
+                "tetsuban_label": "\u4e0b\u95a2123",
+                "is_trifecta_niche": True,
+                "trifecta_niche_name": "\u4e0b\u95a2123",
+                "trifecta_niche_tag": (
+                    "\u4e0b\u95a210-12R + A1 + \u5168\u56fd1\u7740\u7387>=7 + "
+                    "\u5f53\u57301\u7740\u7387>=6 + 2\u53f7\u8247\u30e2\u30fc\u30bf\u30fc<=40 + "
+                    "\u5c55\u793a1/2\u4f4d\u4ee5\u5185 + \u5c55\u793aST<=0.15"
+                ),
+                "trifecta_niche_hit_rate": 31.8,
+                "trifecta_niche_recovery": 157.3,
+                "watch_strategy_labels": ["\u4e0b\u95a2 1-2-3"],
+                "watch_strategy_bets": ["3\u9023\u5358 1-2-3"],
+                "watch_strategy_count": 1,
+                "is_morning_watch": bool(is_watch),
+                "is_display_confirmed": not is_watch,
+                "timing_bucket": "same_day" if is_watch else "adopted",
+            }
+            if is_watch:
+                sig["is_reference"] = True
+            if is_out:
+                sig["is_after_exhibition_out"] = True
+                sig["is_display_confirmed"] = False
+                sig["out_reason"] = "\u5c55\u793aST\u307e\u305f\u306f\u5c55\u793a\u9806\u4f4d\u304c\u6761\u4ef6\u5916"
+            return sig
+
         if stadium != 19 or cls != 1 or race_no is None or not (10 <= race_no <= 12):
             return None
         if natl_1 is None or natl_1 < 7.0 or local_1 is None or local_1 < 6.0:
             return None
         if boat2_motor is None or boat2_motor > 40.0:
             return None
-        if boat1_ex_st is None or boat1_ex_st > 0.15:
-            return None
+
         valid = [v for v in ex_times.values() if v is not None and v > 0]
-        if not valid:
-            return None
+        if boat1_ex_st is None or not valid:
+            return _base_signal(is_watch=True)
 
         def _ex_rank(boat_no: int) -> int | None:
             target = ex_times.get(boat_no)
@@ -3369,26 +3425,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 return None
             return 1 + sum(1 for v in valid if v < target)
 
-        if (_ex_rank(1) or 99) > 2 or (_ex_rank(2) or 99) > 2:
-            return None
-        return {
-            "level": "shimonoseki_123_tri",
-            "label": "下関 1-2-3",
-            "bet": "3連単 1-2-3",
-            "rank": "trifecta_niche",
-            "rank_label": "3連単ニッチ",
-            "recovery": 157.3,
-            "n": 22,
-            "hit_rate": 31.8,
-            "tetsuban_score": 6,
-            "tetsuban_label": "下関123",
-            "is_trifecta_niche": True,
-            "trifecta_niche_name": "下関123",
-            "trifecta_niche_tag": "下関10-12R + A1 + 展示1/2<=2位 + 展示ST<=0.15 + 2号艇モーター<=40",
-            "trifecta_niche_hit_rate": 31.8,
-            "trifecta_niche_recovery": 157.3,
-            "watch_strategy_bets": ["3連単 1-2-3"],
-        }
+        if boat1_ex_st > 0.15 or (_ex_rank(1) or 99) > 2 or (_ex_rank(2) or 99) > 2:
+            return _base_signal(is_watch=True, is_out=True)
+        return _base_signal(is_watch=False)
 
     def _update_tsu_suminoe_history(seed: dict | None, stadium: int, boat2_racer, boat3_racer, w1, w2, w3):
         if not seed or stadium not in (9, 12):
@@ -5331,6 +5370,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_st_G1",
                 "morning_watch_st_G2",
                 "morning_watch_g23_optb",
+                "morning_watch_shimonoseki_123_tri",
                 "morning_watch_ashiya_boat4_lift",
                 "morning_watch_tokoname_123_late_exst_tri",
                 "morning_watch_omura_123_tri",
@@ -5343,6 +5383,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_miyajima_tide_132_tri",
                 "morning_watch_gamagori_tide_132_tri",
                 "morning_watch_marugame_tide_123_tri",
+                "morning_watch_tsu_123_tri",
+                "morning_watch_suminoe_123_tri",
             })
 
             def _is_adopted_priority_signal(sig):
@@ -9347,6 +9389,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "morning_watch_st_G1",
             "morning_watch_st_G2",
             "morning_watch_g23_optb",
+            "morning_watch_shimonoseki_123_tri",
             "morning_watch_ashiya_boat4_lift",
             "morning_watch_tokoname_123_late_exst_tri",
             "morning_watch_omura_123_tri",
@@ -9359,6 +9402,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "morning_watch_miyajima_tide_132_tri",
             "morning_watch_gamagori_tide_132_tri",
             "morning_watch_marugame_tide_123_tri",
+            "morning_watch_tsu_123_tri",
+            "morning_watch_suminoe_123_tri",
         }
         if adopted_signal_levels:
             filtered_signals = []
