@@ -9783,7 +9783,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 SELECT race_date, COUNT(*) FROM races
                  WHERE race_date BETWEEN ? AND ? GROUP BY race_date
             """, (from_date, to_date)).fetchall()
-            n_total_by_date = {row[0]: row[1] for row in cur_n}
+            n_total_by_date = {str(row[0]): int(row[1] or 0) for row in cur_n}
 
             tsu_suminoe_seed = _build_tsu_suminoe_history_seed(conn, from_date)
 
@@ -10123,6 +10123,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
              w1, w2, w3, win_pay, win2_pay, ex_pay, ex13_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, pay_143, weather, wind_speed, wave_height, ex_st,
              boat1_exhibition_time, boat2_exhibition_time, boat2_ex_st, boat2_ex_st_rank, boat3_exhibition_time, boat3_ex_st, boat4_exhibition_time, boat4_ex_st, boat5_exhibition_time, boat6_exhibition_time, boat1_ex_rank, n_female,
              tide_delta_60m_cm, tide_range_cm, is_high_tide_zone, is_low_tide_zone) = row
+            rdate = str(rdate)
             # ☔ 雨除外フィルタ: weather_number=3 (雨) のレースは
             # backtest で ROI 100.8% (break-even) のためベット候補から除外。
             # weather NULL (= 直前情報未取得 or 古いデータ) は通常通り集計。
@@ -13437,10 +13438,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         totals["mid_132_tier_a_tri_recovery"] = totals.get("cand4_tri_recovery")
         totals["mid_132_tier_a_tri_profit"] = totals.get("cand4_tri_profit", 0)
 
+        today_row = next((r for r in rows if str(r.get("date")) == to_d), None)
+        today_bets = sum(int((today_row or {}).get(f"{k}_bets", 0) or 0) for k in adopted_keys)
+        today_hits = sum(int((today_row or {}).get(f"{k}_hits", 0) or 0) for k in adopted_keys)
+        today_summary = {
+            "date": to_d,
+            "n_total": int((today_row or {}).get("n_total", 0) or 0),
+            "bets": today_bets,
+            "hits": today_hits,
+            "hit_rate": ((today_hits / today_bets) * 100) if today_bets > 0 else None,
+        }
+
         html = render_template(
             "member_strategy_v3.html",
             rows=rows,
             totals=totals,
+            today_summary=today_summary,
             strategies=ROI_STRATEGIES,
             health_results=[],
             from_date=from_d,

@@ -47,6 +47,14 @@
   </form>
 
   <section class="summary-grid" style="margin-bottom:16px;">
+    <article class="summary-card">
+      <div class="summary-label">本日のレース合計</div>
+      <div class="summary-roi">{{ today_summary.n_total }}</div>
+      <div class="summary-sub">
+        該当={{ today_summary.bets }} HIT={{ today_summary.hits }}
+        勝率={% if today_summary.hit_rate is not none %}{{ '%.1f' | format(today_summary.hit_rate) }}%{% else %}-{% endif %}
+      </div>
+    </article>
     {% for s in strategies %}
     <article class="summary-card">
       <div class="summary-label">{{ s.label }}</div>
@@ -55,7 +63,9 @@
         {% if recovery is not none %}{{ '%+.1f' | format(recovery - 100) }}%{% else %}-{% endif %}
       </div>
       <div class="summary-sub">
-        n={{ totals[s.key ~ '_bets'] }} 的中={{ totals[s.key ~ '_hits'] }} 損益={{ totals[s.key ~ '_profit'] | signed_comma }}
+        n={{ totals[s.key ~ '_bets'] }} 的中={{ totals[s.key ~ '_hits'] }}
+        勝率={% if totals[s.key ~ '_bets'] > 0 %}{{ '%.1f' | format((totals[s.key ~ '_hits'] / totals[s.key ~ '_bets']) * 100) }}%{% else %}-{% endif %}
+        損益={{ totals[s.key ~ '_profit'] | signed_comma }}
       </div>
     </article>
     {% endfor %}
