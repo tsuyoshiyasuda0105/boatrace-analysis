@@ -13355,6 +13355,68 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "tamagawa_13_weak_sashi2_exa", "label": "多摩川 1-3", "short": "tama13", "color": "#14b8a6", "timing": "previous_day"},
     )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
+    ROI_STRATEGY_VENUE_BY_KEY = {
+        "shimonoseki_123_tri": "下関",
+        "shimonoseki_132_tri": "下関",
+        "tsu_124_tri": "津",
+        "tsu_123_tri": "津",
+        "tsu_143_tri": "津",
+        "amagasaki_143_tri": "尼崎",
+        "amagasaki_13_exa": "尼崎",
+        "omura_13_exa": "大村",
+        "omura_14_exa": "大村",
+        "omura_123_tri": "大村",
+        "omura_132_tri": "大村",
+        "omura_132_weak2_ex3_tri": "大村",
+        "ashiya_boat4_exa": "芦屋",
+        "hamanako_14_exa": "浜名湖",
+        "tokuyama_123_tri": "徳山",
+        "tokuyama_13_exa": "徳山",
+        "tokuyama_12a_exa": "徳山",
+        "kojima_124_tri": "児島",
+        "kojima_13_exa": "児島",
+        "kojima_123_tri": "児島",
+        "marugame_123_tri": "丸亀",
+        "marugame_tide_123_tri": "丸亀",
+        "suminoe_123_tri": "住之江",
+        "miyajima_tide_132_tri": "宮島",
+        "gamagori_tide_132_tri": "蒲郡",
+        "gamagori_123_general_practical_tri": "蒲郡",
+        "gamagori_13_exa": "蒲郡",
+        "gamagori_123_tri": "蒲郡",
+        "fukuoka_tide_132_tri": "福岡",
+        "tokoname_12_late_a_exa": "常滑",
+        "tokoname_14_winter_exa": "常滑",
+        "tokoname_123_late_exst_tri": "常滑",
+        "toda_123_tri": "戸田",
+        "naruto_123_tri": "鳴門",
+        "karatsu_132_tri": "唐津",
+        "wakamatsu_13_weak2_strong3_exa": "若松",
+        "heiwajima_13_acc2_late_exa": "平和島",
+        "tamagawa_13_weak_sashi2_exa": "多摩川",
+    }
+
+    def _sort_roi_strategies_by_venue_volume(strategies, rows):
+        """Display wide ROI tables as no-venue first, then busier venues first."""
+        order = {s["key"]: i for i, s in enumerate(strategies)}
+        key_bets = {
+            s["key"]: sum(int((r.get(f"{s['key']}_bets", 0) or 0)) for r in rows)
+            for s in strategies
+        }
+        venue_bets: dict[str, int] = {}
+        for key, bets in key_bets.items():
+            venue = ROI_STRATEGY_VENUE_BY_KEY.get(key)
+            if venue:
+                venue_bets[venue] = venue_bets.get(venue, 0) + bets
+
+        def sort_key(s):
+            key = s["key"]
+            venue = ROI_STRATEGY_VENUE_BY_KEY.get(key)
+            if not venue:
+                return (0, order[key])
+            return (1, -venue_bets.get(venue, 0), venue, -key_bets.get(key, 0), order[key])
+
+        return tuple(sorted(strategies, key=sort_key))
 
     @app.route("/member/strategy")
     @login_required
@@ -13372,7 +13434,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v13:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v14:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -13385,6 +13447,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 「最新に更新」ボタンを押した時だけ強制再集計する。
         rows = _l4_daily_stats(from_d, to_d, force_full_scan=force_recompute)
         adopted_keys = ROI_STRATEGY_KEYS
+        display_strategies = _sort_roi_strategies_by_venue_volume(ROI_STRATEGIES, rows)
 
         for r in rows:
             for key in adopted_keys:
@@ -13499,7 +13562,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             rows=rows,
             totals=totals,
             today_summary=today_summary,
-            strategies=ROI_STRATEGIES,
+            strategies=display_strategies,
             health_results=[],
             from_date=from_d,
             to_date=to_d,
@@ -13523,7 +13586,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:v10:{monthly_from}:{monthly_to}"
+        page_cache_key = f"member_strategy_monthly:v11:{monthly_from}:{monthly_to}"
         if not force_recompute:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:
@@ -13639,6 +13702,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         monthly_rows_asc = sorted(monthly_map.values(), key=lambda x: x["ym"])
         # 表示用は新しい順
         monthly_rows = list(reversed(monthly_rows_asc))
+        display_strategies = _sort_roi_strategies_by_venue_volume(ROI_STRATEGIES, monthly_rows_asc)
         monthly_totals = {}
         for k in adopted_keys:
             bets = sum((m.get(f"{k}_bets", 0) or 0) for m in monthly_rows_asc)
@@ -13659,7 +13723,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             monthly_rows=monthly_rows,
             monthly_rows_asc=monthly_rows_asc,
             monthly_totals=monthly_totals,
-            strategies=ROI_STRATEGIES,
+            strategies=display_strategies,
             health_results=[],
             monthly_from=monthly_from,
             monthly_to=monthly_to,
