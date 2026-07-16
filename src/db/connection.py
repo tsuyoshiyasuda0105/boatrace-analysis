@@ -77,6 +77,12 @@ _TABLE_PRIMARY_KEYS = {
     "predictions": ["race_id", "boat_number", "model_version"],
     "value_bets": ["race_id", "bet_type", "combination", "model_version"],
     "l4_daily_stats_cache": ["race_date"],
+    "racer_accident_point_rules": ["rule_version", "event_code", "applies_from"],
+    "racer_accident_events": ["race_id", "racer_number", "event_code", "rule_version"],
+    "racer_accident_kraw_unmatched": ["file_name", "line_number", "rule_version"],
+    "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "rule_version", "source_kind"],
+    "racer_accident_period_adjustments": ["racer_number", "period_start", "period_end", "rule_version", "source_kind"],
+    "racer_accident_external_snapshots": ["snapshot_date", "racer_number", "source_kind"],
 }
 
 
@@ -210,6 +216,17 @@ def connect(db_path: Optional[str] = None) -> Union[sqlite3.Connection, "_PgConn
       - autocommit=True
       - SQLite 構文を最低限書き換えて execute
     """
+    # 明示的に db_path が渡された場合は、そのローカル SQLite を最優先する。
+    # バックフィル/検証スクリプトでは .env の DATABASE_URL が残っていても、
+    # 指定した DB ファイルに対して確実に処理したい。
+    if db_path:
+        path = db_path
+        conn = sqlite3.connect(path, timeout=config.SQLITE_CONNECT_TIMEOUT_SECONDS)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute(f"PRAGMA busy_timeout={config.SQLITE_BUSY_TIMEOUT_MS};")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        return conn
+
     db_url = os.getenv("DATABASE_URL", "").strip()
     if db_url and _is_postgres_url(db_url):
         return _PgConnection(_normalize_pg_url(db_url))
@@ -224,7 +241,7 @@ def connect(db_path: Optional[str] = None) -> Union[sqlite3.Connection, "_PgConn
         )
 
     # SQLite path (ローカル開発時のみ)
-    path = db_path or config.DB_PATH
+    path = config.DB_PATH
     conn = sqlite3.connect(path, timeout=config.SQLITE_CONNECT_TIMEOUT_SECONDS)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute(f"PRAGMA busy_timeout={config.SQLITE_BUSY_TIMEOUT_MS};")

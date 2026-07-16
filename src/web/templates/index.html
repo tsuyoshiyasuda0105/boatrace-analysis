@@ -342,7 +342,7 @@
         let marketDataStatusCache = {};
         let raceItemsCache = null;
         let raceItemMapCache = null;
-        const BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
+        const BADGE_SELECTOR = '.l4-badge, .accident-watch-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetail = (raceId) => {
           if (!raceId || !window.BoatraceSpeed) return;
           window.BoatraceSpeed.prefetchUrl(`/race/${encodeURIComponent(raceId)}`);
@@ -409,7 +409,7 @@
           return raceItemMapCache;
         }
 
-        function buildSignalsDigest(signals) {
+        function buildSignalsDigest(signals, accidentWatch) {
           const rows = Object.entries(signals || {}).map(([raceId, sig]) => {
             const l4 = sig && sig.l4 ? sig.l4 : {};
             return [
@@ -424,7 +424,18 @@
               l4.is_after_exhibition_out ? 1 : 0,
               l4.is_display_confirmed ? 1 : 0,
               l4.promoted_from_morning_watch_st ? 1 : 0,
+              l4.has_accident_watch ? 1 : 0,
+              l4.accident_watch_label || '',
             ].join(':');
+          });
+          Object.entries(accidentWatch || {}).forEach(([raceId, acc]) => {
+            rows.push([
+              raceId,
+              'acc',
+              acc.label || '',
+              acc.max_rate ?? '',
+              Array.isArray(acc.boats) ? acc.boats.join(',') : '',
+            ].join(':'));
           });
           rows.sort();
           return rows.join('|');
@@ -759,7 +770,8 @@
             marketSignalsLoaded = true;
             marketDataStatusCache = data.data_status || {};
             renderDataStatus(data.data_status || {});
-            const nextDigest = buildSignalsDigest(signals);
+            const accidentWatch = data.accident_watch || {};
+            const nextDigest = buildSignalsDigest(signals, accidentWatch);
             marketSignalsCache = signals;
             marketSignalsDigest = nextDigest;
             if (nextDigest === lastRenderedSignalsDigest) {
@@ -767,6 +779,20 @@
             }
             getRaceItems(true).forEach(removeStrategyBadges);
             const raceItemMap = getRaceItemMap(true);
+            for (const [raceId, acc] of Object.entries(accidentWatch)) {
+              try {
+                const item = raceItemMap.get(raceId);
+                if (!item) continue;
+                const badge = document.createElement('span');
+                badge.className = 'accident-watch-badge';
+                const maxRate = Number(acc.max_rate || 0);
+                badge.textContent = maxRate ? `事故${maxRate.toFixed(2)}` : '事故0.70+';
+                badge.title = acc.label || '事故率0.70以上の選手が出走';
+                item.appendChild(badge);
+              } catch (e) {
+                console.warn('accident-watch badge failed:', raceId, e);
+              }
+            }
             for (const [raceId, sig] of Object.entries(signals)) {
               try {
                 const item = raceItemMap.get(raceId);
@@ -786,6 +812,7 @@
                   if (sig.l4.ashiya_watch_ready) l4Badge.className += ' l4-ashiya-watch-ready';
                   if (sig.l4.is_after_exhibition_out) l4Badge.className += ' l4-after-exhibition-out';
                   if (sig.l4.is_display_confirmed) l4Badge.className += ' l4-display-confirmed';
+                  if (sig.l4.has_accident_watch) l4Badge.className += ' l4-accident-watch';
                   // 一般戦は ROI 対象外、バッジは表示するが「参考」として控えめに
                   if (sig.l4.is_reference) l4Badge.className += ' l4-reference';
                   // ♀ 案A: 女性混入レースは専用クラスで視覚的に区別
@@ -915,6 +942,9 @@
                   if (sig.l4.is_exhibition_st_out) {
                     title += ` | 展示ST圏外: 展示ST=${Number(sig.l4.exhibition_st).toFixed(2)} / 条件<${sig.l4.exhibition_st_threshold || 0.18}`;
                   }
+                  if (sig.l4.has_accident_watch) {
+                    title += ` | ${sig.l4.accident_watch_label || '事故率0.70+'}`;
+                  }
                   l4Badge.title = title;
                   const onec80 = sig.l4.is_1c80 ? ' 🚀' : '';
                   const pro = '';
@@ -927,7 +957,8 @@
                   const miyajimaWatchSuffix = false && sig.l4.is_miyajima_boat4_watch
                     ? ` ST${Number(sig.l4.miyajima_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.miyajima_boat4_course4_win_rate || 0).toFixed(1)}%`
                     : '';
-                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${portfolio}${exacta}${winNiche}`;
+                  const accidentWatch = sig.l4.has_accident_watch ? ' 事故0.70+' : '';
+                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${portfolio}${exacta}${winNiche}${accidentWatch}`;
                   item.appendChild(l4Badge);
                   if (sig.l4.is_portfolio_strong) {
                     const ps = document.createElement('span');

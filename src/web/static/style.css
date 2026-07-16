@@ -3007,6 +3007,26 @@ main h2 {
   letter-spacing: 0.3px;
   cursor: help;
 }
+
+.l4-badge.l4-accident-watch {
+  border: 1px solid rgba(248, 113, 113, 0.95);
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.55), inset 0 0 10px rgba(127, 29, 29, 0.35);
+}
+
+.accident-watch-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  margin-left: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(248, 113, 113, 0.9);
+  background: linear-gradient(135deg, rgba(127, 29, 29, 0.95), rgba(30, 41, 59, 0.9));
+  color: #fecaca;
+  font-size: 10px;
+  font-weight: 900;
+  font-family: var(--font-mono, monospace);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.45);
+  cursor: help;
+}
 /* SG/G1/G2/G3 は全て「お金を入れるレース」 → backlog item 8/10:
    ロイヤルゴールド系で統一 (旧 G2 の赤橙、G1 のピンク→橙は紫的に見えると
    不評)。SG=最強で輝度最高 → G3 で穏やかな金、と階調を付ける。 */

@@ -275,6 +275,21 @@ def run_db_maintenance() -> bool:
     )
 
 
+def accident_period_start(d: datetime) -> str:
+    if 5 <= d.month <= 10:
+        return f"{d.year}-05-01"
+    if d.month >= 11:
+        return f"{d.year}-11-01"
+    return f"{d.year - 1}-11-01"
+
+
+def run_accident_rebuild(date_from: str, date_to: str) -> bool:
+    return run_py(
+        ["scripts/rebuild_racer_accident_stats.py", "--from", date_from, "--to", date_to],
+        timeout=900,
+    )
+
+
 def run_nightly(now: datetime) -> bool:
     today = now.date().isoformat()
     tomorrow = (now.date() + timedelta(days=1)).isoformat()
@@ -289,6 +304,7 @@ def run_nightly(now: datetime) -> bool:
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
     ok &= run_py(["scripts/prewarm_strategy_pages.py"], timeout=1800)
+    ok &= run_accident_rebuild(accident_period_start(now), today)
     ok &= run_db_maintenance()
     return ok
 
@@ -321,6 +337,7 @@ def main() -> int:
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
         run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
+        run_accident_rebuild(today, today)
 
     # Self-heal tide rows on every loop so missing imports do not survive until the next hour.
     if 6 <= now.hour <= 23:

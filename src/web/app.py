@@ -1557,6 +1557,18 @@ def _safe_int(value):
         return None
 
 
+def _accident_period_start_for_date(date_iso: str) -> str:
+    try:
+        y, m, _d = [int(x) for x in str(date_iso).split("-")[:3]]
+    except Exception:
+        return str(date_iso)
+    if 5 <= m <= 10:
+        return f"{y:04d}-05-01"
+    if m >= 11:
+        return f"{y:04d}-11-01"
+    return f"{y - 1:04d}-11-01"
+
+
 def _branch_label(branch_number: Any) -> str:
     try:
         n = int(branch_number)
@@ -3944,6 +3956,60 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "program_name": rec.get("program_name"),
                             "is_fixed_entry": rec.get("is_fixed_entry"),
                         }
+                    if all_race_info:
+                        try:
+                            accident_period_start = _accident_period_start_for_date(target_date)
+                            race_ids = sorted(all_race_info.keys())
+                            placeholders = ",".join("?" for _ in race_ids)
+                            acc_rows = conn.execute(
+                                f"""
+                                SELECT e.race_id, e.boat_number, e.racer_number,
+                                       ras.accident_rate, ras.accident_points, ras.starts_count
+                                  FROM race_entries e
+                                  JOIN (
+                                        SELECT racer_number,
+                                               MAX(accident_rate) AS accident_rate,
+                                               MAX(accident_points) AS accident_points,
+                                               MAX(starts_count) AS starts_count
+                                          FROM racer_accident_period_stats
+                                         WHERE period_start = ?
+                                           AND source_kind = 'reconstructed'
+                                           AND rule_version LIKE 'official_table_2025_05_reconstructed%'
+                                           AND accident_rate >= 0.7
+                                         GROUP BY racer_number
+                                  ) ras
+                                    ON ras.racer_number = e.racer_number
+                                 WHERE e.race_id IN ({placeholders})
+                                """,
+                                (accident_period_start, *race_ids),
+                            ).fetchall()
+                            by_race_acc: dict[str, list[dict[str, Any]]] = {}
+                            for ar in acc_rows:
+                                rid2 = str(ar[0])
+                                by_race_acc.setdefault(rid2, []).append(
+                                    {
+                                        "boat": int(ar[1]) if ar[1] is not None else None,
+                                        "racer": int(ar[2]) if ar[2] is not None else None,
+                                        "rate": round(float(ar[3] or 0.0), 3),
+                                        "points": int(ar[4] or 0),
+                                        "starts": int(ar[5] or 0),
+                                    }
+                                )
+                            for rid2, items in by_race_acc.items():
+                                items.sort(key=lambda x: (float(x.get("rate") or 0.0), int(x.get("points") or 0)), reverse=True)
+                                info = all_race_info.get(rid2)
+                                if not info:
+                                    continue
+                                info["accident_watch"] = items
+                                info["accident_watch_boats"] = [x.get("boat") for x in items if x.get("boat") is not None]
+                                info["max_accident_rate"] = items[0].get("rate") if items else None
+                                info["max_accident_points"] = items[0].get("points") if items else None
+                        except Exception as acc_exc:
+                            logger.warning("accident watch query failed: %s", acc_exc)
+                            try:
+                                conn.rollback()
+                            except Exception:
+                                pass
                 except Exception as e:
                     logger.warning("all_race_info query failed: %s", e)
                     try:
@@ -9380,6 +9446,37 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("data_status query failed: %s", e)
 
+        def _accident_watch_label(items: list[dict[str, Any]]) -> str:
+            parts = []
+            for item in items[:3]:
+                boat = item.get("boat")
+                rate = item.get("rate")
+                if boat is None or rate is None:
+                    continue
+                try:
+                    parts.append(f"{int(boat)}号:{float(rate):.2f}")
+                except Exception:
+                    continue
+            return "事故率0.70+ " + ", ".join(parts) if parts else "事故率0.70+"
+
+        for s in signals:
+            rid = str(s.get("race_id") or "")
+            info = all_race_info.get(rid) or {}
+            accident_watch = info.get("accident_watch") or []
+            l4 = s.get("l4")
+            if not accident_watch or not isinstance(l4, dict):
+                continue
+            label = _accident_watch_label(accident_watch)
+            l4["has_accident_watch"] = True
+            l4["accident_watch"] = accident_watch
+            l4["accident_watch_boats"] = info.get("accident_watch_boats") or []
+            l4["max_accident_rate"] = info.get("max_accident_rate")
+            l4["max_accident_points"] = info.get("max_accident_points")
+            l4["accident_watch_label"] = label
+            s["has_accident_watch"] = True
+            s["accident_watch"] = accident_watch
+            s["accident_watch_label"] = label
+
         adopted_signal_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
         adopted_watch_levels = {
             "morning_watch_SG",
@@ -9414,6 +9511,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     filtered_signals.append(s)
             signals = filtered_signals
 
+        accident_watch_payload = {}
+        for rid, info in all_race_info.items():
+            items = info.get("accident_watch") or []
+            if not items:
+                continue
+            accident_watch_payload[rid] = {
+                "items": items,
+                "boats": info.get("accident_watch_boats") or [],
+                "max_rate": info.get("max_accident_rate"),
+                "max_points": info.get("max_accident_points"),
+                "label": _accident_watch_label(items),
+            }
+
         payload = {
             "date": target_date,
             "n_races": len(signals),
@@ -9421,6 +9531,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_l4": sum(1 for s in signals if s["l4"]),
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
             "data_status": data_status,
+            "accident_watch": accident_watch_payload,
             "signals": {s["race_id"]: s for s in signals},
         }
         # Race data can arrive in stages. If an early run sees zero signals,
@@ -13404,17 +13515,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             for s in strategies
         }
         venue_bets: dict[str, int] = {}
-        for key, bets in key_bets.items():
+        venue_first_order: dict[str, int] = {}
+        for idx, strategy in enumerate(strategies):
+            key = strategy["key"]
             venue = ROI_STRATEGY_VENUE_BY_KEY.get(key)
-            if venue:
-                venue_bets[venue] = venue_bets.get(venue, 0) + bets
+            if not venue:
+                continue
+            venue_first_order.setdefault(venue, idx)
+            venue_bets[venue] = venue_bets.get(venue, 0) + key_bets.get(key, 0)
 
         def sort_key(s):
             key = s["key"]
             venue = ROI_STRATEGY_VENUE_BY_KEY.get(key)
             if not venue:
-                return (0, order[key])
-            return (1, -venue_bets.get(venue, 0), venue, -key_bets.get(key, 0), order[key])
+                return (0, 0, 0, order[key])
+            return (
+                1,
+                -venue_bets.get(venue, 0),
+                venue_first_order.get(venue, 9999),
+                -key_bets.get(key, 0),
+                order[key],
+            )
 
         return tuple(sorted(strategies, key=sort_key))
 
