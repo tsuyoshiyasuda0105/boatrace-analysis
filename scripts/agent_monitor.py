@@ -62,6 +62,10 @@ TODAY = NOW.date()
 PC_PAUSED_MSG = "PC-local checks skipped; Render cron is primary"
 
 
+def _truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _has_local_pause_flag() -> bool:
     return (
         (ROOT / ".pc_schedule_paused").exists()
@@ -86,6 +90,10 @@ def _local_table_exists(table_name: str) -> bool:
         return False
 
 
+def _render_primary_mode() -> bool:
+    return _truthy_env("BOATRACE_RENDER_PRIMARY") or _truthy_env("BOATRACE_SUPABASE_ONLY")
+
+
 def _pc_schedule_paused() -> bool:
     if _has_local_pause_flag():
         return True
@@ -93,6 +101,18 @@ def _pc_schedule_paused() -> bool:
     if not all(_local_table_exists(name) for name in core_tables):
         return True
     return False
+
+
+def _skip_local_taskrun_check(task_name: str) -> bool:
+    return _render_primary_mode() and task_name in {"daily_collect", "morning", "hourly", "poll_results"}
+
+
+def _skip_local_log_check(log_name: str) -> bool:
+    return _render_primary_mode() and log_name in {"odds_scheduler", "beforeinfo_live"}
+
+
+def _skip_local_work_check() -> bool:
+    return _render_primary_mode()
 
 # 期待スケジュール (task_runs ベース)
 #   ok_h    : この時間以内なら ok
@@ -131,6 +151,8 @@ def _in_active(active):
 
 
 def check_task(task: dict):
+    if _skip_local_taskrun_check(task["name"]):
+        return "ok", "local task_runs check disabled; Render cron is primary"
     if _pc_schedule_paused():
         return "ok", PC_PAUSED_MSG
     if not _in_active(task["active"]):
@@ -152,6 +174,8 @@ def check_task(task: dict):
 
 
 def check_log(spec: dict):
+    if _skip_local_log_check(spec["glob"]):
+        return "ok", "local log check disabled; Render cron is primary"
     if _pc_schedule_paused():
         return "ok", PC_PAUSED_MSG
     if not _in_active(spec["active"]):
@@ -239,6 +263,8 @@ def work_daily_collect():
     """daily_collect が「今日のレース」を実際に取り込んでいるか。
     成功記録あっても races が 0 件ならサボリ。"""
     today = TODAY.isoformat()
+    if _skip_local_work_check():
+        return "ok", "local work check disabled; Render cron is primary"
     if _local_checks_paused():
         return "ok", PC_PAUSED_MSG
     try:
@@ -270,6 +296,8 @@ def work_morning_predict():
     """morning が「今日の予測」を実際に生成しているか。
     成功記録ありで predictions が極端に少ないならサボリ。"""
     today = TODAY.isoformat()
+    if _skip_local_work_check():
+        return "ok", "local work check disabled; Render cron is primary"
     if _local_checks_paused():
         return "ok", PC_PAUSED_MSG
     try:
@@ -337,6 +365,8 @@ def work_beforeinfo_live():
     そのレースに live_updated_at が無ければサボリ。"""
     if not (8 <= _hour_now() <= 22):
         return "ok", "稼働時間外"
+    if _skip_local_work_check():
+        return "ok", "local work check disabled; Render cron is primary"
     if _local_checks_paused():
         return "ok", PC_PAUSED_MSG
     today = TODAY.isoformat()
