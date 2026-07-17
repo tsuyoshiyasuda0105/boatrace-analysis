@@ -61,16 +61,6 @@
     <h3>📈 通算サマリ ({{ from_date }} 〜 {{ to_date }})</h3>
     <div class="summary-grid">
       <div class="summary-card">
-        <span class="card-label">1-3-2 展示型</span>
-        <span class="card-value">{% if totals.tri132_a12_tri_roi is not none %}{{ '%+.1f' | format(totals.tri132_a12_tri_roi) }}%{% else %}-{% endif %}</span>
-        <span class="card-sub">n={{ totals.tri132_a12_tri_bets }} HIT={{ totals.tri132_a12_tri_hits }} / 損益 {{ totals.tri132_a12_tri_profit | signed_comma }}円</span>
-      </div>
-      <div class="summary-card">
-        <span class="card-label">1-2-4 展示型</span>
-        <span class="card-value">{% if totals.tri124_a12_tri_roi is not none %}{{ '%+.1f' | format(totals.tri124_a12_tri_roi) }}%{% else %}-{% endif %}</span>
-        <span class="card-sub">n={{ totals.tri124_a12_tri_bets }} HIT={{ totals.tri124_a12_tri_hits }} / 損益 {{ totals.tri124_a12_tri_profit | signed_comma }}円</span>
-      </div>
-      <div class="summary-card">
         <span class="card-label">候補1・3・4 対象レース</span>
         <span class="card-value">{{ totals.n_l4_display }}</span>
         <span class="card-sub">全レース中 {{ totals.n_l4_display }} / {{ totals.n_total }}</span>

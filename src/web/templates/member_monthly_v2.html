@@ -19,7 +19,7 @@
   ('kojima_124_tri', '児島 1-2-4', 'kojima124', '#60a5fa'),
   ('tsu_123_tri', '津 1-2-3', 'tsu123', '#10b981'),
   ('suminoe_123_tri', '住之江 1-2-3', 'suminoe123', '#06b6d4'),
-  ('general_c_tri', '一般C 1-2-3', 'generalC', '#f59e0b')
+  ('general_c_tri', '1号艇強+2号艇M弱+3号艇強', 'generalC', '#f59e0b')
 ] %}
 
 {% macro monthly_roi_cell(value) -%}
@@ -130,7 +130,7 @@
     {key:'kojima124', label:'児島 1-2-4', color:'#60a5fa'},
     {key:'tsu123', label:'津 1-2-3', color:'#10b981'},
     {key:'suminoe123', label:'住之江 1-2-3', color:'#06b6d4'},
-    {key:'generalC', label:'一般C 1-2-3', color:'#f59e0b'}
+    {key:'generalC', label:'1号艇強+2号艇M弱+3号艇強', color:'#f59e0b'}
   ];
 
   let activeKeys = new Set(SERIES.map(s => s.key));

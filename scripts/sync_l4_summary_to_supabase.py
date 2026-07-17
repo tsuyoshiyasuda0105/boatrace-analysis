@@ -210,7 +210,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             "toda_7r_tri_bets": 0, "toda_7r_tri_hits": 0, "toda_7r_tri_pay": 0,
             # L4-Mid + 1-3-2 観察 (2026-05-19): オッズ 10-20倍帯
             "mid_132_tri_bets": 0, "mid_132_tri_hits": 0, "mid_132_tri_pay": 0,
-            # L4-Mid Tier A: 3号艇国1%≥7 絞り (ROI 175.5%, Tier 1)
+            # L4-Mid Tier A: 3号艇国1%≥7 絞り (???293.3%, n=9 ????)
             "mid_132_tier_a_tri_bets": 0, "mid_132_tier_a_tri_hits": 0, "mid_132_tier_a_tri_pay": 0,
         })
         is_done = (w1 is not None and w2 is not None and w3 is not None)
@@ -359,7 +359,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
           )
     """
     # === L4-Mid 1-3-2 観察 (2026-05-19): オッズ 10-20倍帯、別 universe ===
-    # 検証 ROI 148.1% (n=10,690), B除外 + A1, 1-3-2 単点
+    # 検証 ???76.5% (n=198), B除外 + A1, 1-3-2 単点
     sql_mid = f"""
         SELECT r.race_date, r.race_id,
                oo.any_in_l4_mid AS any_in_l4_mid,
@@ -375,7 +375,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
         LEFT JOIN (SELECT race_id,
                           MAX(CASE WHEN odds >= 10 AND odds < 20 THEN 1 ELSE 0 END) AS any_in_l4_mid
                    FROM odds_trifecta
-                   WHERE combination='1-2-3' AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
+                   WHERE combination='1-3-2' AND snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min','final')
                    GROUP BY race_id) oo ON oo.race_id=r.race_id
         LEFT JOIN race_results res1 ON res1.race_id=r.race_id AND res1.finishing_position=1
         LEFT JOIN race_results res2 ON res2.race_id=r.race_id AND res2.finishing_position=2
@@ -385,10 +385,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
           AND e.class_number = 1
           AND r.stadium_number NOT IN ({placeholders})
           AND (pv.weather_number IS NULL OR pv.weather_number != 3)
-          AND (
-              oo.any_in_l4_mid = 1
-              OR (oo.any_in_l4_mid IS NULL AND pp.min_pay BETWEEN 1000 AND 1999)
-          )
+          AND oo.any_in_l4_mid = 1
     """
     for row in src.execute(sql_mid, (start, end, *EXCLUDE_B)).fetchall():
         rdate, rid, any_mid, fav_pay, w1, w2, w3, p132, boat3_natl_1 = row
@@ -460,8 +457,8 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
             d["toda_7r_tri_hits"] += 1
             d["toda_7r_tri_pay"] += tp_v
 
-    # ?????? raw ????? l4_daily_stats_cache ?? SSOT?
-    # ??? summary ??????????? fallback ??????????
+    # ニッチ戦略は raw 集計よりも l4_daily_stats_cache 側が SSOT。
+    # ここで summary に転写しておくと、月別 fallback でも数字を失わない。
     cache_keys = (
         "amagasaki_motor_exa_bets", "amagasaki_motor_exa_hits", "amagasaki_motor_exa_pay",
         "ashiya_boat4_exa_bets", "ashiya_boat4_exa_hits", "ashiya_boat4_exa_pay",

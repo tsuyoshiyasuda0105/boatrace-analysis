@@ -13,6 +13,7 @@ import time
 from typing import Optional
 
 import requests
+from requests.exceptions import ConnectionError
 
 import config
 
@@ -82,6 +83,15 @@ def fetch_html(url: str) -> Optional[str]:
                                headers=extra_headers)
         except requests.RequestException as e:
             logger.warning("HTTP error attempt=%d url=%s err=%s", attempt, url, e)
+            # DNS / name resolution failures never recover within the same run.
+            cause = getattr(e, "__cause__", None)
+            message = f"{e} {cause or ''}".lower()
+            if isinstance(e, ConnectionError) and (
+                "nameresolutionerror" in message
+                or "getaddrinfo failed" in message
+                or "failed to resolve" in message
+            ):
+                return None
             if attempt < config.LAYER3_MAX_RETRIES:
                 time.sleep(config.LAYER3_RETRY_BACKOFF_SECONDS)
                 continue

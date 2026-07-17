@@ -131,6 +131,24 @@ CREATE TABLE IF NOT EXISTS race_entries (
 CREATE INDEX IF NOT EXISTS idx_entries_racer ON race_entries(racer_number);
 CREATE INDEX IF NOT EXISTS idx_entries_motor ON race_entries(assigned_motor_number);
 
+CREATE TABLE IF NOT EXISTS motor_cycle_stats (
+  stadium_number      INTEGER NOT NULL,
+  motor_cycle_start   TEXT    NOT NULL,   -- YYYY-MM-01
+  motor_number        INTEGER NOT NULL,
+  through_race_date   TEXT    NOT NULL,   -- この日以前のみで集計
+  starts_count        INTEGER NOT NULL DEFAULT 0,
+  win_count           INTEGER NOT NULL DEFAULT 0,
+  top2_count          INTEGER NOT NULL DEFAULT 0,
+  top3_count          INTEGER NOT NULL DEFAULT 0,
+  win_rate            REAL,
+  top2_rate           REAL,
+  top3_rate           REAL,
+  updated_at          TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (stadium_number, motor_cycle_start, motor_number, through_race_date)
+);
+CREATE INDEX IF NOT EXISTS idx_motor_cycle_stats_lookup
+  ON motor_cycle_stats(stadium_number, motor_cycle_start, motor_number, through_race_date);
+
 CREATE TABLE IF NOT EXISTS race_previews (
   -- 直前情報。レース開始15-30分前に確定。1レース×6艇。
   race_id                  TEXT NOT NULL,
@@ -374,7 +392,7 @@ CREATE TABLE IF NOT EXISTS l4_daily_summary (
   mid_132_tier_a_tri_bets INTEGER,
   mid_132_tier_a_tri_hits INTEGER,
   mid_132_tier_a_tri_pay  INTEGER,
-  -- ??? exacta / trifecta ?? (?? fallback ?)
+  -- ニッチ exacta / trifecta 戦略 (月別 fallback 用)
   amagasaki_motor_exa_bets INTEGER,
   amagasaki_motor_exa_hits INTEGER,
   amagasaki_motor_exa_pay  INTEGER,
@@ -478,4 +496,142 @@ CREATE TABLE IF NOT EXISTS task_runs (
   trigger     TEXT,              -- 'scheduled' / 'catchup'
   detail      TEXT,
   PRIMARY KEY (task_name, run_date)
+);
+
+-- ============================================================
+-- 潮位 / 干満データ
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS race_tides (
+  race_id               TEXT PRIMARY KEY,
+  stadium_number        INTEGER NOT NULL,
+  tide_station          TEXT NOT NULL,
+  race_time             TEXT NOT NULL,
+  tide_height_cm        REAL,
+  tide_phase            TEXT,
+  nearest_high_time     TEXT,
+  nearest_high_cm       REAL,
+  nearest_low_time      TEXT,
+  nearest_low_cm        REAL,
+  minutes_from_high     INTEGER,
+  minutes_from_low      INTEGER,
+  tide_range_cm         REAL,
+  tide_delta_60m_cm     REAL,
+  is_high_tide_zone     INTEGER NOT NULL DEFAULT 0,
+  is_low_tide_zone      INTEGER NOT NULL DEFAULT 0,
+  source                TEXT,
+  fetched_at            TEXT,
+  FOREIGN KEY (race_id) REFERENCES races(race_id),
+  FOREIGN KEY (stadium_number) REFERENCES stadiums(stadium_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_race_tides_stadium_time
+  ON race_tides(stadium_number, race_time);
+
+CREATE INDEX IF NOT EXISTS idx_race_tides_phase
+  ON race_tides(tide_phase, is_high_tide_zone, is_low_tide_zone);
+
+-- ============================================================
+-- Accident-point rules and racer accident snapshots
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS racer_accident_point_rules (
+  rule_version        TEXT NOT NULL,
+  event_code          TEXT NOT NULL,
+  event_label         TEXT NOT NULL,
+  base_points         INTEGER NOT NULL,
+  yusho_points        INTEGER,
+  applies_from        TEXT NOT NULL,
+  applies_to          TEXT,
+  priority            INTEGER NOT NULL DEFAULT 100,
+  source_kind         TEXT NOT NULL DEFAULT 'official_table',
+  note                TEXT,
+  updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (rule_version, event_code, applies_from)
+);
+
+CREATE TABLE IF NOT EXISTS racer_accident_events (
+  race_id          TEXT NOT NULL,
+  racer_number     INTEGER NOT NULL,
+  boat_number      INTEGER NOT NULL,
+  race_date        TEXT NOT NULL,
+  stadium_number   INTEGER NOT NULL,
+  race_number      INTEGER NOT NULL,
+  course_number    INTEGER,
+  class_number     INTEGER,
+  event_code       TEXT NOT NULL,
+  event_label      TEXT NOT NULL,
+  accident_points  INTEGER NOT NULL,
+  is_yusho         INTEGER NOT NULL DEFAULT 0,
+  raw_remarks      TEXT,
+  rule_version     TEXT NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (race_id, racer_number, event_code, rule_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_racer_accident_events_racer_date
+  ON racer_accident_events(racer_number, race_date);
+
+CREATE TABLE IF NOT EXISTS racer_accident_period_stats (
+  racer_number        INTEGER NOT NULL,
+  period_year         INTEGER NOT NULL,
+  period_half         INTEGER NOT NULL,
+  period_start        TEXT NOT NULL,
+  period_end          TEXT NOT NULL,
+  starts_count        INTEGER NOT NULL DEFAULT 0,
+  accident_events     INTEGER NOT NULL DEFAULT 0,
+  accident_points     INTEGER NOT NULL DEFAULT 0,
+  accident_rate       REAL,
+  rule_version        TEXT NOT NULL,
+  source_kind         TEXT NOT NULL DEFAULT 'reconstructed',
+  updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (racer_number, period_year, period_half, rule_version, source_kind)
+);
+
+CREATE TABLE IF NOT EXISTS racer_accident_period_adjustments (
+  racer_number       INTEGER NOT NULL,
+  period_start       TEXT NOT NULL,
+  period_end         TEXT NOT NULL,
+  adjustment_points  INTEGER NOT NULL DEFAULT 0,
+  adjustment_events  INTEGER NOT NULL DEFAULT 0,
+  rule_version       TEXT NOT NULL,
+  source_kind        TEXT NOT NULL DEFAULT 'external_calibration',
+  note               TEXT,
+  updated_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (racer_number, period_start, period_end, rule_version, source_kind)
+);
+
+CREATE TABLE IF NOT EXISTS racer_accident_kraw_unmatched (
+  file_name       TEXT NOT NULL,
+  line_number     INTEGER NOT NULL,
+  race_date       TEXT NOT NULL,
+  race_number     INTEGER,
+  event_code      TEXT NOT NULL,
+  boat_number     INTEGER NOT NULL,
+  racer_number    INTEGER NOT NULL,
+  reason          TEXT NOT NULL,
+  detail_reason   TEXT,
+  raw_line        TEXT NOT NULL,
+  rule_version    TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (file_name, line_number, rule_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_racer_accident_kraw_unmatched_date
+  ON racer_accident_kraw_unmatched(race_date, reason);
+
+CREATE TABLE IF NOT EXISTS racer_accident_external_snapshots (
+  snapshot_date       TEXT NOT NULL,
+  racer_number        INTEGER NOT NULL,
+  period_start        TEXT,
+  period_end          TEXT,
+  starts_count        INTEGER,
+  accident_points     INTEGER,
+  accident_rate       REAL,
+  accident_codes_raw  TEXT,
+  source_url          TEXT,
+  source_kind         TEXT NOT NULL DEFAULT 'external',
+  raw_payload         TEXT,
+  created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (snapshot_date, racer_number, source_kind)
 );

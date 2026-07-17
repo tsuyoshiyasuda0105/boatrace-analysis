@@ -140,7 +140,9 @@ def _supplement_preview(
     conn.execute(
         """
         UPDATE race_previews
-           SET wind_speed              = COALESCE(wind_speed, ?),
+           SET weather_number          = COALESCE(weather_number, ?),
+               wind_speed              = COALESCE(wind_speed, ?),
+               wind_direction_number   = COALESCE(wind_direction_number, ?),
                wave_height             = COALESCE(wave_height, ?),
                temperature             = COALESCE(temperature, ?),
                water_temperature       = COALESCE(water_temperature, ?),
@@ -153,7 +155,9 @@ def _supplement_preview(
          WHERE race_id = ? AND boat_number = ?
         """,
         (
+            page_data.get("weather_number"),
             page_data.get("wind_speed"),
+            page_data.get("wind_direction_number"),
             page_data.get("wave_height"),
             page_data.get("temperature"),
             page_data.get("water_temperature"),

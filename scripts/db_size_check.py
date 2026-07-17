@@ -31,6 +31,22 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
 
+def _run_pg_maintenance(conn, sql: str) -> None:
+    """Run VACUUM-style maintenance on the wrapped psycopg connection."""
+    raw = getattr(conn, "_conn", None)
+    if raw is None:
+        raise RuntimeError("underlying psycopg connection is unavailable")
+    try:
+        raw.commit()
+    except Exception:
+        pass
+    cur = raw.cursor()
+    try:
+        cur.execute(sql)
+    finally:
+        cur.close()
+
+
 def get_table_sizes_postgres(conn) -> list[dict]:
     """Postgres: pg_total_relation_size で各テーブルサイズ取得"""
     cur = conn.execute("""
@@ -110,13 +126,7 @@ def cleanup_old_odds(conn, is_pg: bool, keep_days: int = 60,
     # Postgres は VACUUM で実領域回収
     if is_pg:
         try:
-            # psycopg は VACUUM をトランザクション内で許さないので autocommit に
-            conn.commit()  # 念のためトランザクション閉じる
-            # autocommit モードで VACUUM
-            old_autocommit = conn.autocommit
-            conn.autocommit = True
-            conn.execute("VACUUM ANALYZE odds_trifecta")
-            conn.autocommit = old_autocommit
+            _run_pg_maintenance(conn, "VACUUM ANALYZE odds_trifecta")
             logger.info("VACUUM ANALYZE odds_trifecta 完了")
         except Exception as e:
             logger.warning("VACUUM 失敗 (削除自体は成功): %s", e)
@@ -272,6 +282,11 @@ def _resolve_capacity_limit_mb(is_pg: bool) -> tuple[float, str]:
     return 10240.0, "default:sqlite_10gb"
 
 
+def _auto_cleanup_trigger(total_mb: float, limit_mb: float) -> tuple[bool, float]:
+    threshold_mb = limit_mb * 0.80
+    return total_mb >= threshold_mb, threshold_mb
+
+
 def update_system_status(conn, total_bytes: int, sizes: list[dict],
                           cleanup_result: dict | None = None,
                           *, is_pg: bool = False):
@@ -378,10 +393,15 @@ def main():
     # 生データの aggressive クリーンアップ
     raw_cleanup_result = None
     # 自動トリガー: 使用量 >= 80% かつ --auto/環境変数有効
-    trigger_auto = (auto_enabled and total_mb >= 400)
+    limit_mb, _ = _resolve_capacity_limit_mb(is_pg)
+    should_auto_cleanup, auto_threshold_mb = _auto_cleanup_trigger(total_mb, limit_mb)
+    trigger_auto = auto_enabled and should_auto_cleanup
     if args.cleanup_raw or trigger_auto:
         if trigger_auto and not args.cleanup_raw:
-            print(f"\n⚠ 自動クリーンアップ起動 (使用量 {total_mb:.0f} MB >= 400 MB)")
+            print(
+                f"\n[auto] 生データ自動クリーンアップ発火 "
+                f"(使用量 {total_mb:.0f} MB >= {auto_threshold_mb:.0f} MB, 80%)"
+            )
         print(f"\n=== 古い生データ削除 (keep_raw_days={args.keep_raw_days}, dry_run={args.dry_run}) ===")
         raw_cleanup_result = cleanup_old_raw_data(
             conn, is_pg, args.keep_raw_days, args.dry_run

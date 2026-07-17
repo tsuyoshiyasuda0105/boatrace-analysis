@@ -3733,6 +3733,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 gamagori123_live = _load_live_band_map("1-2-3", 200, 500, "T-1min")
                 naruto123_live = _load_live_band_map("1-2-3", 200, 500, "T-1min")
                 karatsu132_live = _load_live_band_map("1-3-2", 200, 500, "T-1min")
+                marugame123_weak4_t5_live = _load_live_band_map("1-2-3", 500, 1500, "T-5min")
+                edogawa132_weak4_t5_live = _load_live_band_map("1-3-2", 1000, 1500, "T-5min")
+                karatsu123_weak4_t5_live = _load_live_band_map("1-2-3", 500, 1500, "T-5min")
+                suminoe124_weak3_t5_live = _load_live_band_map("1-2-4", 700, 1500, "T-5min")
 
                 try:
                     cur = conn.execute("""
@@ -6985,6 +6989,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             race_id = ctx.get("race_id")
             stadium = _to_int(ctx.get("stadium"))
+            race_no = _to_int(ctx.get("race_number"))
             weather = _to_int(ctx.get("weather"))
             n_female = _to_int(ctx.get("n_female")) or 0
             natl_1 = _to_float(ctx.get("natl_1"))
@@ -6992,6 +6997,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             avg_st = _to_float(ctx.get("avg_st_180", ctx.get("avg_st")))
             boat1_motor = _to_float(ctx.get("boat1_motor_top2")) or 0.0
             boat2_motor = _to_float(ctx.get("boat2_motor_top2")) or 0.0
+            boat3_motor = _to_float(ctx.get("boat3_motor_top2")) or 0.0
+            boat4_motor = _to_float(ctx.get("boat4_motor_top2")) or 0.0
 
             if not race_id or stadium is None:
                 return None
@@ -7003,104 +7010,218 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 and local_1 is not None and local_1 >= 6.0
                 and avg_st is not None and avg_st < 0.155
             )
-            if not escape_type_ok:
-                return None
-
             matched = []
-            if stadium == 2 and boat1_motor >= 35.0 and boat2_motor >= 45.0 and race_id in toda123_live:
+            if escape_type_ok:
+                if stadium == 2 and boat1_motor >= 35.0 and boat2_motor >= 45.0 and race_id in toda123_live:
+                    matched.append({
+                        "level": "toda_123_tri",
+                        "label": "戸田 1-2-3",
+                        "bet": "3連単 1-2-3",
+                        "rank": "trifecta_niche",
+                        "rank_label": "採用手法",
+                        "rank_emoji": "3連単",
+                        "recovery": 283.0,
+                        "n": 23,
+                        "hit_rate": 39.1,
+                        "name": "戸田123",
+                        "tag": "T-5 5-10倍 + 逃げ型proxy + 2号艇モーター45%+",
+                        "tetsuban_score": 7,
+                        "uses_rain_filter": True,
+                    })
+                if stadium == 9 and boat1_motor >= 35.0 and boat2_motor >= 40.0 and race_id in tsu143_live:
+                    matched.append({
+                        "level": "tsu_143_tri",
+                        "label": "津 1-4-3",
+                        "bet": "3連単 1-4-3",
+                        "rank": "trifecta_niche",
+                        "rank_label": "採用手法",
+                        "rank_emoji": "3連単",
+                        "recovery": 259.1,
+                        "n": 23,
+                        "hit_rate": 30.4,
+                        "name": "津143",
+                        "tag": "T-5 5-10倍 + 逃げ型proxy + 2号艇モーター40%+",
+                        "tetsuban_score": 7,
+                        "uses_rain_filter": True,
+                    })
+                if stadium == 16 and boat1_motor >= 35.0 and boat2_motor >= 45.0 and race_id in kojima123_live:
+                    matched.append({
+                        "level": "kojima_123_tri",
+                        "label": "児島 1-2-3",
+                        "bet": "3連単 1-2-3",
+                        "rank": "trifecta_niche",
+                        "rank_label": "採用手法",
+                        "rank_emoji": "3連単",
+                        "recovery": 142.5,
+                        "n": 20,
+                        "hit_rate": 30.0,
+                        "name": "児島123",
+                        "tag": "T-5 2-5倍 + 逃げ型proxy + 2号艇モーター45%+",
+                        "tetsuban_score": 5,
+                        "uses_rain_filter": True,
+                    })
+                if stadium == 7 and boat1_motor >= 35.0 and boat2_motor >= 35.0 and race_id in gamagori123_live:
+                    matched.append({
+                        "level": "gamagori_123_tri",
+                        "label": "蒲郡 1-2-3",
+                        "bet": "3連単 1-2-3",
+                        "rank": "trifecta_niche",
+                        "rank_label": "採用手法",
+                        "rank_emoji": "3連単",
+                        "recovery": 130.3,
+                        "n": 33,
+                        "hit_rate": 33.3,
+                        "name": "蒲郡123",
+                        "tag": "T-1 2-5倍 + 逃げ型proxy + 2号艇モーター35%+",
+                        "tetsuban_score": 5,
+                        "uses_rain_filter": True,
+                    })
+                if stadium == 14 and boat1_motor >= 35.0 and boat2_motor >= 35.0 and race_id in naruto123_live:
+                    matched.append({
+                        "level": "naruto_123_tri",
+                        "label": "鳴門 1-2-3",
+                        "bet": "3連単 1-2-3",
+                        "rank": "trifecta_niche",
+                        "rank_label": "採用手法",
+                        "rank_emoji": "3連単",
+                        "recovery": 160.0,
+                        "n": 22,
+                        "hit_rate": 36.4,
+                        "name": "鳴門123",
+                        "tag": "T-1 2-5倍 + 逃げ型proxy + 2号艇モーター35%+",
+                        "tetsuban_score": 6,
+                        "uses_rain_filter": True,
+                    })
+                if stadium == 23 and boat1_motor >= 35.0 and boat2_motor >= 35.0 and race_id in karatsu132_live:
+                    matched.append({
+                        "level": "karatsu_132_tri",
+                        "label": "唐津 1-3-2",
+                        "bet": "3連単 1-3-2",
+                        "rank": "trifecta_niche",
+                        "rank_label": "採用手法",
+                        "rank_emoji": "3連単",
+                        "recovery": 184.6,
+                        "n": 24,
+                        "hit_rate": 45.8,
+                        "name": "唐津132",
+                        "tag": "T-1 2-5倍 + 逃げ型proxy + 2号艇モーター35%+",
+                        "tetsuban_score": 7,
+                        "uses_rain_filter": True,
+                    })
+            if (
+                stadium == 15 and race_id in marugame123_weak4_t5_live
+                and natl_1 is not None and natl_1 >= 6.0
+                and boat1_motor >= 35.0
+                and boat2_motor >= 30.0
+                and boat3_motor >= 30.0
+                and boat4_motor <= 35.0
+                and boat2_motor >= boat4_motor + 5.0
+                and boat3_motor >= boat4_motor + 5.0
+            ):
                 matched.append({
-                    "level": "toda_123_tri",
-                    "label": "戸田 1-2-3",
+                    "level": "marugame_123_weak4_t5_tri",
+                    "label": "丸亀 1-2-3 弱4型",
                     "bet": "3連単 1-2-3",
                     "rank": "trifecta_niche",
                     "rank_label": "採用手法",
                     "rank_emoji": "3連単",
-                    "recovery": 283.0,
-                    "n": 23,
-                    "hit_rate": 39.1,
-                    "name": "戸田123",
-                    "tag": "T-5 5-10倍 + 逃げ型proxy + 2号艇モーター45%+",
-                    "tetsuban_score": 7,
-                    "uses_rain_filter": True,
-                })
-            if stadium == 9 and boat1_motor >= 35.0 and boat2_motor >= 40.0 and race_id in tsu143_live:
-                matched.append({
-                    "level": "tsu_143_tri",
-                    "label": "津 1-4-3",
-                    "bet": "3連単 1-4-3",
-                    "rank": "trifecta_niche",
-                    "rank_label": "採用手法",
-                    "rank_emoji": "3連単",
-                    "recovery": 259.1,
-                    "n": 23,
-                    "hit_rate": 30.4,
-                    "name": "津143",
-                    "tag": "T-5 5-10倍 + 逃げ型proxy + 2号艇モーター40%+",
-                    "tetsuban_score": 7,
-                    "uses_rain_filter": True,
-                })
-            if stadium == 16 and boat1_motor >= 35.0 and boat2_motor >= 45.0 and race_id in kojima123_live:
-                matched.append({
-                    "level": "kojima_123_tri",
-                    "label": "児島 1-2-3",
-                    "bet": "3連単 1-2-3",
-                    "rank": "trifecta_niche",
-                    "rank_label": "採用手法",
-                    "rank_emoji": "3連単",
-                    "recovery": 142.5,
-                    "n": 20,
+                    "recovery": 226.0,
+                    "n": 30,
                     "hit_rate": 30.0,
-                    "name": "児島123",
-                    "tag": "T-5 2-5倍 + 逃げ型proxy + 2号艇モーター45%+",
-                    "tetsuban_score": 5,
+                    "name": "丸亀123弱4",
+                    "tag": "T-5 5-15倍 + 4号艇弱 + 2/3号艇が4号艇より5pt以上優位",
+                    "tetsuban_score": 8,
                     "uses_rain_filter": True,
                 })
-            if stadium == 7 and boat1_motor >= 35.0 and boat2_motor >= 35.0 and race_id in gamagori123_live:
+            if (
+                stadium == 15 and race_no is not None and 7 <= race_no <= 12
+                and race_id in marugame123_weak4_t5_live
+                and natl_1 is not None and natl_1 >= 6.0
+                and boat1_motor >= 35.0
+                and boat2_motor >= 30.0
+                and boat3_motor >= 30.0
+                and boat4_motor <= 35.0
+                and boat2_motor >= boat4_motor + 5.0
+                and boat3_motor >= boat4_motor + 5.0
+            ):
                 matched.append({
-                    "level": "gamagori_123_tri",
-                    "label": "蒲郡 1-2-3",
+                    "level": "marugame_123_late_weak4_t5_tri",
+                    "label": "丸亀 1-2-3 後半弱4型",
                     "bet": "3連単 1-2-3",
                     "rank": "trifecta_niche",
                     "rank_label": "採用手法",
                     "rank_emoji": "3連単",
-                    "recovery": 130.3,
-                    "n": 33,
-                    "hit_rate": 33.3,
-                    "name": "蒲郡123",
-                    "tag": "T-1 2-5倍 + 逃げ型proxy + 2号艇モーター35%+",
-                    "tetsuban_score": 5,
+                    "recovery": 242.1,
+                    "n": 28,
+                    "hit_rate": 32.1,
+                    "name": "丸亀123後半弱4",
+                    "tag": "T-5 5-15倍 + 後半戦 + 4号艇弱 + 2/3号艇が4号艇より5pt以上優位",
+                    "tetsuban_score": 8,
                     "uses_rain_filter": True,
                 })
-            if stadium == 14 and boat1_motor >= 35.0 and boat2_motor >= 35.0 and race_id in naruto123_live:
+            if (
+                stadium == 3 and race_id in edogawa132_weak4_t5_live
+                and boat1_motor >= 35.0
+                and boat4_motor <= 30.0
+                and boat2_motor >= boat4_motor + 5.0
+                and boat3_motor >= boat4_motor + 5.0
+            ):
                 matched.append({
-                    "level": "naruto_123_tri",
-                    "label": "鳴門 1-2-3",
-                    "bet": "3連単 1-2-3",
-                    "rank": "trifecta_niche",
-                    "rank_label": "採用手法",
-                    "rank_emoji": "3連単",
-                    "recovery": 160.0,
-                    "n": 22,
-                    "hit_rate": 36.4,
-                    "name": "鳴門123",
-                    "tag": "T-1 2-5倍 + 逃げ型proxy + 2号艇モーター35%+",
-                    "tetsuban_score": 6,
-                    "uses_rain_filter": True,
-                })
-            if stadium == 23 and boat1_motor >= 35.0 and boat2_motor >= 35.0 and race_id in karatsu132_live:
-                matched.append({
-                    "level": "karatsu_132_tri",
-                    "label": "唐津 1-3-2",
+                    "level": "edogawa_132_weak4_t5_tri",
+                    "label": "江戸川 1-3-2 弱4型",
                     "bet": "3連単 1-3-2",
                     "rank": "trifecta_niche",
                     "rank_label": "採用手法",
                     "rank_emoji": "3連単",
-                    "recovery": 184.6,
-                    "n": 24,
-                    "hit_rate": 45.8,
-                    "name": "唐津132",
-                    "tag": "T-1 2-5倍 + 逃げ型proxy + 2号艇モーター35%+",
-                    "tetsuban_score": 7,
+                    "recovery": 303.5,
+                    "n": 23,
+                    "hit_rate": 30.4,
+                    "name": "江戸川132弱4",
+                    "tag": "T-5 10-15倍 + 4号艇弱 + 2/3号艇が4号艇より5pt以上優位",
+                    "tetsuban_score": 9,
+                    "uses_rain_filter": True,
+                })
+            if (
+                stadium == 23 and race_id in karatsu123_weak4_t5_live
+                and natl_1 is not None and natl_1 >= 6.0
+                and boat1_motor >= 40.0
+                and boat4_motor <= 30.0
+            ):
+                matched.append({
+                    "level": "karatsu_123_weak4_t5_tri",
+                    "label": "唐津 1-2-3 弱4型",
+                    "bet": "3連単 1-2-3",
+                    "rank": "trifecta_niche",
+                    "rank_label": "採用手法",
+                    "rank_emoji": "3連単",
+                    "recovery": 242.2,
+                    "n": 23,
+                    "hit_rate": 30.4,
+                    "name": "唐津123弱4",
+                    "tag": "T-5 5-15倍 + 4号艇弱 + 1号艇現行モーター期2連率40%+",
+                    "tetsuban_score": 8,
+                    "uses_rain_filter": True,
+                })
+            if (
+                stadium == 12 and race_no is not None and 7 <= race_no <= 12
+                and race_id in suminoe124_weak3_t5_live
+                and natl_1 is not None and natl_1 >= 6.0
+                and boat1_motor >= 40.0
+                and boat3_motor <= 35.0
+            ):
+                matched.append({
+                    "level": "suminoe_124_weak3_t5_tri",
+                    "label": "住之江 1-2-4 弱3型",
+                    "bet": "3連単 1-2-4",
+                    "rank": "trifecta_niche",
+                    "rank_label": "採用手法",
+                    "rank_emoji": "3連単",
+                    "recovery": 297.7,
+                    "n": 22,
+                    "hit_rate": 31.8,
+                    "name": "住之江124弱3",
+                    "tag": "T-5 7-15倍 + 後半戦 + 3号艇弱 + 1号艇現行モーター期2連率40%+",
+                    "tetsuban_score": 9,
                     "uses_rain_filter": True,
                 })
             return _pick_best_market_signal(*matched)
@@ -9590,11 +9711,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     TOKONAME_12_LATE_A_EXA_CACHE_VERSION = "tokoname_12_late_a_exa_v1"
     TOKONAME_14_WINTER_EXA_CACHE_VERSION = "tokoname_14_winter_exa_v1"
     TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION = "tokoname_123_late_exst_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v18"
+    MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION = "marugame_123_weak4_t5_tri_v1"
+    MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION = "marugame_123_late_weak4_t5_tri_v1"
+    EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION = "edogawa_132_weak4_t5_tri_v1"
+    KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
+    SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v20"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
     BET_UNIT_MAP = {"toda_42_flow_tri": 400, "ashiya_4head_flow_tri": 2000}
+    RECENT_ADOPTED_RECOMPUTE_DAYS = 14
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
         """日別の L4 戦略統計を集計。
@@ -9607,7 +9734,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
           - Supabase 環境では l4_daily_summary (既存) と併用可能.
         """
         import json as _json
-        from datetime import date as _date
+        from datetime import date as _date, timedelta as _timedelta
 
         # === A. cache テーブルから過去日分を取得 (高速) ===
         cached_by_date: dict[str, dict] = {}
@@ -9714,6 +9841,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             continue
                         if day_d.get("_karatsu_132_tri_version") != KARATSU_132_TRI_CACHE_VERSION:
                             continue
+                        if day_d.get("_marugame_123_weak4_t5_tri_version") != MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_marugame_123_late_weak4_t5_tri_version") != MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_edogawa_132_weak4_t5_tri_version") != EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_karatsu_123_weak4_t5_tri_version") != KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION:
+                            continue
+                        if day_d.get("_suminoe_124_weak3_t5_tri_version") != SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION:
+                            continue
                         if day_d.get("_tokoname_12_late_a_exa_version") != TOKONAME_12_LATE_A_EXA_CACHE_VERSION:
                             continue
                         if day_d.get("_tokoname_14_winter_exa_version") != TOKONAME_14_WINTER_EXA_CACHE_VERSION:
@@ -9769,6 +9906,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "wakamatsu_13_weak2_strong3_exa",
                             "heiwajima_13_acc2_late_exa",
                             "tamagawa_13_weak_sashi2_exa",
+                            "marugame_123_weak4_t5_tri",
+                            "marugame_123_late_weak4_t5_tri",
+                            "edogawa_132_weak4_t5_tri",
+                            "karatsu_123_weak4_t5_tri",
+                            "suminoe_124_weak3_t5_tri",
                         )
                         for prefix in adopted_metric_prefixes:
                             day_d.setdefault(f"{prefix}_bets", 0)
@@ -9820,6 +9962,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gamagori_123_tri",
                 "naruto_123_tri",
                 "karatsu_132_tri",
+                "marugame_123_weak4_t5_tri",
+                "marugame_123_late_weak4_t5_tri",
+                "edogawa_132_weak4_t5_tri",
+                "karatsu_123_weak4_t5_tri",
+                "suminoe_124_weak3_t5_tri",
             )
             for d in stats_by_date.values():
                 for bet in niche_bet_keys:
@@ -9860,16 +10007,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             d_to = _date.fromisoformat(to_date)
             all_dates = []
             cur_d = d_from
-            from datetime import timedelta as _td
             while cur_d <= d_to:
                 all_dates.append(cur_d.isoformat())
-                cur_d += _td(days=1)
+                cur_d += _timedelta(days=1)
         except ValueError:
             all_dates = []
 
+        recent_recompute_from = (today_iso and (_date.today() - _timedelta(days=RECENT_ADOPTED_RECOMPUTE_DAYS)).isoformat())
         missing_dates = [
             d for d in all_dates
-            if d not in cached_by_date or d >= today_iso
+            if d not in cached_by_date
+            or d >= today_iso
+            or (recent_recompute_from and d >= recent_recompute_from)
         ]
         # 当日分は常に再計算 (cache に保存しない、 リアルタイム性確保)
         # 過去日でも cache に無いものは今回 SQL で取得
@@ -10141,9 +10290,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 return out
 
             odds_123_t5_5_10 = _load_snapshot_band_map("1-2-3", 5.0, 10.0, ("T-5min",))
+            odds_123_t5_5_15 = _load_snapshot_band_map("1-2-3", 5.0, 15.0, ("T-5min",))
             odds_123_t5_2_5 = _load_snapshot_band_map("1-2-3", 2.0, 5.0, ("T-5min",))
             odds_123_t1_2_5 = _load_snapshot_band_map("1-2-3", 2.0, 5.0, ("T-1min",))
+            odds_124_t5_7_15 = _load_snapshot_band_map("1-2-4", 7.0, 15.0, ("T-5min",))
             odds_132_t1_2_5 = _load_snapshot_band_map("1-3-2", 2.0, 5.0, ("T-1min",))
+            odds_132_t5_10_15 = _load_snapshot_band_map("1-3-2", 10.0, 15.0, ("T-5min",))
             odds_143_t5_5_10 = _load_snapshot_band_map("1-4-3", 5.0, 10.0, ("T-5min",))
 
         # 日別に集計
@@ -10223,6 +10375,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "kojima_13_exa_bets": 0, "kojima_13_exa_hits": 0, "kojima_13_exa_pay": 0,
                 "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
                 "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
+                "marugame_123_weak4_t5_tri_bets": 0, "marugame_123_weak4_t5_tri_hits": 0, "marugame_123_weak4_t5_tri_pay": 0,
+                "marugame_123_late_weak4_t5_tri_bets": 0, "marugame_123_late_weak4_t5_tri_hits": 0, "marugame_123_late_weak4_t5_tri_pay": 0,
+                "edogawa_132_weak4_t5_tri_bets": 0, "edogawa_132_weak4_t5_tri_hits": 0, "edogawa_132_weak4_t5_tri_pay": 0,
+                "karatsu_123_weak4_t5_tri_bets": 0, "karatsu_123_weak4_t5_tri_hits": 0, "karatsu_123_weak4_t5_tri_pay": 0,
+                "suminoe_124_weak3_t5_tri_bets": 0, "suminoe_124_weak3_t5_tri_hits": 0, "suminoe_124_weak3_t5_tri_pay": 0,
                 "tri134_acc2_ex3_tri_bets": 0, "tri134_acc2_ex3_tri_hits": 0, "tri134_acc2_ex3_tri_pay": 0,
                 "omura_132_weak2_ex3_tri_bets": 0, "omura_132_weak2_ex3_tri_hits": 0, "omura_132_weak2_ex3_tri_pay": 0,
                 "wakamatsu_13_weak2_strong3_exa_bets": 0, "wakamatsu_13_weak2_strong3_exa_hits": 0, "wakamatsu_13_weak2_strong3_exa_pay": 0,
@@ -10458,6 +10615,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     _record_adopted_signal(race_id, rdate, "karatsu_132_tri", 184.6, w1 == 1 and w2 == 3 and w3 == 2, int(pay_132 or 0))
                 if stadium == 9 and b2_motor >= 40.0 and b1_motor >= 35.0 and race_id in odds_143_t5_5_10:
                     _record_adopted_signal(race_id, rdate, "tsu_143_tri", 259.1, w1 == 1 and w2 == 4 and w3 == 3, int(pay_143 or 0))
+            if is_done and grade == 5 and n_female == 0 and not is_rain_weather:
+                if (
+                    stadium == 15 and natl1_v >= 6.0 and b1_motor >= 35.0 and b2_motor >= 30.0 and b3_motor >= 30.0
+                    and b4_motor <= 35.0 and b2_motor >= b4_motor + 5.0 and b3_motor >= b4_motor + 5.0
+                    and race_id in odds_123_t5_5_15
+                ):
+                    _record_adopted_signal(race_id, rdate, "marugame_123_weak4_t5_tri", 226.0, tri_hit, int(tri_pay_v or 0))
+                    if 7 <= int(race_no or 0) <= 12:
+                        _record_adopted_signal(race_id, rdate, "marugame_123_late_weak4_t5_tri", 242.1, tri_hit, int(tri_pay_v or 0))
+                if (
+                    stadium == 3 and b1_motor >= 35.0 and b4_motor <= 30.0
+                    and b2_motor >= b4_motor + 5.0 and b3_motor >= b4_motor + 5.0
+                    and race_id in odds_132_t5_10_15
+                ):
+                    _record_adopted_signal(race_id, rdate, "edogawa_132_weak4_t5_tri", 303.5, w1 == 1 and w2 == 3 and w3 == 2, int(pay_132 or 0))
+                if (
+                    stadium == 23 and natl1_v >= 6.0 and b1_motor >= 40.0 and b4_motor <= 30.0
+                    and race_id in odds_123_t5_5_15
+                ):
+                    _record_adopted_signal(race_id, rdate, "karatsu_123_weak4_t5_tri", 242.2, tri_hit, int(tri_pay_v or 0))
+                if (
+                    stadium == 12 and 7 <= int(race_no or 0) <= 12 and natl1_v >= 6.0 and b1_motor >= 40.0 and b3_motor <= 35.0
+                    and race_id in odds_124_t5_7_15
+                ):
+                    _record_adopted_signal(race_id, rdate, "suminoe_124_weak3_t5_tri", 297.7, w1 == 1 and w2 == 2 and w3 == 4, int(pay_124 or 0))
 
             ex_time_pairs = (
                 (1, boat1_exhibition_time),
@@ -12711,9 +12893,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "tsu_123_tri_bets": 0, "tsu_123_tri_hits": 0, "tsu_123_tri_pay": 0,
                             "suminoe_123_tri_bets": 0, "suminoe_123_tri_hits": 0, "suminoe_123_tri_pay": 0,
                             "shimonoseki_123_tri_bets": 0, "shimonoseki_123_tri_hits": 0, "shimonoseki_123_tri_pay": 0,
-                            "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
-                            "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
-                            "tri134_acc2_ex3_tri_bets": 0, "tri134_acc2_ex3_tri_hits": 0, "tri134_acc2_ex3_tri_pay": 0,
+                "omura_123_tri_bets": 0, "omura_123_tri_hits": 0, "omura_123_tri_pay": 0,
+                "omura_132_tri_bets": 0, "omura_132_tri_hits": 0, "omura_132_tri_pay": 0,
+                "marugame_123_weak4_t5_tri_bets": 0, "marugame_123_weak4_t5_tri_hits": 0, "marugame_123_weak4_t5_tri_pay": 0,
+                "marugame_123_late_weak4_t5_tri_bets": 0, "marugame_123_late_weak4_t5_tri_hits": 0, "marugame_123_late_weak4_t5_tri_pay": 0,
+                "edogawa_132_weak4_t5_tri_bets": 0, "edogawa_132_weak4_t5_tri_hits": 0, "edogawa_132_weak4_t5_tri_pay": 0,
+                "karatsu_123_weak4_t5_tri_bets": 0, "karatsu_123_weak4_t5_tri_hits": 0, "karatsu_123_weak4_t5_tri_pay": 0,
+                "suminoe_124_weak3_t5_tri_bets": 0, "suminoe_124_weak3_t5_tri_hits": 0, "suminoe_124_weak3_t5_tri_pay": 0,
+                "tri134_acc2_ex3_tri_bets": 0, "tri134_acc2_ex3_tri_hits": 0, "tri134_acc2_ex3_tri_pay": 0,
                             "omura_132_weak2_ex3_tri_bets": 0, "omura_132_weak2_ex3_tri_hits": 0, "omura_132_weak2_ex3_tri_pay": 0,
                             "wakamatsu_13_weak2_strong3_exa_bets": 0, "wakamatsu_13_weak2_strong3_exa_hits": 0, "wakamatsu_13_weak2_strong3_exa_pay": 0,
                             "heiwajima_13_acc2_late_exa_bets": 0, "heiwajima_13_acc2_late_exa_hits": 0, "heiwajima_13_acc2_late_exa_pay": 0,
@@ -12728,8 +12915,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "gamagori_tide_132_tri_bets": 0, "gamagori_tide_132_tri_hits": 0, "gamagori_tide_132_tri_pay": 0,
                             "marugame_123_tri_bets": 0, "marugame_123_tri_hits": 0, "marugame_123_tri_pay": 0,
                             "marugame_tide_123_tri_bets": 0, "marugame_tide_123_tri_hits": 0, "marugame_tide_123_tri_pay": 0,
+                            "marugame_123_weak4_t5_tri_bets": 0, "marugame_123_weak4_t5_tri_hits": 0, "marugame_123_weak4_t5_tri_pay": 0,
+                            "marugame_123_late_weak4_t5_tri_bets": 0, "marugame_123_late_weak4_t5_tri_hits": 0, "marugame_123_late_weak4_t5_tri_pay": 0,
                             "fukuoka_tide_132_tri_bets": 0, "fukuoka_tide_132_tri_hits": 0, "fukuoka_tide_132_tri_pay": 0,
                             "gmkf_132_tri_bets": 0, "gmkf_132_tri_hits": 0, "gmkf_132_tri_pay": 0,
+                            "edogawa_132_weak4_t5_tri_bets": 0, "edogawa_132_weak4_t5_tri_hits": 0, "edogawa_132_weak4_t5_tri_pay": 0,
+                            "karatsu_123_weak4_t5_tri_bets": 0, "karatsu_123_weak4_t5_tri_hits": 0, "karatsu_123_weak4_t5_tri_pay": 0,
+                            "suminoe_124_weak3_t5_tri_bets": 0, "suminoe_124_weak3_t5_tri_hits": 0, "suminoe_124_weak3_t5_tri_pay": 0,
                             "toda_42_flow_tri_bets": 0, "toda_42_flow_tri_hits": 0, "toda_42_flow_tri_pay": 0,
                             "grade_breakdown": {},
                             "_from_summary": True,
@@ -12870,6 +13062,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_gamagori_123_tri_version"] = GAMAGORI_123_TRI_CACHE_VERSION
                         day_d["_naruto_123_tri_version"] = NARUTO_123_TRI_CACHE_VERSION
                         day_d["_karatsu_132_tri_version"] = KARATSU_132_TRI_CACHE_VERSION
+                        day_d["_marugame_123_weak4_t5_tri_version"] = MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION
+                        day_d["_marugame_123_late_weak4_t5_tri_version"] = MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION
+                        day_d["_edogawa_132_weak4_t5_tri_version"] = EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION
+                        day_d["_karatsu_123_weak4_t5_tri_version"] = KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION
+                        day_d["_suminoe_124_weak3_t5_tri_version"] = SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION
                         day_d["_tokoname_12_late_a_exa_version"] = TOKONAME_12_LATE_A_EXA_CACHE_VERSION
                         day_d["_tokoname_14_winter_exa_version"] = TOKONAME_14_WINTER_EXA_CACHE_VERSION
                         day_d["_tokoname_123_late_exst_tri_version"] = TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION
@@ -13420,11 +13617,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "wakamatsu_13_weak2_strong3_exa",
         "heiwajima_13_acc2_late_exa",
         "tamagawa_13_weak_sashi2_exa",
+        "marugame_123_weak4_t5_tri",
+        "marugame_123_late_weak4_t5_tri",
+        "edogawa_132_weak4_t5_tri",
+        "karatsu_123_weak4_t5_tri",
+        "suminoe_124_weak3_t5_tri",
     )
 
     ROI_STRATEGIES = (
         {"key": "g23_optb_tri", "label": "G2/G3 1-2-3", "short": "g23", "color": "#ff006e", "timing": "same_day"},
-        {"key": "gmkf_132_tri", "label": "蒲宮児福 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
+        {"key": "gmkf_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
         {"key": "shimonoseki_123_tri", "label": "下関 1-2-3", "short": "shm123", "color": "#22c55e", "timing": "previous_day"},
         {"key": "tsu_124_tri", "label": "津 1-2-4", "short": "tsu124", "color": "#0ea5e9", "timing": "previous_day"},
         {"key": "amagasaki_143_tri", "label": "尼崎 1-4-3", "short": "ama143", "color": "#f97316", "timing": "same_day"},
@@ -13464,78 +13666,96 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "wakamatsu_13_weak2_strong3_exa", "label": "若松 1-3", "short": "waka13", "color": "#0ea5e9", "timing": "previous_day"},
         {"key": "heiwajima_13_acc2_late_exa", "label": "平和島 1-3", "short": "hei13", "color": "#38bdf8", "timing": "previous_day"},
         {"key": "tamagawa_13_weak_sashi2_exa", "label": "多摩川 1-3", "short": "tama13", "color": "#14b8a6", "timing": "previous_day"},
+        {"key": "marugame_123_weak4_t5_tri", "label": "丸亀 1-2-3 弱4型", "short": "mgm123w4", "color": "#7c3aed", "timing": "same_day"},
+        {"key": "marugame_123_late_weak4_t5_tri", "label": "丸亀 1-2-3 後半弱4型", "short": "mgm123lw4", "color": "#9333ea", "timing": "same_day"},
+        {"key": "edogawa_132_weak4_t5_tri", "label": "江戸川 1-3-2 弱4型", "short": "edg132w4", "color": "#f43f5e", "timing": "same_day"},
+        {"key": "karatsu_123_weak4_t5_tri", "label": "唐津 1-2-3 弱4型", "short": "kar123w4", "color": "#06b6d4", "timing": "same_day"},
+        {"key": "suminoe_124_weak3_t5_tri", "label": "住之江 1-2-4 弱3型", "short": "sum124w3", "color": "#f59e0b", "timing": "same_day"},
     )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
     ROI_STRATEGY_VENUE_BY_KEY = {
-        "shimonoseki_123_tri": "下関",
-        "shimonoseki_132_tri": "下関",
-        "tsu_124_tri": "津",
-        "tsu_123_tri": "津",
-        "tsu_143_tri": "津",
-        "amagasaki_143_tri": "尼崎",
-        "amagasaki_13_exa": "尼崎",
-        "omura_13_exa": "大村",
-        "omura_14_exa": "大村",
-        "omura_123_tri": "大村",
-        "omura_132_tri": "大村",
-        "omura_132_weak2_ex3_tri": "大村",
-        "ashiya_boat4_exa": "芦屋",
-        "hamanako_14_exa": "浜名湖",
-        "tokuyama_123_tri": "徳山",
-        "tokuyama_13_exa": "徳山",
-        "tokuyama_12a_exa": "徳山",
-        "kojima_124_tri": "児島",
-        "kojima_13_exa": "児島",
-        "kojima_123_tri": "児島",
-        "marugame_123_tri": "丸亀",
-        "marugame_tide_123_tri": "丸亀",
-        "suminoe_123_tri": "住之江",
-        "miyajima_tide_132_tri": "宮島",
-        "gamagori_tide_132_tri": "蒲郡",
-        "gamagori_123_general_practical_tri": "蒲郡",
-        "gamagori_13_exa": "蒲郡",
-        "gamagori_123_tri": "蒲郡",
-        "fukuoka_tide_132_tri": "福岡",
-        "tokoname_12_late_a_exa": "常滑",
-        "tokoname_14_winter_exa": "常滑",
-        "tokoname_123_late_exst_tri": "常滑",
-        "toda_123_tri": "戸田",
-        "naruto_123_tri": "鳴門",
-        "karatsu_132_tri": "唐津",
-        "wakamatsu_13_weak2_strong3_exa": "若松",
-        "heiwajima_13_acc2_late_exa": "平和島",
-        "tamagawa_13_weak_sashi2_exa": "多摩川",
+        "shimonoseki_123_tri": "shimonoseki",
+        "shimonoseki_132_tri": "shimonoseki",
+        "tsu_124_tri": "tsu",
+        "tsu_123_tri": "tsu",
+        "tsu_143_tri": "tsu",
+        "amagasaki_143_tri": "amagasaki",
+        "amagasaki_13_exa": "amagasaki",
+        "omura_13_exa": "omura",
+        "omura_14_exa": "omura",
+        "omura_123_tri": "omura",
+        "omura_132_tri": "omura",
+        "omura_132_weak2_ex3_tri": "omura",
+        "ashiya_boat4_exa": "ashiya",
+        "hamanako_14_exa": "hamanako",
+        "tokuyama_123_tri": "tokuyama",
+        "tokuyama_13_exa": "tokuyama",
+        "tokuyama_12a_exa": "tokuyama",
+        "kojima_124_tri": "kojima",
+        "kojima_13_exa": "kojima",
+        "kojima_123_tri": "kojima",
+        "marugame_123_tri": "marugame",
+        "marugame_tide_123_tri": "marugame",
+        "suminoe_123_tri": "suminoe",
+        "miyajima_tide_132_tri": "miyajima",
+        "gamagori_tide_132_tri": "gamagori",
+        "gamagori_123_general_practical_tri": "gamagori",
+        "gamagori_13_exa": "gamagori",
+        "gamagori_123_tri": "gamagori",
+        "fukuoka_tide_132_tri": "fukuoka",
+        "tokoname_12_late_a_exa": "tokoname",
+        "tokoname_14_winter_exa": "tokoname",
+        "tokoname_123_late_exst_tri": "tokoname",
+        "toda_123_tri": "toda",
+        "naruto_123_tri": "naruto",
+        "karatsu_132_tri": "karatsu",
+        "wakamatsu_13_weak2_strong3_exa": "wakamatsu",
+        "heiwajima_13_acc2_late_exa": "heiwajima",
+        "tamagawa_13_weak_sashi2_exa": "tamagawa",
+        "marugame_123_weak4_t5_tri": "marugame",
+        "marugame_123_late_weak4_t5_tri": "marugame",
+        "suminoe_124_weak3_t5_tri": "suminoe",
+        "edogawa_132_weak4_t5_tri": "edogawa",
+        "karatsu_123_weak4_t5_tri": "karatsu",
+    }
+
+    ROI_STRATEGY_VENUE_ORDER = {
+        "kiryu": 1,
+        "toda": 2,
+        "edogawa": 3,
+        "heiwajima": 4,
+        "tamagawa": 5,
+        "hamanako": 6,
+        "gamagori": 7,
+        "tokoname": 8,
+        "tsu": 9,
+        "mikuni": 10,
+        "biwako": 11,
+        "suminoe": 12,
+        "amagasaki": 13,
+        "naruto": 14,
+        "marugame": 15,
+        "kojima": 16,
+        "miyajima": 17,
+        "tokuyama": 18,
+        "shimonoseki": 19,
+        "wakamatsu": 20,
+        "ashiya": 21,
+        "fukuoka": 22,
+        "karatsu": 23,
+        "omura": 24,
     }
 
     def _sort_roi_strategies_by_venue_volume(strategies, rows):
-        """Display wide ROI tables as no-venue first, then busier venues first."""
+        """Display ROI tables in fixed venue order, with global items first."""
         order = {s["key"]: i for i, s in enumerate(strategies)}
-        key_bets = {
-            s["key"]: sum(int((r.get(f"{s['key']}_bets", 0) or 0)) for r in rows)
-            for s in strategies
-        }
-        venue_bets: dict[str, int] = {}
-        venue_first_order: dict[str, int] = {}
-        for idx, strategy in enumerate(strategies):
-            key = strategy["key"]
-            venue = ROI_STRATEGY_VENUE_BY_KEY.get(key)
-            if not venue:
-                continue
-            venue_first_order.setdefault(venue, idx)
-            venue_bets[venue] = venue_bets.get(venue, 0) + key_bets.get(key, 0)
 
         def sort_key(s):
             key = s["key"]
             venue = ROI_STRATEGY_VENUE_BY_KEY.get(key)
             if not venue:
-                return (0, 0, 0, order[key])
-            return (
-                1,
-                -venue_bets.get(venue, 0),
-                venue_first_order.get(venue, 9999),
-                -key_bets.get(key, 0),
-                order[key],
-            )
+                return (0, order.get(key, 999), order.get(key, 999))
+            return (1, ROI_STRATEGY_VENUE_ORDER.get(venue, 999), order.get(key, 999))
 
         return tuple(sorted(strategies, key=sort_key))
 
@@ -13555,7 +13775,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v14:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v15:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,

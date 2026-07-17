@@ -91,7 +91,14 @@ def _local_table_exists(table_name: str) -> bool:
 
 
 def _render_primary_mode() -> bool:
-    return _truthy_env("BOATRACE_RENDER_PRIMARY") or _truthy_env("BOATRACE_SUPABASE_ONLY")
+    if _truthy_env("BOATRACE_RENDER_PRIMARY") or _truthy_env("BOATRACE_SUPABASE_ONLY"):
+        return True
+    # Current operations use Render/Supabase as the primary runtime and may
+    # intentionally pause or remove local scheduler state on Windows. In that
+    # mode, local task/log/work checks only create noisy false positives in the
+    # member health board, so infer "Render primary" from the same pause
+    # signals we already use for the local scheduler.
+    return _has_local_pause_flag()
 
 
 def _pc_schedule_paused() -> bool:
