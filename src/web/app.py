@@ -2677,6 +2677,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     today_iso=today_iso,
                     stadium_groups=[],
                     initial_pick_rows=[],
+                    market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
+                    market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
                     roi_picks_visible=roi_picks_visible,
                     empty=True,
                 )
@@ -2707,30 +2709,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             )
             signals = (signal_payload or {}).get("signals") or {}
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
-            adopted_watch_levels = {
-                "morning_watch_SG",
-                "morning_watch_G1",
-                "morning_watch_G2",
-                "morning_watch_st_SG",
-                "morning_watch_st_G1",
-                "morning_watch_st_G2",
-                "morning_watch_g23_optb",
-                "morning_watch_shimonoseki_123_tri",
-                "morning_watch_ashiya_boat4_lift",
-                "morning_watch_tokoname_123_late_exst_tri",
-                "morning_watch_omura_123_tri",
-                "morning_watch_tri143_a12",
-                "morning_watch_gmkf_132_tri",
-                "morning_watch_gamagori_adopted",
-                "morning_watch_tri134_acc2_ex3_tri",
-                "morning_watch_omura_132_weak2_ex3_tri",
-                "morning_watch_fukuoka_tide_132_tri",
-                "morning_watch_miyajima_tide_132_tri",
-                "morning_watch_gamagori_tide_132_tri",
-                "morning_watch_marugame_tide_123_tri",
-                "morning_watch_tsu_123_tri",
-                "morning_watch_suminoe_123_tri",
-            }
+            adopted_watch_levels = set(MARKET_SIGNAL_WATCH_LEVELS)
             for race_id, sig in signals.items():
                 if not roi_picks_visible:
                     break
@@ -2780,6 +2759,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             stadium_groups=sorted(stadium_groups.values(),
                                   key=lambda g: g["stadium_number"]),
             initial_pick_rows=initial_pick_rows,
+            market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
+            market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
             roi_picks_visible=roi_picks_visible,
             empty=False,
         ))
@@ -6330,7 +6311,45 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         def _evaluate_g23_optb_signal(stadium, grade, cls, min_payout, natl_1=None, local_1=None,
                                      avg_st=None, age=None, ex_st=None, boat2_motor_top2=None,
                                      weather=None, n_female=0):
-            return None
+            try:
+                _natl1 = float(natl_1) if natl_1 is not None else 0.0
+                _local1 = float(local_1) if local_1 is not None else 0.0
+                _avg_st = float(avg_st) if avg_st is not None else None
+                _age = int(age) if age is not None else None
+                _ex_st = float(ex_st) if ex_st is not None else None
+                _b2m = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+                _min_pay = int(float(min_payout)) if min_payout is not None else None
+            except (TypeError, ValueError):
+                return None
+            g23_caps = {11: 35.0, 12: 35.0, 16: 40.0, 20: 30.0, 22: 35.0, 23: 40.0}
+            if not (
+                stadium in g23_caps
+                and grade in (3, 4)
+                and cls == 1
+                and n_female == 0
+                and weather != 3
+                and _natl1 >= 7.0
+                and _local1 >= 6.0
+                and _age is not None and 30 <= _age <= 49
+                and _avg_st is not None and _avg_st < 0.155
+                and _ex_st is not None and _ex_st < 0.18
+                and _b2m <= g23_caps[stadium]
+                and _min_pay is not None and 500 <= _min_pay < 1000
+            ):
+                return None
+            return {
+                "level": "g23_optb_tri",
+                "label": "G2/G3 1-2-3",
+                "recovery": 204.0,
+                "n": 1189,
+                "bet": "3連単 1-2-3",
+                "rank": "trifecta_niche",
+                "rank_label": "3連単ニッチ",
+                "rank_emoji": "🎯",
+                "is_reference": False,
+                "tetsuban_score": 4,
+                "tetsuban_label": "G2/G3 1-2-3",
+            }
 
         def _evaluate_g23_optb_watch(stadium, grade, cls, natl_1=None, local_1=None,
                                      avg_st=None, age=None, boat2_motor_top2=None,
@@ -9599,30 +9618,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             s["accident_watch_label"] = label
 
         adopted_signal_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
-        adopted_watch_levels = {
-            "morning_watch_SG",
-            "morning_watch_G1",
-            "morning_watch_G2",
-            "morning_watch_st_SG",
-            "morning_watch_st_G1",
-            "morning_watch_st_G2",
-            "morning_watch_g23_optb",
-            "morning_watch_shimonoseki_123_tri",
-            "morning_watch_ashiya_boat4_lift",
-            "morning_watch_tokoname_123_late_exst_tri",
-            "morning_watch_omura_123_tri",
-            "morning_watch_tri143_a12",
-            "morning_watch_gmkf_132_tri",
-            "morning_watch_gamagori_adopted",
-            "morning_watch_tri134_acc2_ex3_tri",
-            "morning_watch_omura_132_weak2_ex3_tri",
-            "morning_watch_fukuoka_tide_132_tri",
-            "morning_watch_miyajima_tide_132_tri",
-            "morning_watch_gamagori_tide_132_tri",
-            "morning_watch_marugame_tide_123_tri",
-            "morning_watch_tsu_123_tri",
-            "morning_watch_suminoe_123_tri",
-        }
+        adopted_watch_levels = set(MARKET_SIGNAL_WATCH_LEVELS)
         if adopted_signal_levels:
             filtered_signals = []
             for s in signals:
@@ -9711,17 +9707,78 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     TOKONAME_12_LATE_A_EXA_CACHE_VERSION = "tokoname_12_late_a_exa_v1"
     TOKONAME_14_WINTER_EXA_CACHE_VERSION = "tokoname_14_winter_exa_v1"
     TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION = "tokoname_123_late_exst_tri_v1"
+    HEIWAJIMA_13_ACC2_LATE_EXA_CACHE_VERSION = "heiwajima_13_acc2_late_exa_v1"
     MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION = "marugame_123_weak4_t5_tri_v1"
     MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION = "marugame_123_late_weak4_t5_tri_v1"
     EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION = "edogawa_132_weak4_t5_tri_v1"
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v20"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v21"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
     BET_UNIT_MAP = {"toda_42_flow_tri": 400, "ashiya_4head_flow_tri": 2000}
     RECENT_ADOPTED_RECOMPUTE_DAYS = 14
+
+    def _adopted_daily_cache_is_valid(rdate: str, day_d: dict) -> bool:
+        if rdate >= STRICT_ODDS_DAILY_START and not day_d.get("_strict_odds_only"):
+            return False
+        required_versions = (
+            ("_mid132_odds_version", MID132_ODDS_CACHE_VERSION),
+            ("_amagasaki_motor_exa_version", AMAGASAKI_MOTOR_EXA_CACHE_VERSION),
+            ("_amagasaki_13_exa_version", AMAGASAKI_13_EXA_CACHE_VERSION),
+            ("_omura_13_exa_version", OMURA_13_EXA_CACHE_VERSION),
+            ("_ashiya_boat4_exa_version", ASHIYA_BOAT4_EXA_CACHE_VERSION),
+            ("_ashiya_4head_flow_tri_version", ASHIYA_4HEAD_FLOW_TRI_CACHE_VERSION),
+            ("_hamanako_14_exa_version", HAMANAKO_14_EXA_CACHE_VERSION),
+            ("_omura_14_exa_version", OMURA_14_EXA_CACHE_VERSION),
+            ("_kiryu_win2_version", KIRYU_WIN2_CACHE_VERSION),
+            ("_general200_version", GENERAL200_CACHE_VERSION),
+            ("_general_c_tri_version", GENERAL_C_TRI_CACHE_VERSION),
+            ("_boat3_niche_version", BOAT3_NICHE_CACHE_VERSION),
+            ("_tsu_123_tri_version", TSU_123_TRI_CACHE_VERSION),
+            ("_suminoe_123_tri_version", SUMINOE_123_TRI_CACHE_VERSION),
+            ("_tokuyama_123_tri_version", TOKUYAMA_123_TRI_CACHE_VERSION),
+            ("_tokuyama_12a_exa_version", TOKUYAMA_12A_EXA_CACHE_VERSION),
+            ("_tokuyama_13_exa_version", TOKUYAMA_13_EXA_CACHE_VERSION),
+            ("_shimonoseki_123_tri_version", SHIMONOSEKI_123_TRI_CACHE_VERSION),
+            ("_shimonoseki_132_tri_version", SHIMONOSEKI_132_TRI_CACHE_VERSION),
+            ("_kojima_124_tri_version", KOJIMA_124_TRI_CACHE_VERSION),
+            ("_kojima_13_exa_version", KOJIMA_13_EXA_CACHE_VERSION),
+            ("_tsu_124_tri_version", TSU_124_TRI_CACHE_VERSION),
+            ("_omura_123_tri_version", OMURA_123_TRI_CACHE_VERSION),
+            ("_omura_132_tri_version", OMURA_132_TRI_CACHE_VERSION),
+            ("_amagasaki_143_tri_version", AMAGASAKI_143_TRI_CACHE_VERSION),
+            ("_miyajima_tide_132_tri_version", MIYAJIMA_TIDE_132_TRI_CACHE_VERSION),
+            ("_miyajima_fl_132_tri_version", MIYAJIMA_FL_132_TRI_CACHE_VERSION),
+            ("_gamagori_tide_132_tri_version", GAMAGORI_TIDE_132_TRI_CACHE_VERSION),
+            ("_gamagori_123_general_practical_tri_version", GAMAGORI_123_GENERAL_PRACTICAL_TRI_CACHE_VERSION),
+            ("_gamagori_13_exa_version", GAMAGORI_13_EXA_CACHE_VERSION),
+            ("_marugame_123_tri_version", MARUGAME_123_TRI_CACHE_VERSION),
+            ("_marugame_tide_123_tri_version", MARUGAME_TIDE_123_TRI_CACHE_VERSION),
+            ("_fukuoka_tide_132_tri_version", FUKUOKA_TIDE_132_TRI_CACHE_VERSION),
+            ("_gmkf_132_tri_version", GMKF_132_TRI_CACHE_VERSION),
+            ("_toda_42_flow_tri_version", TODA_42_FLOW_TRI_CACHE_VERSION),
+            ("_toda_123_tri_version", TODA_123_TRI_CACHE_VERSION),
+            ("_tsu_143_tri_version", TSU_143_TRI_CACHE_VERSION),
+            ("_kojima_123_tri_version", KOJIMA_123_TRI_CACHE_VERSION),
+            ("_gamagori_123_tri_version", GAMAGORI_123_TRI_CACHE_VERSION),
+            ("_naruto_123_tri_version", NARUTO_123_TRI_CACHE_VERSION),
+            ("_karatsu_132_tri_version", KARATSU_132_TRI_CACHE_VERSION),
+            ("_marugame_123_weak4_t5_tri_version", MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION),
+            ("_marugame_123_late_weak4_t5_tri_version", MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION),
+            ("_edogawa_132_weak4_t5_tri_version", EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION),
+            ("_karatsu_123_weak4_t5_tri_version", KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION),
+            ("_suminoe_124_weak3_t5_tri_version", SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION),
+            ("_tokoname_12_late_a_exa_version", TOKONAME_12_LATE_A_EXA_CACHE_VERSION),
+            ("_tokoname_14_winter_exa_version", TOKONAME_14_WINTER_EXA_CACHE_VERSION),
+            ("_tokoname_123_late_exst_tri_version", TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION),
+            ("_heiwajima_13_acc2_late_exa_version", HEIWAJIMA_13_ACC2_LATE_EXA_CACHE_VERSION),
+        )
+        for version_key, expected_version in required_versions:
+            if day_d.get(version_key) != expected_version:
+                return False
+        return day_d.get("_adopted_daily_select_version") in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS
 
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
         """日別の L4 戦略統計を集計。
@@ -9749,115 +9806,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     try:
                         day_d = _json.loads(sjson)
                         if not force_full_scan:
-                            # 通常表示は速度優先で既存の日別キャッシュをそのまま使う。
-                            # 採用手法の追加や条件変更を厳密に反映したい場合は
-                            # ROI画面の「最新に更新」から force_full_scan=True で再集計する。
+                            # 通常表示でも採用手法の版だけは確認し、古いキャッシュは自動失効。
+                            if not _adopted_daily_cache_is_valid(rdate, day_d):
+                                continue
                             cached_by_date[rdate] = day_d
                             continue
                         # 2026-05-30 以降は実運用ROIとして扱うため、締切前オッズ
                         # ベースで再計算した cache のみ使う。古い cache は確定払戻
                         # 代理を含み、実際に買えた案件とズレる。
-                        if rdate >= STRICT_ODDS_DAILY_START and not day_d.get("_strict_odds_only"):
-                            continue
-                        if day_d.get("_mid132_odds_version") != MID132_ODDS_CACHE_VERSION:
-                            continue
-                        if day_d.get("_amagasaki_motor_exa_version") != AMAGASAKI_MOTOR_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_amagasaki_13_exa_version") != AMAGASAKI_13_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_omura_13_exa_version") != OMURA_13_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_ashiya_boat4_exa_version") != ASHIYA_BOAT4_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_ashiya_4head_flow_tri_version") != ASHIYA_4HEAD_FLOW_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_hamanako_14_exa_version") != HAMANAKO_14_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_omura_14_exa_version") != OMURA_14_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_kiryu_win2_version") != KIRYU_WIN2_CACHE_VERSION:
+                        if not _adopted_daily_cache_is_valid(rdate, day_d):
                             continue
                         if day_d.get("_general200_version") != GENERAL200_CACHE_VERSION:
                             continue
                         if day_d.get("_general_c_tri_version") != GENERAL_C_TRI_CACHE_VERSION:
                             continue
                         if day_d.get("_boat3_niche_version") != BOAT3_NICHE_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tsu_123_tri_version") != TSU_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_suminoe_123_tri_version") != SUMINOE_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tokuyama_123_tri_version") != TOKUYAMA_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tokuyama_12a_exa_version") != TOKUYAMA_12A_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tokuyama_13_exa_version") != TOKUYAMA_13_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_shimonoseki_123_tri_version") != SHIMONOSEKI_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_shimonoseki_132_tri_version") != SHIMONOSEKI_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_kojima_124_tri_version") != KOJIMA_124_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_kojima_13_exa_version") != KOJIMA_13_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tsu_124_tri_version") != TSU_124_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_omura_123_tri_version") != OMURA_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_omura_132_tri_version") != OMURA_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_amagasaki_143_tri_version") != AMAGASAKI_143_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_miyajima_tide_132_tri_version") != MIYAJIMA_TIDE_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_miyajima_fl_132_tri_version") != MIYAJIMA_FL_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_gamagori_tide_132_tri_version") != GAMAGORI_TIDE_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_gamagori_123_general_practical_tri_version") != GAMAGORI_123_GENERAL_PRACTICAL_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_gamagori_13_exa_version") != GAMAGORI_13_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_marugame_123_tri_version") != MARUGAME_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_marugame_tide_123_tri_version") != MARUGAME_TIDE_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_fukuoka_tide_132_tri_version") != FUKUOKA_TIDE_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_gmkf_132_tri_version") != GMKF_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_toda_42_flow_tri_version") != TODA_42_FLOW_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_toda_123_tri_version") != TODA_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tsu_143_tri_version") != TSU_143_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_kojima_123_tri_version") != KOJIMA_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_gamagori_123_tri_version") != GAMAGORI_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_naruto_123_tri_version") != NARUTO_123_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_karatsu_132_tri_version") != KARATSU_132_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_marugame_123_weak4_t5_tri_version") != MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_marugame_123_late_weak4_t5_tri_version") != MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_edogawa_132_weak4_t5_tri_version") != EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_karatsu_123_weak4_t5_tri_version") != KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_suminoe_124_weak3_t5_tri_version") != SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tokoname_12_late_a_exa_version") != TOKONAME_12_LATE_A_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tokoname_14_winter_exa_version") != TOKONAME_14_WINTER_EXA_CACHE_VERSION:
-                            continue
-                        if day_d.get("_tokoname_123_late_exst_tri_version") != TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION:
-                            continue
-                        if day_d.get("_adopted_daily_select_version") not in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS:
                             continue
                         adopted_metric_prefixes = (
                             "g23_optb_tri",
@@ -9974,24 +9937,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     d.setdefault(f"{bet}_hits", 0)
                     d.setdefault(f"{bet}_pay", 0)
             for d in stats_by_date.values():
-                for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
-                            "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
-                            "prime_tri", "r12_tri", "gen_r12_tri",
-                            "toda_7r_tri", "mid_132_tri",
-                            "mid_132_tier_a_tri", "venus_tri",
-                            "amagasaki_motor_exa", "amagasaki_143_tri", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2", "general_c_tri",
-                            "amagasaki_13_exa",
-                            "omura_13_exa",
-                            "g23_optb_tri",
-                            "tsu_123_tri", "suminoe_123_tri", "shimonoseki_123_tri", "tsu_124_tri",
-                            "tokuyama_123_tri", "shimonoseki_132_tri", "kojima_124_tri", "kojima_13_exa",
-                            "tokuyama_12a_exa",
-                            "tokuyama_13_exa",
-                            "omura_123_tri", "omura_132_tri",
-                            "miyajima_tide_132_tri", "miyajima_fl_132_tri", "gamagori_tide_132_tri",
-                    "gamagori_123_general_practical_tri", "gamagori_13_exa",
-                            "marugame_123_tri", "marugame_tide_123_tri", "fukuoka_tide_132_tri", "fukuoka_wind_exa", "toda_42_flow_tri",
-                            "toda_123_tri", "tsu_143_tri", "kojima_123_tri", "gamagori_123_tri", "naruto_123_tri", "karatsu_132_tri"):
+                for bet in ROI_METRIC_KEYS:
                     n = d.get(f"{bet}_bets", 0)
                     pay = d.get(f"{bet}_pay", 0)
                     unit = BET_UNIT_MAP.get(bet, 100)
@@ -10023,8 +9969,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 当日分は常に再計算 (cache に保存しない、 リアルタイム性確保)
         # 過去日でも cache に無いものは今回 SQL で取得
         if missing_dates and not force_full_scan and cached_by_date:
-            # 通常表示では、数日の cache 欠損だけで欠損範囲全体を
-            # 重い SQL 再集計に回さない。厳密な再集計は「最新に更新」で行う。
+            # 欠損日を安易に 0 件埋めすると、集計キャッシュ欠落日が「該当なし」と誤表示される。
+            # レース自体が存在しない日だけ zero-fill し、レースがある欠損日は後段の SQL 再集計に回す。
             n_total_by_missing: dict[str, int] = {}
             try:
                 placeholders = ",".join("?" for _ in missing_dates)
@@ -10036,17 +9982,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         n_total_by_missing[str(rdate)] = int(n_total or 0)
             except Exception:  # noqa: BLE001
                 n_total_by_missing = {}
-            for d in missing_dates:
+            zero_only_dates = [d for d in missing_dates if n_total_by_missing.get(d, 0) <= 0]
+            recompute_dates = [d for d in missing_dates if n_total_by_missing.get(d, 0) > 0]
+            for d in zero_only_dates:
                 cached_by_date.setdefault(
                     d,
                     {
                         "date": d,
-                        "n_total": n_total_by_missing.get(d, 0),
+                        "n_total": 0,
                         "n_l4": 0,
                     },
                 )
-            return _finalize_l4_daily_rows(cached_by_date)
-
+            if not recompute_dates:
+                return _finalize_l4_daily_rows(cached_by_date)
+            missing_dates = recompute_dates
         if not missing_dates:
             # 完全 cache hit でも派生指標を補完して返す
             return _finalize_l4_daily_rows(cached_by_date)
@@ -10528,6 +10477,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if is_done:
                 d["n_done"] += 1
             tri_hit = is_done and (w1 == 1 and w2 == 2 and w3 == 3)
+            for key in ROI_STRATEGY_KEYS:
+                d.setdefault(f"{key}_bets", 0)
+                d.setdefault(f"{key}_hits", 0)
+                d.setdefault(f"{key}_pay", 0)
             tri_pay_v = int(tri_pay or 0) if tri_hit else 0
 
             try:
@@ -12985,22 +12938,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 d[f"{key}_pay"] = int(d.get(f"{key}_pay", 0) or 0) + int(adopted["pay"] or 0)
 
         for d in by_date.values():
-            for bet in ("win", "exa", "tri", "c80", "pro", "sgg12",
-                        "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
-                        "prime_tri", "r12_tri", "gen_r12_tri",
-                        "toda_7r_tri", "mid_132_tri",
-                    "mid_132_tier_a_tri", "venus_tri",
-                    "amagasaki_motor_exa", "amagasaki_13_exa", "omura_13_exa", "ashiya_boat4_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri", "hamanako_14_exa", "omura_14_exa", "kiryu_win2",
-                    "general_c_tri",
-                    "tokuyama_123_tri", "tokuyama_12a_exa", "tokuyama_13_exa", "shimonoseki_123_tri", "shimonoseki_132_tri", "kojima_124_tri", "kojima_13_exa",
-                    "omura_123_tri", "omura_132_tri",
-                    "tri134_acc2_ex3_tri", "omura_132_weak2_ex3_tri",
-                    "wakamatsu_13_weak2_strong3_exa", "heiwajima_13_acc2_late_exa",
-                    "tamagawa_13_weak_sashi2_exa",
-                    "g23_optb_tri",
-                    "tsu_123_tri", "suminoe_123_tri", "tsu_124_tri", "amagasaki_143_tri", "toda_42_flow_tri",
-                    "toda_123_tri", "tsu_143_tri", "kojima_123_tri", "gamagori_123_tri", "naruto_123_tri", "karatsu_132_tri",
-                    "tokoname_12_late_a_exa", "tokoname_14_winter_exa", "tokoname_123_late_exst_tri"):
+            for key in ROI_STRATEGY_KEYS:
+                d.setdefault(f"{key}_bets", 0)
+                d.setdefault(f"{key}_hits", 0)
+                d.setdefault(f"{key}_pay", 0)
+            for bet in ROI_METRIC_KEYS:
                 n = d.get(f"{bet}_bets", 0)
                 pay = d.get(f"{bet}_pay", 0)
                 unit = BET_UNIT_MAP.get(bet, 100)
@@ -13062,6 +13004,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_gamagori_123_tri_version"] = GAMAGORI_123_TRI_CACHE_VERSION
                         day_d["_naruto_123_tri_version"] = NARUTO_123_TRI_CACHE_VERSION
                         day_d["_karatsu_132_tri_version"] = KARATSU_132_TRI_CACHE_VERSION
+                        day_d["_heiwajima_13_acc2_late_exa_version"] = HEIWAJIMA_13_ACC2_LATE_EXA_CACHE_VERSION
                         day_d["_marugame_123_weak4_t5_tri_version"] = MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION
                         day_d["_marugame_123_late_weak4_t5_tri_version"] = MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION
                         day_d["_edogawa_132_weak4_t5_tri_version"] = EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION
@@ -13624,6 +13567,54 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "suminoe_124_weak3_t5_tri",
     )
 
+    MARKET_SIGNAL_WATCH_LEVELS = (
+        "morning_watch_SG",
+        "morning_watch_G1",
+        "morning_watch_G2",
+        "morning_watch_st_SG",
+        "morning_watch_st_G1",
+        "morning_watch_st_G2",
+        "morning_watch_g23_optb",
+        "morning_watch_shimonoseki_123_tri",
+        "morning_watch_ashiya_boat4_lift",
+        "morning_watch_tokoname_123_late_exst_tri",
+        "morning_watch_omura_123_tri",
+        "morning_watch_tri143_a12",
+        "morning_watch_gmkf_132_tri",
+        "morning_watch_gamagori_adopted",
+        "morning_watch_tri134_acc2_ex3_tri",
+        "morning_watch_omura_132_weak2_ex3_tri",
+        "morning_watch_fukuoka_tide_132_tri",
+        "morning_watch_miyajima_tide_132_tri",
+        "morning_watch_gamagori_tide_132_tri",
+        "morning_watch_marugame_tide_123_tri",
+        "morning_watch_tsu_123_tri",
+        "morning_watch_suminoe_123_tri",
+    )
+
+    MARKET_SIGNAL_EXTRA_SUPPORTED_LEVELS = (
+        "general_c_tri",
+        "morning_watch_general_c_tri",
+        "trifecta_niche_143_a12",
+        "exacta_niche_ashiya_boat4_lift",
+        "exacta_niche_hamanako14",
+        "exacta_niche_omura14",
+        "miyajima_fl_132_tri",
+        "toda_42_flow_tri",
+        "fukuoka_wind_exa",
+        "ashiya_4head_flow_tri",
+    )
+
+    MARKET_SIGNAL_SUPPORTED_LEVELS = tuple(dict.fromkeys(
+        MARKET_SIGNAL_ADOPTED_LEVELS
+        + MARKET_SIGNAL_WATCH_LEVELS
+        + MARKET_SIGNAL_EXTRA_SUPPORTED_LEVELS
+    ))
+
+    MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES = tuple(
+        f"l4-{level}" for level in MARKET_SIGNAL_SUPPORTED_LEVELS
+    )
+
     ROI_STRATEGIES = (
         {"key": "g23_optb_tri", "label": "G2/G3 1-2-3", "short": "g23", "color": "#ff006e", "timing": "same_day"},
         {"key": "gmkf_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
@@ -13673,6 +13664,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "suminoe_124_weak3_t5_tri", "label": "住之江 1-2-4 弱3型", "short": "sum124w3", "color": "#f59e0b", "timing": "same_day"},
     )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
+    ROI_METRIC_EXTRA_KEYS = (
+        "win", "exa", "tri", "c80", "pro", "sgg12",
+        "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
+        "prime_tri", "r12_tri", "gen_r12_tri",
+        "toda_7r_tri", "mid_132_tri", "mid_132_tier_a_tri", "venus_tri",
+        "amagasaki_motor_exa", "fukuoka_wind_exa", "ashiya_4head_flow_tri",
+        "kiryu_win2", "general_c_tri", "toda_42_flow_tri", "miyajima_fl_132_tri",
+    )
+    ROI_METRIC_KEYS = tuple(dict.fromkeys(ROI_METRIC_EXTRA_KEYS + ROI_STRATEGY_KEYS))
     ROI_STRATEGY_VENUE_BY_KEY = {
         "shimonoseki_123_tri": "shimonoseki",
         "shimonoseki_132_tri": "shimonoseki",
@@ -13775,7 +13775,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v15:{from_d}:{to_d}"
+        page_cache_key = f"member_strategy:v16:{from_d}:{to_d}"
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -13927,7 +13927,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:v11:{monthly_from}:{monthly_to}"
+        page_cache_key = f"member_strategy_monthly:v12:{monthly_from}:{monthly_to}"
         if not force_recompute:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:
