@@ -8009,8 +8009,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             if not (
                 r4_n >= 8
-                and r4_avg_st <= 0.16
-                and r4_win_rate >= 0.08
+                and r4_avg_st <= 0.15
+                and r4_win_rate >= 0.10
                 and racer_ex_n >= 8
                 and motor_ex_n >= 5
             ):
