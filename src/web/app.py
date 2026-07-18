@@ -2701,7 +2701,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
             today_iso = date.today().isoformat()
             cache_ttl = 60 if target_date >= today_iso else 3600
-            signal_cache_key = f"market_signals:v9:{target_date}"
+            signal_cache_key = f"market_signals:v10:{target_date}"
             signal_payload = (
                 _read_json_cache(signal_cache_key, cache_ttl)
                 or _read_json_cache_stale(signal_cache_key)
@@ -2715,7 +2715,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     break
                 l4 = (sig or {}).get("l4") or {}
                 level = str(l4.get("level") or "")
-                if level not in adopted_levels and level not in adopted_watch_levels:
+                levels = {level}
+                levels.update(str(x) for x in (l4.get("matched_levels") or []) if x)
+                if not (levels & adopted_levels or levels & adopted_watch_levels):
                     continue
                 if l4.get("is_reference") and level in ("morning_general", "general"):
                     continue
@@ -5453,6 +5455,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "morning_watch_marugame_tide_123_tri",
                 "morning_watch_tsu_123_tri",
                 "morning_watch_suminoe_123_tri",
+                "morning_watch_tamagawa_13_acc2n30_m3_40_exa",
+                "morning_watch_tamagawa_123_fl3_n3_30_m2_35_tri",
+                "morning_watch_hamanako_12_pts3_m23_exa",
+                "morning_watch_kojima_12_acc3_m3_n23_exa",
+                "morning_watch_edogawa_13_acc2_n23_m3_exa",
+                "morning_watch_kiryu_13_fl2_n23_exa",
+                "morning_watch_ashiya_13_pts2_m23_exa",
+                "morning_watch_amagasaki_12_acc3_fl3_exa",
+                "morning_watch_omura_13_acc2_fl2_m23_exa",
+                "morning_watch_marugame_13_pts2_m23_exa",
             })
 
             def _is_adopted_priority_signal(sig):
@@ -13881,6 +13893,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "morning_watch_marugame_tide_123_tri",
         "morning_watch_tsu_123_tri",
         "morning_watch_suminoe_123_tri",
+        "morning_watch_tamagawa_13_acc2n30_m3_40_exa",
+        "morning_watch_tamagawa_123_fl3_n3_30_m2_35_tri",
+        "morning_watch_hamanako_12_pts3_m23_exa",
+        "morning_watch_kojima_12_acc3_m3_n23_exa",
+        "morning_watch_edogawa_13_acc2_n23_m3_exa",
+        "morning_watch_kiryu_13_fl2_n23_exa",
+        "morning_watch_ashiya_13_pts2_m23_exa",
+        "morning_watch_amagasaki_12_acc3_fl3_exa",
+        "morning_watch_omura_13_acc2_fl2_m23_exa",
+        "morning_watch_marugame_13_pts2_m23_exa",
     )
 
     MARKET_SIGNAL_EXTRA_SUPPORTED_LEVELS = (
