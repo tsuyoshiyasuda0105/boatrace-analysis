@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import argparse
+from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -15,6 +16,7 @@ from src.web.app import create_app  # noqa: E402
 
 
 MODES = ("signals", "realtime", "morning-check", "nightly")
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def _hit(client, path: str) -> tuple[int, int]:
@@ -80,12 +82,16 @@ def parse_args() -> argparse.Namespace:
         default="realtime",
         help="realtime is light, morning-check reconciles daily pages, nightly does heavy history refresh.",
     )
+    parser.add_argument(
+        "--date",
+        help="Target race date in YYYY-MM-DD. Defaults to the current date in Asia/Tokyo.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    today = date.today()
+    today = date.fromisoformat(args.date) if args.date else datetime.now(JST).date()
     default_from = _days_ago(today, 30)
     yearly_from = _days_ago(today, 365)
     heavy_from = _days_ago(today, 1095)
