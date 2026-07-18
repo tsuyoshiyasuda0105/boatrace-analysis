@@ -601,25 +601,16 @@
           if (marketSignalsLoading) return;
           marketSignalsLoading = true;
           try {
-            async function fetchSignals(forceRecompute = false) {
-              const qs = forceRecompute ? `&recompute=1` : '';
-              const marketSignalsUrl = `/api/market-signals?date=${targetDate}${qs}&_=${Date.now()}`;
+            async function fetchSignals() {
+              const marketSignalsUrl = `/api/market-signals?date=${targetDate}&_=${Date.now()}`;
               const r = await fetch(marketSignalsUrl, {
                 cache: 'no-store',
               });
               if (!r.ok) return null;
               return r.json();
             }
-            let data = await fetchSignals(false);
+            const data = await fetchSignals();
             if (!data) return;
-            const todayIso = new Date().toISOString().slice(0, 10);
-            const isRecentTarget = targetDate >= todayIso;
-            const initialSignals = data.signals || {};
-            const hasBasicData = Number(data?.data_status?.race_basic?.count || 0) > 0;
-            if (isRecentTarget && Object.keys(initialSignals).length === 0 && hasBasicData) {
-              const refreshed = await fetchSignals(true);
-              if (refreshed) data = refreshed;
-            }
             const signals = data.signals || {};
             marketSignalsLoaded = true;
             marketDataStatusCache = data.data_status || {};
@@ -995,9 +986,6 @@
           if (raceTotal <= 0) return false;
           return basicCount < raceTotal;
         }
-
-        loadMarketSignals();
-        setInterval(loadMarketSignals, 30000);
 
         // ============================================================
         // 「次のレース」 ハイライト機能 (1分毎に再評価)
@@ -1624,7 +1612,6 @@ function renderTodaysPicks() {
 
 
         updateNextRaces();
-        setInterval(updateNextRaces, 30000);
         setTimeout(updateNextRaces, 1500);
 
 function updateClosedRaceTiles() {
@@ -1640,16 +1627,34 @@ function updateClosedRaceTiles() {
           });
         }
         updateClosedRaceTiles();
-        setInterval(updateClosedRaceTiles, 60000);  // 1 分毎に判定更新
 
         // 1-2-3 オッズ推移を初回 + 20秒毎に取得
         // odds_scheduler が T-5..T-1 まで毎分書き込む。
         // 60s ポーリングだと UI 表示まで最悪 +60s 遅延するため、20s に短縮
         // (DB 書込 +15s 中央値 → ポーリング待ち +10s 中央値 → 合計 +25s 中央値で表示)
-        loadOdds123Timeline();
-        setInterval(loadOdds123Timeline, 20000);
         // market-signals 描画後にも一度走らせて、L4 バッジが付いたレース全てを補完
-        setTimeout(loadOdds123Timeline, 2000);
+        // Use one refresh clock and pause network work in background tabs.
+        let dashboardRefreshRunning = false;
+        async function refreshDashboard() {
+          if (document.hidden || dashboardRefreshRunning) return;
+          dashboardRefreshRunning = true;
+          try {
+            await Promise.allSettled([
+              loadMarketSignals(),
+              loadOdds123Timeline(),
+            ]);
+            updateNextRaces();
+            updateClosedRaceTiles();
+          } finally {
+            dashboardRefreshRunning = false;
+          }
+        }
+
+        refreshDashboard();
+        setInterval(refreshDashboard, 30000);
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) refreshDashboard();
+        });
       })();
     </script>
   {% endif %}

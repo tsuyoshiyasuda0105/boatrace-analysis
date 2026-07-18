@@ -14,7 +14,7 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
 from src.web.app import create_app  # noqa: E402
 
 
-MODES = ("realtime", "morning-check", "nightly")
+MODES = ("signals", "realtime", "morning-check", "nightly")
 
 
 def _hit(client, path: str) -> tuple[int, int]:
@@ -33,11 +33,16 @@ def build_targets(mode: str, today: date) -> list[str]:
     d365 = _days_ago(today, 365)
     d3y = _days_ago(today, 1095)
 
+    if mode == "signals":
+        # The five-minute Render scheduler is the only daytime writer for the
+        # expensive signal snapshot. Browser requests only read this snapshot.
+        return [f"/api/market-signals?date={today_s}&recompute=1"]
+
     if mode == "nightly":
         # Heavy historical refresh. This is intentionally reserved for the
         # end-of-day Render scheduler so normal app clicks never trigger it.
         return [
-            f"/api/market-signals?date={today_s}",
+            f"/api/market-signals?date={today_s}&recompute=1",
             f"/member/strategy?from={d3y}&to={today_s}&recompute=1",
             f"/member/strategy?from={d365}&to={today_s}&recompute=1",
             f"/member/strategy?from={d30}&to={today_s}&recompute=1",
@@ -51,7 +56,7 @@ def build_targets(mode: str, today: date) -> list[str]:
     if mode == "morning-check":
         # Reconcile visible pages after the morning race/prediction load.
         return [
-            f"/api/market-signals?date={today_s}",
+            f"/api/market-signals?date={today_s}&recompute=1",
             f"/member/strategy?from={d30}&to={today_s}&recompute=1",
             f"/member/strategy/monthly?recompute=1",
             f"/member/strategy?from={d30}&to={today_s}",

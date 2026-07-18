@@ -334,6 +334,10 @@ def main() -> int:
     # Live beforeinfo/weather correction. The scrape function has its own cooldown.
     if 8 <= now.hour <= 22:
         run_beforeinfo(now)
+        # Build the expensive adopted-strategy snapshot in the cron process.
+        # The web request then reads one cached JSON row instead of recomputing
+        # strategy joins when a user opens or refreshes the race list.
+        run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
 
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:

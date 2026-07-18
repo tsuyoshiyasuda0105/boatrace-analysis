@@ -52,6 +52,12 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
+MARKET_SIGNALS_CACHE_VERSION = "v11"
+
+
+def _market_signals_cache_key(target_date: str) -> str:
+    """Return the single cache key shared by the page and signal API."""
+    return f"market_signals:{MARKET_SIGNALS_CACHE_VERSION}:{target_date}"
 
 def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
     """Flask view 用 TTL キャッシュデコレータ。
@@ -208,6 +214,33 @@ def _write_page_html_cache(cache_key: str, html: str) -> None:
         logger.exception("failed to write page_html_cache: %s", cache_key)
 
 
+def _read_page_html_cache_stale(cache_key: str) -> Optional[str]:
+    """Read the last generated HTML without applying its TTL.
+
+    Expensive strategy pages are rebuilt by Render cron. A normal browser
+    request must not fall back to a multi-minute historical aggregation just
+    because the fresh TTL elapsed between cron runs.
+    """
+    try:
+        _ensure_page_html_cache_table()
+        mem_entry = _PAGE_HTML_MEM_CACHE.get(cache_key)
+        if mem_entry:
+            return mem_entry[1]
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT html, updated_at FROM page_html_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        if not row or not row[0]:
+            return None
+        html, updated_at = row[0], float(row[1] or 0)
+        _PAGE_HTML_MEM_CACHE[cache_key] = (updated_at, html)
+        return html
+    except Exception:
+        logger.exception("failed to read stale page cache: %s", cache_key)
+        return None
+
+
 def _read_json_cache(cache_key: str, max_age_sec: int) -> Optional[Any]:
     raw = _read_page_html_cache(cache_key, max_age_sec)
     if not raw:
@@ -309,7 +342,7 @@ def _race_basic_info(race_id: str) -> Optional[dict]:
     return info
 
 
-def _races_for_date(target_date: str) -> list[dict]:
+def _races_for_date(target_date: str, conn: Any = None) -> list[dict]:
     """N+1 クエリ問題を排除: サブクエリを LEFT JOIN + GROUP BY に置換。
     168 サブクエリ -> 1 集約クエリで 5-10 倍高速化。
 
@@ -317,7 +350,10 @@ def _races_for_date(target_date: str) -> list[dict]:
     upsert_results はレース前でも出走表に基づき空シェル行 (place=None) を
     6 行書き込むため、単純な COUNT だと未終了レースも「確定」と誤判定する。
     """
-    with db_connect() as conn:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
+    try:
         rows = conn.execute("""
             SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
                    s.name AS stadium_name,
@@ -330,6 +366,9 @@ def _races_for_date(target_date: str) -> list[dict]:
              GROUP BY r.race_id, r.stadium_number, r.race_number, r.race_closed_at, s.name
              ORDER BY r.stadium_number, r.race_number
         """, (target_date,)).fetchall()
+    finally:
+        if owns_connection:
+            conn.close()
     keys = ["race_id", "stadium_number", "race_number", "race_closed_at",
             "stadium_name", "results_count"]
     return [dict(zip(keys, r)) for r in rows]
@@ -395,11 +434,16 @@ def _venue_trend_summary(
     return tone, " / ".join(parts[:3])
 
 
-def _venue_environment_summaries_for_date(target_date: str) -> dict[int, dict[str, Any]]:
+def _venue_environment_summaries_for_date(
+    target_date: str,
+    conn: Any = None,
+) -> dict[int, dict[str, Any]]:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
     try:
-        with db_connect() as conn:
-            rows = conn.execute(
-                """
+        rows = conn.execute(
+            """
                 SELECT r.race_id,
                        r.stadium_number,
                        r.race_number,
@@ -420,12 +464,15 @@ def _venue_environment_summaries_for_date(target_date: str) -> dict[int, dict[st
                   LEFT JOIN race_tides rt ON rt.race_id = r.race_id
                  WHERE r.race_date = ?
                  ORDER BY r.stadium_number, r.race_number
-                """,
-                (target_date,),
-            ).fetchall()
+            """,
+            (target_date,),
+        ).fetchall()
     except Exception:
         logger.exception("venue environment summary query failed: %s", target_date)
         return {}
+    finally:
+        if owns_connection:
+            conn.close()
 
     grouped: dict[int, list[dict[str, Any]]] = {}
     keys = [
@@ -2649,8 +2696,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # CDN ヒット率が大幅向上し、ユーザ体感速度が改善する。
     def races():
         target_date = request.args.get("date") or date.today().isoformat()
-        races_list = _races_for_date(target_date)
-        venue_environment = _venue_environment_summaries_for_date(target_date)
+        with db_connect() as conn:
+            races_list = _races_for_date(target_date, conn=conn)
+            venue_environment = _venue_environment_summaries_for_date(
+                target_date,
+                conn=conn,
+            )
         roi_picks_visible = (
             is_member()
             and str(os.environ.get("BOATRACE_SHOW_ROI_PICKS", "1")).strip().lower()
@@ -2701,7 +2752,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
             today_iso = date.today().isoformat()
             cache_ttl = 60 if target_date >= today_iso else 3600
-            signal_cache_key = f"market_signals:v10:{target_date}"
+            signal_cache_key = _market_signals_cache_key(target_date)
             signal_payload = (
                 _read_json_cache(signal_cache_key, cache_ttl)
                 or _read_json_cache_stale(signal_cache_key)
@@ -3531,15 +3582,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         cache_ttl = 60 if target_date >= today_iso else 3600
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
         # v6: avoid serving stale empty signals after race data catches up.
-        cache_key = f"market_signals:v9:{target_date}"
-        recent_signal_date = target_date >= (date.today() - timedelta(days=1)).isoformat()
+        cache_key = _market_signals_cache_key(target_date)
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
-        if cached_payload is not None and not (recent_signal_date and _is_empty_market_signals_payload(cached_payload)):
+        if cached_payload is not None:
             resp = jsonify(cached_payload)
             resp.headers["X-Boatrace-Cache"] = "fresh"
             return resp
         stale_payload = None if force_recompute else _read_json_cache_stale(cache_key)
-        if stale_payload is not None and not (recent_signal_date and _is_empty_market_signals_payload(stale_payload)):
+        if stale_payload is not None:
             resp = jsonify(stale_payload)
             resp.headers["X-Boatrace-Cache"] = "stale"
             return resp
@@ -9817,6 +9867,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         payload = {
             "date": target_date,
+            "computed_at": datetime.now().isoformat(timespec="seconds"),
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
@@ -9825,11 +9876,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "accident_watch": accident_watch_payload,
             "signals": {s["race_id"]: s for s in signals},
         }
-        # Race data can arrive in stages. If an early run sees zero signals,
-        # do not persist that empty result to the DB cache; later recomputes
-        # must be able to rebuild from fresh DB even for yesterday/recent days.
-        if signals:
-            _write_json_cache(cache_key, payload)
+        # Zero candidates is also a valid computed result. Persist it so
+        # browsers never trigger the expensive strategy scan themselves.
+        _write_json_cache(cache_key, payload)
         resp = jsonify(payload)
         resp.headers["X-Boatrace-Cache"] = "recomputed"
         return resp
@@ -14120,6 +14169,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             )
             if cached_html:
                 return cached_html
+            stale_html = _read_page_html_cache_stale(page_cache_key)
+            if stale_html:
+                return stale_html
         # 通常表示は日別集計キャッシュを使う。ここで毎回 force_full_scan=True にすると
         # ROI 画面の初回表示が全日付の重い SQL 再集計になり、体感がかなり遅くなる。
         # 「最新に更新」ボタンを押した時だけ強制再集計する。
@@ -14287,11 +14339,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             cached_html = _read_page_html_cache(page_cache_key, 1800)
             if cached_html:
                 return cached_html
+            stale_html = _read_page_html_cache_stale(page_cache_key)
+            if stale_html:
+                return stale_html
 
         bet_keys = ROI_STRATEGY_KEYS
         adopted_keys = ROI_STRATEGY_KEYS
         try:
-            monthly_daily = _l4_daily_stats(monthly_from, monthly_to, force_full_scan=True)
+            monthly_daily = _l4_daily_stats(
+                monthly_from,
+                monthly_to,
+                force_full_scan=force_recompute,
+            )
         except Exception as e:
             logger.warning("monthly daily stats failed: %s", e)
             monthly_daily = []
