@@ -3959,8 +3959,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                           FROM racer_accident_period_stats
                                          WHERE period_start = ?
                                            AND source_kind = 'reconstructed'
-                                           AND rule_version LIKE 'official_table_2025_05_reconstructed%'
-                                           AND accident_rate >= 0.7
+                                           AND rule_version = 'official_table_2025_05_reconstructed_v2'
                                          GROUP BY racer_number
                                   ) ras
                                     ON ras.racer_number = e.racer_number
@@ -3985,10 +3984,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 info = all_race_info.get(rid2)
                                 if not info:
                                     continue
-                                info["accident_watch"] = items
-                                info["accident_watch_boats"] = [x.get("boat") for x in items if x.get("boat") is not None]
-                                info["max_accident_rate"] = items[0].get("rate") if items else None
-                                info["max_accident_points"] = items[0].get("points") if items else None
+                                for item in items:
+                                    boat_no = item.get("boat")
+                                    if boat_no is None:
+                                        continue
+                                    info[f"boat{boat_no}_accident_rate"] = item.get("rate")
+                                    info[f"boat{boat_no}_accident_points"] = item.get("points")
+                                    info[f"boat{boat_no}_accident_starts"] = item.get("starts")
+                                watch_items = [x for x in items if float(x.get("rate") or 0.0) >= 0.7]
+                                info["accident_watch"] = watch_items
+                                info["accident_watch_boats"] = [x.get("boat") for x in watch_items if x.get("boat") is not None]
+                                info["max_accident_rate"] = watch_items[0].get("rate") if watch_items else None
+                                info["max_accident_points"] = watch_items[0].get("points") if watch_items else None
                         except Exception as acc_exc:
                             logger.warning("accident watch query failed: %s", acc_exc)
                             try:
@@ -5412,6 +5419,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "wakamatsu_13_weak2_strong3_exa",
                 "heiwajima_13_acc2_late_exa",
                 "tamagawa_13_weak_sashi2_exa",
+                "tamagawa_13_acc2n30_m3_40_exa",
+                "tamagawa_123_fl3_n3_30_m2_35_tri",
+                "hamanako_12_pts3_m23_exa",
+                "kojima_12_acc3_m3_n23_exa",
+                "edogawa_13_acc2_n23_m3_exa",
+                "kiryu_13_fl2_n23_exa",
+                "ashiya_13_pts2_m23_exa",
+                "amagasaki_12_acc3_fl3_exa",
+                "omura_13_acc2_fl2_m23_exa",
+                "marugame_13_pts2_m23_exa",
             }
             adopted_priority_levels.update({
                 "morning_watch_SG",
@@ -7272,15 +7289,160 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             boat2_top2 = _to_float(ctx.get("boat2_top2"))
             boat2_course2_win = _to_float(ctx.get("boat2_course2_win_rate"))
             boat2_fl = _to_int(ctx.get("boat2_fl_sum")) or 0
+            boat2_acc = _to_float(ctx.get("boat2_accident_rate")) or 0.0
+            boat2_pts = _to_float(ctx.get("boat2_accident_points")) or 0.0
             boat3_natl_1 = _to_float(ctx.get("boat3_natl_1"))
+            boat3_top2 = _to_float(ctx.get("boat3_top2")) or 0.0
+            boat3_acc = _to_float(ctx.get("boat3_accident_rate")) or 0.0
+            boat3_pts = _to_float(ctx.get("boat3_accident_points")) or 0.0
+            boat3_fl = _to_int(ctx.get("boat3_fl_sum")) or 0
             boat3_motor = _to_float(ctx.get("boat3_motor_top2"))
             boat2_ex = _to_float(ctx.get("boat2_exhibition_time"))
             boat3_ex = _to_float(ctx.get("boat3_exhibition_time"))
             wind = _to_float(ctx.get("wind_speed"))
+            boat1_class = _to_int(ctx.get("class"))
 
             matched = []
+            is_boat1_a1 = boat1_class == 1
             wind_ok = wind is not None and wind <= 3.0
             ex3_le_ex2 = boat2_ex is not None and boat3_ex is not None and boat3_ex <= boat2_ex
+
+            def _append_accident_tag_strategy(
+                ok: bool,
+                level: str,
+                label: str,
+                bet: str,
+                recovery: float,
+                n: int,
+                hit_rate: float,
+                tag: str,
+            ) -> None:
+                if not ok:
+                    return
+                is_tri = "1-2-3" in str(bet)
+                matched.append({
+                    "level": level,
+                    "label": label,
+                    "bet": bet,
+                    "rank": "trifecta_niche" if is_tri else "exacta_niche",
+                    "rank_label": "事故率タグ",
+                    "rank_emoji": "ACC",
+                    "recovery": recovery,
+                    "n": n,
+                    "hit_rate": hit_rate,
+                    "trifecta_niche_hit_rate": hit_rate if is_tri else None,
+                    "trifecta_niche_recovery": recovery if is_tri else None,
+                    "exacta_niche_hit_rate": hit_rate if not is_tri else None,
+                    "exacta_niche_recovery": recovery if not is_tri else None,
+                    "is_trifecta_niche": is_tri,
+                    "is_exacta_niche": not is_tri,
+                    "name": label,
+                    "tag": tag,
+                    "tetsuban_score": 6,
+                    "timing_bucket": "preconfirmed",
+                    "is_display_confirmed": True,
+                })
+
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 5 and boat2_acc >= 0.5 and boat2_top2 is not None and boat2_top2 >= 30.0 and boat3_motor is not None and boat3_motor >= 40.0,
+                "tamagawa_13_acc2n30_m3_40_exa",
+                "多摩川 1-3 事故2型",
+                "2連単 1-3",
+                276.2,
+                21,
+                38.1,
+                "A1 + 2事故率>=0.5 + 2全国2連対>=30 + 3M>=40",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 5 and natl_1 is not None and natl_1 >= 5.5 and boat3_fl >= 1 and boat3_top2 >= 30.0 and boat2_motor is not None and boat2_motor >= 35.0,
+                "tamagawa_123_fl3_n3_30_m2_35_tri",
+                "多摩川 1-2-3 事故3型",
+                "3連単 1-2-3",
+                274.8,
+                23,
+                30.4,
+                "A1 + 1全国1着>=5.5 + 3FLあり + 3全国2連対>=30 + 2M>=35",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 6 and avg_st1 is not None and avg_st1 <= 0.17 and boat3_pts >= 20.0 and boat3_motor is not None and boat3_motor >= 35.0 and boat2_motor is not None and boat2_motor >= 35.0,
+                "hamanako_12_pts3_m23_exa",
+                "浜名湖 1-2 事故3型",
+                "2連単 1-2",
+                248.1,
+                37,
+                43.2,
+                "A1 + 1平均ST<=0.17 + 3事故点>=20 + 3M>=35 + 2M>=35",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 16 and boat3_acc >= 0.5 and boat3_motor is not None and boat3_motor >= 35.0 and boat3_top2 >= 30.0 and boat2_top2 is not None and boat2_top2 >= 32.0,
+                "kojima_12_acc3_m3_n23_exa",
+                "児島 1-2 事故3型",
+                "2連単 1-2",
+                224.0,
+                20,
+                35.0,
+                "A1 + 3事故率>=0.5 + 3M>=35 + 3全国2連対>=30 + 2全国2連対>=32",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 3 and boat2_acc >= 0.5 and boat2_top2 is not None and boat2_top2 >= 30.0 and boat3_top2 >= 28.0 and boat3_motor is not None and boat3_motor >= 35.0,
+                "edogawa_13_acc2_n23_m3_exa",
+                "江戸川 1-3 事故2型",
+                "2連単 1-3",
+                217.0,
+                20,
+                35.0,
+                "A1 + 2事故率>=0.5 + 2全国2連対>=30 + 3全国2連対>=28 + 3M>=35",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 1 and avg_st1 is not None and avg_st1 <= 0.17 and boat2_fl >= 1 and boat2_top2 is not None and boat2_top2 >= 30.0 and boat3_top2 >= 30.0,
+                "kiryu_13_fl2_n23_exa",
+                "桐生 1-3 事故2型",
+                "2連単 1-3",
+                192.2,
+                23,
+                34.8,
+                "A1 + 1平均ST<=0.17 + 2FLあり + 2全国2連対>=30 + 3全国2連対>=30",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 21 and boat2_pts >= 20.0 and boat2_motor is not None and boat2_motor >= 35.0 and boat3_top2 >= 28.0 and boat3_motor is not None and boat3_motor >= 40.0,
+                "ashiya_13_pts2_m23_exa",
+                "芦屋 1-3 事故2型",
+                "2連単 1-3",
+                187.1,
+                21,
+                33.3,
+                "A1 + 2事故点>=20 + 2M>=35 + 3全国2連対>=28 + 3M>=40",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 13 and boat3_acc >= 0.7 and boat3_fl >= 1 and boat3_top2 >= 30.0 and boat2_motor is not None and boat2_motor >= 35.0,
+                "amagasaki_12_acc3_fl3_exa",
+                "尼崎 1-2 事故3型",
+                "2連単 1-2",
+                183.3,
+                27,
+                37.0,
+                "A1 + 3事故率>=0.7 + 3FLあり + 3全国2連対>=30 + 2M>=35",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 24 and boat2_acc >= 0.5 and boat2_fl >= 1 and boat2_motor is not None and boat2_motor >= 35.0 and boat2_top2 is not None and boat2_top2 >= 30.0 and boat3_motor is not None and boat3_motor >= 35.0,
+                "omura_13_acc2_fl2_m23_exa",
+                "大村 1-3 事故2型",
+                "2連単 1-3",
+                178.5,
+                20,
+                30.0,
+                "A1 + 2事故率>=0.5 + 2FLあり + 2M>=35 + 2全国2連対>=30 + 3M>=35",
+            )
+            _append_accident_tag_strategy(
+                is_boat1_a1 and stadium == 15 and avg_st1 is not None and avg_st1 <= 0.17 and boat2_pts >= 20.0 and boat2_motor is not None and boat2_motor >= 35.0 and boat3_motor is not None and boat3_motor >= 35.0,
+                "marugame_13_pts2_m23_exa",
+                "丸亀 1-3 事故2型",
+                "2連単 1-3",
+                166.2,
+                24,
+                37.5,
+                "A1 + 1平均ST<=0.17 + 2事故点>=20 + 2M>=35 + 3M>=35",
+            )
 
             tri134_pre_ok = (
                 natl_1 is not None and natl_1 >= 7.5
@@ -9708,12 +9870,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     TOKONAME_14_WINTER_EXA_CACHE_VERSION = "tokoname_14_winter_exa_v1"
     TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION = "tokoname_123_late_exst_tri_v1"
     HEIWAJIMA_13_ACC2_LATE_EXA_CACHE_VERSION = "heiwajima_13_acc2_late_exa_v1"
+    ACCIDENT_TAG_ADOPTED_CACHE_VERSION = "accident_tag_adopted_v1"
     MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION = "marugame_123_weak4_t5_tri_v1"
     MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION = "marugame_123_late_weak4_t5_tri_v1"
     EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION = "edogawa_132_weak4_t5_tri_v1"
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v21"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v22"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -9774,6 +9937,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ("_tokoname_14_winter_exa_version", TOKONAME_14_WINTER_EXA_CACHE_VERSION),
             ("_tokoname_123_late_exst_tri_version", TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION),
             ("_heiwajima_13_acc2_late_exa_version", HEIWAJIMA_13_ACC2_LATE_EXA_CACHE_VERSION),
+            ("_accident_tag_adopted_version", ACCIDENT_TAG_ADOPTED_CACHE_VERSION),
         )
         for version_key, expected_version in required_versions:
             if day_d.get(version_key) != expected_version:
@@ -9839,10 +10003,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "kojima_124_tri",
                             "kojima_13_exa",
                             "miyajima_tide_132_tri",
-            "miyajima_fl_132_tri",
-                    "miyajima_fl_132_tri",
-            "miyajima_fl_132_tri",
-                "miyajima_fl_132_tri",
                             "miyajima_fl_132_tri",
                             "tokuyama_123_tri",
                             "tokuyama_12a_exa",
@@ -9851,7 +10011,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "shimonoseki_132_tri",
                             "fukuoka_tide_132_tri",
                             "ashiya_boat4_exa",
-                "ashiya_4head_flow_tri",
                             "ashiya_4head_flow_tri",
                             "marugame_tide_123_tri",
                             "omura_14_exa",
@@ -9874,6 +10033,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "edogawa_132_weak4_t5_tri",
                             "karatsu_123_weak4_t5_tri",
                             "suminoe_124_weak3_t5_tri",
+                            "tamagawa_13_acc2n30_m3_40_exa",
+                            "tamagawa_123_fl3_n3_30_m2_35_tri",
+                            "hamanako_12_pts3_m23_exa",
+                            "kojima_12_acc3_m3_n23_exa",
+                            "edogawa_13_acc2_n23_m3_exa",
+                            "kiryu_13_fl2_n23_exa",
+                            "ashiya_13_pts2_m23_exa",
+                            "amagasaki_12_acc3_fl3_exa",
+                            "omura_13_acc2_fl2_m23_exa",
+                            "marugame_13_pts2_m23_exa",
                         )
                         for prefix in adopted_metric_prefixes:
                             day_d.setdefault(f"{prefix}_bets", 0)
@@ -11542,6 +11711,127 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("13-series adopted daily stats failed: %s", e)
 
+        # 2026-07-18 adopted accident-tag strategies.
+        try:
+            with db_connect() as conn:
+                accident_rows = conn.execute(
+                    """
+                    WITH acc AS (
+                        SELECT racer_number, period_start,
+                               MAX(accident_rate) AS accident_rate,
+                               MAX(accident_points) AS accident_points
+                          FROM racer_accident_period_stats
+                         WHERE source_kind = 'reconstructed'
+                           AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                         GROUP BY racer_number, period_start
+                    )
+                    SELECT r.race_id, r.race_date, r.stadium_number,
+                           e1.class_number,
+                           e1.national_top_1_percent AS b1_natl1,
+                           e1.avg_start_timing AS b1_avg_st,
+                           e2.national_top_2_percent AS b2_top2,
+                           e2.assigned_motor_top_2_percent AS b2_motor,
+                           (COALESCE(e2.flying_count, 0) + COALESCE(e2.late_count, 0)) AS b2_fl_sum,
+                           COALESCE(a2.accident_rate, 0) AS b2_accident_rate,
+                           COALESCE(a2.accident_points, 0) AS b2_accident_points,
+                           e3.national_top_2_percent AS b3_top2,
+                           e3.assigned_motor_top_2_percent AS b3_motor,
+                           (COALESCE(e3.flying_count, 0) + COALESCE(e3.late_count, 0)) AS b3_fl_sum,
+                           COALESCE(a3.accident_rate, 0) AS b3_accident_rate,
+                           COALESCE(a3.accident_points, 0) AS b3_accident_points,
+                           res1.boat_number AS w1,
+                           p123.payout AS pay123,
+                           e12.payout AS pay12,
+                           e13.payout AS pay13
+                      FROM races r
+                      JOIN race_entries e1 ON e1.race_id = r.race_id AND e1.boat_number = 1
+                      JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
+                      JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
+                      LEFT JOIN acc a2
+                        ON a2.racer_number = e2.racer_number
+                       AND a2.period_start = CASE
+                           WHEN CAST(substr(r.race_date, 6, 2) AS INTEGER) BETWEEN 5 AND 10
+                             THEN substr(r.race_date, 1, 4) || '-05-01'
+                           WHEN CAST(substr(r.race_date, 6, 2) AS INTEGER) >= 11
+                             THEN substr(r.race_date, 1, 4) || '-11-01'
+                           ELSE printf('%04d', CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1) || '-11-01'
+                       END
+                      LEFT JOIN acc a3
+                        ON a3.racer_number = e3.racer_number
+                       AND a3.period_start = CASE
+                           WHEN CAST(substr(r.race_date, 6, 2) AS INTEGER) BETWEEN 5 AND 10
+                             THEN substr(r.race_date, 1, 4) || '-05-01'
+                           WHEN CAST(substr(r.race_date, 6, 2) AS INTEGER) >= 11
+                             THEN substr(r.race_date, 1, 4) || '-11-01'
+                           ELSE printf('%04d', CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1) || '-11-01'
+                       END
+                      LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position = 1
+                      LEFT JOIN race_payouts p123 ON p123.race_id = r.race_id AND p123.bet_type = 'trifecta' AND p123.combination = '1-2-3'
+                      LEFT JOIN race_payouts e12 ON e12.race_id = r.race_id AND e12.bet_type = 'exacta' AND e12.combination = '1-2'
+                      LEFT JOIN race_payouts e13 ON e13.race_id = r.race_id AND e13.bet_type = 'exacta' AND e13.combination = '1-3'
+                     WHERE r.race_date BETWEEN ? AND ?
+                    """,
+                    (from_date, to_date),
+                ).fetchall()
+
+            def _af(value, default=0.0):
+                try:
+                    return float(value) if value is not None else default
+                except (TypeError, ValueError):
+                    return default
+
+            def _ai(value, default=0):
+                try:
+                    return int(value) if value is not None else default
+                except (TypeError, ValueError):
+                    return default
+
+            for row in accident_rows:
+                (
+                    race_id, rdate, stadium_no, b1_class, b1_natl1, b1_avg_st,
+                    b2_top2, b2_motor, b2_fl, b2_acc, b2_pts,
+                    b3_top2, b3_motor, b3_fl, b3_acc, b3_pts,
+                    w1, pay123, pay12, pay13,
+                ) = row
+                if w1 is None or _ai(b1_class) != 1:
+                    continue
+                stadium_no = _ai(stadium_no)
+                b1_natl1_v = _af(b1_natl1)
+                b1_avg_st_v = _af(b1_avg_st, None)
+                b2_top2_v = _af(b2_top2)
+                b2_motor_v = _af(b2_motor)
+                b2_fl_v = _ai(b2_fl)
+                b2_acc_v = _af(b2_acc)
+                b2_pts_v = _af(b2_pts)
+                b3_top2_v = _af(b3_top2)
+                b3_motor_v = _af(b3_motor)
+                b3_fl_v = _ai(b3_fl)
+                b3_acc_v = _af(b3_acc)
+                b3_pts_v = _af(b3_pts)
+
+                if stadium_no == 5 and b2_acc_v >= 0.5 and b2_top2_v >= 30.0 and b3_motor_v >= 40.0:
+                    _record_adopted_signal(race_id, rdate, "tamagawa_13_acc2n30_m3_40_exa", 276.2, bool(pay13), int(pay13 or 0))
+                if stadium_no == 5 and b1_natl1_v >= 5.5 and b3_fl_v >= 1 and b3_top2_v >= 30.0 and b2_motor_v >= 35.0:
+                    _record_adopted_signal(race_id, rdate, "tamagawa_123_fl3_n3_30_m2_35_tri", 274.8, bool(pay123), int(pay123 or 0))
+                if stadium_no == 6 and b1_avg_st_v is not None and b1_avg_st_v <= 0.17 and b3_pts_v >= 20.0 and b3_motor_v >= 35.0 and b2_motor_v >= 35.0:
+                    _record_adopted_signal(race_id, rdate, "hamanako_12_pts3_m23_exa", 248.1, bool(pay12), int(pay12 or 0))
+                if stadium_no == 16 and b3_acc_v >= 0.5 and b3_motor_v >= 35.0 and b3_top2_v >= 30.0 and b2_top2_v >= 32.0:
+                    _record_adopted_signal(race_id, rdate, "kojima_12_acc3_m3_n23_exa", 224.0, bool(pay12), int(pay12 or 0))
+                if stadium_no == 3 and b2_acc_v >= 0.5 and b2_top2_v >= 30.0 and b3_top2_v >= 28.0 and b3_motor_v >= 35.0:
+                    _record_adopted_signal(race_id, rdate, "edogawa_13_acc2_n23_m3_exa", 217.0, bool(pay13), int(pay13 or 0))
+                if stadium_no == 1 and b1_avg_st_v is not None and b1_avg_st_v <= 0.17 and b2_fl_v >= 1 and b2_top2_v >= 30.0 and b3_top2_v >= 30.0:
+                    _record_adopted_signal(race_id, rdate, "kiryu_13_fl2_n23_exa", 192.2, bool(pay13), int(pay13 or 0))
+                if stadium_no == 21 and b2_pts_v >= 20.0 and b2_motor_v >= 35.0 and b3_top2_v >= 28.0 and b3_motor_v >= 40.0:
+                    _record_adopted_signal(race_id, rdate, "ashiya_13_pts2_m23_exa", 187.1, bool(pay13), int(pay13 or 0))
+                if stadium_no == 13 and b3_acc_v >= 0.7 and b3_fl_v >= 1 and b3_top2_v >= 30.0 and b2_motor_v >= 35.0:
+                    _record_adopted_signal(race_id, rdate, "amagasaki_12_acc3_fl3_exa", 183.3, bool(pay12), int(pay12 or 0))
+                if stadium_no == 24 and b2_acc_v >= 0.5 and b2_fl_v >= 1 and b2_motor_v >= 35.0 and b2_top2_v >= 30.0 and b3_motor_v >= 35.0:
+                    _record_adopted_signal(race_id, rdate, "omura_13_acc2_fl2_m23_exa", 178.5, bool(pay13), int(pay13 or 0))
+                if stadium_no == 15 and b1_avg_st_v is not None and b1_avg_st_v <= 0.17 and b2_pts_v >= 20.0 and b2_motor_v >= 35.0 and b3_motor_v >= 35.0:
+                    _record_adopted_signal(race_id, rdate, "marugame_13_pts2_m23_exa", 166.2, bool(pay13), int(pay13 or 0))
+        except Exception as e:
+            logger.warning("accident-tag adopted daily stats failed: %s", e)
+
         # grouped 1-3-2 adopted signal (Gamagori / Miyajima / Kojima / Fukuoka)
         try:
             from collections import defaultdict, deque
@@ -13013,6 +13303,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_tokoname_12_late_a_exa_version"] = TOKONAME_12_LATE_A_EXA_CACHE_VERSION
                         day_d["_tokoname_14_winter_exa_version"] = TOKONAME_14_WINTER_EXA_CACHE_VERSION
                         day_d["_tokoname_123_late_exst_tri_version"] = TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION
+                        day_d["_accident_tag_adopted_version"] = ACCIDENT_TAG_ADOPTED_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
@@ -13663,6 +13954,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "karatsu_123_weak4_t5_tri", "label": "唐津 1-2-3 弱4型", "short": "kar123w4", "color": "#06b6d4", "timing": "same_day"},
         {"key": "suminoe_124_weak3_t5_tri", "label": "住之江 1-2-4 弱3型", "short": "sum124w3", "color": "#f59e0b", "timing": "same_day"},
     )
+    ROI_STRATEGIES = ROI_STRATEGIES + (
+        {"key": "tamagawa_13_acc2n30_m3_40_exa", "label": "多摩川 1-3 事故2型", "short": "tama13a", "color": "#22c55e", "timing": "previous_day"},
+        {"key": "tamagawa_123_fl3_n3_30_m2_35_tri", "label": "多摩川 1-2-3 事故3型", "short": "tama123a", "color": "#16a34a", "timing": "previous_day"},
+        {"key": "hamanako_12_pts3_m23_exa", "label": "浜名湖 1-2 事故3型", "short": "hama12a", "color": "#38bdf8", "timing": "previous_day"},
+        {"key": "kojima_12_acc3_m3_n23_exa", "label": "児島 1-2 事故3型", "short": "koj12a", "color": "#34d399", "timing": "previous_day"},
+        {"key": "edogawa_13_acc2_n23_m3_exa", "label": "江戸川 1-3 事故2型", "short": "edo13a", "color": "#60a5fa", "timing": "previous_day"},
+        {"key": "kiryu_13_fl2_n23_exa", "label": "桐生 1-3 事故2型", "short": "kir13a", "color": "#0ea5e9", "timing": "previous_day"},
+        {"key": "ashiya_13_pts2_m23_exa", "label": "芦屋 1-3 事故2型", "short": "ash13a", "color": "#2dd4bf", "timing": "previous_day"},
+        {"key": "amagasaki_12_acc3_fl3_exa", "label": "尼崎 1-2 事故3型", "short": "ama12a", "color": "#f97316", "timing": "previous_day"},
+        {"key": "omura_13_acc2_fl2_m23_exa", "label": "大村 1-3 事故2型", "short": "omu13a", "color": "#f472b6", "timing": "previous_day"},
+        {"key": "marugame_13_pts2_m23_exa", "label": "丸亀 1-3 事故2型", "short": "mgm13a", "color": "#a78bfa", "timing": "previous_day"},
+    )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
     ROI_METRIC_EXTRA_KEYS = (
         "win", "exa", "tri", "c80", "pro", "sgg12",
@@ -13718,6 +14021,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "edogawa_132_weak4_t5_tri": "edogawa",
         "karatsu_123_weak4_t5_tri": "karatsu",
     }
+    ROI_STRATEGY_VENUE_BY_KEY.update({
+        "tamagawa_13_acc2n30_m3_40_exa": "tamagawa",
+        "tamagawa_123_fl3_n3_30_m2_35_tri": "tamagawa",
+        "hamanako_12_pts3_m23_exa": "hamanako",
+        "kojima_12_acc3_m3_n23_exa": "kojima",
+        "edogawa_13_acc2_n23_m3_exa": "edogawa",
+        "kiryu_13_fl2_n23_exa": "kiryu",
+        "ashiya_13_pts2_m23_exa": "ashiya",
+        "amagasaki_12_acc3_fl3_exa": "amagasaki",
+        "omura_13_acc2_fl2_m23_exa": "omura",
+        "marugame_13_pts2_m23_exa": "marugame",
+    })
 
     ROI_STRATEGY_VENUE_ORDER = {
         "kiryu": 1,
@@ -13890,12 +14205,30 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         today_row = next((r for r in rows if str(r.get("date")) == to_d), None)
         today_bets = sum(int((today_row or {}).get(f"{k}_bets", 0) or 0) for k in adopted_keys)
         today_hits = sum(int((today_row or {}).get(f"{k}_hits", 0) or 0) for k in adopted_keys)
+        today_active_strategies = []
+        for s in display_strategies:
+            key = s["key"]
+            bets_v = int((today_row or {}).get(f"{key}_bets", 0) or 0)
+            if bets_v <= 0:
+                continue
+            hits_v = int((today_row or {}).get(f"{key}_hits", 0) or 0)
+            rec_v = (today_row or {}).get(f"{key}_recovery")
+            today_active_strategies.append({
+                "key": key,
+                "label": s["label"],
+                "bets": bets_v,
+                "hits": hits_v,
+                "hit_rate": ((hits_v / bets_v) * 100) if bets_v > 0 else None,
+                "recovery": rec_v,
+            })
+
         today_summary = {
             "date": to_d,
             "n_total": int((today_row or {}).get("n_total", 0) or 0),
             "bets": today_bets,
             "hits": today_hits,
             "hit_rate": ((today_hits / today_bets) * 100) if today_bets > 0 else None,
+            "active_strategies": today_active_strategies,
         }
 
         html = render_template(
