@@ -34,6 +34,12 @@ from flask import Flask, abort, jsonify, make_response, redirect, render_templat
 import config
 from src.collectors import openapi
 from src.db.connection import connect as db_connect
+from src.evaluation.course_fit_strategy import (
+    COURSE_FIT_STRATEGIES,
+    iter_backtest_matches as iter_course_fit_backtest_matches,
+    load_live_matches as load_course_fit_live_matches,
+    representative_match as representative_course_fit_match,
+)
 from src.web.auth import (
     is_member, login_required, member_only_api,
     register_auth_routes,
@@ -52,7 +58,7 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v12"
+MARKET_SIGNALS_CACHE_VERSION = "v13"
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -3665,7 +3671,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             resp = jsonify(cached_payload)
             resp.headers["X-Boatrace-Cache"] = "fresh"
             return resp
-        stale_payload = None if force_recompute else _read_json_cache_stale(cache_key)
+        # 当日以降の market signals は展示・潮・直前オッズで採否が動く。
+        # stale を返すと、朝の古い候補が残ったり、逆に最新の採用候補が隠れたりするため、
+        # live date は TTL 切れ時に必ず再計算する。過去日は表示速度優先で stale fallback を許可。
+        stale_payload = None if (force_recompute or target_date >= today_iso) else _read_json_cache_stale(cache_key)
         if stale_payload is not None:
             resp = jsonify(stale_payload)
             resp.headers["X-Boatrace-Cache"] = "stale"
@@ -5558,6 +5567,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "amagasaki_12_acc3_fl3_exa",
                 "omura_13_acc2_fl2_m23_exa",
                 "marugame_13_pts2_m23_exa",
+                "tokoname_coursefit_boat2_win",
+                "tokoname_coursefit_boat3_general_win",
+                "biwako_coursefit_boat4_gap10_general_win",
+                "shimonoseki_coursefit_boat2_win",
+                "biwako_coursefit_boat4_gap5_general_win",
+                "biwako_coursefit_boat4_rank1_general_win",
+                "biwako_coursefit_boat4_gap10_all_win",
             }
             adopted_priority_levels.update({
                 "morning_watch_SG",
@@ -9864,6 +9880,75 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "l4": morning_l4,
                         })
 
+        # Course-fit strategies share this evaluator with the ROI backtest below.
+        # Biwako C4/C6/C7/C8 can match the same race; the market list shows the
+        # strictest representative while daily ROI retains every strategy key.
+        try:
+            with db_connect() as course_fit_conn:
+                course_fit_groups = load_course_fit_live_matches(course_fit_conn, target_date)
+            signal_by_race = {str(item.get("race_id")): item for item in signals}
+            for group in course_fit_groups:
+                representative = representative_course_fit_match(group["matches"])
+                if representative is None:
+                    continue
+                strategy = representative["strategy"]
+                matched_strategies = [item["strategy"] for item in group["matches"]]
+                matched_codes = [item.code for item in matched_strategies]
+                course_fit_l4 = {
+                    "level": strategy.key,
+                    "label": strategy.label,
+                    "rank": strategy.code,
+                    "rank_label": strategy.code,
+                    "recovery": strategy.recovery,
+                    "n": strategy.n,
+                    "hit_rate": strategy.hit_rate,
+                    "bet": strategy.bet_label,
+                    "condition": (
+                        f"{strategy.code} / {strategy.condition} / "
+                        f"\u30b3\u30fc\u30b9\u9069\u5408\u6307\u6570 {representative['score']['fit']:.1f}"
+                    ),
+                    "is_reference": False,
+                    "is_course_fit": True,
+                    "course_fit_codes": matched_codes,
+                    "course_fit_keys": [item.key for item in matched_strategies],
+                    "course_fit_labels": [item.label for item in matched_strategies],
+                }
+                race_id = str(group["race_id"])
+                existing = signal_by_race.get(race_id)
+                if existing is None:
+                    existing = {
+                        "race_id": race_id,
+                        "tier": "course_fit",
+                        "min_payout": None,
+                        "source": "course_fit_strategy",
+                        "expected_roi": (strategy.recovery - 100.0) / 100.0,
+                        "title": strategy.label,
+                        "is_positive_ev": strategy.recovery >= 130.0,
+                        "weather": None,
+                        "weather_label": None,
+                        "is_rain": False,
+                        "rain_exclusion_active": False,
+                        "is_rain_excluded": False,
+                        "n_female": 0,
+                        "is_female_present": False,
+                        "l4": course_fit_l4,
+                    }
+                    signals.append(existing)
+                    signal_by_race[race_id] = existing
+                else:
+                    selected_l4 = _pick_best_market_signal(existing.get("l4"), course_fit_l4)
+                    existing["l4"] = selected_l4
+                    if selected_l4 is course_fit_l4:
+                        existing["tier"] = "course_fit"
+                        existing["source"] = "course_fit_strategy"
+                        existing["expected_roi"] = (strategy.recovery - 100.0) / 100.0
+                        existing["title"] = strategy.label
+                        existing["is_positive_ev"] = True
+                    else:
+                        existing.setdefault("course_fit_matches", []).extend(matched_codes)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("course-fit live signals failed: %s", exc)
+
         data_status = {
             "race_basic": {"latest": None, "count": 0, "total": 0},
             "preview": {"latest": None, "count": 0, "total": 0},
@@ -10030,6 +10115,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION = "edogawa_132_weak4_t5_tri_v1"
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
+    COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
     ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v22"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
@@ -10269,6 +10355,33 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     d[f"{bet}_profit"] = pay - unit * n if n else 0
             return [stats_by_date[d] for d in sorted(stats_by_date)]
 
+        def _merge_course_fit_daily(stats_by_date: dict[str, dict]) -> dict[str, dict]:
+            """Overlay only the seven course-fit metrics on existing daily cache.
+
+            This avoids invalidating and rebuilding every legacy strategy merely
+            because the independently calculated course-fit family was added.
+            """
+            course_fit_keys = tuple(strategy.key for strategy in COURSE_FIT_STRATEGIES)
+            for day in stats_by_date.values():
+                for key in course_fit_keys:
+                    day[f"{key}_bets"] = 0
+                    day[f"{key}_hits"] = 0
+                    day[f"{key}_pay"] = 0
+            try:
+                with db_connect() as course_fit_conn:
+                    matches = iter_course_fit_backtest_matches(course_fit_conn, from_date, to_date)
+                    for match in matches:
+                        rdate = match["date"]
+                        day = stats_by_date.setdefault(rdate, {"date": rdate, "n_total": 0, "n_l4": 0})
+                        key = match["strategy"].key
+                        day[f"{key}_bets"] = int(day.get(f"{key}_bets", 0) or 0) + 1
+                        if match["hit"]:
+                            day[f"{key}_hits"] = int(day.get(f"{key}_hits", 0) or 0) + 1
+                            day[f"{key}_pay"] = int(day.get(f"{key}_pay", 0) or 0) + int(match["pay"] or 0)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("course-fit daily overlay failed: %s", exc)
+            return stats_by_date
+
         # === B. cache に無い日付を識別 ===
         today_iso = _date.today().isoformat()
         try:
@@ -10317,11 +10430,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     },
                 )
             if not recompute_dates:
-                return _finalize_l4_daily_rows(cached_by_date)
+                return _finalize_l4_daily_rows(_merge_course_fit_daily(cached_by_date))
             missing_dates = recompute_dates
         if not missing_dates:
             # 完全 cache hit でも派生指標を補完して返す
-            return _finalize_l4_daily_rows(cached_by_date)
+            return _finalize_l4_daily_rows(_merge_course_fit_daily(cached_by_date))
 
         # missing_dates の範囲で SQL 実行 (連続範囲を想定、 非連続は filter で対応)
         sql_from = missing_dates[0]
@@ -13458,6 +13571,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_tokoname_14_winter_exa_version"] = TOKONAME_14_WINTER_EXA_CACHE_VERSION
                         day_d["_tokoname_123_late_exst_tri_version"] = TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION
                         day_d["_accident_tag_adopted_version"] = ACCIDENT_TAG_ADOPTED_CACHE_VERSION
+                        day_d["_course_fit_win_version"] = COURSE_FIT_WIN_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
@@ -13482,7 +13596,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             elif rdate not in result_by_date:
                 result_by_date[rdate] = day_d
 
-        finalized_rows = _finalize_l4_daily_rows(result_by_date)
+        finalized_rows = _finalize_l4_daily_rows(_merge_course_fit_daily(result_by_date))
         return sorted(finalized_rows, key=lambda x: x["date"], reverse=True)
 
     def _l4_races_for_date(target_date: str) -> list[dict]:
@@ -14020,6 +14134,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "edogawa_132_weak4_t5_tri",
         "karatsu_123_weak4_t5_tri",
         "suminoe_124_weak3_t5_tri",
+        "tokoname_coursefit_boat2_win",
+        "tokoname_coursefit_boat3_general_win",
+        "biwako_coursefit_boat4_gap10_general_win",
+        "shimonoseki_coursefit_boat2_win",
+        "biwako_coursefit_boat4_gap5_general_win",
+        "biwako_coursefit_boat4_rank1_general_win",
+        "biwako_coursefit_boat4_gap10_all_win",
     )
 
     MARKET_SIGNAL_WATCH_LEVELS = (
@@ -14140,6 +14261,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "omura_13_acc2_fl2_m23_exa", "label": "大村 1-3 事故2型", "short": "omu13a", "color": "#f472b6", "timing": "previous_day"},
         {"key": "marugame_13_pts2_m23_exa", "label": "丸亀 1-3 事故2型", "short": "mgm13a", "color": "#a78bfa", "timing": "previous_day"},
     )
+    _COURSE_FIT_COLORS = {
+        "C1": "#38bdf8", "C3": "#0ea5e9", "C4": "#a3e635",
+        "C5": "#22d3ee", "C6": "#84cc16", "C7": "#65a30d", "C8": "#4d7c0f",
+    }
+    ROI_STRATEGIES = ROI_STRATEGIES + tuple(
+        {
+            "key": strategy.key,
+            "label": strategy.label,
+            "short": f"coursefit_{strategy.code.lower()}",
+            "color": _COURSE_FIT_COLORS[strategy.code],
+            "timing": "same_day",
+        }
+        for strategy in COURSE_FIT_STRATEGIES
+    )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
     ROI_METRIC_EXTRA_KEYS = (
         "win", "exa", "tri", "c80", "pro", "sgg12",
@@ -14206,6 +14341,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "amagasaki_12_acc3_fl3_exa": "amagasaki",
         "omura_13_acc2_fl2_m23_exa": "omura",
         "marugame_13_pts2_m23_exa": "marugame",
+    })
+
+    ROI_STRATEGY_VENUE_BY_KEY.update({
+        "tokoname_coursefit_boat2_win": "tokoname",
+        "tokoname_coursefit_boat3_general_win": "tokoname",
+        "biwako_coursefit_boat4_gap10_general_win": "biwako",
+        "shimonoseki_coursefit_boat2_win": "shimonoseki",
+        "biwako_coursefit_boat4_gap5_general_win": "biwako",
+        "biwako_coursefit_boat4_rank1_general_win": "biwako",
+        "biwako_coursefit_boat4_gap10_all_win": "biwako",
     })
 
     ROI_STRATEGY_VENUE_ORDER = {
