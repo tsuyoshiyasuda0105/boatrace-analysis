@@ -445,6 +445,14 @@
                 <span style="display: inline-block; vertical-align: middle;">
                   <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
+                  {% if p.has_accident_watch %}
+                    <div class="racer-accident-row">
+                      <span class="racer-accident-tag"
+                            title="事故率 {{ '%.2f' | format(p.accident_rate) }} / 事故点 {{ p.accident_points }} / 出走 {{ p.accident_starts }}">
+                        事故07超
+                      </span>
+                    </div>
+                  {% endif %}
                   {% if p.kimarite_skill is defined %}
                     <div class="kimarite-skill-row">
                       <span class="kimarite-skill-tag {% if p.kimarite_skill.is_strong_escape %}is-strong{% endif %}"

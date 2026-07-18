@@ -1629,6 +1629,25 @@ main h2 {
   letter-spacing: 0.04em;
 }
 
+.racer-accident-row {
+  margin-top: 5px;
+}
+.racer-accident-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  background: rgba(127, 29, 29, 0.34);
+  color: #fecaca;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: 0;
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.18);
+}
+
 /* Probability bar */
 .prob-cell {
   display: inline-flex;

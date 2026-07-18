@@ -1616,6 +1616,74 @@ def _accident_period_start_for_date(date_iso: str) -> str:
     return f"{y - 1:04d}-11-01"
 
 
+def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
+    """Attach V2 accident-rate tags to race-detail rows.
+
+    The tag is display-only. It uses the same V2 reconstructed accident-period
+    source as the index-page accident watch badge.
+    """
+    if not preds:
+        return
+    info = _race_basic_info(race_id)
+    if not info:
+        return
+    period_start = _accident_period_start_for_date(str(info.get("race_date") or ""))
+    racer_numbers_set = set()
+    for p in preds:
+        try:
+            racer_numbers_set.add(int(p.get("racer_number")))
+        except Exception:
+            continue
+    racer_numbers = sorted(racer_numbers_set)
+    if not racer_numbers:
+        return
+    placeholders = ",".join("?" for _ in racer_numbers)
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT racer_number,
+                       MAX(accident_rate) AS accident_rate,
+                       MAX(accident_points) AS accident_points,
+                       MAX(starts_count) AS starts_count
+                  FROM racer_accident_period_stats
+                 WHERE period_start = ?
+                   AND racer_number IN ({placeholders})
+                   AND source_kind = 'reconstructed'
+                   AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                 GROUP BY racer_number
+                """,
+                (period_start, *racer_numbers),
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("race detail accident tag query failed for %s: %s", race_id, exc)
+        return
+
+    by_racer = {}
+    for racer_number, rate, points, starts in rows:
+        try:
+            key = int(racer_number)
+        except Exception:
+            continue
+        by_racer[key] = {
+            "rate": round(float(rate or 0.0), 3),
+            "points": int(points or 0),
+            "starts": int(starts or 0),
+        }
+    for p in preds:
+        try:
+            racer_number = int(p.get("racer_number"))
+        except Exception:
+            continue
+        acc = by_racer.get(racer_number)
+        if not acc:
+            continue
+        p["accident_rate"] = acc["rate"]
+        p["accident_points"] = acc["points"]
+        p["accident_starts"] = acc["starts"]
+        p["has_accident_watch"] = acc["rate"] >= 0.7
+
+
 def _branch_label(branch_number: Any) -> str:
     try:
         n = int(branch_number)
@@ -2867,6 +2935,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if preds:
                     fallback_notice = "予測データ未投入のため、出走表ベースの詳細を表示しています。"
             _attach_kimarite_skill_tags(race_id, preds)
+            _attach_accident_watch_tags(race_id, preds)
             t_tags = time.perf_counter() - t1
         except Exception as e:
             logger.exception("prediction failed: %s", race_id)
@@ -2885,6 +2954,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             preds = _race_entry_fallback_rows(race_id)
             if preds:
                 _attach_kimarite_skill_tags(race_id, preds)
+                _attach_accident_watch_tags(race_id, preds)
                 html = render_template(
                     "race.html",
                     info=info,
