@@ -1,6 +1,7 @@
 (() => {
   const shell = document.getElementById("race-signal-shell");
   const staticVersion = shell?.dataset?.staticVersion || "v1";
+
   const esc = (value) => String(value ?? "").replace(/[&<>\"']/g, (ch) => ({
     "&": "&amp;",
     "<": "&lt;",
@@ -10,52 +11,198 @@
   }[ch]));
   const pct = (value) => value == null ? "-" : `${Number(value).toFixed(1)}%`;
   const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
-  const posClass = (value) => value ? `f-${Number(value)}` : "";
   const signed = (value, digits = 2) => value == null ? "-" : `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(digits)}`;
+  const posClass = (value) => value ? `f-${Number(value)}` : "";
   const toneClass = (tone) => tone === "up" ? "is-up" : tone === "down" ? "is-down" : "is-flat";
   const historyCache = new Map();
+
   const meter = (label, value) => {
     const safeValue = value == null ? null : Math.max(0, Math.min(100, Number(value)));
-    return `\n      <div class="motor-meter">\n        <div class="motor-meter-head">\n          <span>${esc(label)}</span>\n          <b>${safeValue == null ? "-" : `${safeValue.toFixed(1)}pt`}</b>\n        </div>\n        <div class="motor-meter-track"><div class="motor-meter-fill" style="width:${safeValue == null ? 0 : safeValue}%;"></div></div>\n      </div>\n    `;
+    return `
+      <div class="motor-meter">
+        <div class="motor-meter-head">
+          <span>${esc(label)}</span>
+          <b>${safeValue == null ? "-" : `${safeValue.toFixed(1)}pt`}</b>
+        </div>
+        <div class="motor-meter-track"><div class="motor-meter-fill" style="width:${safeValue == null ? 0 : safeValue}%;"></div></div>
+      </div>
+    `;
   };
-  const trendToneClass = (label) => label === "??" ? "is-up" : label === "??" ? "is-down" : "is-flat";
+
+  const trendToneClass = (label) => {
+    if (label === "rise" || label === "rise_strong" || label === "上向き" || label === "強上昇") return "is-up";
+    if (label === "down" || label === "下降") return "is-down";
+    return "is-flat";
+  };
+
   const signalLabel = (signal) => {
     const tone = signal?.trend_tone || "flat";
     const value = signal?.trend_value;
-    if (tone === "up") return `? ??${value == null ? "" : ` ${signed(value)}`}`;
-    if (tone === "down") return `? ??${value == null ? "" : ` ${signed(value)}`}`;
-    return "? ???";
+    if (tone === "up") return `上昇${value == null ? "" : ` ${signed(value)}`}`;
+    if (tone === "down") return `下降${value == null ? "" : ` ${signed(value)}`}`;
+    return "横ばい";
   };
+
   const liftLabel = (signal) => {
     const label = signal?.lift_label || "C";
     const value = signal?.lift_value;
-    return `???? ${label}${value == null ? "" : ` ${signed(value)}`}`;
+    return `引き出し ${label}${value == null ? "" : ` ${signed(value)}`}`;
   };
+
   const renderHistory = (data) => {
     const current = data.current || {};
     const summary = data.summary || {};
     const profile = data.profile || {};
+    const lift = data.lift || {};
     const liveSignal = data.live_signal || {};
     const rows = data.history || [];
-    const title = `M${esc(current.motor_number ?? "-")} ????????`;
-    const cycleNote = current.motor_cycle_start ? `???????: ${esc(current.motor_cycle_start)}??` : "???????: ???";
-    const summaryHtml = `\n      <div class="motor-history-summary">\n        <div><span>??</span><b>${summary.starts ?? 0}</b></div>\n        <div><span>1??</span><b>${pct(summary.win_rate)}</b></div>\n        <div><span>2??</span><b>${pct(summary.top2_rate)}</b></div>\n        <div><span>3??</span><b>${pct(summary.top3_rate)}</b></div>\n        <div><span>??ST</span><b>${num(summary.avg_start_timing)}</b></div>\n        <div><span>????</span><b>${num(summary.avg_exhibition_time)}</b></div>\n      </div>`;
-    const lift = data.lift || {};
-    const liftHtml = `\n      <div class="racer-lift-panel">\n        <div class="racer-lift-head">\n          <div class="racer-lift-title">\n            <strong>????????</strong>\n            <span>${esc(lift.note || "?????????????????????????????????")}</span>\n          </div>\n          <div class="motor-profile-badges">\n            <span class="motor-condition-badge ${toneClass(lift.tone)}">${esc(lift.label || "?????")} ${lift.value == null ? "" : signed(lift.value)}</span>\n            <span class="motor-style-chip is-score">?? ${lift.sample_size ?? 0}?</span>\n            <span class="motor-style-chip is-score">${lift.score == null ? "-" : `${Number(lift.score).toFixed(1)}pt`}</span>\n          </div>\n        </div>\n        <div class="racer-lift-grid">\n          <div><span>???</span><b>${signed(lift.exhibition_delta)}</b></div>\n          <div><span>??ST?</span><b>${signed(lift.exhibition_st_delta)}</b></div>\n          <div><span>??ST?</span><b>${signed(lift.start_delta)}</b></div>\n          <div><span>???</span><b>${signed(lift.finish_delta)}</b></div>\n        </div>\n      </div>`;
-    const liveSummaryHtml = `\n      <div class="motor-live-summary">\n        <div class="motor-live-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</div>\n        <div class="motor-live-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</div>\n        <div class="motor-live-chip is-neutral">??T ${num(current.exhibition_time)}</div>\n        <div class="motor-live-chip is-neutral">??ST ${num(current.start_timing_exhibition)}</div>\n      </div>`;
-    const profileHtml = `\n      <div class="motor-profile">\n        <div class="motor-profile-head">\n          <div class="motor-profile-title">\n            <strong>????????</strong>\n            <span>${esc(profile.note || "????????ST?????????????")}</span>\n          </div>\n          <div class="motor-profile-badges">\n            <span class="motor-condition-badge ${profile.condition_tone === "up" ? "is-up" : profile.condition_tone === "down" ? "is-down" : "is-flat"}">${esc(profile.condition_label || "??")}</span>\n            <span class="motor-style-chip">${esc(profile.style_label || "?????")}</span>\n            <span class="motor-style-chip is-score">?? ${profile.condition_score == null ? "-" : `${Number(profile.condition_score).toFixed(1)}pt`}</span>\n          </div>\n        </div>\n        <div class="motor-profile-meters">\n          ${meter("??", profile.dash_score)}\n          ${meter("??????", profile.stretch_score)}\n          ${meter("???", profile.turn_score)}\n        </div>\n        <div class="motor-trend-strip">\n          ${(profile.recent_scores || []).map((item) => `\n            <div class="motor-trend-card ${trendToneClass(item.label)}">\n              <span>${esc(item.race_date || "")} ${esc(item.race_number || "")}R</span>\n              <b>${item.score == null ? "-" : `${Number(item.score).toFixed(1)}pt`}</b>\n              <small>${esc(item.label || "")}</small>\n            </div>\n          `).join("")}\n        </div>\n      </div>`;
+    const title = `M${esc(current.motor_number ?? "-")} 現行期の直近履歴`;
+    const cycleNote = current.motor_cycle_start ? `現行モーター期: ${esc(current.motor_cycle_start)}以降` : "現行モーター期: 不明";
+
+    const summaryHtml = `
+      <div class="motor-history-summary">
+        <div><span>出走</span><b>${summary.starts ?? 0}</b></div>
+        <div><span>1着率</span><b>${pct(summary.win_rate)}</b></div>
+        <div><span>2連率</span><b>${pct(summary.top2_rate)}</b></div>
+        <div><span>3連率</span><b>${pct(summary.top3_rate)}</b></div>
+        <div><span>平均ST</span><b>${num(summary.avg_start_timing)}</b></div>
+        <div><span>平均展示</span><b>${num(summary.avg_exhibition_time)}</b></div>
+      </div>`;
+
+    const liveSummaryHtml = `
+      <div class="motor-live-summary">
+        <div class="motor-live-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</div>
+        <div class="motor-live-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</div>
+        <div class="motor-live-chip is-neutral">展示T ${num(current.exhibition_time)}</div>
+        <div class="motor-live-chip is-neutral">展示ST ${num(current.start_timing_exhibition)}</div>
+      </div>`;
+
+    const liftHtml = `
+      <div class="racer-lift-panel">
+        <div class="racer-lift-head">
+          <div class="racer-lift-title">
+            <strong>選手の引き出し力</strong>
+            <span>${esc(lift.note || "選手平均との差分から、モーターをどれだけ引き出しているかを推定")}</span>
+          </div>
+          <div class="motor-profile-badges">
+            <span class="motor-condition-badge ${toneClass(lift.tone)}">${esc(lift.label || "判定保留")} ${lift.value == null ? "" : signed(lift.value)}</span>
+            <span class="motor-style-chip is-score">n=${lift.sample_size ?? 0}</span>
+            <span class="motor-style-chip is-score">${lift.score == null ? "-" : `${Number(lift.score).toFixed(1)}pt`}</span>
+          </div>
+        </div>
+        <div class="racer-lift-grid">
+          <div><span>展示差</span><b>${signed(lift.exhibition_delta)}</b></div>
+          <div><span>展示ST差</span><b>${signed(lift.exhibition_st_delta)}</b></div>
+          <div><span>本番ST差</span><b>${signed(lift.start_delta)}</b></div>
+          <div><span>着順差</span><b>${signed(lift.finish_delta)}</b></div>
+        </div>
+      </div>`;
+
+    const profileHtml = `
+      <div class="motor-profile">
+        <div class="motor-profile-head">
+          <div class="motor-profile-title">
+            <strong>推定モーター気配</strong>
+            <span>${esc(profile.note || "展示タイム・展示ST・着順効率からの推定")}</span>
+          </div>
+          <div class="motor-profile-badges">
+            <span class="motor-condition-badge ${toneClass(profile.condition_tone)}">${esc(profile.condition_label || "判定保留")}</span>
+            <span class="motor-style-chip">${esc(profile.style_label || "バランス型")}</span>
+            <span class="motor-style-chip is-score">総合 ${profile.condition_score == null ? "-" : `${Number(profile.condition_score).toFixed(1)}pt`}</span>
+          </div>
+        </div>
+        <div class="motor-profile-meters">
+          ${meter("出足", profile.dash_score)}
+          ${meter("行き足・伸び", profile.stretch_score)}
+          ${meter("回り足", profile.turn_score)}
+        </div>
+        <div class="motor-trend-strip">
+          ${(profile.recent_scores || []).map((item) => `
+            <div class="motor-trend-card ${trendToneClass(item.label)}">
+              <span>${esc(item.race_date || "")} ${esc(item.race_number || "")}R</span>
+              <b>${item.score == null ? "-" : `${Number(item.score).toFixed(1)}pt`}</b>
+              <small>${esc(item.label || "")}</small>
+            </div>
+          `).join("")}
+        </div>
+      </div>`;
+
     if (!rows.length) {
-      return `\n        <div class="motor-history-head">\n          <strong>${title}</strong>\n          <span>${esc(current.stadium_name)} / ${esc(current.racer_name)} / ${cycleNote}</span>\n        </div>\n        ${summaryHtml}\n        ${liveSummaryHtml}\n        ${liftHtml}\n        ${profileHtml}\n        <div class="motor-history-empty">?????????????????????????</div>\n      `;
+      return `
+        <div class="motor-history-head">
+          <strong>${title}</strong>
+          <span>${esc(current.stadium_name)} / ${esc(current.racer_name)} / ${cycleNote}</span>
+        </div>
+        ${summaryHtml}
+        ${liveSummaryHtml}
+        ${liftHtml}
+        ${profileHtml}
+        <div class="motor-history-empty">モーター履歴の取得に必要な過去データがありません。</div>
+      `;
     }
-    const body = rows.map((r) => `\n      <tr>\n        <td>${esc(r.race_date)}</td>\n        <td>${esc(r.race_number)}R</td>\n        <td><span class="lane lane-${esc(r.boat_number)} motor-mini-lane">${esc(r.boat_number)}</span></td>\n        <td class="left">${esc(r.racer_name)}<div class="racer-meta">No. ${esc(r.racer_number)}</div></td>\n        <td>${esc(r.course_number ?? "-")}</td>\n        <td>${num(r.start_timing)}</td>\n        <td>${num(r.exhibition_time)}</td>\n        <td>${num(r.start_timing_exhibition)}</td>\n        <td><span class="finish-badge ${posClass(r.finishing_position)}">${esc(r.finishing_position ?? "-")}?</span></td>\n        <td class="left">${esc(r.kimarite || "-")}</td>\n      </tr>\n    `).join("");
-    const currentRowHtml = `\n      <tr class="motor-history-current-row">\n        <td>${esc(current.race_date || "")}</td>\n        <td>${esc(current.race_number || "")}R</td>\n        <td><span class="lane lane-${esc(current.boat_number)} motor-mini-lane">${esc(current.boat_number)}</span></td>\n        <td class="left">${esc(current.racer_name || "")}<div class="racer-meta">No. ${esc(current.racer_number || "")}</div></td>\n        <td>-</td>\n        <td>-</td>\n        <td>${num(current.exhibition_time)}</td>\n        <td>${num(current.start_timing_exhibition)}</td>\n        <td><span class="motor-history-inline ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span></td>\n        <td class="left">-</td>\n      </tr>\n    `;
-    return `\n      <div class="motor-history-head">\n        <strong>${title}</strong>\n        <span>${esc(current.stadium_name)} / ?? ${esc(current.boat_number)}?? ${esc(current.racer_name)} / ${cycleNote}</span>\n      </div>\n      ${summaryHtml}\n      ${liveSummaryHtml}\n      ${liftHtml}\n      ${profileHtml}\n      <div class="motor-history-table-wrap">\n        <table class="motor-history-table">\n          <thead>\n            <tr>\n              <th>??</th><th>R</th><th>?</th><th class="left">??</th>\n              <th>??</th><th>ST</th><th>??T</th><th>??ST</th><th>?</th><th class="left">????</th>\n            </tr>\n          </thead>\n          <tbody>${currentRowHtml}${body}</tbody>\n        </table>\n      </div>\n    `;
+
+    const currentRowHtml = `
+      <tr class="motor-history-current-row">
+        <td>${esc(current.race_date || "")}</td>
+        <td>${esc(current.race_number || "")}R</td>
+        <td><span class="lane lane-${esc(current.boat_number)} motor-mini-lane">${esc(current.boat_number)}</span></td>
+        <td class="left">${esc(current.racer_name || "")}<div class="racer-meta">No. ${esc(current.racer_number || "")}</div></td>
+        <td>-</td>
+        <td>-</td>
+        <td>${num(current.exhibition_time)}</td>
+        <td>${num(current.start_timing_exhibition)}</td>
+        <td><span class="motor-history-inline ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span></td>
+        <td class="left">-</td>
+      </tr>
+    `;
+
+    const body = rows.map((r) => `
+      <tr>
+        <td>${esc(r.race_date)}</td>
+        <td>${esc(r.race_number)}R</td>
+        <td><span class="lane lane-${esc(r.boat_number)} motor-mini-lane">${esc(r.boat_number)}</span></td>
+        <td class="left">${esc(r.racer_name)}<div class="racer-meta">No. ${esc(r.racer_number)}</div></td>
+        <td>${esc(r.course_number ?? "-")}</td>
+        <td>${num(r.start_timing)}</td>
+        <td>${num(r.exhibition_time)}</td>
+        <td>${num(r.start_timing_exhibition)}</td>
+        <td><span class="finish-badge ${posClass(r.finishing_position)}">${esc(r.finishing_position ?? "-")}着</span></td>
+        <td class="left">${esc(r.kimarite || "-")}</td>
+      </tr>
+    `).join("");
+
+    return `
+      <div class="motor-history-head">
+        <strong>${title}</strong>
+        <span>${esc(current.stadium_name)} / ${esc(current.boat_number)}号艇 ${esc(current.racer_name)} / ${cycleNote}</span>
+      </div>
+      ${summaryHtml}
+      ${liveSummaryHtml}
+      ${liftHtml}
+      ${profileHtml}
+      <div class="motor-history-table-wrap">
+        <table class="motor-history-table">
+          <thead>
+            <tr>
+              <th>日付</th><th>R</th><th>艇</th><th class="left">選手</th>
+              <th>進入</th><th>ST</th><th>展示T</th><th>展示ST</th><th>着</th><th class="left">決まり手</th>
+            </tr>
+          </thead>
+          <tbody>${currentRowHtml}${body}</tbody>
+        </table>
+      </div>
+    `;
   };
+
   const renderInlineSignals = (container, data) => {
     if (!container) return;
     const liveSignal = data.live_signal || {};
-    container.innerHTML = `\n      <span class="motor-inline-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span>\n      <span class="motor-inline-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</span>\n    `;
+    container.innerHTML = `
+      <span class="motor-inline-chip ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span>
+      <span class="motor-inline-chip is-lift ${toneClass(liveSignal.lift_tone)}">${esc(liftLabel(liveSignal))}</span>
+    `;
   };
+
   const fetchHistory = (button) => {
     const boatNumber = button.dataset.boatNumber;
     const raceId = button.dataset.raceId;
@@ -75,6 +222,7 @@
     }
     return historyCache.get(key);
   };
+
   document.querySelectorAll(".motor-history-btn").forEach((button) => {
     button.addEventListener("click", async () => {
       const boatNumber = button.dataset.boatNumber;
@@ -89,14 +237,14 @@
       row.hidden = false;
       button.setAttribute("aria-expanded", "true");
       if (panel.dataset.loaded === "1") return;
-      panel.innerHTML = '<div class="motor-history-loading">????????????...</div>';
+      panel.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
       try {
         const data = await fetchHistory(button);
         panel.innerHTML = renderHistory(data);
         renderInlineSignals(document.querySelector(`[data-motor-inline-signals="${boatNumber}"]`), data);
         panel.dataset.loaded = "1";
       } catch (err) {
-        panel.innerHTML = `<div class="motor-history-empty">?????????????????${esc(err.message || "")}</div>`;
+        panel.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました: ${esc(err.message || "")}</div>`;
       }
     });
   });
@@ -109,7 +257,7 @@
       <div class="market-signal market-${esc(signal.tier || "neutral")}">
         <div class="ms-head">
           <span class="ms-title">${esc(signal.title || "")}</span>
-          <span class="${roiClass}">想定 ROI ${(Number(signal.expected_roi || 0) * 100).toFixed(1)}%</span>
+          <span class="${roiClass}">想定ROI ${(Number(signal.expected_roi || 0) * 100).toFixed(1)}%</span>
         </div>
         <div class="ms-msg">${esc(signal.msg || "")}</div>
         ${extras.length ? `
@@ -148,7 +296,7 @@
             <div class="niche-body">
               <div class="niche-desc">${esc(sig.desc || "")}</div>
               <div class="niche-recommend"><b>推奨:</b> ${esc(sig.recommend || "")}</div>
-              ${sig.warning ? `<div class="niche-warning">注意 ${esc(sig.warning)}</div>` : ""}
+              ${sig.warning ? `<div class="niche-warning">注意: ${esc(sig.warning)}</div>` : ""}
             </div>
           </div>
         `).join("")}

@@ -331,17 +331,22 @@
       (function() {
         const targetDate = "{{ target_date }}";
         const roiPicksVisible = {{ roi_picks_visible|default(false)|tojson }};
+        const initialMarketSignalsPayload = {{ initial_market_signals|default({})|tojson }};
         let marketSignalsLoading = false;
-        let marketSignalsLoaded = false;
-        let marketSignalsCache = {};
+        let marketSignalsLoaded = Boolean(initialMarketSignalsPayload && initialMarketSignalsPayload.signals);
+        let marketSignalsCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.signals) || {};
         let marketSignalsDigest = '';
         let odds123Digest = '';
         let lastRenderedSignalsDigest = '';
         let lastTodaysPicksRenderKey = '';
         let lastNextRaceRenderKey = '';
-        let marketDataStatusCache = {};
+        let marketDataStatusCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.data_status) || {};
         let raceItemsCache = null;
         let raceItemMapCache = null;
+        marketSignalsDigest = buildSignalsDigest(
+          marketSignalsCache,
+          (initialMarketSignalsPayload && initialMarketSignalsPayload.accident_watch) || {}
+        );
         const BADGE_SELECTOR = '.l4-badge, .accident-watch-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetail = (raceId) => {
           if (!raceId || !window.BoatraceSpeed) return;
@@ -602,10 +607,8 @@
           marketSignalsLoading = true;
           try {
             async function fetchSignals() {
-              const marketSignalsUrl = `/api/market-signals?date=${targetDate}&_=${Date.now()}`;
-              const r = await fetch(marketSignalsUrl, {
-                cache: 'no-store',
-              });
+              const marketSignalsUrl = `/api/market-signals?date=${encodeURIComponent(targetDate)}`;
+              const r = await fetch(marketSignalsUrl, { cache: 'default' });
               if (!r.ok) return null;
               return r.json();
             }
@@ -1627,6 +1630,10 @@ function updateClosedRaceTiles() {
           });
         }
         updateClosedRaceTiles();
+        if (marketSignalsLoaded) {
+          try { renderDataStatus(marketDataStatusCache || {}); } catch (e) {}
+          try { renderTodaysPicks(); } catch (e) { console.warn('initial picks render failed:', e); }
+        }
 
         // 1-2-3 オッズ推移を初回 + 20秒毎に取得
         // odds_scheduler が T-5..T-1 まで毎分書き込む。

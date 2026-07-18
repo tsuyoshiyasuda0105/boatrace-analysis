@@ -2728,6 +2728,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     today_iso=today_iso,
                     stadium_groups=[],
                     initial_pick_rows=[],
+                    initial_market_signals={},
                     market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
                     market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
                     roi_picks_visible=roi_picks_visible,
@@ -2804,6 +2805,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             initial_pick_rows.sort(key=lambda row: row.get("closed_at") or "")
         except Exception as exc:
             logger.exception("failed to build initial pick rows for %s: %s", target_date, exc)
+            signal_payload = {}
 
         resp = make_response(render_template(
             "index.html",
@@ -2812,6 +2814,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             stadium_groups=sorted(stadium_groups.values(),
                                   key=lambda g: g["stadium_number"]),
             initial_pick_rows=initial_pick_rows,
+            initial_market_signals=signal_payload or {},
             market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
             market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
             roi_picks_visible=roi_picks_visible,
@@ -2853,7 +2856,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         fallback_notice = None
         try:
             t0 = time.perf_counter()
-            preds = _race_predictions(predictor, race_id)
+            # Race detail must stay responsive. If precomputed predictions are
+            # missing, show the entry-based fallback instead of running the
+            # full live predictor inside the request.
+            preds = _race_predictions_from_cache(race_id, predictor.version) or []
             t_pred = time.perf_counter() - t0
             t1 = time.perf_counter()
             if not preds:
@@ -2965,7 +2971,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # 三連単予測 (本番 Render では heavy compute をスキップして OOM/timeout 防止)
         tri_pw = []
         tri_uni = []
-        if not (os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT")):
+        run_live_trifecta = request.args.get("live_trifecta") in ("1", "true", "yes", "on")
+        if run_live_trifecta and not (os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT")):
             try:
                 pw = predictor.predict_trifecta(target_date, race_id, mode="per_winner")
                 if pw:
@@ -7965,6 +7972,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 r4st = float(boat4_avg_st) if boat4_avg_st is not None else 9.9
             except (TypeError, ValueError):
                 r4st = 9.9
+            try:
+                weather_no = int(weather) if weather is not None else None
+            except (TypeError, ValueError):
+                weather_no = None
+            is_rain_weather = weather_no == 3
 
             if stadium == 13 and m2 >= 55.0:
                 return {
@@ -8036,9 +8048,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "uses_rain_filter": True,
                 }
 
-            if stadium == 24 and grade == 5 and rn in (5, 6, 7, 8) and n_female == 0 and n1 >= 7.0 and n4 >= 5.0 and m2 <= 35.0:
+            if (
+                stadium == 24
+                and grade == 5
+                and rn in (5, 6, 7, 8)
+                and n_female == 0
+                and not is_rain_weather
+                and n1 >= 7.0
+                and n4 >= 5.0
+                and m2 <= 35.0
+            ):
                 return {
-                    "level": "exacta_niche_omura14",
+                    "level": "omura_14_exa",
                     "label": "大村 2連単1-4",
                     "recovery": 152.8,
                     "n": 32,
@@ -9895,7 +9916,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     ASHIYA_BOAT4_EXA_CACHE_VERSION = "ashiya_boat4_exa_v2"
     ASHIYA_4HEAD_FLOW_TRI_CACHE_VERSION = "ashiya_4head_flow_tri_v1"
     HAMANAKO_14_EXA_CACHE_VERSION = "hamanako_14_exa_v2"
-    OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v2"
+    OMURA_14_EXA_CACHE_VERSION = "omura_14_exa_v3"
     KIRYU_WIN2_CACHE_VERSION = "kiryu_win2_v1"
     GENERAL200_CACHE_VERSION = "general200_v1"
     GENERAL_C_TRI_CACHE_VERSION = "general_c_tri_v7"
@@ -13914,6 +13935,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "wakamatsu_13_weak2_strong3_exa",
         "heiwajima_13_acc2_late_exa",
         "tamagawa_13_weak_sashi2_exa",
+        "tamagawa_13_acc2n30_m3_40_exa",
+        "tamagawa_123_fl3_n3_30_m2_35_tri",
+        "hamanako_12_pts3_m23_exa",
+        "kojima_12_acc3_m3_n23_exa",
+        "edogawa_13_acc2_n23_m3_exa",
+        "kiryu_13_fl2_n23_exa",
+        "ashiya_13_pts2_m23_exa",
+        "amagasaki_12_acc3_fl3_exa",
+        "omura_13_acc2_fl2_m23_exa",
+        "marugame_13_pts2_m23_exa",
         "marugame_123_weak4_t5_tri",
         "marugame_123_late_weak4_t5_tri",
         "edogawa_132_weak4_t5_tri",
