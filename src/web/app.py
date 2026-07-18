@@ -52,7 +52,7 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v11"
+MARKET_SIGNALS_CACHE_VERSION = "v12"
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -6456,17 +6456,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ):
                 return None
             return {
-                "level": "g23_optb_tri",
-                "label": "G2/G3 1-2-3",
+                "level": "morning_watch_g23_optb",
+                "label": "朝監視 G2/G3 1-2-3",
                 "recovery": 190.3,
                 "n": 126,
                 "bet": "3連単 1-2-3",
                 "rank": "trifecta_niche",
                 "rank_label": "3連単ニッチ",
                 "rank_emoji": "👀",
-                "is_reference": False,
+                "is_reference": True,
+                "is_morning": True,
+                "is_morning_watch": True,
+                "watch_strategy_labels": ["G2/G3 1-2-3"],
+                "watch_strategy_bets": ["3連単 1-2-3"],
+                "watch_strategy_count": 1,
+                "is_display_confirmed": False,
+                "is_after_exhibition_out": False,
                 "tetsuban_score": 4,
-                "tetsuban_label": "G2/G3 1-2-3",
+                "tetsuban_label": "朝監視 G2/G3 1-2-3",
             }
 
         def _evaluate_fukuoka_wind_exa_signal(stadium, cls, boat2_top2=None, wind_speed=None):
@@ -9140,6 +9147,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 weather=weather,
                 n_female=n_female,
             )
+            # Keep the pre-race G2/G3 watch independently from the final odds
+            # decision. Historical results can provide a fallback payout even
+            # when no eligible T-5/T-1 odds snapshot was captured; that must not
+            # erase a race that was visible in the morning watch list.
+            g23_watch = _safe_signal_eval(
+                "g23_watch",
+                _evaluate_g23_optb_watch,
+                stadium, grade, cls,
+                natl_1=natl_1,
+                local_1=local_1,
+                avg_st=avg_st,
+                age=age,
+                boat2_motor_top2=boat2_motor_top2,
+                weather=weather,
+                n_female=n_female,
+            )
             fukuoka_wind_exa = _safe_signal_eval(
                 "fukuoka_wind_exa",
                 _evaluate_fukuoka_wind_exa_signal,
@@ -9312,6 +9335,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     non_exhibition_core,
                     general_c,
                     g23_optb,
+                    g23_watch,
                     tsu_suminoe_signal,
                     current_motor_adopted_signal,
                     series13_adopted_signal,
@@ -9397,16 +9421,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         boat1_motor_top2=boat1_motor_top2,
                         boat2_motor_top2=boat2_motor_top2,
                         boat3_natl_1=info.get("boat3_natl_1"),
-                        weather=weather,
-                        n_female=n_female,
-                    )
-                    g23_watch = _evaluate_g23_optb_watch(
-                        stadium, grade, cls,
-                        natl_1=natl_1,
-                        local_1=local_1,
-                        avg_st=avg_st,
-                        age=age,
-                        boat2_motor_top2=boat2_motor_top2,
                         weather=weather,
                         n_female=n_female,
                     )
@@ -9679,18 +9693,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     boat1_motor_top2=boat1_motor_top2,
                     boat2_motor_top2=boat2_motor_top2,
                     boat3_natl_1=info.get("boat3_natl_1"),
-                    weather=weather,
-                    n_female=n_female,
-                )
-                g23_watch = _safe_signal_eval(
-                    "g23_watch_no_data",
-                    _evaluate_g23_optb_watch,
-                    stadium, grade, cls,
-                    natl_1=natl_1,
-                    local_1=local_1,
-                    avg_st=avg_st,
-                    age=age,
-                    boat2_motor_top2=boat2_motor_top2,
                     weather=weather,
                     n_female=n_female,
                 )
