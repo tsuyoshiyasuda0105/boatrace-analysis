@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+import argparse
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -13,15 +14,76 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
 from src.web.app import create_app  # noqa: E402
 
 
+MODES = ("realtime", "morning-check", "nightly")
+
+
 def _hit(client, path: str) -> tuple[int, int]:
     resp = client.get(path)
     body = resp.get_data() or b""
     return resp.status_code, len(body)
 
 
+def _days_ago(today: date, days: int) -> str:
+    return (today - timedelta(days=days)).isoformat()
+
+
+def build_targets(mode: str, today: date) -> list[str]:
+    today_s = today.isoformat()
+    d30 = _days_ago(today, 30)
+    d365 = _days_ago(today, 365)
+    d3y = _days_ago(today, 1095)
+
+    if mode == "nightly":
+        # Heavy historical refresh. This is intentionally reserved for the
+        # end-of-day Render scheduler so normal app clicks never trigger it.
+        return [
+            f"/api/market-signals?date={today_s}",
+            f"/member/strategy?from={d3y}&to={today_s}&recompute=1",
+            f"/member/strategy?from={d365}&to={today_s}&recompute=1",
+            f"/member/strategy?from={d30}&to={today_s}&recompute=1",
+            f"/member/strategy/monthly?recompute=1",
+            f"/member/strategy?from={d3y}&to={today_s}",
+            f"/member/strategy?from={d365}&to={today_s}",
+            f"/member/strategy?from={d30}&to={today_s}",
+            "/member/strategy/monthly",
+        ]
+
+    if mode == "morning-check":
+        # Reconcile visible pages after the morning race/prediction load.
+        return [
+            f"/api/market-signals?date={today_s}",
+            f"/member/strategy?from={d30}&to={today_s}&recompute=1",
+            f"/member/strategy/monthly?recompute=1",
+            f"/member/strategy?from={d30}&to={today_s}",
+            "/member/strategy/monthly",
+        ]
+
+    # Realtime mode is deliberately light: keep pages warm, but do not force
+    # a long ROI recalculation during daytime candidate monitoring.
+    return [
+        f"/api/market-signals?date={today_s}",
+        f"/member/strategy?from={d30}&to={today_s}",
+        "/member/strategy/monthly",
+    ]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Warm boatrace strategy pages.")
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default="realtime",
+        help="realtime is light, morning-check reconciles daily pages, nightly does heavy history refresh.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
     today = date.today()
-    default_from = (today - timedelta(days=30)).isoformat()
+    default_from = _days_ago(today, 30)
+    yearly_from = _days_ago(today, 365)
+    heavy_from = _days_ago(today, 1095)
     default_to = today.isoformat()
     monthly_from = "2024-06-01"
     monthly_to = today.isoformat()
@@ -31,14 +93,7 @@ def main() -> int:
     with client.session_transaction() as sess:
         sess["is_member"] = True
 
-    targets = [
-        f"/api/market-signals?date={today.isoformat()}",
-        f"/member/strategy?from={default_from}&to={default_to}&recompute=1",
-        f"/member/strategy/monthly?recompute=1",
-        f"/api/market-signals?date={today.isoformat()}",
-        f"/member/strategy?from={default_from}&to={default_to}",
-        "/member/strategy/monthly",
-    ]
+    targets = build_targets(args.mode, today)
 
     ok = True
     for path in targets:
@@ -48,7 +103,8 @@ def main() -> int:
             ok = False
 
     print(
-        f"[prewarm] default_range={default_from}..{default_to} "
+        f"[prewarm] mode={args.mode} default_range={default_from}..{default_to} "
+        f"year_range={yearly_from}..{default_to} heavy_range={heavy_from}..{default_to} "
         f"monthly_range={monthly_from}..{monthly_to}",
         flush=True,
     )

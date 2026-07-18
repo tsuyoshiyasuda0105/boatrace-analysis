@@ -177,6 +177,7 @@ def run_morning(now: datetime) -> bool:
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
+    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "morning-check"], timeout=1800)
     return ok
 
 
@@ -225,7 +226,7 @@ def run_hourly(now: datetime) -> bool:
     except Exception as exc:
         print(f"[hourly] tide check failed: {type(exc).__name__}: {exc}", flush=True)
     ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "3"], timeout=1800)
-    ok &= run_py(["scripts/prewarm_strategy_pages.py"], timeout=1800)
+    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "realtime"], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     ok &= run_py(["scripts/agent_monitor.py", "--quiet"], timeout=600)
     return ok
@@ -303,7 +304,7 @@ def run_nightly(now: datetime) -> bool:
     # Preload tomorrow after its races exist as well.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
-    ok &= run_py(["scripts/prewarm_strategy_pages.py"], timeout=1800)
+    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "nightly"], timeout=3600)
     ok &= run_accident_rebuild(accident_period_start(now), today)
     ok &= run_db_maintenance()
     return ok
