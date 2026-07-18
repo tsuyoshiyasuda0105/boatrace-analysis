@@ -1,0 +1,193 @@
+{
+  "_comment": "Boatrace venue to JMA tide-station mapping. Many venues use the nearest practical harbor station because the exact boatrace venue is not always listed in JMA tide tables. Use verified=false entries carefully in strategy work.",
+  "3": {
+    "stadium_name": "江戸川",
+    "water": "brackish",
+    "tide_effect": "high",
+    "priority": "A",
+    "primary_station": "東京",
+    "primary_station_code": "TK",
+    "verified": false,
+    "station_candidates": [
+      { "name": "東京", "code": "TK", "confidence": "medium" }
+    ]
+  },
+  "4": {
+    "stadium_name": "平和島",
+    "water": "sea",
+    "tide_effect": "high",
+    "priority": "A",
+    "primary_station": "東京",
+    "primary_station_code": "TK",
+    "verified": false,
+    "station_candidates": [
+      { "name": "東京", "code": "TK", "confidence": "high" }
+    ]
+  },
+  "6": {
+    "stadium_name": "浜名湖",
+    "water": "brackish",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "舞阪",
+    "primary_station_code": "MI",
+    "verified": false,
+    "station_candidates": [
+      { "name": "舞阪", "code": "MI", "confidence": "high" }
+    ]
+  },
+  "7": {
+    "stadium_name": "蒲郡",
+    "water": "brackish",
+    "tide_effect": "mid",
+    "priority": "A",
+    "primary_station": "形原",
+    "primary_station_code": "G5",
+    "verified": false,
+    "station_candidates": [
+      { "name": "形原", "code": "G5", "confidence": "medium" },
+      { "name": "三河", "code": "G4", "confidence": "medium" }
+    ]
+  },
+  "8": {
+    "stadium_name": "常滑",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "鬼崎",
+    "primary_station_code": "ZD",
+    "verified": false,
+    "station_candidates": [
+      { "name": "鬼崎", "code": "ZD", "confidence": "medium" },
+      { "name": "名古屋", "code": "NG", "confidence": "low" }
+    ]
+  },
+  "9": {
+    "stadium_name": "津",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "鳥羽",
+    "primary_station_code": "TB",
+    "verified": false,
+    "station_candidates": [
+      { "name": "鳥羽", "code": "TB", "confidence": "low" },
+      { "name": "四日市港", "code": "G3", "confidence": "low" }
+    ]
+  },
+  "14": {
+    "stadium_name": "鳴門",
+    "water": "sea",
+    "tide_effect": "high",
+    "priority": "A",
+    "primary_station": "小松島",
+    "primary_station_code": "KM",
+    "verified": false,
+    "station_candidates": [
+      { "name": "小松島", "code": "KM", "confidence": "low" },
+      { "name": "橘", "code": "J6", "confidence": "low" }
+    ]
+  },
+  "15": {
+    "stadium_name": "丸亀",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "多度津",
+    "primary_station_code": "TX",
+    "verified": false,
+    "station_candidates": [
+      { "name": "多度津", "code": "TX", "confidence": "medium" },
+      { "name": "高松", "code": "TA", "confidence": "low" }
+    ]
+  },
+  "16": {
+    "stadium_name": "児島",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "宇野",
+    "primary_station_code": "UN",
+    "verified": false,
+    "station_candidates": [
+      { "name": "宇野", "code": "UN", "confidence": "medium" },
+      { "name": "水島", "code": "MM", "confidence": "low" }
+    ]
+  },
+  "17": {
+    "stadium_name": "宮島",
+    "water": "sea",
+    "tide_effect": "high",
+    "priority": "A",
+    "primary_station": "広島",
+    "primary_station_code": "Q8",
+    "verified": false,
+    "station_candidates": [
+      { "name": "広島", "code": "Q8", "confidence": "medium" },
+      { "name": "呉", "code": "Q9", "confidence": "low" }
+    ]
+  },
+  "18": {
+    "stadium_name": "徳山",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "徳山",
+    "primary_station_code": "QA",
+    "verified": true,
+    "station_candidates": [
+      { "name": "徳山", "code": "QA", "confidence": "high" }
+    ]
+  },
+  "19": {
+    "stadium_name": "下関",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "下関",
+    "primary_station_code": "DS",
+    "verified": true,
+    "station_candidates": [
+      { "name": "下関", "code": "DS", "confidence": "high" },
+      { "name": "長府", "code": "CF", "confidence": "medium" }
+    ]
+  },
+  "20": {
+    "stadium_name": "若松",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "門司",
+    "primary_station_code": "MO",
+    "verified": false,
+    "station_candidates": [
+      { "name": "門司", "code": "MO", "confidence": "medium" },
+      { "name": "日明", "code": "N1", "confidence": "low" }
+    ]
+  },
+  "22": {
+    "stadium_name": "福岡",
+    "water": "brackish",
+    "tide_effect": "mid",
+    "priority": "B",
+    "primary_station": "博多",
+    "primary_station_code": "QF",
+    "verified": true,
+    "station_candidates": [
+      { "name": "博多", "code": "QF", "confidence": "high" }
+    ]
+  },
+  "24": {
+    "stadium_name": "大村",
+    "water": "sea",
+    "tide_effect": "mid",
+    "priority": "A",
+    "primary_station": "長崎",
+    "primary_station_code": "NS",
+    "verified": false,
+    "station_candidates": [
+      { "name": "長崎", "code": "NS", "confidence": "medium" },
+      { "name": "口之津", "code": "KT", "confidence": "low" }
+    ]
+  }
+}
