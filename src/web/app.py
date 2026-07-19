@@ -58,8 +58,8 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v15"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v4"
+MARKET_SIGNALS_CACHE_VERSION = "v16"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v5"
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -10109,6 +10109,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         payload = {
             "date": target_date,
+            "cache_version": MARKET_SIGNALS_CACHE_VERSION,
             "computed_at": datetime.now().isoformat(timespec="seconds"),
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
@@ -10178,7 +10179,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v25"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v26"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -10920,15 +10921,38 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if not adopted_levels:
                 return
 
+            try:
+                recent_floor = (_date.today() - _timedelta(days=RECENT_ADOPTED_RECOMPUTE_DAYS)).isoformat()
+            except Exception:
+                recent_floor = ""
+
+            def _clear_adopted_counts(day_d: dict) -> None:
+                for key in ROI_STRATEGY_KEYS:
+                    day_d[f"{key}_bets"] = 0
+                    day_d[f"{key}_hits"] = 0
+                    day_d[f"{key}_pay"] = 0
+
             rows_to_lookup: list[tuple[str, str, str, str, str]] = []
             selected_by_date: dict[str, list[tuple[str, str, str, str]]] = {}
 
             for rdate, day_d in by_date.items():
                 payload = _read_json_cache_stale(_market_signals_cache_key(rdate))
-                if not isinstance(payload, dict) or payload.get("date") != rdate:
+                if (
+                    not isinstance(payload, dict)
+                    or payload.get("date") != rdate
+                    or payload.get("cache_version") != MARKET_SIGNALS_CACHE_VERSION
+                ):
+                    if recent_floor and rdate >= recent_floor:
+                        _clear_adopted_counts(day_d)
+                        day_d["_adopted_from_market_signals_cache"] = False
+                        day_d["_adopted_market_signals_cache_missing"] = True
                     continue
                 signals = payload.get("signals") or {}
                 if not isinstance(signals, dict):
+                    if recent_floor and rdate >= recent_floor:
+                        _clear_adopted_counts(day_d)
+                        day_d["_adopted_from_market_signals_cache"] = False
+                        day_d["_adopted_market_signals_cache_missing"] = True
                     continue
 
                 selected: list[tuple[str, str, str, str]] = []
@@ -10950,11 +10974,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
                 # Even an empty cache is a valid computed high-ROI list, so
                 # clear adopted counts for that day before applying rows.
-                for key in ROI_STRATEGY_KEYS:
-                    day_d[f"{key}_bets"] = 0
-                    day_d[f"{key}_hits"] = 0
-                    day_d[f"{key}_pay"] = 0
+                _clear_adopted_counts(day_d)
                 day_d["_adopted_from_market_signals_cache"] = True
+                day_d["_adopted_market_signals_cache_missing"] = False
                 selected_by_date[rdate] = selected
                 rows_to_lookup.extend((rdate, *row) for row in selected)
 
