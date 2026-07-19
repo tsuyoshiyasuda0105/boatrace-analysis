@@ -2483,6 +2483,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if "/api/" in path and not path.startswith("/login"):
                 # 過去日 API は長く、今日のは短く
                 try:
+                    if path == "/api/market-signals":
+                        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+                        response.headers["Pragma"] = "no-cache"
+                        response.headers["Expires"] = "0"
+                        return response
                     req_date = request.args.get("date", "")
                     if req_date and req_date < date.today().isoformat():
                         response.headers["Cache-Control"] = "private, max-age=600"
@@ -2915,6 +2920,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             initial_market_signals=signal_payload or {},
             market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
             market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
+            market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
             roi_picks_visible=roi_picks_visible,
             empty=False,
         ))
@@ -2922,7 +2928,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # ブラウザは HTML パース前に /api/market-signals に並列リクエストを
         # 飛ばすので、JS が呼ぶ頃には返答がキャッシュ済 → 体感速度向上
         link_headers = [
-            f'</api/market-signals?date={target_date}>; rel=preload; as=fetch; crossorigin'
+            f'</api/market-signals?date={target_date}&ui_v={MARKET_SIGNALS_CACHE_VERSION}>; rel=preload; as=fetch; crossorigin'
         ]
         upcoming_races = []
         for r in races_list:
@@ -3690,19 +3696,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
         # v6: avoid serving stale empty signals after race data catches up.
         cache_key = _market_signals_cache_key(target_date)
+        def _market_json_response(payload: Any, cache_state: str):
+            resp = jsonify(payload)
+            resp.headers["X-Boatrace-Cache"] = cache_state
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            return resp
+
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None:
-            resp = jsonify(cached_payload)
-            resp.headers["X-Boatrace-Cache"] = "fresh"
-            return resp
+            return _market_json_response(cached_payload, "fresh")
         # 当日以降の market signals は展示・潮・直前オッズで採否が動く。
         # stale を返すと、朝の古い候補が残ったり、逆に最新の採用候補が隠れたりするため、
         # live date は TTL 切れ時に必ず再計算する。過去日は表示速度優先で stale fallback を許可。
         stale_payload = None if (force_recompute or target_date >= today_iso) else _read_json_cache_stale(cache_key)
         if stale_payload is not None:
-            resp = jsonify(stale_payload)
-            resp.headers["X-Boatrace-Cache"] = "stale"
-            return resp
+            return _market_json_response(stale_payload, "stale")
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
@@ -10099,9 +10108,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # Zero candidates is also a valid computed result. Persist it so
         # browsers never trigger the expensive strategy scan themselves.
         _write_json_cache(cache_key, payload)
-        resp = jsonify(payload)
-        resp.headers["X-Boatrace-Cache"] = "recomputed"
-        return resp
+        return _market_json_response(payload, "recomputed")
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
     STRICT_ODDS_DAILY_START = "2026-05-30"
