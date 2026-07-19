@@ -5666,6 +5666,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             merged["matched_recoveries"] = [s.get("recovery") for s in valid if s.get("recovery") is not None]
             return merged
 
+        def _allow_market_signal_with_female(signal, n_female_count: int) -> bool:
+            """Gate live ROI candidates before they reach the betting list."""
+            if not signal:
+                return False
+            if int(n_female_count or 0) <= 0:
+                return True
+            return bool(signal.get("allow_female_market_signal"))
+
         def _prefer_adopted_signal_over_general200(selected, adopted):
             """Keep adopted strategy labels visible when general200 also matches.
 
@@ -9615,6 +9623,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                     morning_l4["is_female_present"] = True
                                     morning_l4["is_reference"] = True
                                     morning_l4["label"] = f"🚫{morning_l4['label']} (女性{n_female}名混在)"
+                        if morning_l4 and not _allow_market_signal_with_female(morning_l4, n_female):
+                            morning_l4 = None
                         if morning_l4:
                             signals.append({
                                 "race_id": rid,
@@ -9720,23 +9730,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         l4["ex_recommended_bet_yen"] = ex_bonus["recommended_bet_yen"]
                         l4["ex_expected_roi_pct"] = ex_bonus["expected_roi_pct"]
 
-                signals.append({
-                    "race_id": rid,
-                    "tier": tier,
-                    "min_payout": mp,
-                    "source": src,
-                    "expected_roi": expected_roi,
-                    "title": title,
-                    "is_positive_ev": expected_roi > 0,
-                    "weather": weather,
-                    "weather_label": WEATHER_LABEL.get(weather),
-                    "is_rain": is_rain,
-                    "rain_exclusion_active": rain_exclusion_active,
-                    "is_rain_excluded": is_rain_excluded,
-                    "n_female": n_female,
-                    "is_female_present": is_female_present,
-                    "l4": l4,
-                })
+                if _allow_market_signal_with_female(l4, n_female):
+                    signals.append({
+                        "race_id": rid,
+                        "tier": tier,
+                        "min_payout": mp,
+                        "source": src,
+                        "expected_roi": expected_roi,
+                        "title": title,
+                        "is_positive_ev": expected_roi > 0,
+                        "weather": weather,
+                        "weather_label": WEATHER_LABEL.get(weather),
+                        "is_rain": is_rain,
+                        "rain_exclusion_active": rain_exclusion_active,
+                        "is_rain_excluded": is_rain_excluded,
+                        "n_female": n_female,
+                        "is_female_present": is_female_present,
+                        "l4": l4,
+                    })
             else:
                 # === 未確定 (朝判定) → 予測ベース L4 候補 ===
                 prob_first = morning_pred.get(rid)
@@ -9885,6 +9896,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 morning_l4["is_female_present"] = True
                                 morning_l4["is_reference"] = True
                                 morning_l4["label"] = f"♀{morning_l4['label']} (女性{n_female}名除外)"
+                    if morning_l4 and not _allow_market_signal_with_female(morning_l4, n_female):
+                        morning_l4 = None
                     if morning_l4:
                         signals.append({
                             "race_id": rid,
