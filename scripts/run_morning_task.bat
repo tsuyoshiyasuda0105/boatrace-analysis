@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableExtensions EnableDelayedExpansion
 if exist C:\boat_project\boatrace-analysis\.pc_schedule_paused exit /b 0
 REM Morning task: data collect + predict + sync + morning alerts (06:30 daily)
 cd /d C:\boat_project\boatrace-analysis
@@ -18,6 +19,8 @@ if /I not "%BOATRACE_TASK_TRIGGER%"=="self_heal" (
 ) else (
   echo [step] self_heal_today_data skipped (trigger=self_heal) >> "%LOG%"
 )
+call :run_step "backfill_official_supabase" ".venv\Scripts\python.exe" "scripts\backfill_official.py" "--start" "%date:~0,4%-%date:~5,2%-%date:~8,2%" "--end" "%date:~0,4%-%date:~5,2%-%date:~8,2%"
+call :run_step "backfill_official_local" ".venv\Scripts\python.exe" "scripts\backfill_official.py" "--start" "%date:~0,4%-%date:~5,2%-%date:~8,2%" "--end" "%date:~0,4%-%date:~5,2%-%date:~8,2%" "--local"
 call :run_step "daily_collect_supabase" ".venv\Scripts\python.exe" "scripts\daily_collect.py"
 call :run_step "daily_collect_local" ".venv\Scripts\python.exe" "scripts\daily_collect.py" "--local"
 call :run_step "tides_supabase" ".venv\Scripts\python.exe" "scripts\fetch_and_import_jma_tides.py" "--year-from" "%date:~0,4%" "--year-to" "%date:~0,4%" "--only-missing" "--timeout" "30"
@@ -39,12 +42,20 @@ echo === Morning task finished %date% %time% === >> "%LOG%"
 exit /b %ERRORS%
 
 :run_step
-set STEP_NAME=%~1
-shift
+set "STEP_NAME=%~1"
+shift /1
+set "STEP_CMD="
+:collect_args
+if "%~1"=="" goto run_collected_step
+set "STEP_CMD=!STEP_CMD! "%~1""
+shift /1
+goto collect_args
+:run_collected_step
 echo [step] %STEP_NAME% start >> "%LOG%"
-%* >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo [warn] %STEP_NAME% failed with %errorlevel% >> "%LOG%"
+call !STEP_CMD! >> "%LOG%" 2>&1
+set "STEP_EXIT=%errorlevel%"
+if %STEP_EXIT% GEQ 1 (
+  echo [warn] %STEP_NAME% failed with %STEP_EXIT% >> "%LOG%"
   set /a ERRORS+=1
 ) else (
   echo [step] %STEP_NAME% done >> "%LOG%"

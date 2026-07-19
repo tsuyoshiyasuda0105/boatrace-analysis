@@ -12327,7 +12327,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                              THEN substr(r.race_date, 1, 4) || '-05-01'
                            WHEN CAST(substr(r.race_date, 6, 2) AS INTEGER) >= 11
                              THEN substr(r.race_date, 1, 4) || '-11-01'
-                           ELSE printf('%04d', CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1) || '-11-01'
+                           ELSE CAST(CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1 AS TEXT) || '-11-01'
                        END
                       LEFT JOIN acc a3
                         ON a3.racer_number = e3.racer_number
@@ -12336,7 +12336,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                              THEN substr(r.race_date, 1, 4) || '-05-01'
                            WHEN CAST(substr(r.race_date, 6, 2) AS INTEGER) >= 11
                              THEN substr(r.race_date, 1, 4) || '-11-01'
-                           ELSE printf('%04d', CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1) || '-11-01'
+                           ELSE CAST(CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1 AS TEXT) || '-11-01'
                        END
                       LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position = 1
                       LEFT JOIN race_payouts p123 ON p123.race_id = r.race_id AND p123.bet_type = 'trifecta' AND p123.combination = '1-2-3'
