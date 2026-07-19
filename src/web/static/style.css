@@ -413,7 +413,7 @@ html.is-navigating::before {
 }
 .accident-table th,
 .accident-table td {
-  padding: 11px 13px;
+  padding: 8px 9px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.13);
   text-align: right;
 }
@@ -433,8 +433,14 @@ html.is-navigating::before {
   background: linear-gradient(90deg, rgba(248, 113, 113, 0.08), rgba(15, 23, 42, 0));
 }
 .accident-racer-name {
-  display: block;
+  display: inline-block;
   font-weight: 800;
+}
+.accident-racer-line {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  gap: 5px;
 }
 .accident-table .numeric {
   font-family: var(--font-mono, monospace);
@@ -466,6 +472,99 @@ html.is-navigating::before {
   }
   .accident-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .accident-dashboard {
+    padding: 18px 0 30px;
+  }
+  .accident-dashboard h2 {
+    font-size: 22px;
+  }
+  .accident-filter {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 9px;
+  }
+  .accident-filter label {
+    min-width: 0;
+  }
+  .accident-filter select,
+  .accident-filter input,
+  .accident-filter button {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  .accident-summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 5px;
+  }
+  .accident-summary-card {
+    min-height: 54px;
+    padding: 8px 6px;
+  }
+  .accident-summary-card span {
+    margin-bottom: 4px;
+    font-size: 10px;
+    line-height: 1.15;
+  }
+  .accident-summary-card strong {
+    font-size: 18px;
+  }
+  .accident-legend {
+    gap: 5px;
+  }
+  .accident-table-wrap {
+    overflow-x: hidden;
+  }
+  .accident-table {
+    min-width: 0;
+    table-layout: fixed;
+  }
+  .accident-table th,
+  .accident-table td {
+    padding: 5px 2px;
+    font-size: 11px;
+    line-height: 1.08;
+  }
+  .accident-table th:nth-child(1),
+  .accident-table td:nth-child(1) {
+    width: 22%;
+  }
+  .accident-table th:nth-child(2),
+  .accident-table td:nth-child(2),
+  .accident-table th:nth-child(3),
+  .accident-table td:nth-child(3) {
+    width: 38px;
+  }
+  .accident-table .racer-accident-tag {
+    max-width: 40px;
+    min-width: 0;
+    padding: 3px 4px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .accident-racer-name {
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .accident-racer-line {
+    gap: 3px;
+  }
+  .accident-table .racer-meta {
+    font-size: 9px;
+    white-space: nowrap;
+  }
+  .accident-note {
+    font-size: 11px;
   }
 }
 .nav-btn-accidents {

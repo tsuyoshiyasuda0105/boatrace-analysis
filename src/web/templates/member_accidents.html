@@ -86,7 +86,6 @@
     <table class="accident-table">
       <thead>
         <tr>
-          <th>#</th>
           <th class="left">選手名</th>
           <th>ランク</th>
           <th>事故点</th>
@@ -98,12 +97,13 @@
       <tbody>
         {% for r in rows %}
           <tr class="{% if r.accident_rate >= 0.7 %}is-watch{% endif %}">
-            <td>{{ r.rank_no }}</td>
             <td class="left">
-              <span class="accident-racer-name">{{ r.racer_name }}</span>
-              {% if r.racer_number %}
-                <span class="racer-meta">No. {{ r.racer_number }}</span>
-              {% endif %}
+              <span class="accident-racer-line">
+                <span class="accident-racer-name">{{ r.racer_name }}</span>
+                {% if r.racer_number %}
+                  <span class="racer-meta">No. {{ r.racer_number }}</span>
+                {% endif %}
+              </span>
             </td>
             <td>
               <span class="racer-accident-tag accident-risk-{{ r.tone }}">
@@ -117,7 +117,7 @@
           </tr>
         {% else %}
           <tr>
-            <td colspan="7" class="empty-row">事故率データがありません。</td>
+            <td colspan="6" class="empty-row">事故率データがありません。</td>
           </tr>
         {% endfor %}
       </tbody>
