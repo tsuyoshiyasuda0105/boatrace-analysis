@@ -10895,7 +10895,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             bet_text = str((l4 or {}).get("bet") or "")
             match = _re.search(r"\b([1-6](?:-[1-6]){0,2})\b", bet_text)
             if not match:
-                return None
+                win_match = _re.search(r"([1-6])\s*号艇", bet_text)
+                if not win_match:
+                    return None
+                return "win", win_match.group(1)
             combo = match.group(1)
             n_boats = combo.count("-") + 1
             if n_boats >= 3:
