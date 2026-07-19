@@ -59,7 +59,7 @@ _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
 MARKET_SIGNALS_CACHE_VERSION = "v15"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v2"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v4"
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -2798,7 +2798,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/races")
     @login_required
-    @cached(ttl=120, past_ttl=3600)  # 今日120秒/過去日1時間キャッシュ
+    @cached(ttl=30, past_ttl=3600)  # 今日30秒/過去日1時間キャッシュ
     # backlog item 11: 旧 60s → 120s。レース予定の動的要素は results_count のみで
     # poll_results が 5分間隔なので 120s 化しても表示遅延ほぼ無し。Cloudflare
     # CDN ヒット率が大幅向上し、ユーザ体感速度が改善する。
@@ -2860,7 +2860,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         try:
             race_by_id = {str(r.get("race_id")): r for r in races_list}
             today_iso = date.today().isoformat()
-            cache_ttl = 60 if target_date >= today_iso else 3600
+            cache_ttl = 15 if target_date >= today_iso else 3600
             signal_cache_key = _market_signals_cache_key(target_date)
             signal_payload = _read_json_cache(signal_cache_key, cache_ttl)
             if signal_payload is None and target_date < today_iso:
@@ -3700,7 +3700,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """
         target_date = request.args.get("date") or date.today().isoformat()
         today_iso = date.today().isoformat()
-        cache_ttl = 60 if target_date >= today_iso else 3600
+        cache_ttl = 15 if target_date >= today_iso else 3600
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
         # v6: avoid serving stale empty signals after race data catches up.
         cache_key = _market_signals_cache_key(target_date)
@@ -10178,7 +10178,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v23"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v25"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -10866,6 +10866,123 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             }
             if prev is None or payload["recovery"] > prev["recovery"]:
                 adopted_signal_by_race_and_key[signal_key] = payload
+
+        def _selected_adopted_signals_for_roi() -> list[dict]:
+            """Match the ROI dashboard to the live high-ROI race list.
+
+            The live list renders one representative adopted strategy per race.
+            Daily ROI used to count every matching strategy for the same race,
+            so a hidden secondary strategy could appear as a bet/hit on the ROI
+            page. Select only the highest-recovery adopted strategy per race to
+            keep the list, MD adoption table, and ROI daily stats in sync.
+            """
+            by_race: dict[str, dict] = {}
+            adopted_keys = set(ROI_STRATEGY_KEYS)
+            for signal in adopted_signal_by_race_and_key.values():
+                key = signal.get("key")
+                race_id = signal.get("race_id")
+                if not race_id or key not in adopted_keys:
+                    continue
+                prev = by_race.get(race_id)
+                if prev is None or float(signal.get("recovery") or 0.0) > float(prev.get("recovery") or 0.0):
+                    by_race[race_id] = signal
+            return list(by_race.values())
+
+        def _parse_market_signal_bet(l4: dict) -> tuple[str, str] | None:
+            """Return (bet_type, combination) for a displayed high-ROI pick."""
+            import re as _re
+
+            bet_text = str((l4 or {}).get("bet") or "")
+            match = _re.search(r"\b([1-6](?:-[1-6]){0,2})\b", bet_text)
+            if not match:
+                return None
+            combo = match.group(1)
+            n_boats = combo.count("-") + 1
+            if n_boats >= 3:
+                return "trifecta", combo
+            if n_boats == 2:
+                return "exacta", combo
+            return "win", combo
+
+        def _overlay_market_signal_cache_daily() -> None:
+            """Use the same adopted picks as /api/market-signals when cached.
+
+            The high-ROI list is the operational source of truth. Historical
+            ROI used to re-run strategy-specific backtests and could count
+            strategies that were never shown to the user for that day. When a
+            market-signals cache exists, replace adopted-strategy daily counts
+            with exactly the adopted rows displayed by that payload.
+            """
+            adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS) & set(ROI_STRATEGY_KEYS)
+            if not adopted_levels:
+                return
+
+            rows_to_lookup: list[tuple[str, str, str, str, str]] = []
+            selected_by_date: dict[str, list[tuple[str, str, str, str]]] = {}
+
+            for rdate, day_d in by_date.items():
+                payload = _read_json_cache_stale(_market_signals_cache_key(rdate))
+                if not isinstance(payload, dict) or payload.get("date") != rdate:
+                    continue
+                signals = payload.get("signals") or {}
+                if not isinstance(signals, dict):
+                    continue
+
+                selected: list[tuple[str, str, str, str]] = []
+                for rid, signal in signals.items():
+                    if not isinstance(signal, dict):
+                        continue
+                    l4 = signal.get("l4") or {}
+                    if not isinstance(l4, dict):
+                        continue
+                    level = str(l4.get("level") or "")
+                    if level not in adopted_levels or level.startswith("morning_watch_"):
+                        continue
+                    race_id = str(signal.get("race_id") or rid or "")
+                    parsed = _parse_market_signal_bet(l4)
+                    if not race_id or parsed is None:
+                        continue
+                    bet_type, combo = parsed
+                    selected.append((race_id, level, bet_type, combo))
+
+                # Even an empty cache is a valid computed high-ROI list, so
+                # clear adopted counts for that day before applying rows.
+                for key in ROI_STRATEGY_KEYS:
+                    day_d[f"{key}_bets"] = 0
+                    day_d[f"{key}_hits"] = 0
+                    day_d[f"{key}_pay"] = 0
+                day_d["_adopted_from_market_signals_cache"] = True
+                selected_by_date[rdate] = selected
+                rows_to_lookup.extend((rdate, *row) for row in selected)
+
+            if not rows_to_lookup:
+                return
+
+            payout_by_signal: dict[tuple[str, str, str], int] = {}
+            try:
+                with db_connect() as conn_p:
+                    for _rdate, race_id, _level, bet_type, combo in rows_to_lookup:
+                        row_p = conn_p.execute(
+                            "SELECT payout FROM race_payouts "
+                            "WHERE race_id = ? AND bet_type = ? AND combination = ? "
+                            "ORDER BY payout DESC LIMIT 1",
+                            (race_id, bet_type, combo),
+                        ).fetchone()
+                        payout_by_signal[(race_id, bet_type, combo)] = int(row_p[0] or 0) if row_p else 0
+            except Exception as e:
+                logger.warning("market-signals adopted ROI payout lookup failed: %s", e)
+                return
+
+            for rdate, selected in selected_by_date.items():
+                day_d = by_date.get(rdate)
+                if day_d is None:
+                    continue
+                for race_id, level, bet_type, combo in selected:
+                    pay = payout_by_signal.get((race_id, bet_type, combo), 0)
+                    day_d[f"{level}_bets"] = int(day_d.get(f"{level}_bets", 0) or 0) + 1
+                    if pay:
+                        day_d[f"{level}_hits"] = int(day_d.get(f"{level}_hits", 0) or 0) + 1
+                        day_d[f"{level}_pay"] = int(day_d.get(f"{level}_pay", 0) or 0) + pay
 
         for row in cur:
             row = tuple(row)
@@ -13552,7 +13669,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("fukuoka wind exacta daily stats failed: %s", e)
 
-        for adopted in adopted_signal_by_race_and_key.values():
+        for adopted in _selected_adopted_signals_for_roi():
             rdate = adopted["date"]
             d = by_date.get(rdate)
             if d is None:
@@ -13562,6 +13679,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if adopted["hit"]:
                 d[f"{key}_hits"] = int(d.get(f"{key}_hits", 0) or 0) + 1
                 d[f"{key}_pay"] = int(d.get(f"{key}_pay", 0) or 0) + int(adopted["pay"] or 0)
+
+        _overlay_market_signal_cache_daily()
 
         for d in by_date.values():
             for key in ROI_STRATEGY_KEYS:
