@@ -3736,6 +3736,60 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             resp.headers["Pragma"] = "no-cache"
             return resp
 
+        def _load_market_data_status() -> dict[str, dict[str, Any]]:
+            """Return cheap same-day data counts even when signal cache is cold."""
+            data_status = {
+                "race_basic": {"latest": None, "count": 0, "total": 0},
+                "preview": {"latest": None, "count": 0, "total": 0},
+                "tide": {"latest": None, "count": 0, "total": 0},
+            }
+            try:
+                with db_connect() as conn:
+                    row = conn.execute("""
+                        SELECT
+                            (SELECT COUNT(*) FROM races WHERE race_date = ?) AS race_total,
+                            (SELECT COUNT(DISTINCT p.race_id) FROM predictions p
+                              JOIN races r ON r.race_id = p.race_id
+                             WHERE r.race_date = ? AND p.boat_number = 1) AS basic_count,
+                            (SELECT MAX(p.predicted_at) FROM predictions p
+                              JOIN races r ON r.race_id = p.race_id
+                             WHERE r.race_date = ? AND p.boat_number = 1) AS basic_latest,
+                            (SELECT COUNT(DISTINCT pv.race_id) FROM race_previews pv
+                              JOIN races r ON r.race_id = pv.race_id
+                             WHERE r.race_date = ?) AS preview_count,
+                            (SELECT MAX(pv.live_updated_at) FROM race_previews pv
+                              JOIN races r ON r.race_id = pv.race_id
+                             WHERE r.race_date = ?) AS preview_latest,
+                            (SELECT COUNT(DISTINCT rt.race_id) FROM race_tides rt
+                              JOIN races r ON r.race_id = rt.race_id
+                             WHERE r.race_date = ?) AS tide_count,
+                            (SELECT MAX(rt.fetched_at) FROM race_tides rt
+                              JOIN races r ON r.race_id = rt.race_id
+                             WHERE r.race_date = ?) AS tide_latest
+                    """, (target_date, target_date, target_date, target_date, target_date, target_date, target_date)).fetchone()
+                    if row:
+                        race_total, basic_count, basic_latest, preview_count, preview_latest, tide_count, tide_latest = row
+                        data_status = {
+                            "race_basic": {
+                                "latest": basic_latest,
+                                "count": int(basic_count or 0),
+                                "total": int(race_total or 0),
+                            },
+                            "preview": {
+                                "latest": preview_latest,
+                                "count": int(preview_count or 0),
+                                "total": int(race_total or 0),
+                            },
+                            "tide": {
+                                "latest": tide_latest,
+                                "count": int(tide_count or 0),
+                                "total": int(race_total or 0),
+                            },
+                        }
+            except Exception as e:
+                logger.warning("data_status query failed: %s", e)
+            return data_status
+
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if (
             cached_payload is not None
@@ -3757,7 +3811,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "n_positive_ev": 0,
                 "n_l4": 0,
                 "n_morning_l4": 0,
-                "data_status": {"cache_only": True, "cache_miss": True},
+                "data_status": {
+                    **_load_market_data_status(),
+                    "cache_only": True,
+                    "cache_miss": True,
+                },
                 "accident_watch": {},
                 "signals": {},
             }
@@ -10048,44 +10106,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as exc:  # noqa: BLE001
             logger.warning("course-fit live signals failed: %s", exc)
 
-        data_status = {
-            "race_basic": {"latest": None, "count": 0, "total": 0},
-            "preview": {"latest": None, "count": 0, "total": 0},
-            "tide": {"latest": None, "count": 0, "total": 0},
-        }
-        try:
-            with db_connect() as conn:
-                row = conn.execute("""
-                    SELECT
-                        (SELECT COUNT(*) FROM races WHERE race_date = ?) AS race_total,
-                        (SELECT COUNT(DISTINCT p.race_id) FROM predictions p
-                          JOIN races r ON r.race_id = p.race_id
-                         WHERE r.race_date = ? AND p.boat_number = 1) AS basic_count,
-                        (SELECT MAX(p.predicted_at) FROM predictions p
-                          JOIN races r ON r.race_id = p.race_id
-                         WHERE r.race_date = ? AND p.boat_number = 1) AS basic_latest,
-                        (SELECT COUNT(DISTINCT pv.race_id) FROM race_previews pv
-                          JOIN races r ON r.race_id = pv.race_id
-                         WHERE r.race_date = ?) AS preview_count,
-                        (SELECT MAX(pv.live_updated_at) FROM race_previews pv
-                          JOIN races r ON r.race_id = pv.race_id
-                         WHERE r.race_date = ?) AS preview_latest,
-                        (SELECT COUNT(DISTINCT rt.race_id) FROM race_tides rt
-                          JOIN races r ON r.race_id = rt.race_id
-                         WHERE r.race_date = ?) AS tide_count,
-                        (SELECT MAX(rt.fetched_at) FROM race_tides rt
-                          JOIN races r ON r.race_id = rt.race_id
-                         WHERE r.race_date = ?) AS tide_latest
-                """, (target_date, target_date, target_date, target_date, target_date, target_date, target_date)).fetchone()
-                if row:
-                    race_total, basic_count, basic_latest, preview_count, preview_latest, tide_count, tide_latest = row
-                    data_status = {
-                        "race_basic": {"latest": basic_latest, "count": int(basic_count or 0), "total": int(race_total or 0)},
-                        "preview": {"latest": preview_latest, "count": int(preview_count or 0), "total": int(race_total or 0)},
-                        "tide": {"latest": tide_latest, "count": int(tide_count or 0), "total": int(race_total or 0)},
-                    }
-        except Exception as e:
-            logger.warning("data_status query failed: %s", e)
+        data_status = _load_market_data_status()
 
         def _accident_watch_label(items: list[dict[str, Any]]) -> str:
             parts = []
