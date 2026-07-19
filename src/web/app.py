@@ -10254,6 +10254,62 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 return False
         return day_d.get("_adopted_daily_select_version") in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS
 
+    def _l4_daily_stats_cache_only(from_date: str, to_date: str) -> list[dict]:
+        """Read daily ROI stats from precomputed JSON cache only.
+
+        This is intentionally used by the monthly dashboard's normal display
+        path. If the cache is missing or stale, the page should remain
+        responsive and show zeros/missing months instead of running the long
+        historical aggregation inside the web worker.
+        """
+        import json as _json
+        from datetime import date as _date, timedelta as _timedelta
+
+        try:
+            d_from = _date.fromisoformat(from_date)
+            d_to = _date.fromisoformat(to_date)
+        except ValueError:
+            return []
+        if d_to < d_from:
+            return []
+
+        by_date: dict[str, dict] = {}
+        try:
+            with db_connect() as conn_c:
+                cur_c = conn_c.execute(
+                    "SELECT race_date, stats_json FROM l4_daily_stats_cache "
+                    "WHERE race_date BETWEEN ? AND ?",
+                    (from_date, to_date),
+                )
+                for rdate, sjson in cur_c.fetchall():
+                    try:
+                        day_d = _json.loads(sjson)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(day_d, dict):
+                        continue
+                    if not _adopted_daily_cache_is_valid(str(rdate), day_d):
+                        continue
+                    by_date[str(rdate)] = day_d
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("daily ROI cache-only lookup failed: %s", exc)
+
+        rows: list[dict] = []
+        cur = d_from
+        while cur <= d_to:
+            rdate = cur.isoformat()
+            day = dict(by_date.get(rdate) or {"date": rdate, "n_total": 0, "n_l4": 0})
+            day.setdefault("date", rdate)
+            day.setdefault("n_total", 0)
+            day.setdefault("n_l4", 0)
+            for key in ROI_STRATEGY_KEYS:
+                day.setdefault(f"{key}_bets", 0)
+                day.setdefault(f"{key}_hits", 0)
+                day.setdefault(f"{key}_pay", 0)
+            rows.append(day)
+            cur += _timedelta(days=1)
+        return rows
+
     def _l4_daily_stats(from_date: str, to_date: str, force_full_scan: bool = False) -> list[dict]:
         """日別の L4 戦略統計を集計。
         L4 条件: 三連単本命 500-1000 + B除外 + 1号艇A1
@@ -14846,11 +14902,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         bet_keys = ROI_STRATEGY_KEYS
         adopted_keys = ROI_STRATEGY_KEYS
         try:
-            monthly_daily = _l4_daily_stats(
-                monthly_from,
-                monthly_to,
-                force_full_scan=force_recompute,
-            )
+            if force_recompute:
+                monthly_daily = _l4_daily_stats(
+                    monthly_from,
+                    monthly_to,
+                    force_full_scan=True,
+                )
+            else:
+                monthly_daily = _l4_daily_stats_cache_only(monthly_from, monthly_to)
         except Exception as e:
             logger.warning("monthly daily stats failed: %s", e)
             monthly_daily = []

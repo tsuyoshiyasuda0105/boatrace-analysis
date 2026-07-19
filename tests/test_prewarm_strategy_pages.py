@@ -21,6 +21,14 @@ def test_realtime_mode_never_forces_expensive_recompute():
 
     assert "/api/market-signals?date=2026-07-18" in targets
     assert all("recompute=1" not in target for target in targets)
+    assert all("/member/strategy/monthly" not in target for target in targets)
+
+
+def test_morning_check_keeps_monthly_refresh_out_of_race_hours():
+    targets = build_targets("morning-check", TODAY)
+
+    assert "/member/strategy?from=2026-06-18&to=2026-07-18&recompute=1" in targets
+    assert all("/member/strategy/monthly" not in target for target in targets)
 
 
 def test_morning_and_nightly_refresh_market_signal_snapshot():

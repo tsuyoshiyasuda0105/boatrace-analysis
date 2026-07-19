@@ -331,5 +331,21 @@
     }
   };
 
-  loadRaceSignals();
+  const scheduleRaceSignals = () => {
+    if (!shell) return;
+    const run = () => {
+      loadRaceSignals();
+    };
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(run, { timeout: 1500 });
+    } else {
+      window.setTimeout(run, 450);
+    }
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleRaceSignals, { once: true });
+  } else {
+    scheduleRaceSignals();
+  }
 })();

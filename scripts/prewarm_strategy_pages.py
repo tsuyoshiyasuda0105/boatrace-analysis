@@ -61,9 +61,7 @@ def build_targets(mode: str, today: date) -> list[str]:
         return [
             f"/api/market-signals?date={today_s}&recompute=1",
             f"/member/strategy?from={d30}&to={today_s}&recompute=1",
-            f"/member/strategy/monthly?recompute=1",
             f"/member/strategy?from={d30}&to={today_s}",
-            "/member/strategy/monthly",
         ]
 
     # Realtime mode is deliberately light: keep pages warm, but do not force
@@ -71,7 +69,6 @@ def build_targets(mode: str, today: date) -> list[str]:
     return [
         f"/api/market-signals?date={today_s}",
         f"/member/strategy?from={d30}&to={today_s}",
-        "/member/strategy/monthly",
     ]
 
 
