@@ -59,11 +59,17 @@ _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
 MARKET_SIGNALS_CACHE_VERSION = "v14"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-nightly-v1"
 
 
 def _market_signals_cache_key(target_date: str) -> str:
     """Return the single cache key shared by the page and signal API."""
     return f"market_signals:{MARKET_SIGNALS_CACHE_VERSION}:{target_date}"
+
+
+def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
+    suffix = ":".join(str(p) for p in parts)
+    return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{suffix}"
 
 def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
     """Flask view 用 TTL キャッシュデコレータ。
@@ -14458,7 +14464,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy:v16:{from_d}:{to_d}"
+        page_cache_key = _strategy_page_cache_key("member_strategy", from_d, to_d)
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -14631,7 +14637,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
-        page_cache_key = f"member_strategy_monthly:v12:{monthly_from}:{monthly_to}"
+        page_cache_key = _strategy_page_cache_key("member_strategy_monthly", monthly_from, monthly_to)
         if not force_recompute:
             # Monthly ROI is rebuilt by the nightly Render scheduler. Keep the
             # generated HTML valid through the next night so normal navigation

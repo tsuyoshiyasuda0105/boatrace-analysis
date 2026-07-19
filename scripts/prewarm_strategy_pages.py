@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO))
 os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
 
 from src.web.app import create_app  # noqa: E402
+from scripts.ensure_performance_indexes import ensure_performance_indexes  # noqa: E402
 
 
 MODES = ("signals", "realtime", "morning-check", "nightly")
@@ -103,6 +104,9 @@ def main() -> int:
     client = app.test_client()
     with client.session_transaction() as sess:
         sess["is_member"] = True
+
+    if args.mode in ("nightly", "morning-check"):
+        ensure_performance_indexes()
 
     targets = build_targets(args.mode, today)
 

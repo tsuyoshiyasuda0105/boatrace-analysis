@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS races (
 );
 CREATE INDEX IF NOT EXISTS idx_races_date ON races(race_date);
 CREATE INDEX IF NOT EXISTS idx_races_stadium_date ON races(stadium_number, race_date);
+CREATE INDEX IF NOT EXISTS idx_races_date_stadium_rno
+  ON races(race_date, stadium_number, race_number);
 
 CREATE TABLE IF NOT EXISTS race_entries (
   -- 1レース×6艇の出走表データ。前日確定。
@@ -130,6 +132,8 @@ CREATE TABLE IF NOT EXISTS race_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_entries_racer ON race_entries(racer_number);
 CREATE INDEX IF NOT EXISTS idx_entries_motor ON race_entries(assigned_motor_number);
+CREATE INDEX IF NOT EXISTS idx_entries_race_boat
+  ON race_entries(race_id, boat_number);
 
 CREATE TABLE IF NOT EXISTS motor_cycle_stats (
   stadium_number      INTEGER NOT NULL,
@@ -170,6 +174,8 @@ CREATE TABLE IF NOT EXISTS race_previews (
   PRIMARY KEY (race_id, boat_number),
   FOREIGN KEY (race_id) REFERENCES races(race_id)
 );
+CREATE INDEX IF NOT EXISTS idx_previews_race_boat
+  ON race_previews(race_id, boat_number);
 
 CREATE TABLE IF NOT EXISTS race_parts (
   -- 部品交換 / プロペラ交換情報。Layer 3 スクレイピング由来。
@@ -218,6 +224,8 @@ CREATE TABLE IF NOT EXISTS race_results (
 -- ROI 集計 SQL の "WHERE finishing_position=N" JOIN を高速化
 CREATE INDEX IF NOT EXISTS idx_results_race_pos
   ON race_results(race_id, finishing_position);
+CREATE INDEX IF NOT EXISTS idx_results_race_boat_finish
+  ON race_results(race_id, boat_number, finishing_position);
 
 CREATE TABLE IF NOT EXISTS race_payouts (
   -- 払戻金。三連単/三連複/二連単/二連複/拡連複/単勝/複勝
@@ -233,6 +241,16 @@ CREATE TABLE IF NOT EXISTS race_payouts (
 -- 全行スキャンになりがち。bet_type で先に絞り込めるよう補助 index
 CREATE INDEX IF NOT EXISTS idx_payouts_type_combination
   ON race_payouts(bet_type, combination, race_id);
+CREATE INDEX IF NOT EXISTS idx_payouts_race_type_combination
+  ON race_payouts(race_id, bet_type, combination);
+
+CREATE TABLE IF NOT EXISTS l4_daily_stats_cache (
+  race_date  TEXT PRIMARY KEY,
+  stats_json TEXT NOT NULL,
+  cached_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l4_daily_stats_cache_date
+  ON l4_daily_stats_cache(race_date);
 
 -- ============================================================
 -- オッズ (オプション。スクレイピングで取得する場合)
