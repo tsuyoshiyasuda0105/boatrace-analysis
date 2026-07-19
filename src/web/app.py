@@ -58,7 +58,7 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v13"
+MARKET_SIGNALS_CACHE_VERSION = "v14"
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -2849,11 +2849,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             today_iso = date.today().isoformat()
             cache_ttl = 60 if target_date >= today_iso else 3600
             signal_cache_key = _market_signals_cache_key(target_date)
-            signal_payload = (
-                _read_json_cache(signal_cache_key, cache_ttl)
-                or _read_json_cache_stale(signal_cache_key)
-                or {}
-            )
+            signal_payload = _read_json_cache(signal_cache_key, cache_ttl)
+            if signal_payload is None and target_date < today_iso:
+                signal_payload = _read_json_cache_stale(signal_cache_key)
+            signal_payload = signal_payload or {}
             signals = (signal_payload or {}).get("signals") or {}
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
             adopted_watch_levels = set(MARKET_SIGNAL_WATCH_LEVELS)
@@ -2861,6 +2860,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if not roi_picks_visible:
                     break
                 l4 = (sig or {}).get("l4") or {}
+                if int((sig or {}).get("n_female") or 0) > 0 and not l4.get("allow_female_market_signal"):
+                    continue
+                if l4.get("is_female_present") and not l4.get("allow_female_market_signal"):
+                    continue
                 level = str(l4.get("level") or "")
                 levels = {level}
                 levels.update(str(x) for x in (l4.get("matched_levels") or []) if x)
@@ -14842,7 +14845,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "updated_at": None,
         }
         error_message = None
-        raw_rows = []
+        raw_rows: list[dict[str, Any]] = []
         try:
             with db_connect() as conn:
                 period_rows = conn.execute(
@@ -14889,38 +14892,40 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     like = f"%{q}%"
                     params.extend([like, like])
                 where_sql = " AND ".join(where)
-                raw_rows = conn.execute(
+                cur = conn.execute(
                     f"""
-                    SELECT racer_number, racer_name, class_number, class_label,
+                    SELECT rank_no, racer_number, racer_name, class_number, class_label,
                            accident_points, accident_rate, starts_count, accident_events,
-                           tone, rank_no, updated_at
+                           tone, updated_at
                       FROM racer_accident_rank_snapshots
                      WHERE {where_sql}
                      ORDER BY accident_rate DESC, accident_points DESC, starts_count DESC
                      LIMIT {limit}
                     """,
                     tuple(params),
-                ).fetchall()
+                )
+                columns = [desc[0] for desc in (cur.description or [])]
+                raw_rows = [dict(zip(columns, row)) for row in cur.fetchall()]
         except Exception as exc:  # noqa: BLE001
             logger.warning("member_accidents failed: %s", exc)
             error_message = str(exc)
 
         for idx, r in enumerate(raw_rows, start=1):
-            class_number = r[2]
-            accident_rate = float(r[4] or 0.0)
+            class_number = r.get("class_number")
+            accident_rate = float(r.get("accident_rate") or 0.0)
             rows.append(
                 {
-                    "rank_no": idx,
-                    "racer_number": int(r[0]) if r[0] is not None else None,
-                    "racer_name": r[1] or "-",
+                    "rank_no": int(r.get("rank_no") or idx),
+                    "racer_number": int(r["racer_number"]) if r.get("racer_number") is not None else None,
+                    "racer_name": r.get("racer_name") or "-",
                     "class_number": class_number,
-                    "class_label": _class_label(class_number),
-                    "accident_points": int(r[3] or 0),
+                    "class_label": r.get("class_label") or _class_label(class_number),
+                    "accident_points": int(r.get("accident_points") or 0),
                     "accident_rate": accident_rate,
-                    "starts_count": int(r[5] or 0),
-                    "accident_events": int(r[6] or 0),
-                    "tone": _accident_rank_tone(class_number, accident_rate),
-                    "updated_at": r[7],
+                    "starts_count": int(r.get("starts_count") or 0),
+                    "accident_events": int(r.get("accident_events") or 0),
+                    "tone": r.get("tone") or _accident_rank_tone(class_number, accident_rate),
+                    "updated_at": r.get("updated_at"),
                 }
             )
 
