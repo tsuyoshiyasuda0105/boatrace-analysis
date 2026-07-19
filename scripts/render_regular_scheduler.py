@@ -291,6 +291,13 @@ def run_accident_rebuild(date_from: str, date_to: str) -> bool:
     )
 
 
+def run_accident_rank_snapshot(target_date: str) -> bool:
+    return run_py(
+        ["scripts/cache_racer_accident_rank_snapshot.py", "--date", target_date],
+        timeout=300,
+    )
+
+
 def run_nightly(now: datetime) -> bool:
     today = now.date().isoformat()
     tomorrow = (now.date() + timedelta(days=1)).isoformat()
@@ -306,6 +313,7 @@ def run_nightly(now: datetime) -> bool:
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
     ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "nightly"], timeout=3600)
     ok &= run_accident_rebuild(accident_period_start(now), today)
+    ok &= run_accident_rank_snapshot(today)
     ok &= run_db_maintenance()
     return ok
 

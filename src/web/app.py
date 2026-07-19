@@ -14821,9 +14821,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     @cached(ttl=600, past_ttl=3600)
     def member_accidents():
-        """事故率の選手一覧。事故点・事故率・級別ランクを期別に表示する。"""
+        """事故率の選手一覧。夜間集計済みスナップショットを表示する。"""
         today_iso = date.today().isoformat()
         selected_period = request.args.get("period") or _accident_period_start_for_date(today_iso)
+        class_filter = (request.args.get("class") or "all").strip().lower()
+        if class_filter not in {"all", "a", "a1", "a2", "b1", "b2"}:
+            class_filter = "all"
+        q = (request.args.get("q") or "").strip()
         try:
             limit = int(request.args.get("limit") or 300)
         except (TypeError, ValueError):
@@ -14845,9 +14849,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     """
                     SELECT period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
                            MAX(updated_at) AS updated_at
-                      FROM racer_accident_period_stats
+                      FROM racer_accident_rank_snapshots
                      WHERE source_kind = 'reconstructed'
-                       AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                       AND source_rule_version = 'official_table_2025_05_reconstructed_v2'
                      GROUP BY period_start
                      ORDER BY period_start DESC
                     """
@@ -14868,38 +14872,34 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     (p for p in periods if p["period_start"] == selected_period),
                     selected_meta,
                 )
-                class_as_of = selected_meta.get("period_end") or today_iso
+
+                where = [
+                    "period_start = ?",
+                    "source_kind = 'reconstructed'",
+                    "source_rule_version = 'official_table_2025_05_reconstructed_v2'",
+                ]
+                params: list[Any] = [selected_period]
+                if class_filter == "a":
+                    where.append("class_label IN ('A1', 'A2')")
+                elif class_filter in {"a1", "a2", "b1", "b2"}:
+                    where.append("class_label = ?")
+                    params.append(class_filter.upper())
+                if q:
+                    where.append("(racer_name LIKE ? OR CAST(racer_number AS TEXT) LIKE ?)")
+                    like = f"%{q}%"
+                    params.extend([like, like])
+                where_sql = " AND ".join(where)
                 raw_rows = conn.execute(
                     f"""
-                    WITH latest_entry AS (
-                        SELECT e.racer_number, e.racer_name, e.class_number,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY e.racer_number
-                                   ORDER BY r.race_date DESC, e.race_id DESC
-                               ) AS rn
-                          FROM race_entries e
-                          JOIN races r ON r.race_id = e.race_id
-                         WHERE r.race_date <= ?
-                    )
-                    SELECT s.racer_number,
-                           COALESCE(NULLIF(le.racer_name, ''), rc.name, '') AS racer_name,
-                           le.class_number,
-                           s.accident_points,
-                           s.accident_rate,
-                           s.starts_count,
-                           s.accident_events,
-                           s.updated_at
-                      FROM racer_accident_period_stats s
-                      LEFT JOIN racers rc ON rc.racer_number = s.racer_number
-                      LEFT JOIN latest_entry le
-                        ON le.racer_number = s.racer_number AND le.rn = 1
-                     WHERE s.period_start = ?
-                       AND s.source_kind = 'reconstructed'
-                       AND s.rule_version = 'official_table_2025_05_reconstructed_v2'
-                     ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
+                    SELECT racer_number, racer_name, class_number, class_label,
+                           accident_points, accident_rate, starts_count, accident_events,
+                           tone, rank_no, updated_at
+                      FROM racer_accident_rank_snapshots
+                     WHERE {where_sql}
+                     ORDER BY accident_rate DESC, accident_points DESC, starts_count DESC
                      LIMIT {limit}
                     """,
-                    (class_as_of, selected_period),
+                    tuple(params),
                 ).fetchall()
         except Exception as exc:  # noqa: BLE001
             logger.warning("member_accidents failed: %s", exc)
@@ -14938,6 +14938,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             selected_period=selected_period,
             selected_meta=selected_meta,
             limit=limit,
+            class_filter=class_filter,
+            q=q,
             summary=summary,
             error_message=error_message,
         )

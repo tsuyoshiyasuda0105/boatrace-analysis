@@ -83,6 +83,7 @@ _TABLE_PRIMARY_KEYS = {
     "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "rule_version", "source_kind"],
     "racer_accident_period_adjustments": ["racer_number", "period_start", "period_end", "rule_version", "source_kind"],
     "racer_accident_external_snapshots": ["snapshot_date", "racer_number", "source_kind"],
+    "racer_accident_rank_snapshots": ["period_start", "racer_number"],
 }
 
 

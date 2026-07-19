@@ -23,6 +23,21 @@
         </select>
       </label>
       <label>
+        級別
+        <select name="class">
+          <option value="all" {% if class_filter == 'all' %}selected{% endif %}>全選手</option>
+          <option value="a" {% if class_filter == 'a' %}selected{% endif %}>A1/A2</option>
+          <option value="a1" {% if class_filter == 'a1' %}selected{% endif %}>A1</option>
+          <option value="a2" {% if class_filter == 'a2' %}selected{% endif %}>A2</option>
+          <option value="b1" {% if class_filter == 'b1' %}selected{% endif %}>B1</option>
+          <option value="b2" {% if class_filter == 'b2' %}selected{% endif %}>B2</option>
+        </select>
+      </label>
+      <label>
+        検索
+        <input name="q" value="{{ q }}" placeholder="選手名 / 登録番号">
+      </label>
+      <label>
         表示
         <select name="limit">
           {% for n in [100, 300, 500, 1000] %}
