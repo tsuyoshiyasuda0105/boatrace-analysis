@@ -48,11 +48,19 @@
 
   <section class="summary-grid" style="margin-bottom:16px;">
     <article class="summary-card">
-      <div class="summary-label">本日のレース合計</div>
-      <div class="summary-roi">{{ today_summary.n_total }}</div>
+      <div class="summary-label">本日採用手法合計</div>
+      <div class="summary-roi">{{ today_summary.bets }}</div>
       <div class="summary-sub">
-        該当={{ today_summary.bets }} HIT={{ today_summary.hits }}
+        採用={{ today_summary.bets }} HIT={{ today_summary.hits }}
         勝率={% if today_summary.hit_rate is not none %}{{ '%.1f' | format(today_summary.hit_rate) }}%{% else %}-{% endif %}
+        {% if today_summary.active_strategies %}
+        <div style="margin-top:8px; font-size:12px; line-height:1.5; opacity:0.92;">
+          内訳:
+          {% for item in today_summary.active_strategies %}
+            <span style="display:inline-block; margin-right:8px;">{{ item.label }}({{ item.bets }}件)</span>
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
     </article>
     {% for s in strategies %}
@@ -99,7 +107,12 @@
             {% endif %}
           {% endfor %}
           <tr class="{% if ns.has_signal %}has-l4{% endif %}">
-            <td class="date-cell"><span class="date-text">{{ r.date }}</span></td>
+            <td class="date-cell">
+              <span class="date-text">{{ r.date }}</span>
+              <span style="display:block; margin-top:4px; font-size:11px; color:#facc15; opacity:0.95;">
+                HIT {{ r.adopted_total_hits }}/{{ r.adopted_total_bets }}
+              </span>
+            </td>
             <td class="num">{{ r.n_total }}</td>
             {% for s in strategies %}
             <td class="num">{{ r[s.key ~ '_bets'] }}</td>

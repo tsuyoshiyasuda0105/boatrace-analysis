@@ -59,7 +59,7 @@ _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
 MARKET_SIGNALS_CACHE_VERSION = "v14"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-nightly-v1"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v2"
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -10171,7 +10171,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v22"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v23"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -10236,6 +10236,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
         for version_key, expected_version in required_versions:
             if day_d.get(version_key) != expected_version:
+                return False
+        for key in ROI_STRATEGY_KEYS:
+            if (
+                f"{key}_bets" not in day_d
+                or f"{key}_hits" not in day_d
+                or f"{key}_pay" not in day_d
+            ):
                 return False
         return day_d.get("_adopted_daily_select_version") in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS
 
@@ -14505,12 +14512,48 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             r["tri_core_recovery"] = (tri_pay / (100 * tri_bets) * 100) if tri_bets else None
             r["tri_core_profit"] = tri_pay - 100 * tri_bets if tri_bets else 0
             r["n_l4_display"] = int(r.get("n_l4", 0) or 0)
+            adopted_bets_v = sum(int(r.get(f"{key}_bets", 0) or 0) for key in adopted_keys)
+            adopted_hits_v = sum(int(r.get(f"{key}_hits", 0) or 0) for key in adopted_keys)
+            adopted_pay_v = sum(int(r.get(f"{key}_pay", 0) or 0) for key in adopted_keys)
+            adopted_cost_v = sum(
+                int(r.get(f"{key}_bets", 0) or 0) * BET_UNIT_MAP.get(key, 100)
+                for key in adopted_keys
+            )
+            r["adopted_total_bets"] = adopted_bets_v
+            r["adopted_total_hits"] = adopted_hits_v
+            r["adopted_total_hit_rate"] = ((adopted_hits_v / adopted_bets_v) * 100) if adopted_bets_v else None
+            r["adopted_total_recovery"] = ((adopted_pay_v / adopted_cost_v) * 100) if adopted_cost_v else None
+            r["adopted_total_profit"] = adopted_pay_v - adopted_cost_v if adopted_cost_v else 0
 
         # 通算集計 (L4 = A1 のみ + サブカテゴリ別 ROI)
         totals = {
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
+            "adopted_total_bets": sum(r.get("adopted_total_bets", 0) for r in rows),
+            "adopted_total_hits": sum(r.get("adopted_total_hits", 0) for r in rows),
+            "adopted_total_pay": sum(
+                int(r.get(f"{key}_pay", 0) or 0)
+                for r in rows
+                for key in adopted_keys
+            ),
+            "adopted_total_cost": sum(
+                int(r.get(f"{key}_bets", 0) or 0) * BET_UNIT_MAP.get(key, 100)
+                for r in rows
+                for key in adopted_keys
+            ),
         }
+        totals["adopted_total_hit_rate"] = (
+            (totals["adopted_total_hits"] / totals["adopted_total_bets"]) * 100
+            if totals["adopted_total_bets"] else None
+        )
+        totals["adopted_total_recovery"] = (
+            (totals["adopted_total_pay"] / totals["adopted_total_cost"]) * 100
+            if totals["adopted_total_cost"] else None
+        )
+        totals["adopted_total_profit"] = (
+            totals["adopted_total_pay"] - totals["adopted_total_cost"]
+            if totals["adopted_total_cost"] else 0
+        )
         for k in adopted_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
