@@ -358,3 +358,17 @@ def test_subscriber_default_alert_types_includes_f1():
     assert "L4_morning_general_f1" in DEFAULT_ALERT_TYPES, (
         "DEFAULT_ALERT_TYPES に L4_morning_general_f1 (朝の F1) が含まれていません。"
     )
+
+
+def test_adopted_roi_cache_missing_does_not_survive_recompute():
+    """採用手法ROIの日別キャッシュが候補キャッシュ欠損のまま固定されないこと。
+
+    バグ: market_signals キャッシュ作成前に ROI 日別キャッシュが保存されると、
+    `_adopted_market_signals_cache_missing=True` の古い JSON が有効扱いされ、
+    さらに再計算結果も最後の cache merge で上書きされることがあった。
+    その結果、候補画面では採用だったレースが ROI 画面で 0 件になる。
+    """
+    src = _read("src/web/app.py")
+    assert 'day_d.get("_adopted_market_signals_cache_missing")' in src
+    assert "recomputed_date_set = set(missing_dates)" in src
+    assert "if rdate in recomputed_date_set:" in src

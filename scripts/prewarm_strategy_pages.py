@@ -32,6 +32,7 @@ def _days_ago(today: date, days: int) -> str:
 
 def build_targets(mode: str, today: date) -> list[str]:
     today_s = today.isoformat()
+    yesterday_s = _days_ago(today, 1)
     d30 = _days_ago(today, 30)
     d365 = _days_ago(today, 365)
     d3y = _days_ago(today, 1095)
@@ -44,7 +45,10 @@ def build_targets(mode: str, today: date) -> list[str]:
     if mode == "nightly":
         # Heavy historical refresh. This is intentionally reserved for the
         # end-of-day Render scheduler so normal app clicks never trigger it.
+        # Rebuild yesterday first: after results/payouts arrive, the ROI cache
+        # must overlay the same high-ROI signal payload that users saw.
         return [
+            f"/api/market-signals?date={yesterday_s}&recompute=1",
             f"/api/market-signals?date={today_s}&recompute=1",
             f"/member/strategy?from={d3y}&to={today_s}&recompute=1",
             f"/member/strategy?from={d365}&to={today_s}&recompute=1",

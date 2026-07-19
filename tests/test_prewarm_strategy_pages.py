@@ -32,9 +32,12 @@ def test_morning_check_keeps_monthly_refresh_out_of_race_hours():
 
 
 def test_morning_and_nightly_refresh_market_signal_snapshot():
-    for mode in ("morning-check", "nightly"):
-        targets = build_targets(mode, TODAY)
-        assert targets[0] == "/api/market-signals?date=2026-07-18&recompute=1"
+    morning_targets = build_targets("morning-check", TODAY)
+    assert morning_targets[0] == "/api/market-signals?date=2026-07-18&recompute=1"
+
+    nightly_targets = build_targets("nightly", TODAY)
+    assert nightly_targets[0] == "/api/market-signals?date=2026-07-17&recompute=1"
+    assert nightly_targets[1] == "/api/market-signals?date=2026-07-18&recompute=1"
 
 
 def test_dashboard_uses_one_read_only_refresh_clock():

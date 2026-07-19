@@ -10216,7 +10216,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v26"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v27"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -10224,6 +10224,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     RECENT_ADOPTED_RECOMPUTE_DAYS = 14
 
     def _adopted_daily_cache_is_valid(rdate: str, day_d: dict) -> bool:
+        if day_d.get("_adopted_market_signals_cache_missing"):
+            return False
         if rdate >= STRICT_ODDS_DAILY_START and not day_d.get("_strict_odds_only"):
             return False
         required_versions = (
@@ -13894,7 +13896,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # === D. cache hit 分と SQL 結果をマージ ===
         result_by_date = dict(by_date)  # SQL 結果をベース
+        recomputed_date_set = set(missing_dates)
         for rdate, day_d in cached_by_date.items():
+            if rdate in recomputed_date_set:
+                continue
             # 過去日は cache を正とする。to に今日が含まれて SQL 経路が走った場合でも、
             # 歴史データまでゼロ初期化側で上書きしないようにする。
             if rdate < today_iso:
