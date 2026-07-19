@@ -446,8 +446,16 @@
                   <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
                   {% if p.has_accident_watch %}
+                    {% set accident_tone = 'unknown' %}
+                    {% if p.class_number in [1, 2] %}
+                      {% set accident_tone = 'a' %}
+                    {% elif p.class_number == 3 %}
+                      {% set accident_tone = 'b1' %}
+                    {% elif p.class_number == 4 %}
+                      {% set accident_tone = 'b2' %}
+                    {% endif %}
                     <div class="racer-accident-row">
-                      <span class="racer-accident-tag"
+                      <span class="racer-accident-tag accident-risk-{{ accident_tone }}"
                             title="事故率 {{ '%.2f' | format(p.accident_rate) }} / 事故点 {{ p.accident_points }} / 出走 {{ p.accident_starts }}">
                         事故07超
                       </span>

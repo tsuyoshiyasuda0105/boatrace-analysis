@@ -634,6 +634,9 @@
                 const badge = document.createElement('span');
                 badge.className = 'accident-watch-badge';
                 const maxRate = Number(acc.max_rate || 0);
+                const primaryAccident = Array.isArray(acc.items) ? acc.items[0] : null;
+                const accidentTone = primaryAccident && primaryAccident.tone ? primaryAccident.tone : 'unknown';
+                badge.className += ` accident-risk-${accidentTone}`;
                 badge.textContent = maxRate ? `事故${maxRate.toFixed(2)}` : '事故0.70+';
                 badge.title = acc.label || '事故率0.70以上の選手が出走';
                 item.appendChild(badge);

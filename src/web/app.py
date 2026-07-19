@@ -1702,6 +1702,27 @@ def _class_label(class_number: Any) -> str:
     return {1: "A1", 2: "A2", 3: "B1", 4: "B2"}.get(class_number, "-")
 
 
+def _accident_rank_tone(class_number: Any, accident_rate: Any) -> str:
+    """Return the display tone for accident-rate badges by racer class."""
+    try:
+        rate = float(accident_rate or 0.0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    try:
+        cls = int(class_number)
+    except (TypeError, ValueError):
+        cls = None
+    if rate < 0.7:
+        return "normal"
+    if cls in (1, 2):
+        return "a"
+    if cls == 3:
+        return "b1"
+    if cls == 4:
+        return "b2"
+    return "unknown"
+
+
 def _diff_tone(value: Optional[float]) -> str:
     if value is None:
         return "flat"
@@ -4086,7 +4107,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             placeholders = ",".join("?" for _ in race_ids)
                             acc_rows = conn.execute(
                                 f"""
-                                SELECT e.race_id, e.boat_number, e.racer_number,
+                                SELECT e.race_id, e.boat_number, e.racer_number, e.class_number,
                                        ras.accident_rate, ras.accident_points, ras.starts_count
                                   FROM race_entries e
                                   JOIN (
@@ -4112,9 +4133,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                     {
                                         "boat": int(ar[1]) if ar[1] is not None else None,
                                         "racer": int(ar[2]) if ar[2] is not None else None,
-                                        "rate": round(float(ar[3] or 0.0), 3),
-                                        "points": int(ar[4] or 0),
-                                        "starts": int(ar[5] or 0),
+                                        "class_number": int(ar[3]) if ar[3] is not None else None,
+                                        "class_label": _class_label(ar[3]),
+                                        "tone": _accident_rank_tone(ar[3], ar[4]),
+                                        "rate": round(float(ar[4] or 0.0), 3),
+                                        "points": int(ar[5] or 0),
+                                        "starts": int(ar[6] or 0),
                                     }
                                 )
                             for rid2, items in by_race_acc.items():
@@ -9993,10 +10017,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             for item in items[:3]:
                 boat = item.get("boat")
                 rate = item.get("rate")
+                cls = item.get("class_label")
                 if boat is None or rate is None:
                     continue
                 try:
-                    parts.append(f"{int(boat)}号:{float(rate):.2f}")
+                    cls_part = f"{cls} " if cls and cls != "-" else ""
+                    parts.append(f"{int(boat)}号:{cls_part}{float(rate):.2f}")
                 except Exception:
                     continue
             return "事故率0.70+ " + ", ".join(parts) if parts else "事故率0.70+"
@@ -14776,6 +14802,131 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             n_warning=n_warning,
             n_watch=n_watch,
             n_healthy=n_healthy,
+        )
+
+    @app.route("/member/accidents")
+    @login_required
+    @cached(ttl=600, past_ttl=3600)
+    def member_accidents():
+        """事故率の選手一覧。事故点・事故率・級別ランクを期別に表示する。"""
+        today_iso = date.today().isoformat()
+        selected_period = request.args.get("period") or _accident_period_start_for_date(today_iso)
+        try:
+            limit = int(request.args.get("limit") or 300)
+        except (TypeError, ValueError):
+            limit = 300
+        limit = max(50, min(limit, 1000))
+
+        periods: list[dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
+        selected_meta: dict[str, Any] = {
+            "period_start": selected_period,
+            "period_end": None,
+            "updated_at": None,
+        }
+        error_message = None
+        raw_rows = []
+        try:
+            with db_connect() as conn:
+                period_rows = conn.execute(
+                    """
+                    SELECT period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
+                           MAX(updated_at) AS updated_at
+                      FROM racer_accident_period_stats
+                     WHERE source_kind = 'reconstructed'
+                       AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                     GROUP BY period_start
+                     ORDER BY period_start DESC
+                    """
+                ).fetchall()
+                periods = [
+                    {
+                        "period_start": str(r[0]),
+                        "period_end": str(r[1]) if r[1] else None,
+                        "count": int(r[2] or 0),
+                        "updated_at": r[3],
+                    }
+                    for r in period_rows
+                ]
+                valid_periods = {p["period_start"] for p in periods}
+                if selected_period not in valid_periods and periods:
+                    selected_period = periods[0]["period_start"]
+                selected_meta = next(
+                    (p for p in periods if p["period_start"] == selected_period),
+                    selected_meta,
+                )
+                class_as_of = selected_meta.get("period_end") or today_iso
+                raw_rows = conn.execute(
+                    f"""
+                    WITH latest_entry AS (
+                        SELECT e.racer_number, e.racer_name, e.class_number,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY e.racer_number
+                                   ORDER BY r.race_date DESC, e.race_id DESC
+                               ) AS rn
+                          FROM race_entries e
+                          JOIN races r ON r.race_id = e.race_id
+                         WHERE r.race_date <= ?
+                    )
+                    SELECT s.racer_number,
+                           COALESCE(NULLIF(le.racer_name, ''), rc.name, '') AS racer_name,
+                           le.class_number,
+                           s.accident_points,
+                           s.accident_rate,
+                           s.starts_count,
+                           s.accident_events,
+                           s.updated_at
+                      FROM racer_accident_period_stats s
+                      LEFT JOIN racers rc ON rc.racer_number = s.racer_number
+                      LEFT JOIN latest_entry le
+                        ON le.racer_number = s.racer_number AND le.rn = 1
+                     WHERE s.period_start = ?
+                       AND s.source_kind = 'reconstructed'
+                       AND s.rule_version = 'official_table_2025_05_reconstructed_v2'
+                     ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
+                     LIMIT {limit}
+                    """,
+                    (class_as_of, selected_period),
+                ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("member_accidents failed: %s", exc)
+            error_message = str(exc)
+
+        for idx, r in enumerate(raw_rows, start=1):
+            class_number = r[2]
+            accident_rate = float(r[4] or 0.0)
+            rows.append(
+                {
+                    "rank_no": idx,
+                    "racer_number": int(r[0]) if r[0] is not None else None,
+                    "racer_name": r[1] or "-",
+                    "class_number": class_number,
+                    "class_label": _class_label(class_number),
+                    "accident_points": int(r[3] or 0),
+                    "accident_rate": accident_rate,
+                    "starts_count": int(r[5] or 0),
+                    "accident_events": int(r[6] or 0),
+                    "tone": _accident_rank_tone(class_number, accident_rate),
+                    "updated_at": r[7],
+                }
+            )
+
+        summary = {
+            "total": len(rows),
+            "watch": sum(1 for r in rows if r["accident_rate"] >= 0.7),
+            "a_watch": sum(1 for r in rows if r["tone"] == "a"),
+            "b1_watch": sum(1 for r in rows if r["tone"] == "b1"),
+            "b2_watch": sum(1 for r in rows if r["tone"] == "b2"),
+        }
+        return render_template(
+            "member_accidents.html",
+            rows=rows,
+            periods=periods,
+            selected_period=selected_period,
+            selected_meta=selected_meta,
+            limit=limit,
+            summary=summary,
+            error_message=error_message,
         )
 
     @app.route("/api/member/l4-stats")

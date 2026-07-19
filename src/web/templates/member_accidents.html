@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}事故率 選手一覧{% endblock %}
+
+{% block content %}
+<section class="accident-dashboard">
+  <div class="accident-page-head">
+    <div>
+      <p class="page-kicker">ACCIDENT RATE</p>
+      <h2>事故率 選手一覧</h2>
+      <p class="dashboard-hint">
+        事故点・事故率を期別に確認します。事故率0.70以上は級別で色分けしています。
+      </p>
+    </div>
+    <form method="get" class="accident-filter">
+      <label>
+        期
+        <select name="period">
+          {% for p in periods %}
+            <option value="{{ p.period_start }}" {% if p.period_start == selected_period %}selected{% endif %}>
+              {{ p.period_start }}{% if p.period_end %} - {{ p.period_end }}{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        表示
+        <select name="limit">
+          {% for n in [100, 300, 500, 1000] %}
+            <option value="{{ n }}" {% if n == limit %}selected{% endif %}>{{ n }}件</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">表示</button>
+    </form>
+  </div>
+
+  {% if error_message %}
+    <div class="accident-error">事故率データの取得に失敗しました: {{ error_message }}</div>
+  {% endif %}
+
+  <div class="accident-summary-grid">
+    <div class="accident-summary-card">
+      <span>表示件数</span>
+      <strong>{{ summary.total }}</strong>
+    </div>
+    <div class="accident-summary-card is-watch">
+      <span>事故率0.70以上</span>
+      <strong>{{ summary.watch }}</strong>
+    </div>
+    <div class="accident-summary-card tone-a">
+      <span>A1/A2 0.70以上</span>
+      <strong>{{ summary.a_watch }}</strong>
+    </div>
+    <div class="accident-summary-card tone-b1">
+      <span>B1 0.70以上</span>
+      <strong>{{ summary.b1_watch }}</strong>
+    </div>
+    <div class="accident-summary-card tone-b2">
+      <span>B2 0.70以上</span>
+      <strong>{{ summary.b2_watch }}</strong>
+    </div>
+  </div>
+
+  <div class="accident-legend">
+    <span class="racer-accident-tag accident-risk-a">A1/A2 高事故率</span>
+    <span class="racer-accident-tag accident-risk-b1">B1 高事故率</span>
+    <span class="racer-accident-tag accident-risk-b2">B2 高事故率</span>
+  </div>
+
+  <div class="accident-table-wrap">
+    <table class="accident-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th class="left">選手名</th>
+          <th>ランク</th>
+          <th>事故点</th>
+          <th>事故率</th>
+          <th>出走</th>
+          <th>事故件数</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr class="{% if r.accident_rate >= 0.7 %}is-watch{% endif %}">
+            <td>{{ r.rank_no }}</td>
+            <td class="left">
+              <span class="accident-racer-name">{{ r.racer_name }}</span>
+              {% if r.racer_number %}
+                <span class="racer-meta">No. {{ r.racer_number }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="racer-accident-tag accident-risk-{{ r.tone }}">
+                {{ r.class_label }}
+              </span>
+            </td>
+            <td class="numeric">{{ r.accident_points }}</td>
+            <td class="numeric strong">{{ '%.2f' | format(r.accident_rate) }}</td>
+            <td class="numeric">{{ r.starts_count }}</td>
+            <td class="numeric">{{ r.accident_events }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="empty-row">事故率データがありません。</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="dashboard-hint accident-note">
+    更新: {{ selected_meta.updated_at or '-' }} / 事故率 = 事故点 ÷ 出走数。選手ランクは直近登録データから表示しています。
+  </p>
+</section>
+{% endblock %}
