@@ -14626,7 +14626,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
         page_cache_key = f"member_strategy_monthly:v12:{monthly_from}:{monthly_to}"
         if not force_recompute:
-            cached_html = _read_page_html_cache(page_cache_key, 1800)
+            # Monthly ROI is rebuilt by the nightly Render scheduler. Keep the
+            # generated HTML valid through the next night so normal navigation
+            # stays SELECT-only instead of falling back to a long aggregation.
+            cached_html = _read_page_html_cache(page_cache_key, 86400)
             if cached_html:
                 return cached_html
             stale_html = _read_page_html_cache_stale(page_cache_key)

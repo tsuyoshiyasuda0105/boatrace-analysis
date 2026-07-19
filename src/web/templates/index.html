@@ -348,13 +348,10 @@
           (initialMarketSignalsPayload && initialMarketSignalsPayload.accident_watch) || {}
         );
         const BADGE_SELECTOR = '.l4-badge, .accident-watch-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
-        const warmRaceDetail = (raceId) => {
-          if (!raceId || !window.BoatraceSpeed) return;
-          window.BoatraceSpeed.prefetchUrl(`/race/${encodeURIComponent(raceId)}`);
-        };
-        const warmRaceDetails = (raceIds) => {
-          const unique = [...new Set((raceIds || []).filter(Boolean))].slice(0, 8);
-          unique.forEach((rid, idx) => setTimeout(() => warmRaceDetail(rid), 120 + idx * 120));
+        const warmRaceDetails = () => {
+          // Race detail pages now load heavy motor/history/affinity data lazily
+          // on click. Avoid background-prefetching several detail pages from
+          // the race list because it competes with market-signal rendering.
         };
 
         const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
