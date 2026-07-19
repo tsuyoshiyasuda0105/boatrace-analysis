@@ -60,6 +60,11 @@ _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
 MARKET_SIGNALS_CACHE_VERSION = "v16"
 STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v5"
+EXPENSIVE_RECOMPUTE_TRIGGERS = {
+    "render-prewarm",
+    "render-cron",
+    "db-maintenance",
+}
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -70,6 +75,26 @@ def _market_signals_cache_key(target_date: str) -> str:
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
     suffix = ":".join(str(p) for p in parts)
     return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{suffix}"
+
+
+def _is_expensive_recompute_allowed() -> bool:
+    """Allow long SQL recomputation only from background maintenance contexts."""
+    if os.getenv("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE") == "1":
+        return True
+    trigger = (os.getenv("BOATRACE_TASK_TRIGGER") or "").strip().lower()
+    return trigger in EXPENSIVE_RECOMPUTE_TRIGGERS
+
+
+def _wants_recompute() -> bool:
+    try:
+        return request.args.get("recompute") in ("1", "true", "yes", "on")
+    except Exception:
+        return False
+
+
+def _effective_force_recompute() -> bool:
+    """User-visible recompute flag, guarded so web clicks cannot run heavy SQL."""
+    return _wants_recompute() and _is_expensive_recompute_allowed()
 
 def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
     """Flask view 用 TTL キャッシュデコレータ。
@@ -88,7 +113,7 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
             filtered_qs = ""
             try:
                 if request:
-                    force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+                    force_recompute = _effective_force_recompute()
                     filtered_items = []
                     for key in sorted(request.args.keys()):
                         if key == "recompute":
@@ -3701,7 +3726,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or date.today().isoformat()
         today_iso = date.today().isoformat()
         cache_ttl = 15 if target_date >= today_iso else 3600
-        force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+        force_recompute = _effective_force_recompute()
         # v6: avoid serving stale empty signals after race data catches up.
         cache_key = _market_signals_cache_key(target_date)
         def _market_json_response(payload: Any, cache_state: str):
@@ -3714,17 +3739,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if (
             cached_payload is not None
-            and not (target_date >= today_iso and _is_empty_market_signals_payload(cached_payload))
         ):
             return _market_json_response(cached_payload, "fresh")
-        if cached_payload is not None:
-            logger.info("ignore empty live market-signals cache for %s; recomputing", target_date)
-        # 当日以降の market signals は展示・潮・直前オッズで採否が動く。
-        # stale を返すと、朝の古い候補が残ったり、逆に最新の採用候補が隠れたりするため、
-        # live date は TTL 切れ時に必ず再計算する。過去日は表示速度優先で stale fallback を許可。
-        stale_payload = None if (force_recompute or target_date >= today_iso) else _read_json_cache_stale(cache_key)
+        # Web worker を守るため、通常リクエストは live date でも stale を返す。
+        # 展示・潮・直前オッズで採否が動く候補の再計算は Render Cron の
+        # recompute=1 に限定する。
+        stale_payload = None if force_recompute else _read_json_cache_stale(cache_key)
         if stale_payload is not None:
             return _market_json_response(stale_payload, "stale")
+
+        if not force_recompute:
+            payload = {
+                "date": target_date,
+                "cache_version": MARKET_SIGNALS_CACHE_VERSION,
+                "computed_at": None,
+                "n_races": 0,
+                "n_positive_ev": 0,
+                "n_l4": 0,
+                "n_morning_l4": 0,
+                "data_status": {"cache_only": True, "cache_miss": True},
+                "accident_watch": {},
+                "signals": {},
+            }
+            return _market_json_response(payload, "cache-miss")
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
@@ -14677,7 +14714,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             return "Invalid date format", 400
 
-        force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+        force_recompute = _effective_force_recompute()
         page_cache_key = _strategy_page_cache_key("member_strategy", from_d, to_d)
         if not force_recompute:
             cached_html = _read_page_html_cache(
@@ -14689,10 +14726,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             stale_html = _read_page_html_cache_stale(page_cache_key)
             if stale_html:
                 return stale_html
-        # 通常表示は日別集計キャッシュを使う。ここで毎回 force_full_scan=True にすると
-        # ROI 画面の初回表示が全日付の重い SQL 再集計になり、体感がかなり遅くなる。
-        # 「最新に更新」ボタンを押した時だけ強制再集計する。
-        rows = _l4_daily_stats(from_d, to_d, force_full_scan=force_recompute)
+        # 通常表示は日別集計キャッシュのみを読む。cache miss でも Web worker 内で
+        # 長い SQL 再集計に落とさない。重い再集計は Render Cron の recompute だけ。
+        if force_recompute:
+            rows = _l4_daily_stats(from_d, to_d, force_full_scan=True)
+        else:
+            rows = _l4_daily_stats_cache_only(from_d, to_d)
         adopted_keys = ROI_STRATEGY_KEYS
         display_strategies = _sort_roi_strategies_by_venue_volume(ROI_STRATEGIES, rows)
 
@@ -14886,7 +14925,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # keep visible near the top for source-regression coverage:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
-        force_recompute = request.args.get("recompute") in ("1", "true", "yes", "on")
+        force_recompute = _effective_force_recompute()
         page_cache_key = _strategy_page_cache_key("member_strategy_monthly", monthly_from, monthly_to)
         if not force_recompute:
             # Monthly ROI is rebuilt by the nightly Render scheduler. Keep the
