@@ -26,6 +26,7 @@ call :run_step "daily_collect_local" ".venv\Scripts\python.exe" "scripts\daily_c
 call :run_step "tides_supabase" ".venv\Scripts\python.exe" "scripts\fetch_and_import_jma_tides.py" "--year-from" "%date:~0,4%" "--year-to" "%date:~0,4%" "--only-missing" "--timeout" "30"
 call :run_step "tides_local" ".venv\Scripts\python.exe" "scripts\fetch_and_import_jma_tides.py" "--db" "C:\boat_project\boatrace-analysis\data\boatrace.db" "--year-from" "%date:~0,4%" "--year-to" "%date:~0,4%" "--only-missing" "--timeout" "30"
 call :run_step "cache_predictions" ".venv\Scripts\python.exe" "scripts\cache_predictions.py" "--today" "--sync"
+call :run_step "prewarm_strategy_pages_morning" ".venv\Scripts\python.exe" "scripts\prewarm_strategy_pages.py" "--mode" "morning-check"
 call :run_step "send_l4_alerts_morning" ".venv\Scripts\python.exe" "scripts\send_l4_alerts.py" "--mode" "morning"
 call :run_step "send_l4_alerts_confirmed" ".venv\Scripts\python.exe" "scripts\send_l4_alerts.py" "--mode" "confirmed"
 call :run_step "check_data_quality" ".venv\Scripts\python.exe" "scripts\check_data_quality.py"
