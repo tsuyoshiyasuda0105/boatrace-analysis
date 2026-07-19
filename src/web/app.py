@@ -58,7 +58,7 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v14"
+MARKET_SIGNALS_CACHE_VERSION = "v15"
 STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v2"
 
 
@@ -1720,8 +1720,10 @@ def _accident_rank_tone(class_number: Any, accident_rate: Any) -> str:
         cls = None
     if rate < 0.7:
         return "normal"
-    if cls in (1, 2):
-        return "a"
+    if cls == 1:
+        return "a1"
+    if cls == 2:
+        return "a2"
     if cls == 3:
         return "b1"
     if cls == 4:
@@ -3710,8 +3712,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return resp
 
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
-        if cached_payload is not None:
+        if (
+            cached_payload is not None
+            and not (target_date >= today_iso and _is_empty_market_signals_payload(cached_payload))
+        ):
             return _market_json_response(cached_payload, "fresh")
+        if cached_payload is not None:
+            logger.info("ignore empty live market-signals cache for %s; recomputing", target_date)
         # 当日以降の market signals は展示・潮・直前オッズで採否が動く。
         # stale を返すと、朝の古い候補が残ったり、逆に最新の採用候補が隠れたりするため、
         # live date は TTL 切れ時に必ず再計算する。過去日は表示速度優先で stale fallback を許可。

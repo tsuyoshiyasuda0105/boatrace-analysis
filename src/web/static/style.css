@@ -1928,11 +1928,20 @@ main h2 {
   box-shadow: 0 0 12px rgba(248, 113, 113, 0.18);
 }
 .racer-accident-tag.accident-risk-a,
-.accident-watch-badge.accident-risk-a {
+.accident-watch-badge.accident-risk-a,
+.racer-accident-tag.accident-risk-a1,
+.accident-watch-badge.accident-risk-a1 {
   border-color: rgba(248, 113, 113, 0.9);
   background: linear-gradient(135deg, rgba(127, 29, 29, 0.88), rgba(239, 68, 68, 0.22));
   color: #fecaca;
   box-shadow: 0 0 14px rgba(248, 113, 113, 0.34);
+}
+.racer-accident-tag.accident-risk-a2,
+.accident-watch-badge.accident-risk-a2 {
+  border-color: rgba(244, 114, 182, 0.9);
+  background: linear-gradient(135deg, rgba(131, 24, 67, 0.88), rgba(244, 114, 182, 0.24));
+  color: #fce7f3;
+  box-shadow: 0 0 14px rgba(244, 114, 182, 0.32);
 }
 .racer-accident-tag.accident-risk-b1,
 .accident-watch-badge.accident-risk-b1 {
