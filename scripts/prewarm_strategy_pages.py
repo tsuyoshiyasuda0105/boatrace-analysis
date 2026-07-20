@@ -68,10 +68,15 @@ def build_targets(mode: str, today: date) -> list[str]:
             f"/member/strategy?from={d30}&to={today_s}",
         ]
 
-    # Realtime mode is deliberately light: keep pages warm, but do not force
-    # a long ROI recalculation during daytime candidate monitoring.
+    # The dedicated 30-minute prewarm cron is the recovery path when exhibition,
+    # tide, or result data arrives after the first empty snapshot. Rebuild the
+    # current day and the two preceding days so an early zero-candidate cache
+    # cannot remain visible for the rest of the day (or for recent history).
+    two_days_ago_s = _days_ago(today, 2)
     return [
-        f"/api/market-signals?date={today_s}",
+        f"/api/market-signals?date={two_days_ago_s}&recompute=1",
+        f"/api/market-signals?date={yesterday_s}&recompute=1",
+        f"/api/market-signals?date={today_s}&recompute=1",
         f"/member/strategy?from={d30}&to={today_s}",
     ]
 
@@ -82,7 +87,7 @@ def parse_args() -> argparse.Namespace:
         "--mode",
         choices=MODES,
         default="realtime",
-        help="realtime is light, morning-check reconciles daily pages, nightly does heavy history refresh.",
+        help="realtime repairs recent signal snapshots, morning-check reconciles daily pages, nightly does heavy history refresh.",
     )
     parser.add_argument(
         "--date",
