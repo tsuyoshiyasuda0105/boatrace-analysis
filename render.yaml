@@ -39,6 +39,7 @@ services:
     plan: starter
     branch: main
     region: singapore
+    autoDeploy: true
     schedule: "* * * * *"
     buildCommand: |
       pip install --upgrade pip
@@ -64,6 +65,7 @@ services:
     plan: starter
     branch: main
     region: singapore
+    autoDeploy: true
     schedule: "*/5 * * * *"
     buildCommand: |
       pip install --upgrade pip
@@ -89,6 +91,7 @@ services:
     plan: starter
     branch: main
     region: singapore
+    autoDeploy: true
     schedule: "*/30 * * * *"
     buildCommand: |
       pip install --upgrade pip
