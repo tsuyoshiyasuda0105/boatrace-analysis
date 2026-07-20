@@ -59,7 +59,7 @@ _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
 MARKET_SIGNALS_CACHE_VERSION = "v19"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v6"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v7"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -10681,7 +10681,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if not isinstance(day_d, dict):
                         continue
                     if not _adopted_daily_cache_is_valid(str(rdate), day_d):
-                        continue
+                        has_displayable_adopted_metric = any(
+                            f"{key}_bets" in day_d
+                            or f"{key}_hits" in day_d
+                            or f"{key}_pay" in day_d
+                            for key in ROI_STRATEGY_KEYS
+                        )
+                        if not has_displayable_adopted_metric:
+                            continue
+                        day_d["_roi_cache_partial"] = True
                     by_date[str(rdate)] = day_d
         except Exception as exc:  # noqa: BLE001
             logger.warning("daily ROI cache-only lookup failed: %s", exc)
