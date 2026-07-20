@@ -4,7 +4,11 @@ from pathlib import Path
 
 os.environ["DATABASE_URL"] = ""
 
-from scripts.prewarm_strategy_pages import build_targets
+from scripts.prewarm_strategy_pages import (
+    _hit,
+    _validate_market_signal_response,
+    build_targets,
+)
 
 
 TODAY = date(2026, 7, 18)
@@ -64,3 +68,96 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "startCommand: python scripts/render_regular_scheduler.py" in blueprint
     assert "startCommand: python scripts/odds_scheduler.py --no-jitter" in blueprint
     assert "startCommand: python scripts/prewarm_strategy_pages.py --mode realtime" in blueprint
+
+
+class _Response:
+    def __init__(self, payload, *, status=200, cache_state="recomputed"):
+        self.status_code = status
+        self._payload = payload
+        self.headers = {"X-Boatrace-Cache": cache_state}
+
+    def get_json(self, silent=True):
+        return self._payload
+
+    def get_data(self):
+        return b"{}"
+
+
+class _Client:
+    def __init__(self, response):
+        self.response = response
+
+    def get(self, path):
+        return self.response
+
+
+def _valid_signal_payload():
+    return {
+        "date": "2026-07-18",
+        "computed_at": "2026-07-18T09:10:00",
+        "n_races": 1,
+        "signals": {"202607180101": {"race_id": "202607180101"}},
+        "data_status": {
+            "race_basic": {"count": 144, "total": 144},
+        },
+    }
+
+
+def test_market_signal_prewarm_validates_completed_snapshot():
+    response = _Response(_valid_signal_payload())
+
+    valid, detail = _validate_market_signal_response(
+        response,
+        "/api/market-signals?date=2026-07-18&recompute=1",
+    )
+
+    assert valid is True
+    assert "signals=1" in detail
+
+
+def test_market_signal_prewarm_rejects_cache_placeholder_with_http_200():
+    payload = _valid_signal_payload()
+    payload["computed_at"] = None
+    payload["data_status"]["cache_miss"] = True
+    response = _Response(payload, cache_state="cache-miss")
+
+    status, size, valid, detail = _hit(
+        _Client(response),
+        "/api/market-signals?date=2026-07-18&recompute=1",
+    )
+
+    assert status == 200
+    assert size == 2
+    assert valid is False
+    assert "cache_state" in detail
+
+
+def test_market_signal_prewarm_accepts_valid_zero_candidate_result():
+    payload = _valid_signal_payload()
+    payload["n_races"] = 0
+    payload["signals"] = {}
+
+    valid, detail = _validate_market_signal_response(
+        _Response(payload),
+        "/api/market-signals?date=2026-07-18&recompute=1",
+    )
+
+    assert valid is True
+    assert "signals=0" in detail
+
+
+def test_regular_scheduler_does_not_duplicate_signal_rebuild_each_loop():
+    scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    main_block = scheduler.split("def main() -> int:", 1)[1]
+    live_block = main_block.split("# Lightweight result polling", 1)[0]
+
+    assert "run_beforeinfo(now)" in live_block
+    assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' not in live_block
+
+
+def test_beforeinfo_rebuilds_snapshot_after_source_rows_change():
+    scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    beforeinfo_block = scheduler.split("def run_beforeinfo", 1)[1].split("def run_morning", 1)[0]
+
+    assert 'if summary.get("races", 0) > 0:' in beforeinfo_block
+    assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' in beforeinfo_block

@@ -5,6 +5,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import argparse
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parents[1]
@@ -20,10 +21,48 @@ MODES = ("signals", "realtime", "morning-check", "nightly")
 JST = ZoneInfo("Asia/Tokyo")
 
 
-def _hit(client, path: str) -> tuple[int, int]:
+def _validate_market_signal_response(resp, path: str) -> tuple[bool, str]:
+    """Reject cache placeholders that happen to return HTTP 200."""
+    payload = resp.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return False, "response is not a JSON object"
+
+    target_date = (parse_qs(urlparse(path).query).get("date") or [None])[0]
+    if target_date and payload.get("date") != target_date:
+        return False, f"date mismatch: expected={target_date} actual={payload.get('date')}"
+    if resp.headers.get("X-Boatrace-Cache") != "recomputed":
+        return False, f"cache_state={resp.headers.get('X-Boatrace-Cache') or 'missing'}"
+    if not payload.get("computed_at"):
+        return False, "computed_at is missing"
+    if not isinstance(payload.get("signals"), dict):
+        return False, "signals is not an object"
+    if int(payload.get("n_races") or 0) != len(payload["signals"]):
+        return False, "n_races does not match signals"
+
+    data_status = payload.get("data_status") or {}
+    if data_status.get("cache_only") or data_status.get("cache_miss"):
+        return False, "cache placeholder returned"
+    race_basic = data_status.get("race_basic") or {}
+    total = int(race_basic.get("total") or 0)
+    count = int(race_basic.get("count") or 0)
+    if total > 0 and count == 0:
+        return False, f"race source incomplete: predictions=0/{total}"
+
+    return True, (
+        f"computed_at={payload['computed_at']} signals={len(payload['signals'])} "
+        f"source={count}/{total}"
+    )
+
+
+def _hit(client, path: str) -> tuple[int, int, bool, str]:
     resp = client.get(path)
     body = resp.get_data() or b""
-    return resp.status_code, len(body)
+    if resp.status_code != 200:
+        return resp.status_code, len(body), False, f"http={resp.status_code}"
+    if path.startswith("/api/market-signals") and "recompute=1" in path:
+        valid, detail = _validate_market_signal_response(resp, path)
+        return resp.status_code, len(body), valid, detail
+    return resp.status_code, len(body), True, "ok"
 
 
 def _days_ago(today: date, days: int) -> str:
@@ -115,9 +154,12 @@ def main() -> int:
 
     ok = True
     for path in targets:
-        status, size = _hit(client, path)
-        print(f"{path} status={status} bytes={size}", flush=True)
-        if status != 200:
+        status, size, valid, detail = _hit(client, path)
+        print(
+            f"{path} status={status} bytes={size} valid={valid} detail={detail}",
+            flush=True,
+        )
+        if status != 200 or not valid:
             ok = False
 
     print(

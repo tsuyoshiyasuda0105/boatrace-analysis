@@ -131,6 +131,131 @@ def find_due_races(now_jst: datetime, window_min: int, window_max: int,
     return due
 
 
+def _preview_is_incomplete(conn, race_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS n_rows,
+               SUM(CASE WHEN exhibition_time IS NOT NULL
+                         AND exhibition_time != 0 THEN 1 ELSE 0 END) AS n_ex_time,
+               SUM(CASE WHEN start_timing_exhibition IS NOT NULL THEN 1 ELSE 0 END) AS n_ex_st,
+               SUM(CASE WHEN weather_number IS NOT NULL THEN 1 ELSE 0 END) AS n_weather,
+               SUM(CASE WHEN wind_speed IS NOT NULL THEN 1 ELSE 0 END) AS n_wind
+          FROM race_previews
+         WHERE race_id = ?
+        """,
+        (race_id,),
+    ).fetchone()
+    if not row:
+        return True
+    n_rows, n_ex_time, n_ex_st, n_weather, n_wind = [int(v or 0) for v in row]
+    return n_rows < 6 or n_ex_time < 6 or n_ex_st < 6 or n_weather < 1 or n_wind < 1
+
+
+def _load_market_signal_race_ids(target_date: date) -> set[str]:
+    """Return race_ids shown in today's market signal list.
+
+    This intentionally reuses the web app evaluator so the beforeinfo fetch queue
+    follows the same adopted-strategy logic as the ROI-high race screen.
+    """
+    try:
+        from src.web.app import create_app
+
+        app = create_app()
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["is_member"] = True
+        resp = client.get(f"/api/market-signals?date={target_date.isoformat()}")
+        if resp.status_code != 200:
+            logger.warning("market-signals returned status=%s", resp.status_code)
+            return set()
+        payload = resp.get_json(silent=True) or {}
+        signals = payload.get("signals") or {}
+        if isinstance(signals, dict):
+            return {str(rid) for rid in signals.keys()}
+        if isinstance(signals, list):
+            return {str(item.get("race_id")) for item in signals if item.get("race_id")}
+    except Exception as e:
+        logger.warning("market-signals candidate load failed: %s", e)
+    return set()
+
+
+def find_market_candidate_races(now_jst: datetime, past_min: int,
+                                future_min: int) -> list[tuple[str, int, int, datetime]]:
+    target_date = now_jst.date().isoformat()
+    race_ids = _load_market_signal_race_ids(now_jst.date())
+    if not race_ids:
+        return []
+    with db_connect() as conn:
+        _ensure_live_column(conn)
+        placeholders = ",".join("?" for _ in race_ids)
+        rows = conn.execute(
+            f"""
+            SELECT race_id, stadium_number, race_number, race_closed_at
+              FROM races
+             WHERE race_date = ?
+               AND race_id IN ({placeholders})
+             ORDER BY race_closed_at
+            """,
+            (target_date, *race_ids),
+        ).fetchall()
+        due = []
+        for rid, stadium, rno, closed_at in rows:
+            close = _parse_close_jst(closed_at, target_date)
+            if close is None:
+                continue
+            mins_until = (close - now_jst).total_seconds() / 60.0
+            if mins_until < -abs(past_min) or mins_until > future_min:
+                continue
+            if not _preview_is_incomplete(conn, rid):
+                continue
+            due.append((rid, stadium, rno, close))
+    return due
+
+
+def find_recent_incomplete_races(now_jst: datetime, past_min: int,
+                                 future_min: int, limit: int) -> list[tuple[str, int, int, datetime]]:
+    target_date = now_jst.date().isoformat()
+    with db_connect() as conn:
+        _ensure_live_column(conn)
+        rows = conn.execute(
+            """
+            SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at
+              FROM races r
+             WHERE r.race_date = ?
+               AND r.race_closed_at IS NOT NULL
+             ORDER BY r.race_closed_at
+            """,
+            (target_date,),
+        ).fetchall()
+        due = []
+        for rid, stadium, rno, closed_at in rows:
+            close = _parse_close_jst(closed_at, target_date)
+            if close is None:
+                continue
+            mins_until = (close - now_jst).total_seconds() / 60.0
+            if mins_until < -abs(past_min) or mins_until > future_min:
+                continue
+            if not _preview_is_incomplete(conn, rid):
+                continue
+            due.append((rid, stadium, rno, close))
+            if limit > 0 and len(due) >= limit:
+                break
+    return due
+
+
+def _merge_due_races(*groups: list[tuple[str, int, int, datetime]]) -> list[tuple[str, int, int, datetime]]:
+    merged: list[tuple[str, int, int, datetime]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            rid = item[0]
+            if rid in seen:
+                continue
+            seen.add(rid)
+            merged.append(item)
+    return merged
+
+
 def _ensure_live_column(conn) -> None:
     """race_previews.live_updated_at が無ければ追加 (SQLite/Postgres 共通)。"""
     try:
@@ -175,6 +300,50 @@ def _update_volatile(conn, race_id: str, page_data: dict, now_iso: str) -> int:
     temp = page_data.get("temperature")
     wtemp = page_data.get("water_temperature")
     stable_plate = page_data.get("stable_plate")
+    updated = 0
+
+    for boat in page_data.get("boats", []) or []:
+        boat_no = boat.get("boat_number")
+        if not boat_no:
+            continue
+        exists = conn.execute(
+            "SELECT 1 FROM race_previews WHERE race_id = ? AND boat_number = ?",
+            (race_id, boat_no),
+        ).fetchone()
+        if exists:
+            continue
+        exhibition_time = boat.get("exhibition_time")
+        if exhibition_time == 0:
+            exhibition_time = None
+        conn.execute(
+            """
+            INSERT INTO race_previews (
+                race_id, boat_number,
+                weather_number, wind_speed, wind_direction_number,
+                wave_height, temperature, water_temperature,
+                course_number, exhibition_time, start_timing_exhibition,
+                weight_adjustment, tilt_adjustment, live_updated_at, stable_plate
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                race_id,
+                boat_no,
+                weather,
+                wind,
+                wind_dir,
+                wave,
+                temp,
+                wtemp,
+                boat.get("course_number"),
+                exhibition_time,
+                boat.get("start_timing_exhibition"),
+                boat.get("weight_adjustment"),
+                boat.get("tilt_adjustment"),
+                now_iso,
+                stable_plate,
+            ),
+        )
+        updated += 1
 
     # COALESCE(?, col): 新値が NULL なら旧値を保持。直前情報パーサーが
     # weather_number を取り逃がしても Open API 朝値を消さない安全策。
@@ -194,9 +363,9 @@ def _update_volatile(conn, race_id: str, page_data: dict, now_iso: str) -> int:
         (weather, wind, wind_dir, wave, temp, wtemp, stable_plate, now_iso, race_id),
     )
     try:
-        updated = cur.rowcount or 0
+        updated += cur.rowcount or 0
     except Exception:
-        updated = 0
+        pass
 
     for boat in page_data.get("boats", []) or []:
         boat_no = boat.get("boat_number")
@@ -341,6 +510,18 @@ def main():
                    help="ウィンドウ外も含め本日全レースを取得 (テスト用)")
     p.add_argument("--supabase-only", action="store_true",
                    help="local SQLite へのミラー書込を行わず、DATABASE_URL 側だけを更新する")
+    p.add_argument("--no-market-candidates", action="store_true",
+                   help="Do not add ROI-high market candidates to the beforeinfo queue")
+    p.add_argument("--market-past-min", type=int, default=360,
+                   help="Retry incomplete ROI-high candidates for this many minutes after close")
+    p.add_argument("--market-future-min", type=int, default=480,
+                   help="Prefetch incomplete ROI-high candidates this many minutes before close")
+    p.add_argument("--incomplete-past-min", type=int, default=900,
+                   help="Retry recent races with incomplete weather/wind/exhibition rows")
+    p.add_argument("--incomplete-future-min", type=int, default=20,
+                   help="Prefetch near-future races with incomplete weather/wind/exhibition rows")
+    p.add_argument("--incomplete-limit", type=int, default=24,
+                   help="Maximum non-market incomplete races to add per run")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
 
@@ -373,6 +554,23 @@ def main():
             due.append((rid, stadium, rno, close))
     else:
         due = find_due_races(now, args.window[0], args.window[1], args.cooldown_min)
+        if not args.no_market_candidates:
+            market_due = find_market_candidate_races(
+                now,
+                past_min=args.market_past_min,
+                future_min=args.market_future_min,
+            )
+            if market_due:
+                print(f"  market candidate races needing beforeinfo: {len(market_due)}")
+            incomplete_due = find_recent_incomplete_races(
+                now,
+                past_min=args.incomplete_past_min,
+                future_min=args.incomplete_future_min,
+                limit=args.incomplete_limit,
+            )
+            if incomplete_due:
+                print(f"  recent incomplete races needing beforeinfo: {len(incomplete_due)}")
+            due = _merge_due_races(market_due, due, incomplete_due)
 
     print(f"  due races: {len(due)}")
     if not due:

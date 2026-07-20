@@ -101,6 +101,9 @@ def record_task(task_name: str, run_date: str, status: str, detail: str | None =
 def run_beforeinfo(now: datetime) -> bool:
     from scripts.scrape_beforeinfo_live import (
         find_due_races,
+        find_market_candidate_races,
+        find_recent_incomplete_races,
+        _merge_due_races,
         scrape_one_race,
         write_updates,
     )
@@ -115,6 +118,13 @@ def run_beforeinfo(now: datetime) -> bool:
         window_max=BEFOREINFO_WINDOW_MAX,
         cooldown_min=BEFOREINFO_COOLDOWN_MIN,
     )
+    market_due = find_market_candidate_races(now, past_min=360, future_min=480)
+    incomplete_due = find_recent_incomplete_races(now, past_min=900, future_min=20, limit=24)
+    if market_due:
+        print(f"[beforeinfo] market_due={len(market_due)}", flush=True)
+    if incomplete_due:
+        print(f"[beforeinfo] incomplete_due={len(incomplete_due)}", flush=True)
+    due = _merge_due_races(market_due, due, incomplete_due)
     print(f"[beforeinfo] due={len(due)}", flush=True)
     if not due:
         return True
@@ -164,7 +174,9 @@ def run_beforeinfo(now: datetime) -> bool:
     summary = write_updates(updates, now_iso, also_local=False)
     print(f"[beforeinfo] written={summary}", flush=True)
     if summary.get("races", 0) > 0:
-        return run_py(["scripts/render_cache_predictions.py", "--date", now.date().isoformat()], timeout=1800)
+        ok = run_py(["scripts/render_cache_predictions.py", "--date", now.date().isoformat()], timeout=1800)
+        ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
+        return ok
     return True
 
 
@@ -342,10 +354,9 @@ def main() -> int:
     # Live beforeinfo/weather correction. The scrape function has its own cooldown.
     if 8 <= now.hour <= 22:
         run_beforeinfo(now)
-        # Build the expensive adopted-strategy snapshot in the cron process.
-        # The web request then reads one cached JSON row instead of recomputing
-        # strategy joins when a user opens or refreshes the race list.
-        run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
+        # run_beforeinfo rebuilds the snapshot only when source rows changed.
+        # Recomputing it unconditionally here duplicated the heaviest query and
+        # could overlap the next five-minute cron run.
 
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
