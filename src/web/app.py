@@ -3824,12 +3824,37 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return data_status
 
         recent_cache_floor = (date.today() - timedelta(days=2)).isoformat()
+
+        def _with_current_data_status(payload: Any) -> Any:
+            """Overlay live source counts without rebuilding cached signals."""
+            if not isinstance(payload, dict) or target_date < recent_cache_floor:
+                return payload
+
+            current_status = _load_market_data_status()
+            if not any(
+                int(item.get("total") or 0)
+                for item in current_status.values()
+                if isinstance(item, dict)
+            ):
+                return payload
+
+            refreshed = dict(payload)
+            previous_status = payload.get("data_status")
+            if isinstance(previous_status, dict):
+                for flag in ("cache_only", "cache_miss"):
+                    if flag in previous_status:
+                        current_status[flag] = previous_status[flag]
+            refreshed["data_status"] = current_status
+            return refreshed
+
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
         if cached_payload is not None and not (
             target_date >= recent_cache_floor
             and _is_empty_market_signals_payload(cached_payload)
         ):
-            return _market_json_response(cached_payload, "fresh")
+            return _market_json_response(
+                _with_current_data_status(cached_payload), "fresh"
+            )
         # Web worker を守るため、通常リクエストは live date でも stale を返す。
         # 展示・潮・直前オッズで採否が動く候補の再計算は Render Cron の
         # recompute=1 に限定する。
@@ -3838,7 +3863,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             target_date >= recent_cache_floor
             and _is_empty_market_signals_payload(stale_payload)
         ):
-            return _market_json_response(stale_payload, "stale")
+            return _market_json_response(
+                _with_current_data_status(stale_payload), "stale"
+            )
 
         # Web and cron services can finish a rolling Render deploy at
         # different times. Reuse the last two generations instead of turning
@@ -3858,7 +3885,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 compat_payload = dict(compat_payload)
                 compat_payload["source_cache_version"] = compat_payload.get("cache_version")
                 compat_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
-                return _market_json_response(compat_payload, "compat-stale")
+                return _market_json_response(
+                    _with_current_data_status(compat_payload), "compat-stale"
+                )
 
         if not force_recompute:
             payload = {

@@ -48,6 +48,17 @@ def test_market_signal_cache_miss_never_self_heals_in_web_worker():
     assert '"cache_miss": True' in route_source
 
 
+def test_cached_market_signals_refresh_live_data_status():
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    route_source = source.split("def market_signals_for_date():", 1)[1]
+    route_source = route_source.split("@app.route", 1)[0]
+
+    assert "def _with_current_data_status" in route_source
+    assert "_with_current_data_status(cached_payload)" in route_source
+    assert "_with_current_data_status(stale_payload)" in route_source
+    assert "_with_current_data_status(compat_payload)" in route_source
+
+
 def test_daily_source_complete_requires_all_races_entries_and_predictions():
     assert scheduler.daily_source_complete(
         {"races": 144, "entries": 864, "predictions": 144}
