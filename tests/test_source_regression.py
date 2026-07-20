@@ -386,3 +386,12 @@ def test_market_signals_recent_cache_miss_self_heals():
     src = _read("src/web/app.py")
     assert 'logger.warning("market-signals cache missing; self-healing %s"' in src
     assert "force_recompute = True" in src
+
+
+def test_market_signals_recent_empty_cache_self_heals():
+    """直近日の空キャッシュも正常扱いせず再生成する。"""
+    src = _read("src/web/app.py")
+    assert "def _is_empty_market_signals_payload" in src
+    assert "and _is_empty_market_signals_payload(cached_payload)" in src
+    assert "and _is_empty_market_signals_payload(stale_payload)" in src
+    assert "and _is_empty_market_signals_payload(compat_payload)" in src

@@ -3802,16 +3802,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 logger.warning("data_status query failed: %s", e)
             return data_status
 
+        recent_cache_floor = (date.today() - timedelta(days=2)).isoformat()
         cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
-        if (
-            cached_payload is not None
+        if cached_payload is not None and not (
+            target_date >= recent_cache_floor
+            and _is_empty_market_signals_payload(cached_payload)
         ):
             return _market_json_response(cached_payload, "fresh")
         # Web worker を守るため、通常リクエストは live date でも stale を返す。
         # 展示・潮・直前オッズで採否が動く候補の再計算は Render Cron の
         # recompute=1 に限定する。
         stale_payload = None if force_recompute else _read_json_cache_stale(cache_key)
-        if stale_payload is not None:
+        if stale_payload is not None and not (
+            target_date >= recent_cache_floor
+            and _is_empty_market_signals_payload(stale_payload)
+        ):
             return _market_json_response(stale_payload, "stale")
 
         # Web and cron services can finish a rolling Render deploy at
@@ -3824,6 +3829,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     continue
                 if compat_payload.get("date") != target_date:
                     continue
+                if (
+                    target_date >= recent_cache_floor
+                    and _is_empty_market_signals_payload(compat_payload)
+                ):
+                    continue
                 compat_payload = dict(compat_payload)
                 compat_payload["source_cache_version"] = compat_payload.get("cache_version")
                 compat_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
@@ -3834,7 +3844,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # once in the web worker so the UI can recover instead of remaining
         # empty indefinitely. The successful computation is persisted below,
         # so normal requests continue to be cache-only.
-        recent_cache_floor = (date.today() - timedelta(days=2)).isoformat()
         if not force_recompute and target_date >= recent_cache_floor:
             logger.warning("market-signals cache missing; self-healing %s", target_date)
             force_recompute = True
