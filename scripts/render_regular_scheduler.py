@@ -335,6 +335,23 @@ def run_morning_catchup_if_needed(now: datetime) -> bool:
     return ok
 
 
+def run_signal_refresh_slot(now: datetime) -> bool:
+    """Rebuild today's ROI candidate snapshot once per 30-minute slot."""
+    today = now.date().isoformat()
+    slot = now.minute // 30
+    task = f"render_signal_refresh_{now.hour:02d}_{slot}"
+    if task_attempt_exists(task, today):
+        print(f"[signal-refresh] already attempted slot={now.hour:02d}:{slot}", flush=True)
+        return True
+
+    ok = run_py(
+        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today],
+        timeout=1800,
+    )
+    record_task(task, today, "success" if ok else "failure")
+    return ok
+
+
 def run_tides(now: datetime) -> bool:
     year_from = now.year
     year_to = (now.date() + timedelta(days=1)).year
@@ -438,6 +455,11 @@ def main() -> int:
         # run_beforeinfo rebuilds the snapshot only when source rows changed.
         # Recomputing it unconditionally here duplicated the heaviest query and
         # could overlap the next five-minute cron run.
+
+    # A dedicated prewarm service is optional. Keep the existing five-minute
+    # scheduler self-contained and guarantee a fresh snapshot twice per hour.
+    if 6 <= now.hour <= 23:
+        run_signal_refresh_slot(now)
 
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:

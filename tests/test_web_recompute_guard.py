@@ -61,3 +61,16 @@ def test_daily_source_complete_requires_all_races_entries_and_predictions():
     assert not scheduler.daily_source_complete(
         {"races": 0, "entries": 0, "predictions": 0}
     )
+
+
+def test_signal_refresh_uses_one_task_slot_per_half_hour(monkeypatch):
+    attempted = []
+    monkeypatch.setattr(
+        scheduler,
+        "task_attempt_exists",
+        lambda task, run_date: attempted.append((task, run_date)) or True,
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
+    assert scheduler.run_signal_refresh_slot(now)
+    assert attempted == [("render_signal_refresh_10_1", "2026-07-21")]
