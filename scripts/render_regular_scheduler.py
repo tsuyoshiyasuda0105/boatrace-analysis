@@ -260,6 +260,81 @@ def run_tide_self_heal(now: datetime) -> bool:
     return True
 
 
+def task_attempt_exists(task_name: str, run_date: str) -> bool:
+    """Return whether this recovery slot has already been attempted."""
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT run_count
+                  FROM task_runs
+                 WHERE task_name = ?
+                   AND run_date = ?
+                """,
+                (task_name, run_date),
+            ).fetchone()
+        return bool(row and int(row[0] or 0) > 0)
+    except Exception as exc:
+        print(f"[task_runs] attempt read failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+
+
+def daily_source_counts(run_date: str) -> dict[str, int]:
+    """Read the minimum source-data counts required to render today's races."""
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM races WHERE race_date = ?) AS races,
+              (SELECT COUNT(*)
+                 FROM race_entries e
+                 JOIN races r ON r.race_id = e.race_id
+                WHERE r.race_date = ?) AS entries,
+              (SELECT COUNT(DISTINCT p.race_id)
+                 FROM predictions p
+                 JOIN races r ON r.race_id = p.race_id
+                WHERE r.race_date = ?) AS predictions
+            """,
+            (run_date, run_date, run_date),
+        ).fetchone()
+    return {
+        "races": int(row[0] or 0),
+        "entries": int(row[1] or 0),
+        "predictions": int(row[2] or 0),
+    }
+
+
+def daily_source_complete(counts: dict[str, int]) -> bool:
+    races = int(counts.get("races", 0) or 0)
+    entries = int(counts.get("entries", 0) or 0)
+    predictions = int(counts.get("predictions", 0) or 0)
+    return races > 0 and entries >= races * 6 and predictions >= races
+
+
+def run_morning_catchup_if_needed(now: datetime) -> bool:
+    """Recover a missed morning job at most once per hour during service hours."""
+    today = now.date().isoformat()
+    try:
+        counts = daily_source_counts(today)
+    except Exception as exc:
+        print(f"[morning-catchup] source check failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+
+    print(f"[morning-catchup] source={counts}", flush=True)
+    if daily_source_complete(counts):
+        return True
+
+    task = f"render_morning_catchup_{now.hour:02d}"
+    if task_attempt_exists(task, today):
+        print(f"[morning-catchup] already attempted slot={now.hour:02d}", flush=True)
+        return False
+
+    print("[morning-catchup] source incomplete -> rerun morning collection", flush=True)
+    ok = run_morning(now)
+    record_task(task, today, "success" if ok else "failure", detail=str(counts))
+    return ok
+
+
 def run_tides(now: datetime) -> bool:
     year_from = now.year
     year_to = (now.date() + timedelta(days=1)).year
@@ -350,6 +425,12 @@ def main() -> int:
             record_task(task, today, "success" if ok else "failure")
         else:
             print("[morning] already successful today", flush=True)
+
+    # A narrow morning window must not leave the service empty all day. Render is
+    # the source of truth, so verify actual rows and recover even when a PC was off
+    # or a previous task_runs row incorrectly reported success.
+    if morning_end <= now < now.replace(hour=22, minute=0, second=0, microsecond=0):
+        run_morning_catchup_if_needed(now)
 
     # Live beforeinfo/weather correction. The scrape function has its own cooldown.
     if 8 <= now.hour <= 22:
