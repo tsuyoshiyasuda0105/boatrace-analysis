@@ -58,8 +58,8 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v18"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v5"
+MARKET_SIGNALS_CACHE_VERSION = "v19"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v6"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -344,6 +344,27 @@ def _is_empty_market_signals_payload(payload: Any) -> bool:
         return True
     signals = payload.get("signals")
     return not isinstance(signals, dict) or len(signals) == 0
+
+
+def _parse_market_signal_bets_for_roi(l4: dict) -> list[tuple[str, str]]:
+    """Extract executable bets without mistaking the bet-type label for a boat."""
+    import re
+
+    bet_text = str((l4 or {}).get("bet") or "")
+    trifectas = list(dict.fromkeys(
+        re.findall(r"(?<![0-9])([1-6]-[1-6]-[1-6])(?![0-9])", bet_text)
+    ))
+    if trifectas:
+        return [("trifecta", combo) for combo in trifectas]
+
+    exactas = list(dict.fromkeys(
+        re.findall(r"(?<![0-9])([1-6]-[1-6])(?![0-9-])", bet_text)
+    ))
+    if exactas:
+        return [("exacta", combo) for combo in exactas]
+
+    win_match = re.search(r"(?:単勝|win)\s*([1-6])(?:号艇)?", bet_text, re.IGNORECASE)
+    return [("win", win_match.group(1))] if win_match else []
 
 
 def _format_race_id(race_id: str) -> tuple[str, int, int]:
@@ -3838,15 +3859,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 compat_payload["source_cache_version"] = compat_payload.get("cache_version")
                 compat_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
                 return _market_json_response(compat_payload, "compat-stale")
-
-        # A missing live cache means the background writer has stopped or a
-        # new cache generation has never been produced. Rebuild recent dates
-        # once in the web worker so the UI can recover instead of remaining
-        # empty indefinitely. The successful computation is persisted below,
-        # so normal requests continue to be cache-only.
-        if not force_recompute and target_date >= recent_cache_floor:
-            logger.warning("market-signals cache missing; self-healing %s", target_date)
-            force_recompute = True
 
         if not force_recompute:
             payload = {
@@ -9345,12 +9357,217 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             base["tetsuban_score"], base["tetsuban_label"] = _compute_tetsuban(base, rn)
             return _apply_exhibition_st_out(base)
 
+        def _bw_float(value, default=None):
+            try:
+                return float(value) if value is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        def _bw_int(value, default=None):
+            try:
+                return int(value) if value is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        def _boat2_wall_feature_flags(ctx: dict | None) -> dict:
+            """2号艇の壁成立/壁崩れを、当該レース以前の履歴だけで判定する。"""
+            ctx = ctx or {}
+            prior_n = _bw_int(ctx.get("boat2_prior_n"), 0) or 0
+            avg = _bw_float(ctx.get("boat2_hist_st_avg"))
+            std = _bw_float(ctx.get("boat2_hist_st_std"))
+            course2 = _bw_float(ctx.get("boat2_course2_rate"))
+            sashi2 = _bw_float(ctx.get("boat2_sashi2_rate"))
+            fl_sum = _bw_int(ctx.get("boat2_fl_sum"), 0) or 0
+            good_score = 0
+            weak_score = 0
+            if prior_n >= 30:
+                good_score += 1 if avg is not None and avg <= 0.170 else 0
+                good_score += 1 if std is not None and std <= 0.055 else 0
+                good_score += 1 if fl_sum == 0 else 0
+                good_score += 1 if course2 is not None and course2 >= 0.240 else 0
+                good_score += 1 if sashi2 is not None and sashi2 >= 0.060 else 0
+                weak_score += 1 if avg is not None and avg >= 0.170 else 0
+                weak_score += 1 if std is not None and std >= 0.060 else 0
+                weak_score += 1 if fl_sum >= 1 else 0
+                weak_score += 1 if course2 is not None and course2 <= 0.200 else 0
+                weak_score += 1 if sashi2 is not None and sashi2 <= 0.030 else 0
+            return {
+                "prior_n": prior_n,
+                "avg": avg,
+                "std": std,
+                "course2": course2,
+                "sashi2": sashi2,
+                "good_score": good_score,
+                "weak_score": weak_score,
+            }
+
+        def _boat2_wall_strategy_ok(strategy: dict, ctx: dict | None) -> bool:
+            ctx = ctx or {}
+            stadium = _bw_int(ctx.get("stadium"))
+            grade = _bw_int(ctx.get("grade"))
+            race_no = _bw_int(ctx.get("race_number"))
+            month = _bw_int(str(ctx.get("race_id") or "")[4:6]) or _bw_int(str(ctx.get("race_date") or "")[5:7])
+            natl_1 = _bw_float(ctx.get("natl_1"), 0.0) or 0.0
+            avg_st1 = _bw_float(ctx.get("avg_st_180", ctx.get("avg_st")), 9.9) or 9.9
+            b1_motor = _bw_float(ctx.get("boat1_motor_top2"), 0.0) or 0.0
+            b2_course2 = _bw_float(ctx.get("boat2_course2_rate"), 0.0) or 0.0
+            b3_n1 = _bw_float(ctx.get("boat3_natl_1"), 0.0) or 0.0
+            b3_motor = _bw_float(ctx.get("boat3_motor_top2"), 0.0) or 0.0
+            b4_n1 = _bw_float(ctx.get("boat4_natl_1"), 0.0) or 0.0
+            b4_motor = _bw_float(ctx.get("boat4_motor_top2"), 0.0) or 0.0
+            flags = _boat2_wall_feature_flags(ctx)
+
+            if "month" in strategy and month != strategy["month"]:
+                return False
+            if "stadium" in strategy and stadium != strategy["stadium"]:
+                return False
+            if "grade_in" in strategy and grade not in strategy["grade_in"]:
+                return False
+            if strategy.get("race_no_min") is not None and (race_no is None or race_no < strategy["race_no_min"]):
+                return False
+            if strategy.get("race_no_max") is not None and (race_no is None or race_no > strategy["race_no_max"]):
+                return False
+
+            mode = strategy.get("mode")
+            if mode == "good_score4" and flags["good_score"] < 4:
+                return False
+            if mode == "weak_score4" and flags["weak_score"] < 4:
+                return False
+            if mode == "kiryu_weak_exact":
+                if not (
+                    flags["prior_n"] >= 30
+                    and flags["avg"] is not None and flags["avg"] >= 0.175
+                    and flags["std"] is not None and flags["std"] >= 0.055
+                    and flags["course2"] is not None and flags["course2"] <= 0.210
+                    and flags["sashi2"] is not None and flags["sashi2"] <= 0.040
+                ):
+                    return False
+            if mode == "miyajima_weak_exact":
+                if not (
+                    flags["prior_n"] >= 30
+                    and flags["avg"] is not None and flags["avg"] >= 0.165
+                    and flags["std"] is not None and flags["std"] >= 0.055
+                    and flags["course2"] is not None and flags["course2"] <= 0.180
+                    and flags["sashi2"] is not None and flags["sashi2"] <= 0.020
+                ):
+                    return False
+
+            shape = strategy.get("shape")
+            if shape == "1strong_m35":
+                return natl_1 >= 6.5 and avg_st1 <= 0.170 and b1_motor >= 35.0
+            if shape == "1strong_3m35":
+                return natl_1 >= 6.5 and b3_motor >= 35.0
+            if shape == "3strong":
+                return b3_n1 >= 5.5 and b3_motor >= 35.0
+            if shape == "3or4strong":
+                return (b3_n1 >= 5.5 and b3_motor >= 35.0) or (b4_n1 >= 5.0 and b4_motor >= 35.0)
+            if shape == "1strong_2wall_low":
+                return natl_1 >= 6.5 and b2_course2 <= 0.240
+            return True
+
+        def _evaluate_boat2_wall_adopted_signal(ctx: dict | None):
+            matched = []
+            for strategy in BOAT2_WALL_STRATEGIES:
+                if not _boat2_wall_strategy_ok(strategy, ctx):
+                    continue
+                is_tri = strategy["bet_type"] == "trifecta"
+                matched.append({
+                    "level": strategy["key"],
+                    "label": strategy["label"],
+                    "bet": strategy["bet_label"],
+                    "rank": "trifecta_niche" if is_tri else "exacta_niche",
+                    "rank_label": "採用手法",
+                    "rank_emoji": "WALL",
+                    "recovery": strategy["recovery"],
+                    "n": strategy["n"],
+                    "hit_rate": strategy["hit_rate"],
+                    "trifecta_niche_hit_rate": strategy["hit_rate"] if is_tri else None,
+                    "trifecta_niche_recovery": strategy["recovery"] if is_tri else None,
+                    "exacta_niche_hit_rate": strategy["hit_rate"] if not is_tri else None,
+                    "exacta_niche_recovery": strategy["recovery"] if not is_tri else None,
+                    "is_trifecta_niche": is_tri,
+                    "is_exacta_niche": not is_tri,
+                    "name": strategy["label"],
+                    "tag": strategy["tag"],
+                    "tetsuban_score": 6,
+                    "timing_bucket": "preconfirmed",
+                    "is_display_confirmed": True,
+                })
+            return _pick_best_market_signal(*matched)
+
+        def _apply_boat2_wall_history_to_info(conn, all_info: dict) -> None:
+            if not all_info:
+                return
+            race_ids = sorted(str(rid) for rid in all_info.keys())
+            placeholders = ",".join("?" for _ in race_ids)
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT r.race_id,
+                           COUNT(rr.start_timing) AS prior_n,
+                           AVG(rr.start_timing) AS avg_st,
+                           AVG(rr.start_timing * rr.start_timing) AS avg_st_sq,
+                           SUM(CASE WHEN COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) = 2 THEN 1 ELSE 0 END) AS course2_count,
+                           SUM(CASE WHEN COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) = 2
+                                     AND rr.finishing_position = 1
+                                     AND rr.kimarite = '差し' THEN 1 ELSE 0 END) AS sashi2_win
+                      FROM races r
+                      JOIN race_entries e2
+                        ON e2.race_id = r.race_id
+                       AND e2.boat_number = 2
+                      JOIN race_entries eh
+                        ON eh.racer_number = e2.racer_number
+                      JOIN races rh
+                        ON rh.race_id = eh.race_id
+                       AND rh.race_date < r.race_date
+                      JOIN race_results rr
+                        ON rr.race_id = eh.race_id
+                       AND rr.boat_number = eh.boat_number
+                     WHERE r.race_id IN ({placeholders})
+                       AND rr.start_timing IS NOT NULL
+                       AND rr.start_timing BETWEEN -0.5 AND 1.5
+                     GROUP BY r.race_id
+                    """,
+                    tuple(race_ids),
+                ).fetchall()
+            except Exception as e:
+                logger.warning("boat2 wall history enrichment failed: %s", e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                return
+            for rid, prior_n, avg_st, avg_st_sq, course2_count, sashi2_win in rows:
+                info = all_info.get(str(rid))
+                if not info:
+                    continue
+                n = int(prior_n or 0)
+                avg_v = float(avg_st) if avg_st is not None else None
+                avg_sq_v = float(avg_st_sq) if avg_st_sq is not None else None
+                std_v = None
+                if avg_v is not None and avg_sq_v is not None:
+                    std_v = max(avg_sq_v - avg_v * avg_v, 0.0) ** 0.5
+                c2 = int(course2_count or 0)
+                info.update({
+                    "boat2_prior_n": n,
+                    "boat2_hist_st_avg": avg_v,
+                    "boat2_hist_st_std": std_v,
+                    "boat2_course2_rate": (c2 / n) if n else None,
+                    "boat2_sashi2_rate": (int(sashi2_win or 0) / c2) if c2 else None,
+                })
+
         def _safe_signal_eval(name, fn, *args, **kwargs):
             try:
                 return fn(*args, **kwargs)
             except Exception as e:  # noqa: BLE001
                 logger.warning("signal eval failed [%s]: %s", name, e)
                 return None
+
+        try:
+            with db_connect() as wall_conn:
+                _apply_boat2_wall_history_to_info(wall_conn, all_race_info)
+        except Exception as wall_exc:
+            logger.warning("boat2 wall history live enrichment failed: %s", wall_exc)
 
         signals = []
         # 当日全レースを走査 (確定済 → L4、未確定 → 朝L4候補)
@@ -9435,6 +9652,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             series13_adopted_signal = _safe_signal_eval(
                 "series13_adopted",
                 _evaluate_13_series_adopted_signal,
+                info,
+            )
+            boat2_wall_adopted_signal = _safe_signal_eval(
+                "boat2_wall_adopted",
+                _evaluate_boat2_wall_adopted_signal,
                 info,
             )
 
@@ -9644,6 +9866,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tsu_suminoe_signal,
                     current_motor_adopted_signal,
                     series13_adopted_signal,
+                    boat2_wall_adopted_signal,
                     candidate_l4,
                     gamagori_adopted_signal,
                 )
@@ -9719,6 +9942,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     gamagori_watch = _evaluate_gamagori_adopted_signal(info)
                     current_motor_adopted_watch = _evaluate_current_motor_adopted_signal(info)
                     series13_adopted_watch = _evaluate_13_series_adopted_signal(info)
+                    try:
+                        boat2_wall_adopted_watch = _evaluate_boat2_wall_adopted_signal(info)
+                    except Exception:
+                        boat2_wall_adopted_watch = None
                     general_c_watch = _evaluate_general_c_watch(
                         stadium, grade, cls,
                         natl_1=natl_1,
@@ -9760,6 +9987,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         tsu_suminoe_signal,
                         current_motor_adopted_watch,
                         series13_adopted_watch,
+                        boat2_wall_adopted_watch,
                         win_niche_watch,
                         candidate_l4,
                         gamagori_watch,
@@ -9992,6 +10220,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     _evaluate_13_series_adopted_signal,
                     info,
                 )
+                boat2_wall_adopted_watch = _safe_signal_eval(
+                    "boat2_wall_adopted_watch_no_data",
+                    _evaluate_boat2_wall_adopted_signal,
+                    info,
+                )
                 general_c_watch = _safe_signal_eval(
                     "general_c_watch_no_data",
                     _evaluate_general_c_watch,
@@ -10033,6 +10266,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tsu_suminoe_signal,
                     current_motor_adopted_watch,
                     series13_adopted_watch,
+                    boat2_wall_adopted_watch,
                     win_niche,
                     candidate_l4,
                     gamagori_watch,
@@ -10283,11 +10517,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v27"
+    BOAT2_WALL_ADOPTED_CACHE_VERSION = "boat2_wall_adopted_v1"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v29"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
-    BET_UNIT_MAP = {"toda_42_flow_tri": 400, "ashiya_4head_flow_tri": 2000}
+    BOAT2_WALL_STRATEGIES = (
+        {"key": "nov_wall_break_31_41_exa", "label": "11月 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "month": 11, "mode": "weak_score4", "shape": "1strong_m35", "recovery": 236.1, "hit_rate": 31.6, "n": 19, "tag": "11月 + 2号艇壁崩れ + 1号艇強M35"},
+        {"key": "kiryu_wall_break_31_41_exa", "label": "桐生 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "stadium": 1, "mode": "kiryu_weak_exact", "shape": "3strong", "recovery": 211.2, "hit_rate": 31.2, "n": 32, "tag": "桐生 + 2号艇壁崩れ精密 + 3号艇強"},
+        {"key": "marugame_wall_hold_123_tri", "label": "丸亀 壁成立 1-2-3", "bet_type": "trifecta", "combos": ("1-2-3",), "bet_label": "3連単 1-2-3", "stadium": 15, "mode": "good_score4", "shape": "1strong_m35", "recovery": 195.8, "hit_rate": 31.6, "n": 19, "tag": "丸亀 + 2号艇壁成立 + 1号艇強M35"},
+        {"key": "miyajima_wall_break_31_41_exa", "label": "宮島 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "stadium": 17, "mode": "miyajima_weak_exact", "shape": "3strong", "recovery": 182.2, "hit_rate": 38.9, "n": 18, "tag": "宮島 + 2号艇壁崩れ精密 + 3号艇強"},
+        {"key": "july_wall_hold_12_exa", "label": "7月 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "month": 7, "mode": "good_score4", "shape": "3strong", "recovery": 169.6, "hit_rate": 38.5, "n": 26, "tag": "7月 + 2号艇壁成立 + 3号艇強"},
+        {"key": "shimonoseki_late_wall_hold_12_exa", "label": "下関後半 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "stadium": 19, "race_no_min": 7, "race_no_max": 12, "mode": "good_score4", "recovery": 166.4, "hit_rate": 56.0, "n": 25, "tag": "下関7-12R + 2号艇壁成立"},
+        {"key": "hamanako_wall_hold_12_exa", "label": "浜名湖 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "stadium": 6, "mode": "good_score4", "shape": "1strong_2wall_low", "recovery": 162.1, "hit_rate": 47.4, "n": 19, "tag": "浜名湖 + 2号艇壁成立 + 1号艇強 + 2コース率低め"},
+        {"key": "miyajima_wall_hold_123_132_tri", "label": "宮島 壁成立 123/132", "bet_type": "trifecta", "combos": ("1-2-3", "1-3-2"), "bet_label": "3連単 1-2-3 / 1-3-2", "stadium": 17, "mode": "good_score4", "shape": "3or4strong", "recovery": 155.7, "hit_rate": 33.3, "n": 21, "tag": "宮島 + 2号艇壁成立 + 3or4強"},
+        {"key": "g23_wall_hold_12_exa", "label": "G2/G3 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "grade_in": (3, 4), "mode": "good_score4", "shape": "1strong_3m35", "recovery": 153.2, "hit_rate": 42.1, "n": 19, "tag": "G2/G3 + 2号艇壁成立 + 1強3M35"},
+        {"key": "tamagawa_late_wall_hold_123_132_tri", "label": "多摩川後半 壁成立 123/132", "bet_type": "trifecta", "combos": ("1-2-3", "1-3-2"), "bet_label": "3連単 1-2-3 / 1-3-2", "stadium": 5, "race_no_min": 7, "race_no_max": 12, "mode": "good_score4", "recovery": 150.2, "hit_rate": 30.0, "n": 20, "tag": "多摩川7-12R + 2号艇壁成立"},
+    )
+    BET_UNIT_MAP = {
+        "toda_42_flow_tri": 400,
+        "ashiya_4head_flow_tri": 2000,
+        "nov_wall_break_31_41_exa": 200,
+        "kiryu_wall_break_31_41_exa": 200,
+        "miyajima_wall_break_31_41_exa": 200,
+        "miyajima_wall_hold_123_132_tri": 200,
+        "tamagawa_late_wall_hold_123_132_tri": 200,
+    }
     RECENT_ADOPTED_RECOMPUTE_DAYS = 14
 
     def _adopted_daily_cache_is_valid(rdate: str, day_d: dict) -> bool:
@@ -10347,6 +10602,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ("_tokoname_123_late_exst_tri_version", TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION),
             ("_heiwajima_13_acc2_late_exa_version", HEIWAJIMA_13_ACC2_LATE_EXA_CACHE_VERSION),
             ("_accident_tag_adopted_version", ACCIDENT_TAG_ADOPTED_CACHE_VERSION),
+            ("_course_fit_win_version", COURSE_FIT_WIN_CACHE_VERSION),
+            ("_boat2_wall_adopted_version", BOAT2_WALL_ADOPTED_CACHE_VERSION),
         )
         for version_key, expected_version in required_versions:
             if day_d.get(version_key) != expected_version:
@@ -10515,6 +10772,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "amagasaki_12_acc3_fl3_exa",
                             "omura_13_acc2_fl2_m23_exa",
                             "marugame_13_pts2_m23_exa",
+                            "nov_wall_break_31_41_exa",
+                            "kiryu_wall_break_31_41_exa",
+                            "marugame_wall_hold_123_tri",
+                            "miyajima_wall_break_31_41_exa",
+                            "july_wall_hold_12_exa",
+                            "shimonoseki_late_wall_hold_12_exa",
+                            "hamanako_wall_hold_12_exa",
+                            "miyajima_wall_hold_123_132_tri",
+                            "g23_wall_hold_12_exa",
+                            "tamagawa_late_wall_hold_123_132_tri",
                         )
                         for prefix in adopted_metric_prefixes:
                             day_d.setdefault(f"{prefix}_bets", 0)
@@ -11051,24 +11318,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     by_race[race_id] = signal
             return list(by_race.values())
 
-        def _parse_market_signal_bet(l4: dict) -> tuple[str, str] | None:
-            """Return (bet_type, combination) for a displayed high-ROI pick."""
-            import re as _re
-
-            bet_text = str((l4 or {}).get("bet") or "")
-            match = _re.search(r"\b([1-6](?:-[1-6]){0,2})\b", bet_text)
-            if not match:
-                win_match = _re.search(r"([1-6])\s*号艇", bet_text)
-                if not win_match:
-                    return None
-                return "win", win_match.group(1)
-            combo = match.group(1)
-            n_boats = combo.count("-") + 1
-            if n_boats >= 3:
-                return "trifecta", combo
-            if n_boats == 2:
-                return "exacta", combo
-            return "win", combo
+        def _parse_market_signal_bets(l4: dict) -> list[tuple[str, str]]:
+            """Return all (bet_type, combination) pairs for a displayed high-ROI pick."""
+            return _parse_market_signal_bets_for_roi(l4)
 
         def _overlay_market_signal_cache_daily() -> None:
             """Use the same adopted picks as /api/market-signals when cached.
@@ -11095,7 +11347,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     day_d[f"{key}_pay"] = 0
 
             rows_to_lookup: list[tuple[str, str, str, str, str]] = []
-            selected_by_date: dict[str, list[tuple[str, str, str, str]]] = {}
+            selected_by_date: dict[str, list[tuple[str, str, list[tuple[str, str]]]]] = {}
 
             for rdate, day_d in by_date.items():
                 payload = _read_json_cache_stale(_market_signals_cache_key(rdate))
@@ -11117,7 +11369,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_adopted_market_signals_cache_missing"] = True
                     continue
 
-                selected: list[tuple[str, str, str, str]] = []
+                selected: list[tuple[str, str, list[tuple[str, str]]]] = []
                 for rid, signal in signals.items():
                     if not isinstance(signal, dict):
                         continue
@@ -11128,11 +11380,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if level not in adopted_levels or level.startswith("morning_watch_"):
                         continue
                     race_id = str(signal.get("race_id") or rid or "")
-                    parsed = _parse_market_signal_bet(l4)
-                    if not race_id or parsed is None:
+                    parsed_bets = _parse_market_signal_bets(l4)
+                    if not race_id or not parsed_bets:
                         continue
-                    bet_type, combo = parsed
-                    selected.append((race_id, level, bet_type, combo))
+                    selected.append((race_id, level, parsed_bets))
 
                 # Even an empty cache is a valid computed high-ROI list, so
                 # clear adopted counts for that day before applying rows.
@@ -11140,7 +11391,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 day_d["_adopted_from_market_signals_cache"] = True
                 day_d["_adopted_market_signals_cache_missing"] = False
                 selected_by_date[rdate] = selected
-                rows_to_lookup.extend((rdate, *row) for row in selected)
+                for race_id, level, parsed_bets in selected:
+                    rows_to_lookup.extend((rdate, race_id, level, bet_type, combo) for bet_type, combo in parsed_bets)
 
             if not rows_to_lookup:
                 return
@@ -11164,8 +11416,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 day_d = by_date.get(rdate)
                 if day_d is None:
                     continue
-                for race_id, level, bet_type, combo in selected:
-                    pay = payout_by_signal.get((race_id, bet_type, combo), 0)
+                for race_id, level, parsed_bets in selected:
+                    pay = sum(payout_by_signal.get((race_id, bet_type, combo), 0) for bet_type, combo in parsed_bets)
                     day_d[f"{level}_bets"] = int(day_d.get(f"{level}_bets", 0) or 0) + 1
                     if pay:
                         day_d[f"{level}_hits"] = int(day_d.get(f"{level}_hits", 0) or 0) + 1
@@ -13856,6 +14108,264 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("fukuoka wind exacta daily stats failed: %s", e)
 
+        def _bw_float(value, default=None):
+            try:
+                return float(value) if value is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        def _bw_int(value, default=None):
+            try:
+                return int(value) if value is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        def _boat2_wall_daily_flags(ctx: dict) -> dict:
+            prior_n = _bw_int(ctx.get("boat2_prior_n"), 0) or 0
+            avg = _bw_float(ctx.get("boat2_hist_st_avg"))
+            sq_avg = _bw_float(ctx.get("boat2_hist_st_sq_avg"))
+            std = None
+            if avg is not None and sq_avg is not None:
+                try:
+                    std = max(sq_avg - avg * avg, 0.0) ** 0.5
+                except Exception:
+                    std = None
+            course2 = _bw_float(ctx.get("boat2_course2_rate"))
+            sashi2 = _bw_float(ctx.get("boat2_sashi2_rate"))
+            fl_sum = _bw_int(ctx.get("boat2_fl_sum"), 0) or 0
+            good_score = 0
+            weak_score = 0
+            if prior_n >= 30:
+                good_score += 1 if avg is not None and avg <= 0.170 else 0
+                good_score += 1 if std is not None and std <= 0.055 else 0
+                good_score += 1 if fl_sum == 0 else 0
+                good_score += 1 if course2 is not None and course2 >= 0.240 else 0
+                good_score += 1 if sashi2 is not None and sashi2 >= 0.060 else 0
+                weak_score += 1 if avg is not None and avg >= 0.170 else 0
+                weak_score += 1 if std is not None and std >= 0.060 else 0
+                weak_score += 1 if fl_sum >= 1 else 0
+                weak_score += 1 if course2 is not None and course2 <= 0.200 else 0
+                weak_score += 1 if sashi2 is not None and sashi2 <= 0.030 else 0
+            return {
+                "prior_n": prior_n,
+                "avg": avg,
+                "std": std,
+                "course2": course2,
+                "sashi2": sashi2,
+                "good_score": good_score,
+                "weak_score": weak_score,
+            }
+
+        def _boat2_wall_daily_ok(strategy: dict, ctx: dict) -> bool:
+            stadium_v = _bw_int(ctx.get("stadium"))
+            grade_v = _bw_int(ctx.get("grade"))
+            race_no_v = _bw_int(ctx.get("race_number"))
+            month_v = _bw_int(str(ctx.get("race_date") or "")[5:7])
+            natl_1_v = _bw_float(ctx.get("natl_1"), 0.0) or 0.0
+            avg_st1_v = _bw_float(ctx.get("avg_st_180"), 9.9) or 9.9
+            b1_motor_v = _bw_float(ctx.get("boat1_motor_top2"), 0.0) or 0.0
+            b2_course2_v = _bw_float(ctx.get("boat2_course2_rate"), 0.0) or 0.0
+            b3_n1_v = _bw_float(ctx.get("boat3_natl_1"), 0.0) or 0.0
+            b3_motor_v = _bw_float(ctx.get("boat3_motor_top2"), 0.0) or 0.0
+            b4_n1_v = _bw_float(ctx.get("boat4_natl_1"), 0.0) or 0.0
+            b4_motor_v = _bw_float(ctx.get("boat4_motor_top2"), 0.0) or 0.0
+            flags = _boat2_wall_daily_flags(ctx)
+
+            if "month" in strategy and month_v != strategy["month"]:
+                return False
+            if "stadium" in strategy and stadium_v != strategy["stadium"]:
+                return False
+            if "grade_in" in strategy and grade_v not in strategy["grade_in"]:
+                return False
+            if strategy.get("race_no_min") is not None and (race_no_v is None or race_no_v < strategy["race_no_min"]):
+                return False
+            if strategy.get("race_no_max") is not None and (race_no_v is None or race_no_v > strategy["race_no_max"]):
+                return False
+
+            mode = strategy.get("mode")
+            if mode == "good_score4" and flags["good_score"] < 4:
+                return False
+            if mode == "weak_score4" and flags["weak_score"] < 4:
+                return False
+            if mode == "kiryu_weak_exact" and not (
+                flags["prior_n"] >= 30
+                and flags["avg"] is not None and flags["avg"] >= 0.175
+                and flags["std"] is not None and flags["std"] >= 0.055
+                and flags["course2"] is not None and flags["course2"] <= 0.210
+                and flags["sashi2"] is not None and flags["sashi2"] <= 0.040
+            ):
+                return False
+            if mode == "miyajima_weak_exact" and not (
+                flags["prior_n"] >= 30
+                and flags["avg"] is not None and flags["avg"] >= 0.165
+                and flags["std"] is not None and flags["std"] >= 0.055
+                and flags["course2"] is not None and flags["course2"] <= 0.180
+                and flags["sashi2"] is not None and flags["sashi2"] <= 0.020
+            ):
+                return False
+
+            shape = strategy.get("shape")
+            if shape == "1strong_m35":
+                return natl_1_v >= 6.5 and avg_st1_v <= 0.170 and b1_motor_v >= 35.0
+            if shape == "1strong_3m35":
+                return natl_1_v >= 6.5 and b3_motor_v >= 35.0
+            if shape == "3strong":
+                return b3_n1_v >= 5.5 and b3_motor_v >= 35.0
+            if shape == "3or4strong":
+                return (b3_n1_v >= 5.5 and b3_motor_v >= 35.0) or (b4_n1_v >= 5.0 and b4_motor_v >= 35.0)
+            if shape == "1strong_2wall_low":
+                return natl_1_v >= 6.5 and b2_course2_v <= 0.240
+            return True
+
+        try:
+            boat2_wall_rows = conn.execute(
+                """
+                WITH current_races AS (
+                    SELECT r.race_id, r.race_date, r.stadium_number, r.race_grade_number, r.race_number,
+                           e1.national_top_1_percent AS natl_1,
+                           e1.avg_start_timing AS avg_st_180,
+                           e1.assigned_motor_top_2_percent AS boat1_motor_top2,
+                           e2.racer_number AS boat2_racer,
+                           (COALESCE(e2.flying_count, 0) + COALESCE(e2.late_count, 0)) AS boat2_fl_sum,
+                           e3.national_top_1_percent AS boat3_natl_1,
+                           e3.assigned_motor_top_2_percent AS boat3_motor_top2,
+                           e4.national_top_1_percent AS boat4_natl_1,
+                           e4.assigned_motor_top_2_percent AS boat4_motor_top2,
+                           res1.boat_number AS w1,
+                           res2.boat_number AS w2,
+                           res3.boat_number AS w3,
+                           COALESCE(pe31.payout, 0) AS pay_ex31,
+                           COALESCE(pe41.payout, 0) AS pay_ex41,
+                           COALESCE(pe12.payout, 0) AS pay_ex12,
+                           COALESCE(pt123.payout, 0) AS pay_tri123,
+                           COALESCE(pt132.payout, 0) AS pay_tri132
+                      FROM races r
+                      LEFT JOIN race_entries e1 ON e1.race_id = r.race_id AND e1.boat_number = 1
+                      LEFT JOIN race_entries e2 ON e2.race_id = r.race_id AND e2.boat_number = 2
+                      LEFT JOIN race_entries e3 ON e3.race_id = r.race_id AND e3.boat_number = 3
+                      LEFT JOIN race_entries e4 ON e4.race_id = r.race_id AND e4.boat_number = 4
+                      LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position = 1
+                      LEFT JOIN race_results res2 ON res2.race_id = r.race_id AND res2.finishing_position = 2
+                      LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position = 3
+                      LEFT JOIN race_payouts pe31 ON pe31.race_id = r.race_id AND pe31.bet_type='exacta' AND pe31.combination='3-1'
+                      LEFT JOIN race_payouts pe41 ON pe41.race_id = r.race_id AND pe41.bet_type='exacta' AND pe41.combination='4-1'
+                      LEFT JOIN race_payouts pe12 ON pe12.race_id = r.race_id AND pe12.bet_type='exacta' AND pe12.combination='1-2'
+                      LEFT JOIN race_payouts pt123 ON pt123.race_id = r.race_id AND pt123.bet_type='trifecta' AND pt123.combination='1-2-3'
+                      LEFT JOIN race_payouts pt132 ON pt132.race_id = r.race_id AND pt132.bet_type='trifecta' AND pt132.combination='1-3-2'
+                     WHERE r.race_date BETWEEN ? AND ?
+                )
+                SELECT cr.*,
+                       (
+                           SELECT COUNT(*)
+                             FROM race_entries eh
+                             JOIN races rh ON rh.race_id = eh.race_id
+                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
+                            WHERE eh.racer_number = cr.boat2_racer
+                              AND rh.race_date < cr.race_date
+                              AND rr.start_timing IS NOT NULL
+                              AND rr.start_timing BETWEEN -0.5 AND 1.5
+                       ) AS boat2_prior_n,
+                       (
+                           SELECT AVG(rr.start_timing)
+                             FROM race_entries eh
+                             JOIN races rh ON rh.race_id = eh.race_id
+                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
+                            WHERE eh.racer_number = cr.boat2_racer
+                              AND rh.race_date < cr.race_date
+                              AND rr.start_timing IS NOT NULL
+                              AND rr.start_timing BETWEEN -0.5 AND 1.5
+                       ) AS boat2_hist_st_avg,
+                       (
+                           SELECT AVG(rr.start_timing * rr.start_timing)
+                             FROM race_entries eh
+                             JOIN races rh ON rh.race_id = eh.race_id
+                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
+                            WHERE eh.racer_number = cr.boat2_racer
+                              AND rh.race_date < cr.race_date
+                              AND rr.start_timing IS NOT NULL
+                              AND rr.start_timing BETWEEN -0.5 AND 1.5
+                       ) AS boat2_hist_st_sq_avg,
+                       (
+                           SELECT AVG(CASE WHEN COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) = 2 THEN 1.0 ELSE 0.0 END)
+                             FROM race_entries eh
+                             JOIN races rh ON rh.race_id = eh.race_id
+                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
+                            WHERE eh.racer_number = cr.boat2_racer
+                              AND rh.race_date < cr.race_date
+                       ) AS boat2_course2_rate,
+                       (
+                           SELECT AVG(CASE WHEN COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) = 2
+                                             AND rr.finishing_position = 1
+                                             AND rr.kimarite = '差し'
+                                           THEN 1.0 ELSE 0.0 END)
+                             FROM race_entries eh
+                             JOIN races rh ON rh.race_id = eh.race_id
+                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
+                            WHERE eh.racer_number = cr.boat2_racer
+                              AND rh.race_date < cr.race_date
+                       ) AS boat2_sashi2_rate
+                  FROM current_races cr
+                """,
+                (from_date, to_date),
+            ).fetchall()
+            for row_bw in boat2_wall_rows:
+                (
+                    race_id_bw, rdate_bw, stadium_bw, grade_bw, race_no_bw,
+                    natl_1_bw, avg_st_bw, boat1_motor_bw, boat2_racer_bw, boat2_fl_bw,
+                    boat3_n1_bw, boat3_motor_bw, boat4_n1_bw, boat4_motor_bw,
+                    w1_bw, w2_bw, w3_bw, pay_ex31_bw, pay_ex41_bw, pay_ex12_bw,
+                    pay_tri123_bw, pay_tri132_bw, prior_n_bw, st_avg_bw, st_sq_avg_bw,
+                    course2_bw, sashi2_bw,
+                ) = tuple(row_bw)
+                if w1_bw is None or w2_bw is None or w3_bw is None:
+                    continue
+                ctx_bw = {
+                    "race_id": race_id_bw,
+                    "race_date": str(rdate_bw),
+                    "stadium": stadium_bw,
+                    "grade": grade_bw,
+                    "race_number": race_no_bw,
+                    "natl_1": natl_1_bw,
+                    "avg_st_180": avg_st_bw,
+                    "boat1_motor_top2": boat1_motor_bw,
+                    "boat2_fl_sum": boat2_fl_bw,
+                    "boat2_prior_n": prior_n_bw,
+                    "boat2_hist_st_avg": st_avg_bw,
+                    "boat2_hist_st_sq_avg": st_sq_avg_bw,
+                    "boat2_course2_rate": course2_bw,
+                    "boat2_sashi2_rate": sashi2_bw,
+                    "boat3_natl_1": boat3_n1_bw,
+                    "boat3_motor_top2": boat3_motor_bw,
+                    "boat4_natl_1": boat4_n1_bw,
+                    "boat4_motor_top2": boat4_motor_bw,
+                }
+                for strategy in BOAT2_WALL_STRATEGIES:
+                    if not _boat2_wall_daily_ok(strategy, ctx_bw):
+                        continue
+                    key_bw = strategy["key"]
+                    if key_bw in ("nov_wall_break_31_41_exa", "kiryu_wall_break_31_41_exa", "miyajima_wall_break_31_41_exa"):
+                        hit_bw = (w1_bw == 3 and w2_bw == 1) or (w1_bw == 4 and w2_bw == 1)
+                        pay_bw = int(pay_ex31_bw or 0) + int(pay_ex41_bw or 0)
+                    elif key_bw in ("miyajima_wall_hold_123_132_tri", "tamagawa_late_wall_hold_123_132_tri"):
+                        hit_bw = (w1_bw == 1 and w2_bw == 2 and w3_bw == 3) or (w1_bw == 1 and w2_bw == 3 and w3_bw == 2)
+                        pay_bw = int(pay_tri123_bw or 0) + int(pay_tri132_bw or 0)
+                    elif strategy["bet_type"] == "exacta":
+                        hit_bw = w1_bw == 1 and w2_bw == 2
+                        pay_bw = int(pay_ex12_bw or 0)
+                    else:
+                        hit_bw = w1_bw == 1 and w2_bw == 2 and w3_bw == 3
+                        pay_bw = int(pay_tri123_bw or 0)
+                    _record_adopted_signal(
+                        race_id_bw,
+                        str(rdate_bw),
+                        key_bw,
+                        float(strategy["recovery"]),
+                        bool(hit_bw),
+                        pay_bw if hit_bw else 0,
+                    )
+        except Exception as e:
+            logger.warning("boat2 wall adopted daily stats failed: %s", e)
+
         for adopted in _selected_adopted_signals_for_roi():
             rdate = adopted["date"]
             d = by_date.get(rdate)
@@ -13947,6 +14457,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_tokoname_123_late_exst_tri_version"] = TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION
                         day_d["_accident_tag_adopted_version"] = ACCIDENT_TAG_ADOPTED_CACHE_VERSION
                         day_d["_course_fit_win_version"] = COURSE_FIT_WIN_CACHE_VERSION
+                        day_d["_boat2_wall_adopted_version"] = BOAT2_WALL_ADOPTED_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
@@ -14519,6 +15030,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "biwako_coursefit_boat4_gap5_general_win",
         "biwako_coursefit_boat4_rank1_general_win",
         "biwako_coursefit_boat4_gap10_all_win",
+        "nov_wall_break_31_41_exa",
+        "kiryu_wall_break_31_41_exa",
+        "marugame_wall_hold_123_tri",
+        "miyajima_wall_break_31_41_exa",
+        "july_wall_hold_12_exa",
+        "shimonoseki_late_wall_hold_12_exa",
+        "hamanako_wall_hold_12_exa",
+        "miyajima_wall_hold_123_132_tri",
+        "g23_wall_hold_12_exa",
+        "tamagawa_late_wall_hold_123_132_tri",
     )
 
     MARKET_SIGNAL_WATCH_LEVELS = (
@@ -14653,6 +15174,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         }
         for strategy in COURSE_FIT_STRATEGIES
     )
+    ROI_STRATEGIES = ROI_STRATEGIES + tuple(
+        {
+            "key": strategy["key"],
+            "label": strategy["label"],
+            "short": strategy["tag"],
+            "color": "#facc15" if strategy["bet_type"] == "trifecta" else "#38bdf8",
+            "timing": "previous_day",
+        }
+        for strategy in BOAT2_WALL_STRATEGIES
+    )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
     ROI_METRIC_EXTRA_KEYS = (
         "win", "exa", "tri", "c80", "pro", "sgg12",
@@ -14729,6 +15260,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "biwako_coursefit_boat4_gap5_general_win": "biwako",
         "biwako_coursefit_boat4_rank1_general_win": "biwako",
         "biwako_coursefit_boat4_gap10_all_win": "biwako",
+    })
+    ROI_STRATEGY_VENUE_BY_KEY.update({
+        "kiryu_wall_break_31_41_exa": "kiryu",
+        "hamanako_wall_hold_12_exa": "hamanako",
+        "marugame_wall_hold_123_tri": "marugame",
+        "miyajima_wall_break_31_41_exa": "miyajima",
+        "miyajima_wall_hold_123_132_tri": "miyajima",
+        "shimonoseki_late_wall_hold_12_exa": "shimonoseki",
+        "tamagawa_late_wall_hold_123_132_tri": "tamagawa",
     })
 
     ROI_STRATEGY_VENUE_ORDER = {
@@ -15223,6 +15763,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "period_start": selected_period,
             "period_end": None,
             "updated_at": None,
+            "source_updated_at": None,
+            "events_created_at": None,
+            "snapshot_date": None,
         }
         error_message = None
         raw_rows: list[dict[str, Any]] = []
@@ -15255,6 +15798,48 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     (p for p in periods if p["period_start"] == selected_period),
                     selected_meta,
                 )
+                meta_row = conn.execute(
+                    """
+                    SELECT MAX(period_end) AS period_end,
+                           MAX(updated_at) AS snapshot_updated_at,
+                           MAX(snapshot_date) AS snapshot_date
+                      FROM racer_accident_rank_snapshots
+                     WHERE period_start = ?
+                       AND source_kind = 'reconstructed'
+                       AND source_rule_version = 'official_table_2025_05_reconstructed_v2'
+                    """,
+                    (selected_period,),
+                ).fetchone()
+                source_row = conn.execute(
+                    """
+                    SELECT MAX(updated_at) AS source_updated_at
+                      FROM racer_accident_period_stats
+                     WHERE period_start = ?
+                       AND source_kind = 'reconstructed'
+                       AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                    """,
+                    (selected_period,),
+                ).fetchone()
+                event_row = None
+                if meta_row and meta_row[0]:
+                    event_row = conn.execute(
+                        """
+                        SELECT MAX(created_at) AS events_created_at
+                          FROM racer_accident_events
+                         WHERE race_date BETWEEN ? AND ?
+                           AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                        """,
+                        (selected_period, str(meta_row[0])),
+                    ).fetchone()
+                selected_meta = {
+                    **selected_meta,
+                    "period_start": selected_period,
+                    "period_end": str(meta_row[0]) if meta_row and meta_row[0] else selected_meta.get("period_end"),
+                    "updated_at": meta_row[1] if meta_row and meta_row[1] else selected_meta.get("updated_at"),
+                    "snapshot_date": meta_row[2] if meta_row and meta_row[2] else selected_meta.get("snapshot_date"),
+                    "source_updated_at": source_row[0] if source_row and source_row[0] else None,
+                    "events_created_at": event_row[0] if event_row and event_row[0] else None,
+                }
 
                 where = [
                     "period_start = ?",
