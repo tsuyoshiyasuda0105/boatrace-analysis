@@ -372,3 +372,10 @@ def test_adopted_roi_cache_missing_does_not_survive_recompute():
     assert 'day_d.get("_adopted_market_signals_cache_missing")' in src
     assert "recomputed_date_set = set(missing_dates)" in src
     assert "if rdate in recomputed_date_set:" in src
+
+
+def test_market_signals_cache_accepts_recent_generation_during_rollout():
+    """Web/Cron の更新順が前後しても候補一覧を空にしない。"""
+    src = _read("src/web/app.py")
+    assert "def _market_signals_compat_cache_keys" in src
+    assert 'return _market_json_response(compat_payload, "compat-stale")' in src

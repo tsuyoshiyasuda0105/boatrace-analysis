@@ -72,6 +72,18 @@ def _market_signals_cache_key(target_date: str) -> str:
     return f"market_signals:{MARKET_SIGNALS_CACHE_VERSION}:{target_date}"
 
 
+def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
+    """Return recent cache generations for zero-downtime cron rollouts."""
+    try:
+        current = int(MARKET_SIGNALS_CACHE_VERSION.removeprefix("v"))
+    except (TypeError, ValueError):
+        return []
+    return [
+        f"market_signals:v{version}:{target_date}"
+        for version in range(current - 1, max(current - 3, 0), -1)
+    ]
+
+
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
     suffix = ":".join(str(p) for p in parts)
     return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{suffix}"
@@ -3801,6 +3813,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         stale_payload = None if force_recompute else _read_json_cache_stale(cache_key)
         if stale_payload is not None:
             return _market_json_response(stale_payload, "stale")
+
+        # Web and cron services can finish a rolling Render deploy at
+        # different times. Reuse the last two generations instead of turning
+        # a valid candidate list into an empty response during that window.
+        if not force_recompute:
+            for compat_key in _market_signals_compat_cache_keys(target_date):
+                compat_payload = _read_json_cache_stale(compat_key)
+                if not isinstance(compat_payload, dict):
+                    continue
+                if compat_payload.get("date") != target_date:
+                    continue
+                compat_payload = dict(compat_payload)
+                compat_payload["source_cache_version"] = compat_payload.get("cache_version")
+                compat_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
+                return _market_json_response(compat_payload, "compat-stale")
 
         if not force_recompute:
             payload = {
