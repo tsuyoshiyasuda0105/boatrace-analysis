@@ -16,13 +16,12 @@ def test_signals_mode_is_the_daytime_market_signal_writer():
     ]
 
 
-def test_realtime_mode_rebuilds_recent_market_signal_snapshots():
+def test_realtime_mode_rebuilds_today_before_reading_strategy_page():
     targets = build_targets("realtime", TODAY)
 
-    assert targets[:3] == [
-        "/api/market-signals?date=2026-07-16&recompute=1",
-        "/api/market-signals?date=2026-07-17&recompute=1",
+    assert targets == [
         "/api/market-signals?date=2026-07-18&recompute=1",
+        "/member/strategy?from=2026-06-18&to=2026-07-18",
     ]
     assert all("/member/strategy/monthly" not in target for target in targets)
 

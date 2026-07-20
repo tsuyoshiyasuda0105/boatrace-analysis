@@ -68,14 +68,11 @@ def build_targets(mode: str, today: date) -> list[str]:
             f"/member/strategy?from={d30}&to={today_s}",
         ]
 
-    # The dedicated 30-minute prewarm cron is the recovery path when exhibition,
-    # tide, or result data arrives after the first empty snapshot. Rebuild the
-    # current day and the two preceding days so an early zero-candidate cache
-    # cannot remain visible for the rest of the day (or for recent history).
-    two_days_ago_s = _days_ago(today, 2)
+    # The dedicated 30-minute prewarm cron must finish today's expensive scan
+    # before the next run starts. Historical repairs belong to nightly mode;
+    # processing older dates first can consume the whole cron window and leave
+    # today's dashboard without a snapshot.
     return [
-        f"/api/market-signals?date={two_days_ago_s}&recompute=1",
-        f"/api/market-signals?date={yesterday_s}&recompute=1",
         f"/api/market-signals?date={today_s}&recompute=1",
         f"/member/strategy?from={d30}&to={today_s}",
     ]
