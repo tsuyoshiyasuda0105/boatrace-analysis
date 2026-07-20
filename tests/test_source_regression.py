@@ -379,3 +379,10 @@ def test_market_signals_cache_accepts_recent_generation_during_rollout():
     src = _read("src/web/app.py")
     assert "def _market_signals_compat_cache_keys" in src
     assert 'return _market_json_response(compat_payload, "compat-stale")' in src
+
+
+def test_market_signals_recent_cache_miss_self_heals():
+    """直近日の全キャッシュ欠損は空応答で固定せず再生成する。"""
+    src = _read("src/web/app.py")
+    assert 'logger.warning("market-signals cache missing; self-healing %s"' in src
+    assert "force_recompute = True" in src

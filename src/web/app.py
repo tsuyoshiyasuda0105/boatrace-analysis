@@ -3829,6 +3829,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 compat_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
                 return _market_json_response(compat_payload, "compat-stale")
 
+        # A missing live cache means the background writer has stopped or a
+        # new cache generation has never been produced. Rebuild recent dates
+        # once in the web worker so the UI can recover instead of remaining
+        # empty indefinitely. The successful computation is persisted below,
+        # so normal requests continue to be cache-only.
+        recent_cache_floor = (date.today() - timedelta(days=2)).isoformat()
+        if not force_recompute and target_date >= recent_cache_floor:
+            logger.warning("market-signals cache missing; self-healing %s", target_date)
+            force_recompute = True
+
         if not force_recompute:
             payload = {
                 "date": target_date,
