@@ -49,6 +49,13 @@
     </form>
   </div>
 
+  <div class="dashboard-hint accident-note">
+    <div>対象期間: {{ selected_meta.period_start or selected_period }}{% if selected_meta.period_end %} - {{ selected_meta.period_end }}{% endif %}</div>
+    <div>事故点数集計日時: {{ selected_meta.source_updated_at or '-' }}</div>
+    <div>事故イベント取込日時: {{ selected_meta.events_created_at or '-' }}</div>
+    <div>画面反映日時: {{ selected_meta.updated_at or '-' }}{% if selected_meta.snapshot_date %} / スナップショット日: {{ selected_meta.snapshot_date }}{% endif %}</div>
+  </div>
+
   {% if error_message %}
     <div class="accident-error">事故率データの取得に失敗しました: {{ error_message }}</div>
   {% endif %}
@@ -126,7 +133,7 @@
   </div>
 
   <p class="dashboard-hint accident-note">
-    更新: {{ selected_meta.updated_at or '-' }} / 事故率 = 事故点 ÷ 出走数。選手ランクは直近登録データから表示しています。
+    事故率 = 事故点 ÷ 出走数。選手ランクは直近登録データから表示しています。
   </p>
 </section>
 {% endblock %}
