@@ -34,7 +34,9 @@
   <section class="chart-section">
     <h3>月別 ROI 推移グラフ</h3>
     <div class="chart-legend" id="monthlyChartLegend"></div>
-    <canvas id="monthlyChart" width="980" height="380"></canvas>
+    <div class="monthly-chart-scroll">
+      <canvas id="monthlyChart" width="980" height="380"></canvas>
+    </div>
     <p class="dashboard-hint" style="margin-top:8px;"><small>横軸: 年月 / 縦軸: ROI (%)</small></p>
   </section>
 
@@ -84,7 +86,7 @@
     {
       ym: {{ m.ym | tojson }},
       {% for s in strategies %}
-      {{ s.short }}: {{ ('null' if m[s.key ~ '_roi'] is none else '%.1f' | format(m[s.key ~ '_roi'])) }}{% if not loop.last %},{% endif %}
+      {{ s.short | tojson }}: {{ ('null' if m[s.key ~ '_roi'] is none else '%.1f' | format(m[s.key ~ '_roi'])) }}{% if not loop.last %},{% endif %}
       {% endfor %}
     }{% if not loop.last %},{% endif %}
     {% endfor %}
@@ -92,7 +94,7 @@
 
   const SERIES = [
     {% for s in strategies %}
-    { key: '{{ s.short }}', label: {{ s.label | tojson }}, color: '{{ s.color }}' }{% if not loop.last %},{% endif %}
+    { key: {{ s.short | tojson }}, label: {{ s.label | tojson }}, color: {{ s.color | tojson }} }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
 

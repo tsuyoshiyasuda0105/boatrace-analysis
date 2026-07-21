@@ -40,11 +40,18 @@ from src.evaluation.course_fit_strategy import (
     load_live_matches as load_course_fit_live_matches,
     representative_match as representative_course_fit_match,
 )
+from src.evaluation.accident_dent_strategy import (
+    ACCIDENT_DENT_CACHE_VERSION,
+    ACCIDENT_DENT_STRATEGIES,
+    iter_backtest_matches as iter_accident_dent_backtest_matches,
+    live_matches as load_accident_dent_live_matches,
+)
 from src.web.auth import (
     is_member, login_required, member_only_api,
     register_auth_routes,
 )
 from src.web.predictor import Predictor
+from src.web.start_prediction_api import bp as start_prediction_bp
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +65,8 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v19"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v7"
+MARKET_SIGNALS_CACHE_VERSION = "v20"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v10"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -2600,6 +2607,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
+    app.register_blueprint(start_prediction_bp)
     # メール購読 UI
     try:
         from src.web.subscriber_views import register_subscriber_routes
@@ -4127,6 +4135,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                pv.wind_speed,
                                NULLIF(pv.exhibition_time, 0) AS boat1_exhibition_time,
                                e2.racer_number AS boat2_racer,
+                               e2.class_number AS boat2_class,
                                e2.national_top_2_percent AS boat2_top2,
                                e2.avg_start_timing AS boat2_avg_st,
                                e2.assigned_motor_top_2_percent AS boat2_motor_top2,
@@ -4170,6 +4179,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e4.assigned_motor_number AS boat4_motor_number,
                                e4.local_top_1_percent AS boat4_local_1,
                                e4.national_top_1_percent AS boat4_natl_1,
+                               e4.national_top_2_percent AS boat4_top2,
                                e4.avg_start_timing AS boat4_avg_st,
                                e4.assigned_motor_top_2_percent AS boat4_motor_top2,
                                (COALESCE(e4.flying_count, 0) + COALESCE(e4.late_count, 0)) AS boat4_fl_sum,
@@ -4259,6 +4269,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "wind_speed": rec.get("wind_speed"),
                             "boat1_exhibition_time": rec.get("boat1_exhibition_time"),
                             "boat2_racer": rec.get("boat2_racer"),
+                            "boat2_class": rec.get("boat2_class"),
                             "boat2_top2": rec.get("boat2_top2"),
                             "boat2_avg_st": rec.get("boat2_avg_st"),
                             "boat2_motor_top2": rec.get("boat2_motor_top2"),
@@ -4283,6 +4294,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat4_motor_number": rec.get("boat4_motor_number"),
                             "boat4_local_1": rec.get("boat4_local_1"),
                             "boat4_natl_1": rec.get("boat4_natl_1"),
+                            "boat4_top2": rec.get("boat4_top2"),
                             "boat4_avg_st": rec.get("boat4_avg_st"),
                             "boat4_motor_top2": rec.get("boat4_motor_top2"),
                             "boat4_fl_sum": rec.get("boat4_fl_sum"),
@@ -4308,6 +4320,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "is_fixed_entry": rec.get("is_fixed_entry"),
                         }
                     if all_race_info:
+                        for info in all_race_info.values():
+                            info["boat2_national_top2"] = info.get("boat2_top2")
+                            info["boat2_motor_top2"] = info.get("boat2_motor_top2")
+                            info["boat3_national_top1"] = info.get("boat3_natl_1")
+                            info["boat3_national_top2"] = info.get("boat3_top2")
+                            info["boat3_motor_top2"] = info.get("boat3_motor_top2")
+                            info["boat4_national_top1"] = info.get("boat4_natl_1")
+                            info["boat4_national_top2"] = info.get("boat4_top2")
+                            info["boat4_motor_top2"] = info.get("boat4_motor_top2")
                         try:
                             accident_period_start = _accident_period_start_for_date(target_date)
                             race_ids = sorted(all_race_info.keys())
@@ -4367,6 +4388,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 info["max_accident_points"] = watch_items[0].get("points") if watch_items else None
                         except Exception as acc_exc:
                             logger.warning("accident watch query failed: %s", acc_exc)
+                            try:
+                                conn.rollback()
+                            except Exception:
+                                pass
+                        try:
+                            race_ids = sorted(all_race_info.keys())
+                            placeholders = ",".join("?" for _ in race_ids)
+                            ds_rows = conn.execute(
+                                f"""
+                                SELECT race_id, boat_number,
+                                       derived_avg_start_timing_180d,
+                                       derived_start_count_180d
+                                  FROM derived_start_stats
+                                 WHERE race_id IN ({placeholders})
+                                """,
+                                tuple(race_ids),
+                            ).fetchall()
+                            for race_id_ds, boat_no_ds, avg_st_ds, count_ds in ds_rows:
+                                info = all_race_info.get(str(race_id_ds))
+                                if info is None:
+                                    continue
+                                boat_no_ds = int(boat_no_ds)
+                                info[f"boat{boat_no_ds}_avg_st_180"] = avg_st_ds
+                                info[f"boat{boat_no_ds}_avg_st_count"] = int(count_ds or 0)
+                        except Exception as ds_exc:
+                            logger.warning("derived start live query failed: %s", ds_exc)
                             try:
                                 conn.rollback()
                             except Exception:
@@ -5806,6 +5853,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "biwako_coursefit_boat4_rank1_general_win",
                 "biwako_coursefit_boat4_gap10_all_win",
             }
+            adopted_priority_levels.update(
+                strategy.key for strategy in ACCIDENT_DENT_STRATEGIES
+            )
             adopted_priority_levels.update({
                 "morning_watch_SG",
                 "morning_watch_G1",
@@ -8005,6 +8055,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             return _pick_best_market_signal(*matched)
 
+        def _evaluate_accident_dent_adopted_signal(ctx: dict | None):
+            """Evaluate the leakage-safe accident-rate/ST dent portfolio."""
+            matched = []
+            for strategy in load_accident_dent_live_matches(ctx):
+                matched.append({
+                    "level": strategy.key,
+                    "label": strategy.label,
+                    "bet": f"2連単 {strategy.combination}",
+                    "rank": "exacta_niche",
+                    "rank_label": "事故率STへこみ",
+                    "rank_emoji": "ACC",
+                    "recovery": strategy.recovery,
+                    "n": strategy.sample_size,
+                    "hit_rate": strategy.hit_rate,
+                    "exacta_niche_hit_rate": strategy.hit_rate,
+                    "exacta_niche_recovery": strategy.recovery,
+                    "is_exacta_niche": True,
+                    "name": strategy.label,
+                    "tag": "事故率0.50+ / 直前180日平均ST / 隣接艇ST差",
+                    "tetsuban_score": 7,
+                    "timing_bucket": "preconfirmed",
+                    "is_display_confirmed": True,
+                })
+            return _pick_best_market_signal(*matched)
+
         def _evaluate_non_exhibition_core_signal(
             stadium,
             grade,
@@ -9683,6 +9758,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 _evaluate_13_series_adopted_signal,
                 info,
             )
+            accident_dent_adopted_signal = _safe_signal_eval(
+                "accident_dent_adopted",
+                _evaluate_accident_dent_adopted_signal,
+                info,
+            )
             boat2_wall_adopted_signal = _safe_signal_eval(
                 "boat2_wall_adopted",
                 _evaluate_boat2_wall_adopted_signal,
@@ -9895,6 +9975,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tsu_suminoe_signal,
                     current_motor_adopted_signal,
                     series13_adopted_signal,
+                    accident_dent_adopted_signal,
                     boat2_wall_adopted_signal,
                     candidate_l4,
                     gamagori_adopted_signal,
@@ -9971,6 +10052,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     gamagori_watch = _evaluate_gamagori_adopted_signal(info)
                     current_motor_adopted_watch = _evaluate_current_motor_adopted_signal(info)
                     series13_adopted_watch = _evaluate_13_series_adopted_signal(info)
+                    accident_dent_adopted_watch = _evaluate_accident_dent_adopted_signal(info)
                     try:
                         boat2_wall_adopted_watch = _evaluate_boat2_wall_adopted_signal(info)
                     except Exception:
@@ -10016,6 +10098,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         tsu_suminoe_signal,
                         current_motor_adopted_watch,
                         series13_adopted_watch,
+                        accident_dent_adopted_watch,
                         boat2_wall_adopted_watch,
                         win_niche_watch,
                         candidate_l4,
@@ -10249,6 +10332,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     _evaluate_13_series_adopted_signal,
                     info,
                 )
+                accident_dent_adopted_watch = _safe_signal_eval(
+                    "accident_dent_adopted_watch_no_data",
+                    _evaluate_accident_dent_adopted_signal,
+                    info,
+                )
                 boat2_wall_adopted_watch = _safe_signal_eval(
                     "boat2_wall_adopted_watch_no_data",
                     _evaluate_boat2_wall_adopted_signal,
@@ -10295,6 +10383,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tsu_suminoe_signal,
                     current_motor_adopted_watch,
                     series13_adopted_watch,
+                    accident_dent_adopted_watch,
                     boat2_wall_adopted_watch,
                     win_niche,
                     candidate_l4,
@@ -10547,7 +10636,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
     BOAT2_WALL_ADOPTED_CACHE_VERSION = "boat2_wall_adopted_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v29"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v32"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -10633,6 +10722,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ("_accident_tag_adopted_version", ACCIDENT_TAG_ADOPTED_CACHE_VERSION),
             ("_course_fit_win_version", COURSE_FIT_WIN_CACHE_VERSION),
             ("_boat2_wall_adopted_version", BOAT2_WALL_ADOPTED_CACHE_VERSION),
+            ("_accident_dent_version", ACCIDENT_DENT_CACHE_VERSION),
         )
         for version_key, expected_version in required_versions:
             if day_d.get(version_key) != expected_version:
@@ -11366,7 +11456,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ROI used to re-run strategy-specific backtests and could count
             strategies that were never shown to the user for that day. When a
             market-signals cache exists, replace adopted-strategy daily counts
-            with exactly the adopted rows displayed by that payload.
+            with exactly the adopted rows displayed by that payload. If the
+            historical payload is missing, retain the deterministic raw
+            reconstruction instead of turning a real day into a false zero.
             """
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS) & set(ROI_STRATEGY_KEYS)
             if not adopted_levels:
@@ -11394,16 +11486,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     or payload.get("cache_version") != MARKET_SIGNALS_CACHE_VERSION
                 ):
                     if recent_floor and rdate >= recent_floor:
-                        _clear_adopted_counts(day_d)
                         day_d["_adopted_from_market_signals_cache"] = False
-                        day_d["_adopted_market_signals_cache_missing"] = True
+                        day_d["_adopted_market_signals_cache_missing"] = False
+                        day_d["_adopted_from_raw_fallback"] = True
                     continue
                 signals = payload.get("signals") or {}
                 if not isinstance(signals, dict):
                     if recent_floor and rdate >= recent_floor:
-                        _clear_adopted_counts(day_d)
                         day_d["_adopted_from_market_signals_cache"] = False
-                        day_d["_adopted_market_signals_cache_missing"] = True
+                        day_d["_adopted_market_signals_cache_missing"] = False
+                        day_d["_adopted_from_raw_fallback"] = True
                     continue
 
                 selected: list[tuple[str, str, list[tuple[str, str]]]] = []
@@ -11427,6 +11519,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 _clear_adopted_counts(day_d)
                 day_d["_adopted_from_market_signals_cache"] = True
                 day_d["_adopted_market_signals_cache_missing"] = False
+                day_d["_adopted_from_raw_fallback"] = False
                 selected_by_date[rdate] = selected
                 for race_id, level, parsed_bets in selected:
                     rows_to_lookup.extend((rdate, race_id, level, bet_type, combo) for bet_type, combo in parsed_bets)
@@ -14255,8 +14348,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return True
 
         try:
-            boat2_wall_rows = conn.execute(
-                """
+            with db_connect() as conn_bw:
+                boat2_wall_rows = conn_bw.execute(
+                    """
                 WITH current_races AS (
                     SELECT r.race_id, r.race_date, r.stadium_number, r.race_grade_number, r.race_number,
                            e1.national_top_1_percent AS natl_1,
@@ -14291,71 +14385,108 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                       LEFT JOIN race_payouts pt132 ON pt132.race_id = r.race_id AND pt132.bet_type='trifecta' AND pt132.combination='1-3-2'
                      WHERE r.race_date BETWEEN ? AND ?
                 )
-                SELECT cr.*,
-                       (
-                           SELECT COUNT(*)
-                             FROM race_entries eh
-                             JOIN races rh ON rh.race_id = eh.race_id
-                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
-                            WHERE eh.racer_number = cr.boat2_racer
-                              AND rh.race_date < cr.race_date
-                              AND rr.start_timing IS NOT NULL
-                              AND rr.start_timing BETWEEN -0.5 AND 1.5
-                       ) AS boat2_prior_n,
-                       (
-                           SELECT AVG(rr.start_timing)
-                             FROM race_entries eh
-                             JOIN races rh ON rh.race_id = eh.race_id
-                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
-                            WHERE eh.racer_number = cr.boat2_racer
-                              AND rh.race_date < cr.race_date
-                              AND rr.start_timing IS NOT NULL
-                              AND rr.start_timing BETWEEN -0.5 AND 1.5
-                       ) AS boat2_hist_st_avg,
-                       (
-                           SELECT AVG(rr.start_timing * rr.start_timing)
-                             FROM race_entries eh
-                             JOIN races rh ON rh.race_id = eh.race_id
-                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
-                            WHERE eh.racer_number = cr.boat2_racer
-                              AND rh.race_date < cr.race_date
-                              AND rr.start_timing IS NOT NULL
-                              AND rr.start_timing BETWEEN -0.5 AND 1.5
-                       ) AS boat2_hist_st_sq_avg,
-                       (
-                           SELECT AVG(CASE WHEN COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) = 2 THEN 1.0 ELSE 0.0 END)
-                             FROM race_entries eh
-                             JOIN races rh ON rh.race_id = eh.race_id
-                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
-                            WHERE eh.racer_number = cr.boat2_racer
-                              AND rh.race_date < cr.race_date
-                       ) AS boat2_course2_rate,
-                       (
-                           SELECT AVG(CASE WHEN COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) = 2
-                                             AND rr.finishing_position = 1
-                                             AND rr.kimarite = '差し'
-                                           THEN 1.0 ELSE 0.0 END)
-                             FROM race_entries eh
-                             JOIN races rh ON rh.race_id = eh.race_id
-                             JOIN race_results rr ON rr.race_id = eh.race_id AND rr.boat_number = eh.boat_number
-                            WHERE eh.racer_number = cr.boat2_racer
-                              AND rh.race_date < cr.race_date
-                       ) AS boat2_sashi2_rate
+                SELECT cr.*
                   FROM current_races cr
-                """,
-                (from_date, to_date),
-            ).fetchall()
+                    """,
+                    (from_date, to_date),
+                ).fetchall()
+
+                # Load each target racer's history once.  The former query ran
+                # five correlated scans per race and regularly exceeded the
+                # Supabase statement timeout for a month-long ROI request.
+                boat2_history_rows = conn_bw.execute(
+                    """
+                    WITH target_racers AS (
+                        SELECT DISTINCT e2.racer_number
+                          FROM races r
+                          JOIN race_entries e2
+                            ON e2.race_id = r.race_id
+                           AND e2.boat_number = 2
+                         WHERE r.race_date BETWEEN ? AND ?
+                           AND e2.racer_number IS NOT NULL
+                    )
+                    SELECT eh.racer_number,
+                           rh.race_date,
+                           rr.start_timing,
+                           COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) AS actual_course,
+                           rr.finishing_position,
+                           rr.kimarite
+                      FROM target_racers tr
+                      JOIN race_entries eh ON eh.racer_number = tr.racer_number
+                      JOIN races rh ON rh.race_id = eh.race_id
+                      JOIN race_results rr
+                        ON rr.race_id = eh.race_id
+                       AND rr.boat_number = eh.boat_number
+                     WHERE rh.race_date < ?
+                     ORDER BY eh.racer_number, rh.race_date, rh.race_id
+                    """,
+                    (from_date, to_date, to_date),
+                ).fetchall()
+
+            from bisect import bisect_left
+            from collections import defaultdict
+
+            history_by_racer = defaultdict(list)
+            for racer_h, date_h, st_h, course_h, finish_h, kimarite_h in boat2_history_rows:
+                history_by_racer[_bw_int(racer_h)].append(
+                    (str(date_h), st_h, course_h, finish_h, kimarite_h)
+                )
+
+            history_prefix = {}
+            for racer_h, items_h in history_by_racer.items():
+                dates_h = []
+                st_n_h = [0]
+                st_sum_h = [0.0]
+                st_sq_sum_h = [0.0]
+                result_n_h = [0]
+                course2_n_h = [0]
+                sashi2_n_h = [0]
+                for date_h, st_h, course_h, finish_h, kimarite_h in items_h:
+                    st_v_h = _bw_float(st_h)
+                    valid_st_h = st_v_h is not None and -0.5 <= st_v_h <= 1.5
+                    course2_h = _bw_int(course_h) == 2
+                    sashi2_h = course2_h and _bw_int(finish_h) == 1 and str(kimarite_h or "") == "差し"
+                    dates_h.append(date_h)
+                    st_n_h.append(st_n_h[-1] + int(valid_st_h))
+                    st_sum_h.append(st_sum_h[-1] + (st_v_h if valid_st_h else 0.0))
+                    st_sq_sum_h.append(st_sq_sum_h[-1] + ((st_v_h * st_v_h) if valid_st_h else 0.0))
+                    result_n_h.append(result_n_h[-1] + 1)
+                    course2_n_h.append(course2_n_h[-1] + int(course2_h))
+                    sashi2_n_h.append(sashi2_n_h[-1] + int(sashi2_h))
+                history_prefix[racer_h] = (
+                    dates_h, st_n_h, st_sum_h, st_sq_sum_h,
+                    result_n_h, course2_n_h, sashi2_n_h,
+                )
+
             for row_bw in boat2_wall_rows:
                 (
                     race_id_bw, rdate_bw, stadium_bw, grade_bw, race_no_bw,
                     natl_1_bw, avg_st_bw, boat1_motor_bw, boat2_racer_bw, boat2_fl_bw,
                     boat3_n1_bw, boat3_motor_bw, boat4_n1_bw, boat4_motor_bw,
                     w1_bw, w2_bw, w3_bw, pay_ex31_bw, pay_ex41_bw, pay_ex12_bw,
-                    pay_tri123_bw, pay_tri132_bw, prior_n_bw, st_avg_bw, st_sq_avg_bw,
-                    course2_bw, sashi2_bw,
+                    pay_tri123_bw, pay_tri132_bw,
                 ) = tuple(row_bw)
                 if w1_bw is None or w2_bw is None or w3_bw is None:
                     continue
+                prefix_bw = history_prefix.get(_bw_int(boat2_racer_bw))
+                if prefix_bw:
+                    (
+                        dates_bw, st_n_prefix_bw, st_sum_prefix_bw, st_sq_prefix_bw,
+                        result_n_prefix_bw, course2_prefix_bw, sashi2_prefix_bw,
+                    ) = prefix_bw
+                    idx_bw = bisect_left(dates_bw, str(rdate_bw))
+                    prior_n_bw = st_n_prefix_bw[idx_bw]
+                    result_n_bw = result_n_prefix_bw[idx_bw]
+                    st_avg_bw = st_sum_prefix_bw[idx_bw] / prior_n_bw if prior_n_bw else None
+                    st_sq_avg_bw = st_sq_prefix_bw[idx_bw] / prior_n_bw if prior_n_bw else None
+                    course2_bw = course2_prefix_bw[idx_bw] / result_n_bw if result_n_bw else None
+                    sashi2_bw = sashi2_prefix_bw[idx_bw] / result_n_bw if result_n_bw else None
+                else:
+                    prior_n_bw = 0
+                    st_avg_bw = None
+                    st_sq_avg_bw = None
+                    course2_bw = None
+                    sashi2_bw = None
                 ctx_bw = {
                     "race_id": race_id_bw,
                     "race_date": str(rdate_bw),
@@ -14402,6 +14533,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     )
         except Exception as e:
             logger.warning("boat2 wall adopted daily stats failed: %s", e)
+
+        try:
+            with db_connect() as conn_accident_dent:
+                for match in iter_accident_dent_backtest_matches(
+                    conn_accident_dent, from_date, to_date
+                ):
+                    strategy = match["strategy"]
+                    _record_adopted_signal(
+                        match["race_id"],
+                        match["race_date"],
+                        strategy.key,
+                        strategy.recovery,
+                        match["hit"],
+                        match["payout"] if match["hit"] else 0,
+                    )
+        except Exception as e:
+            logger.warning("accident dent adopted daily stats failed: %s", e)
 
         for adopted in _selected_adopted_signals_for_roi():
             rdate = adopted["date"]
@@ -14495,6 +14643,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_accident_tag_adopted_version"] = ACCIDENT_TAG_ADOPTED_CACHE_VERSION
                         day_d["_course_fit_win_version"] = COURSE_FIT_WIN_CACHE_VERSION
                         day_d["_boat2_wall_adopted_version"] = BOAT2_WALL_ADOPTED_CACHE_VERSION
+                        day_d["_accident_dent_version"] = ACCIDENT_DENT_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         sjson = _json.dumps(day_d, ensure_ascii=False)
                         conn_s.execute(
@@ -15078,6 +15227,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "g23_wall_hold_12_exa",
         "tamagawa_late_wall_hold_123_132_tri",
     )
+    MARKET_SIGNAL_ADOPTED_LEVELS = MARKET_SIGNAL_ADOPTED_LEVELS + tuple(
+        strategy.key for strategy in ACCIDENT_DENT_STRATEGIES
+    )
 
     MARKET_SIGNAL_WATCH_LEVELS = (
         "morning_watch_SG",
@@ -15221,6 +15373,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         }
         for strategy in BOAT2_WALL_STRATEGIES
     )
+    ROI_STRATEGIES = ROI_STRATEGIES + tuple(
+        {
+            "key": strategy.key,
+            "label": strategy.label,
+            "short": f"accdent_{strategy.venue}_{strategy.combination.replace('-', '')}",
+            "color": "#fb7185" if strategy.dent_class_a_only else "#f59e0b",
+            "timing": "previous_day",
+        }
+        for strategy in ACCIDENT_DENT_STRATEGIES
+    )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
     ROI_METRIC_EXTRA_KEYS = (
         "win", "exa", "tri", "c80", "pro", "sgg12",
@@ -15306,6 +15468,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "miyajima_wall_hold_123_132_tri": "miyajima",
         "shimonoseki_late_wall_hold_12_exa": "shimonoseki",
         "tamagawa_late_wall_hold_123_132_tri": "tamagawa",
+    })
+    ROI_STRATEGY_VENUE_BY_KEY.update({
+        "toda_dent2_makuri4_41": "toda",
+        "toda_a_accident2_13_exa": "toda",
+        "edogawa_late_dent2_makuri3_31": "edogawa",
+        "edogawa_a_accident4_12_exa": "edogawa",
+        "biwako_dent2_makuri3_31": "biwako",
+        "amagasaki_dent3_makuri4_41": "amagasaki",
+        "shimonoseki_a_accident4_13_exa": "shimonoseki",
     })
 
     ROI_STRATEGY_VENUE_ORDER = {

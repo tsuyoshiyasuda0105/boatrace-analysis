@@ -3106,6 +3106,12 @@ main h2 {
 }
 .chart-section h3 { margin-bottom: 12px; }
 #cumChart { width: 100%; max-width: 100%; height: auto; }
+.monthly-chart-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
 
 .daily-table-section { margin-bottom: 28px; }
 .daily-table-section h3 { margin-bottom: 12px; }
@@ -5997,3 +6003,5 @@ main h2 {
   margin-bottom: 16px;
   box-shadow: 0 4px 16px rgba(255, 140, 0, 0.3);
 }
+/* Start/development prediction v1 */
+.start-prediction{margin:22px 0;border:1px solid #14516b;background:#091522;padding:16px;border-radius:7px;color:#eaf4ff}.start-prediction-head{display:flex;justify-content:space-between;align-items:center;gap:16px}.start-prediction-head h3,.start-metrics-head h2{margin:3px 0 0;font-size:20px}.start-eyebrow{font-size:11px;color:#20d9ff;font-weight:700}.start-confidence{text-align:right}.start-confidence span{display:block;color:#8da0b6;font-size:11px}.start-confidence b{font-size:24px;color:#66ebc1}.start-scenario-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0}.start-scenario-strip>div{background:#101d2e;border:1px solid #24354c;padding:10px;border-radius:6px}.start-scenario-strip span{display:block;color:#8da0b6;font-size:11px;margin-bottom:5px}.start-scenario-strip b{display:flex;align-items:center;gap:7px}.start-table-wrap,.start-admin-table-wrap{overflow-x:auto}.start-table,.start-admin-table{width:100%;border-collapse:collapse;font-size:12px}.start-table th,.start-table td,.start-admin-table th,.start-admin-table td{padding:9px 7px;border-bottom:1px solid #203147;text-align:center;white-space:nowrap}.start-table th,.start-admin-table th{color:#93a9c1;background:#101a2c}.start-bottom-grid{display:grid;grid-template-columns:1fr 1.2fr;gap:18px;margin-top:14px}.start-bottom-grid h4{margin:0 0 8px;font-size:13px}.start-trifectas{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 20px;margin:0;padding-left:24px}.start-trifectas li{padding:3px 0}.start-trifectas span{float:right;color:#55d9ff}.start-reasons{margin:0 0 9px;padding-left:18px;color:#b8c7d8}.start-prediction-empty{display:flex;align-items:center;justify-content:space-between;gap:12px}.start-prediction-empty span{display:block;color:#8da0b6;font-size:12px;margin-top:3px}.start-prediction-empty button,.start-filter button{background:#13bde8;border:0;color:#03131c;font-weight:700;padding:9px 15px;border-radius:5px}.start-metrics-page{padding:10px 0}.start-filter{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#0d1725;border:1px solid #223248;padding:12px;margin:16px 0}.start-filter label{font-size:11px;color:#91a5bb}.start-filter input{display:block;margin-top:4px;background:#111d2c;border:1px solid #314056;color:#fff;padding:7px}.start-metric-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-bottom:16px}.start-metric-grid>div{background:#101b29;border:1px solid #26364a;padding:12px}.start-metric-grid span{display:block;color:#8da0b6;font-size:11px}.start-metric-grid b{font-size:20px}.start-admin-table tr.is-miss{background:#21151d}@media(max-width:760px){.start-scenario-strip,.start-bottom-grid,.start-metric-grid{grid-template-columns:1fr}.start-trifectas{grid-template-columns:1fr}.start-prediction{padding:11px}}

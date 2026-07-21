@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 import time
@@ -17,6 +18,7 @@ JST = timezone(timedelta(hours=9))
 BEFOREINFO_WINDOW_MIN = 5
 BEFOREINFO_WINDOW_MAX = 9
 BEFOREINFO_COOLDOWN_MIN = 8
+ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v32"
 
 
 def jst_now() -> datetime:
@@ -244,6 +246,52 @@ def run_hourly(now: datetime) -> bool:
     return ok
 
 
+def roi_daily_cache_needs_repair(target_date: str) -> bool:
+    """Return True when yesterday's finalized ROI cache is absent or invalid."""
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT stats_json FROM l4_daily_stats_cache WHERE race_date = ?",
+                (target_date,),
+            ).fetchone()
+        if not row or not row[0]:
+            return True
+        payload = json.loads(row[0])
+        return bool(
+            payload.get("_adopted_market_signals_cache_missing")
+            or payload.get("_adopted_daily_select_version") != ROI_DAILY_CACHE_VERSION
+        )
+    except Exception as exc:
+        print(f"[roi-cache] check failed: {type(exc).__name__}: {exc}", flush=True)
+        return True
+
+
+def run_roi_daily_self_heal(now: datetime) -> bool:
+    """Materialize yesterday after results and payouts have arrived."""
+    target_date = (now.date() - timedelta(days=1)).isoformat()
+    if not roi_daily_cache_needs_repair(target_date):
+        print(f"[roi-cache] current date={target_date}", flush=True)
+        return True
+    print(f"[roi-cache] repair date={target_date}", flush=True)
+    ok = run_py(
+        ["scripts/prewarm_strategy_pages.py", "--mode", "daily-reconcile", "--date", now.date().isoformat()],
+        timeout=1800,
+    )
+    if ok:
+        ok &= run_py(
+            ["scripts/backfill_accident_dent_daily_cache.py", "--from", target_date, "--to", target_date],
+            timeout=900,
+        )
+    verified = ok and not roi_daily_cache_needs_repair(target_date)
+    record_task(
+        "render_roi_daily_reconcile",
+        target_date,
+        "success" if verified else "failure",
+        detail=f"cache_verified={verified}",
+    )
+    return verified
+
+
 def run_tide_self_heal(now: datetime) -> bool:
     """5分周期の本体ループでも潮欠損を補修する。
 
@@ -402,6 +450,57 @@ def run_accident_rank_snapshot(target_date: str) -> bool:
     )
 
 
+def latest_accident_snapshot_date() -> str | None:
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(snapshot_date)
+                  FROM racer_accident_rank_snapshots
+                 WHERE source_kind = 'reconstructed'
+                """
+            ).fetchone()
+        return str(row[0]) if row and row[0] else None
+    except Exception as exc:
+        print(
+            f"[accident-refresh] snapshot check failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return None
+
+
+def run_accident_full_refresh(target_date: str) -> bool:
+    target_dt = datetime.fromisoformat(target_date).replace(tzinfo=JST)
+    ok = run_accident_rebuild(accident_period_start(target_dt), target_date)
+    if ok:
+        ok = run_accident_rank_snapshot(target_date)
+    return ok
+
+
+def run_accident_self_heal(now: datetime) -> bool:
+    """Rebuild yesterday's period when the materialized ranking is stale."""
+    target_date = (now.date() - timedelta(days=1)).isoformat()
+    latest = latest_accident_snapshot_date()
+    if latest and latest >= target_date:
+        print(f"[accident-refresh] current snapshot={latest}", flush=True)
+        return True
+
+    print(
+        f"[accident-refresh] stale snapshot={latest or '-'} target={target_date}",
+        flush=True,
+    )
+    ok = run_accident_full_refresh(target_date)
+    verified = latest_accident_snapshot_date() if ok else None
+    ok = bool(ok and verified and verified >= target_date)
+    record_task(
+        "render_accident_refresh",
+        target_date,
+        "success" if ok else "failure",
+        detail=f"snapshot={verified or '-'} target={target_date}",
+    )
+    return ok
+
+
 def run_nightly(now: datetime) -> bool:
     today = now.date().isoformat()
     tomorrow = (now.date() + timedelta(days=1)).isoformat()
@@ -430,14 +529,19 @@ def run_nightly(now: datetime) -> bool:
         print("[nightly] tomorrow source incomplete -> retry next cron", flush=True)
         return False
     # Build tomorrow's high-ROI snapshot after tomorrow's races and predictions
-    # exist. Otherwise previous-day confirmed candidates wait for the morning run.
+    # exist. Without this, nightly prewarming only refreshes today's signals and
+    # previous-day confirmed candidates do not appear until the morning run.
     ok &= run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow],
         timeout=1800,
     )
+    ok &= run_py(
+        ["scripts/backfill_accident_dent_daily_cache.py", "--recent-days", "400"],
+        timeout=1800,
+    )
     ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "nightly"], timeout=3600)
-    ok &= run_accident_rebuild(accident_period_start(now), today)
-    ok &= run_accident_rank_snapshot(today)
+    ok &= run_py(["scripts/aggregate_start_prediction_metrics.py", "--date", today], timeout=900)
+    ok &= run_accident_full_refresh(today)
     ok &= run_db_maintenance()
     return ok
 
@@ -472,6 +576,7 @@ def main() -> int:
     # Live beforeinfo/weather correction. The scrape function has its own cooldown.
     if 8 <= now.hour <= 22:
         run_beforeinfo(now)
+        run_py(["scripts/generate_start_predictions.py", "--date", today], timeout=900)
         # run_beforeinfo rebuilds the snapshot only when source rows changed.
         # Recomputing it unconditionally here duplicated the heaviest query and
         # could overlap the next five-minute cron run.
@@ -484,7 +589,7 @@ def main() -> int:
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
         run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
-        run_accident_rebuild(today, today)
+        run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
 
     # Self-heal tide rows on every loop so missing imports do not survive until the next hour.
     if 6 <= now.hour <= 23:
@@ -496,6 +601,12 @@ def main() -> int:
         if not task_success_exists(task, today):
             ok = run_hourly(now)
             record_task(task, today, "success" if ok else "failure")
+
+    # Nightly execution is not the only recovery path. Verify the materialized
+    # accident ranking hourly so a missed or stale nightly run heals itself.
+    if now.minute < 5 and 6 <= now.hour <= 23:
+        run_accident_self_heal(now)
+        run_roi_daily_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
     if now.hour == 23 and now.minute >= 30:

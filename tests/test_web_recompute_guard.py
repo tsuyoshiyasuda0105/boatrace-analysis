@@ -6,6 +6,7 @@ os.environ["DATABASE_URL"] = ""
 from flask import Flask
 
 from src.web import app as web_app
+from scripts import prewarm_strategy_pages as prewarm
 from scripts import render_regular_scheduler as scheduler
 
 
@@ -87,15 +88,180 @@ def test_signal_refresh_uses_one_task_slot_per_half_hour(monkeypatch):
     assert attempted == [("render_signal_refresh_10_1", "2026-07-21")]
 
 
-def test_nightly_prewarms_tomorrow_market_signals():
-    source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
-    nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
-    expected = '["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow]'
-    assert expected in nightly
+def test_accident_self_heal_skips_when_snapshot_is_current(monkeypatch):
+    monkeypatch.setattr(scheduler, "latest_accident_snapshot_date", lambda: "2026-07-20")
+    monkeypatch.setattr(
+        scheduler,
+        "run_accident_full_refresh",
+        lambda _target: (_ for _ in ()).throw(AssertionError("must not rebuild")),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 9, 0, tzinfo=scheduler.JST)
+    assert scheduler.run_accident_self_heal(now)
 
 
-def test_nightly_retries_when_tomorrow_source_is_empty():
+def test_accident_self_heal_rebuilds_full_period_and_verifies_snapshot(monkeypatch):
+    snapshots = iter(["2026-07-19", "2026-07-20"])
+    rebuilt = []
+    recorded = []
+    monkeypatch.setattr(scheduler, "latest_accident_snapshot_date", lambda: next(snapshots))
+    monkeypatch.setattr(
+        scheduler,
+        "run_accident_full_refresh",
+        lambda target: rebuilt.append(target) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 9, 0, tzinfo=scheduler.JST)
+    assert scheduler.run_accident_self_heal(now)
+    assert rebuilt == ["2026-07-20"]
+    assert recorded[0][0][:3] == (
+        "render_accident_refresh",
+        "2026-07-20",
+        "success",
+    )
+
+
+def test_accident_full_refresh_rebuilds_from_period_start(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "run_accident_rebuild",
+        lambda date_from, date_to: calls.append((date_from, date_to)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_accident_rank_snapshot",
+        lambda target: calls.append(("snapshot", target)) or True,
+    )
+
+    assert scheduler.run_accident_full_refresh("2026-07-20")
+    assert calls == [
+        (scheduler.accident_period_start(scheduler.datetime(2026, 7, 20, tzinfo=scheduler.JST)), "2026-07-20"),
+        ("snapshot", "2026-07-20"),
+    ]
+
+
+def test_scheduler_never_rebuilds_accident_stats_from_one_day_only():
     source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
-    nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
-    assert "daily_source_complete(tomorrow_counts)" in nightly
-    assert "tomorrow source incomplete -> retry next cron" in nightly
+    assert "run_accident_rebuild(today, today)" not in source
+
+
+def test_roi_cache_self_heal_skips_current_cache(monkeypatch):
+    monkeypatch.setattr(scheduler, "roi_daily_cache_needs_repair", lambda _date: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not rebuild")),
+    )
+    now = scheduler.datetime(2026, 7, 21, 9, 0, tzinfo=scheduler.JST)
+    assert scheduler.run_roi_daily_self_heal(now)
+
+
+def test_roi_cache_repair_detects_old_select_version(monkeypatch):
+    class _Cursor:
+        def fetchone(self):
+            return ('{"_adopted_daily_select_version":"adopted_daily_select_v30"}',)
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args):
+            return _Cursor()
+
+    monkeypatch.setattr(scheduler, "db_connect", lambda: _Connection())
+    assert scheduler.roi_daily_cache_needs_repair("2026-07-20")
+
+
+def test_roi_cache_self_heal_repairs_and_verifies(monkeypatch):
+    checks = iter([True, False])
+    calls = []
+    records = []
+    monkeypatch.setattr(scheduler, "roi_daily_cache_needs_repair", lambda _date: next(checks))
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: calls.append((args, timeout)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda *args, **kwargs: records.append((args, kwargs)),
+    )
+    now = scheduler.datetime(2026, 7, 21, 9, 0, tzinfo=scheduler.JST)
+    assert scheduler.run_roi_daily_self_heal(now)
+    assert calls == [
+        (["scripts/prewarm_strategy_pages.py", "--mode", "daily-reconcile", "--date", "2026-07-21"], 1800),
+        (["scripts/backfill_accident_dent_daily_cache.py", "--from", "2026-07-20", "--to", "2026-07-20"], 900),
+    ]
+    assert records[0][0][:3] == (
+        "render_roi_daily_reconcile",
+        "2026-07-20",
+        "success",
+    )
+
+
+def test_daily_reconcile_targets_yesterday_before_roi_page():
+    targets = prewarm.build_targets("daily-reconcile", scheduler.datetime(2026, 7, 21).date())
+    assert targets[0] == "/api/market-signals?date=2026-07-20&recompute=1"
+    assert targets[1] == "/member/strategy?from=2026-07-20&to=2026-07-21&recompute=1"
+
+
+def test_nightly_prewarms_tomorrow_market_signals(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: calls.append((args, timeout)) or True,
+    )
+    monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
+    monkeypatch.setattr(
+        scheduler,
+        "daily_source_counts",
+        lambda _date: {"races": 12, "entries": 72, "predictions": 12},
+    )
+    monkeypatch.setattr(scheduler, "run_accident_full_refresh", lambda _today: True)
+    monkeypatch.setattr(scheduler, "run_db_maintenance", lambda: True)
+
+    now = scheduler.datetime(2026, 7, 21, 23, 30, tzinfo=scheduler.JST)
+    assert scheduler.run_nightly(now)
+    assert (
+        [
+            "scripts/prewarm_strategy_pages.py",
+            "--mode",
+            "signals",
+            "--date",
+            "2026-07-22",
+        ],
+        1800,
+    ) in calls
+
+
+def test_nightly_retries_when_tomorrow_source_is_not_ready(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: calls.append((args, timeout)) or True,
+    )
+    monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
+    monkeypatch.setattr(
+        scheduler,
+        "daily_source_counts",
+        lambda _date: {"races": 0, "entries": 0, "predictions": 0},
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 23, 30, tzinfo=scheduler.JST)
+    assert scheduler.run_nightly(now) is False
+    assert not any(
+        args[:3] == ["scripts/prewarm_strategy_pages.py", "--mode", "signals"]
+        for args, _timeout in calls
+    )
