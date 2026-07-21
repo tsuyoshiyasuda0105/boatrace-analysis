@@ -415,6 +415,12 @@ def run_nightly(now: datetime) -> bool:
     # Preload tomorrow after its races exist as well.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
+    # Build tomorrow's high-ROI snapshot after tomorrow's races and predictions
+    # exist. Otherwise previous-day confirmed candidates wait for the morning run.
+    ok &= run_py(
+        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow],
+        timeout=1800,
+    )
     ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "nightly"], timeout=3600)
     ok &= run_accident_rebuild(accident_period_start(now), today)
     ok &= run_accident_rank_snapshot(today)

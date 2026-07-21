@@ -85,3 +85,10 @@ def test_signal_refresh_uses_one_task_slot_per_half_hour(monkeypatch):
     now = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
     assert scheduler.run_signal_refresh_slot(now)
     assert attempted == [("render_signal_refresh_10_1", "2026-07-21")]
+
+
+def test_nightly_prewarms_tomorrow_market_signals():
+    source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
+    expected = '["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow]'
+    assert expected in nightly
