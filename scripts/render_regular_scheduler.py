@@ -603,9 +603,14 @@ def main() -> int:
             record_task(task, today, "success" if ok else "failure")
 
     # Nightly execution is not the only recovery path. Verify the materialized
-    # accident ranking hourly so a missed or stale nightly run heals itself.
-    if now.minute < 5 and 6 <= now.hour <= 23:
+    # accident ranking on every regular loop so a missed or stale nightly run
+    # heals itself even when Render's cron does not land in the top-of-hour slot.
+    # The snapshot check is cheap, and the rebuild only runs when the cache is
+    # behind yesterday.
+    if 6 <= now.hour <= 23:
         run_accident_self_heal(now)
+
+    if now.minute < 5 and 6 <= now.hour <= 23:
         run_roi_daily_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
