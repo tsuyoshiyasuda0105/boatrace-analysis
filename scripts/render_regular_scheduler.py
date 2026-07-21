@@ -415,6 +415,20 @@ def run_nightly(now: datetime) -> bool:
     # Preload tomorrow after its races exist as well.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
+    try:
+        tomorrow_counts = daily_source_counts(tomorrow)
+    except Exception as exc:
+        print(
+            f"[nightly] tomorrow source check failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return False
+    print(f"[nightly] tomorrow source={tomorrow_counts}", flush=True)
+    if not daily_source_complete(tomorrow_counts):
+        # The official B file can appear a few minutes after the first 23:30
+        # attempt. Keep the task failed so the next five-minute cron retries.
+        print("[nightly] tomorrow source incomplete -> retry next cron", flush=True)
+        return False
     # Build tomorrow's high-ROI snapshot after tomorrow's races and predictions
     # exist. Otherwise previous-day confirmed candidates wait for the morning run.
     ok &= run_py(

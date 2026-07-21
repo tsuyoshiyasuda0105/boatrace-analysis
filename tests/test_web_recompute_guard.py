@@ -92,3 +92,10 @@ def test_nightly_prewarms_tomorrow_market_signals():
     nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
     expected = '["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow]'
     assert expected in nightly
+
+
+def test_nightly_retries_when_tomorrow_source_is_empty():
+    source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
+    assert "daily_source_complete(tomorrow_counts)" in nightly
+    assert "tomorrow source incomplete -> retry next cron" in nightly
