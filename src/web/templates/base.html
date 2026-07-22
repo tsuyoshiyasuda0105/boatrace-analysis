@@ -30,6 +30,9 @@
         <a href="{{ url_for('member_accidents') }}" class="nav-btn nav-btn-accidents" title="事故率 選手一覧">
           <span class="nav-icon">⚠</span><span class="nav-label">事故率</span>
         </a>
+        <a href="{{ url_for('start_prediction.prediction_metrics_page') }}" class="nav-btn" title="スタート展開予測の精度管理">
+          <span class="nav-icon">ST</span><span class="nav-label">展開精度</span>
+        </a>
       </nav>
       {% endif %}
       <div class="auth-status">

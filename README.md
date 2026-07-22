@@ -216,3 +216,10 @@ Issue / PR 歓迎。特に以下の領域:
 ```bash
 pytest tests/
 ```
+
+### スタート展開予測 v1
+
+本番ST、スタート順位、攻め艇、1マーク展開、決まり手、着順確率を、
+予測時点の入力スナップショットから生成・保存・自動評価します。
+構成、データリーク防止、API、学習、Render運用、既知の制約は
+[`docs/start_prediction_v1.md`](docs/start_prediction_v1.md) を参照してください。

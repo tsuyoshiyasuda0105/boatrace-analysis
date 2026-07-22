@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}展開予測 精度管理{% endblock %}
+{% block content %}
+<div class="start-metrics-page">
+  <div class="start-metrics-head">
+    <div>
+      <span class="start-eyebrow">MODEL MONITOR</span>
+      <h2>スタート展開予測 精度管理</h2>
+      <p>予測時点のスナップショットと確定結果を比較します。</p>
+    </div>
+  </div>
+  <form class="start-filter" method="get">
+    <label>開始日<input type="date" name="from" value="{{ filters.get('from','') }}"></label>
+    <label>終了日<input type="date" name="to" value="{{ filters.get('to','') }}"></label>
+    <label>会場<input type="number" min="1" max="24" name="stadium_number" value="{{ filters.get('stadium_number','') }}"></label>
+    <label>グレード<input type="number" name="grade" value="{{ filters.get('grade','') }}"></label>
+    <label>R<input type="number" min="1" max="12" name="race_number" value="{{ filters.get('race_number','') }}"></label>
+    <label>風速下限<input type="number" step="0.1" name="wind_min" value="{{ filters.get('wind_min','') }}"></label>
+    <label>風速上限<input type="number" step="0.1" name="wind_max" value="{{ filters.get('wind_max','') }}"></label>
+    <label>潮区分<input type="text" name="tide_phase" value="{{ filters.get('tide_phase','') }}"></label>
+    <label>信頼度下限<input type="number" step="0.01" min="0" max="1" name="confidence_min" value="{{ filters.get('confidence_min','') }}"></label>
+    <label>オッズ下限<input type="number" step="0.1" name="odds_min" value="{{ filters.get('odds_min','') }}"></label>
+    <label>オッズ上限<input type="number" step="0.1" name="odds_max" value="{{ filters.get('odds_max','') }}"></label>
+    <button type="submit">表示</button>
+  </form>
+  <div class="start-metric-grid">
+    <div><span>予測数</span><b>{{ metrics.prediction_count }}</b></div>
+    <div><span>評価済み</span><b>{{ metrics.evaluated_count }}</b></div>
+    <div><span>ST MAE</span><b>{{ '%.3f'|format(metrics.st_mae) if metrics.st_mae is not none else '-' }}</b></div>
+    <div><span>STトップ</span><b>{{ '%.1f%%'|format(metrics.start_top_accuracy*100) if metrics.start_top_accuracy is not none else '-' }}</b></div>
+    <div><span>1着</span><b>{{ '%.1f%%'|format(metrics.winner_accuracy*100) if metrics.winner_accuracy is not none else '-' }}</b></div>
+    <div><span>決まり手</span><b>{{ '%.1f%%'|format(metrics.kimarite_accuracy*100) if metrics.kimarite_accuracy is not none else '-' }}</b></div>
+    <div><span>3連単 Top1 ROI</span><b>{{ '%.1f%%'|format(metrics.roi_top1) if metrics.roi_top1 is not none else '-' }}</b></div>
+    <div><span>3連単 Top10 ROI</span><b>{{ '%.1f%%'|format(metrics.roi_top10_box) if metrics.roi_top10_box is not none else '-' }}</b></div>
+  </div>
+  <p class="start-metrics-note">{{ metrics.note }}</p>
+  <div class="start-admin-table-wrap">
+    <table class="start-admin-table">
+      <thead><tr><th>日付</th><th>会場</th><th>R</th><th>モデル</th><th>ST MAE</th><th>STトップ</th><th>1着</th><th>決まり手</th><th>外れ要因</th></tr></thead>
+      <tbody>
+      {% for row in metrics.rows %}
+        <tr class="{% if row.st_mae is not none and not row.winner_hit %}is-miss{% endif %}">
+          <td>{{ row.race_date }}</td><td>{{ row.stadium_number }}</td><td>{{ row.race_number }}R</td>
+          <td>{{ row.model_bundle_version }}</td>
+          <td>{{ '%.3f'|format(row.st_mae) if row.st_mae is not none else '-' }}</td>
+          <td>{{ '○' if row.start_top_hit else ('×' if row.st_mae is not none else '-') }}</td>
+          <td>{{ '○' if row.winner_hit else ('×' if row.st_mae is not none else '-') }}</td>
+          <td>{{ '○' if row.kimarite_hit else ('×' if row.st_mae is not none else '-') }}</td>
+          <td>{{ row.error_categories or '-' }}</td>
+        </tr>
+      {% else %}<tr><td colspan="9">対象期間の予測はありません。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
