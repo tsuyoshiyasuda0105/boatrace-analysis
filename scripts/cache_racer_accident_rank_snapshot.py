@@ -125,6 +125,11 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
 
         period_start = str(period_row[0])
         period_end = str(period_row[1])
+        if period_end < str(target_date):
+            raise RuntimeError(
+                "racer_accident_period_stats is stale "
+                f"period_end={period_end} target_date={target_date}"
+            )
         class_as_of = period_end
         rows = conn.execute(
             """

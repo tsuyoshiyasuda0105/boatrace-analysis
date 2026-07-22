@@ -466,23 +466,25 @@ def run_accident_rank_snapshot(target_date: str) -> bool:
     )
 
 
-def latest_accident_snapshot_date() -> str | None:
+def latest_accident_snapshot_state() -> tuple[str | None, str | None]:
     try:
         with db_connect() as conn:
             row = conn.execute(
                 """
-                SELECT MAX(snapshot_date)
+                SELECT MAX(snapshot_date), MAX(period_end)
                   FROM racer_accident_rank_snapshots
                  WHERE source_kind = 'reconstructed'
                 """
             ).fetchone()
-        return str(row[0]) if row and row[0] else None
+        snapshot_date = str(row[0]) if row and row[0] else None
+        period_end = str(row[1]) if row and row[1] else None
+        return snapshot_date, period_end
     except Exception as exc:
         print(
             f"[accident-refresh] snapshot check failed: {type(exc).__name__}: {exc}",
             flush=True,
         )
-        return None
+        return None, None
 
 
 def run_accident_full_refresh(target_date: str) -> bool:
@@ -496,23 +498,42 @@ def run_accident_full_refresh(target_date: str) -> bool:
 def run_accident_self_heal(now: datetime) -> bool:
     """Rebuild yesterday's period when the materialized ranking is stale."""
     target_date = (now.date() - timedelta(days=1)).isoformat()
-    latest = latest_accident_snapshot_date()
-    if latest and latest >= target_date:
-        print(f"[accident-refresh] current snapshot={latest}", flush=True)
+    latest_snapshot, latest_period_end = latest_accident_snapshot_state()
+    if (
+        latest_snapshot
+        and latest_period_end
+        and latest_snapshot >= target_date
+        and latest_period_end >= target_date
+    ):
+        print(
+            f"[accident-refresh] current snapshot={latest_snapshot} period_end={latest_period_end}",
+            flush=True,
+        )
         return True
 
     print(
-        f"[accident-refresh] stale snapshot={latest or '-'} target={target_date}",
+        "[accident-refresh] stale "
+        f"snapshot={latest_snapshot or '-'} period_end={latest_period_end or '-'} "
+        f"target={target_date}",
         flush=True,
     )
     ok = run_accident_full_refresh(target_date)
-    verified = latest_accident_snapshot_date() if ok else None
-    ok = bool(ok and verified and verified >= target_date)
+    verified_snapshot, verified_period_end = latest_accident_snapshot_state() if ok else (None, None)
+    ok = bool(
+        ok
+        and verified_snapshot
+        and verified_period_end
+        and verified_snapshot >= target_date
+        and verified_period_end >= target_date
+    )
     record_task(
         "render_accident_refresh",
         target_date,
         "success" if ok else "failure",
-        detail=f"snapshot={verified or '-'} target={target_date}",
+        detail=(
+            f"snapshot={verified_snapshot or '-'} "
+            f"period_end={verified_period_end or '-'} target={target_date}"
+        ),
     )
     return ok
 
