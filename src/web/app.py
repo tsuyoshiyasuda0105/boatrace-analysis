@@ -15625,6 +15625,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             totals["adopted_total_pay"] - totals["adopted_total_cost"]
             if totals["adopted_total_cost"] else 0
         )
+        totals["latest_data_date"] = max(
+            (
+                str(r.get("date"))
+                for r in rows
+                if int(r.get("n_total", 0) or 0) > 0
+            ),
+            default=None,
+        )
         for k in adopted_keys:
             totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
             totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)

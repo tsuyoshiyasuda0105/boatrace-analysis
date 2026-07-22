@@ -47,6 +47,23 @@
   </form>
 
   <section class="summary-grid" style="margin-bottom:16px;">
+    <article class="summary-card strategy-total-card">
+      <div class="summary-label">期間内の採用手法合計</div>
+      <div class="summary-roi {% if totals.adopted_total_profit > 0 %}pos{% elif totals.adopted_total_profit < 0 %}neg{% endif %}">
+        損益 {{ totals.adopted_total_profit | signed_comma }}円
+      </div>
+      <div class="summary-sub">
+        集計確定日 {{ totals.latest_data_date or '-' }}<br>
+        投資 {{ '{:,}'.format(totals.adopted_total_cost) }}円 / 払戻 {{ '{:,}'.format(totals.adopted_total_pay) }}円 / 回収率
+        {% if totals.adopted_total_recovery is not none %}{{ '%.1f' | format(totals.adopted_total_recovery) }}%{% else %}-{% endif %}<br>
+        該当 {{ totals.adopted_total_bets }}件 / 的中 {{ totals.adopted_total_hits }}件 / 的中率
+        {% if totals.adopted_total_hit_rate is not none %}{{ '%.1f' | format(totals.adopted_total_hit_rate) }}%{% else %}-{% endif %}<br>
+        <small>同一レースで複数の採用手法が該当した場合は、手法ごとの投資として合算します。</small>
+      </div>
+    </article>
+  </section>
+
+  <section class="summary-grid" style="margin-bottom:16px;">
     <article class="summary-card">
       <div class="summary-label">本日採用手法合計</div>
       <div class="summary-roi">{{ today_summary.bets }}</div>
@@ -150,8 +167,10 @@
       {% set ns.total_hits = ns.total_hits + (totals[s.key ~ '_hits'] or 0) %}
     {% endfor %}
     <div class="dashboard-hint" style="margin-top:10px; text-align:left;">
-      採用手法合計: <strong>{{ ns.total_bets }}</strong>件 / 的中 <strong>{{ ns.total_hits }}</strong>件 / 的中率
-      <strong>{% if ns.total_bets > 0 %}{{ '%.1f' | format((ns.total_hits / ns.total_bets) * 100) }}%{% else %}-{% endif %}</strong>
+      採用手法合計: <strong>{{ totals.adopted_total_bets }}</strong>件 / 的中 <strong>{{ totals.adopted_total_hits }}</strong>件 / 的中率
+      <strong>{% if totals.adopted_total_hit_rate is not none %}{{ '%.1f' | format(totals.adopted_total_hit_rate) }}%{% else %}-{% endif %}</strong> /
+      投資 <strong>{{ '{:,}'.format(totals.adopted_total_cost) }}円</strong> / 払戻 <strong>{{ '{:,}'.format(totals.adopted_total_pay) }}円</strong> /
+      損益 <strong class="{% if totals.adopted_total_profit > 0 %}pos{% elif totals.adopted_total_profit < 0 %}neg{% endif %}">{{ totals.adopted_total_profit | signed_comma }}円</strong>
     </div>
   </section>
 </div>
