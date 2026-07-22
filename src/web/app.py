@@ -51,7 +51,11 @@ from src.web.auth import (
     register_auth_routes,
 )
 from src.web.predictor import Predictor
-from src.web.start_prediction_api import bp as start_prediction_bp
+try:
+    from src.web.start_prediction_api import bp as start_prediction_bp
+except ModuleNotFoundError:
+    # The start-prediction feature is deployed independently from the core UI.
+    start_prediction_bp = None
 
 logger = logging.getLogger(__name__)
 
@@ -2607,7 +2611,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
-    app.register_blueprint(start_prediction_bp)
+    if start_prediction_bp is not None:
+        app.register_blueprint(start_prediction_bp)
     # メール購読 UI
     try:
         from src.web.subscriber_views import register_subscriber_routes
