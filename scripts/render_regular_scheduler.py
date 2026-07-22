@@ -400,12 +400,17 @@ def run_morning_catchup_if_needed(now: datetime) -> bool:
 
 
 def run_signal_refresh_slot(now: datetime) -> bool:
-    """Rebuild today's ROI candidate snapshot once per 30-minute slot."""
+    """Rebuild today's ROI candidate snapshot once per 30-minute slot.
+
+    Failed attempts are intentionally retried by the next five-minute cron
+    tick. A cold or missing signal cache leaves the high-ROI list blank, so a
+    failure must not block the whole 30-minute slot.
+    """
     today = now.date().isoformat()
     slot = now.minute // 30
     task = f"render_signal_refresh_{now.hour:02d}_{slot}"
-    if task_attempt_exists(task, today):
-        print(f"[signal-refresh] already attempted slot={now.hour:02d}:{slot}", flush=True)
+    if task_success_exists(task, today):
+        print(f"[signal-refresh] already succeeded slot={now.hour:02d}:{slot}", flush=True)
         return True
 
     ok = run_py(

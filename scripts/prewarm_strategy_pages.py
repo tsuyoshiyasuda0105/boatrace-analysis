@@ -5,7 +5,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import argparse
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parents[1]
@@ -13,11 +13,11 @@ sys.path.insert(0, str(REPO))
 
 os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
 
-from src.web.app import create_app  # noqa: E402
+from src.web.app import create_app, invalidate_cache  # noqa: E402
 from scripts.ensure_performance_indexes import ensure_performance_indexes  # noqa: E402
 
 
-MODES = ("signals", "realtime", "morning-check", "nightly")
+MODES = ("signals", "realtime", "morning-check", "daily-reconcile", "nightly")
 JST = ZoneInfo("Asia/Tokyo")
 
 
@@ -61,6 +61,43 @@ def _hit(client, path: str) -> tuple[int, int, bool, str]:
         return resp.status_code, len(body), False, f"http={resp.status_code}"
     if path.startswith("/api/market-signals") and "recompute=1" in path:
         valid, detail = _validate_market_signal_response(resp, path)
+        if valid:
+            payload = resp.get_json(silent=True) or {}
+            parsed = urlparse(path)
+            qs = parse_qs(parsed.query)
+            qs.pop("recompute", None)
+            readback_query = urlencode(
+                [(key, value) for key, values in qs.items() for value in values]
+            )
+            readback_path = parsed.path + (f"?{readback_query}" if readback_query else "")
+            invalidate_cache()
+            readback = client.get(readback_path)
+            readback_payload = readback.get_json(silent=True)
+            if readback.status_code != 200:
+                return (
+                    resp.status_code,
+                    len(body),
+                    False,
+                    f"{detail}; persisted readback http={readback.status_code}",
+                )
+            if not isinstance(readback_payload, dict):
+                return resp.status_code, len(body), False, f"{detail}; persisted readback is not JSON"
+            if readback_payload.get("date") != payload.get("date"):
+                return resp.status_code, len(body), False, f"{detail}; persisted readback date mismatch"
+            if not isinstance(readback_payload.get("signals"), dict):
+                return resp.status_code, len(body), False, f"{detail}; persisted signals missing"
+            if len(readback_payload["signals"]) != len(payload.get("signals") or {}):
+                return (
+                    resp.status_code,
+                    len(body),
+                    False,
+                    f"{detail}; persisted signal count mismatch "
+                    f"{len(readback_payload['signals'])}!={len(payload.get('signals') or {})}",
+                )
+            cache_state = readback.headers.get("X-Boatrace-Cache") or "missing"
+            if cache_state in ("cache-miss", "missing"):
+                return resp.status_code, len(body), False, f"{detail}; persisted cache_state={cache_state}"
+            detail = f"{detail}; persisted={cache_state}"
         return resp.status_code, len(body), valid, detail
     return resp.status_code, len(body), True, "ok"
 
@@ -104,6 +141,15 @@ def build_targets(mode: str, today: date) -> list[str]:
         return [
             f"/api/market-signals?date={today_s}&recompute=1",
             f"/member/strategy?from={d30}&to={today_s}&recompute=1",
+            f"/member/strategy?from={d30}&to={today_s}",
+        ]
+
+    if mode == "daily-reconcile":
+        # Repair only yesterday's finalized ROI row. This is deliberately
+        # small enough for the regular Render cron self-heal path.
+        return [
+            f"/api/market-signals?date={yesterday_s}&recompute=1",
+            f"/member/strategy?from={yesterday_s}&to={today_s}&recompute=1",
             f"/member/strategy?from={d30}&to={today_s}",
         ]
 
