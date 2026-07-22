@@ -13,7 +13,12 @@ sys.path.insert(0, str(REPO))
 
 os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
 
-from src.web.app import create_app, invalidate_cache  # noqa: E402
+from src.web.app import (  # noqa: E402
+    create_app,
+    invalidate_cache,
+    _market_signals_cache_key,
+    _read_json_cache_stale,
+)
 from scripts.ensure_performance_indexes import ensure_performance_indexes  # noqa: E402
 
 
@@ -71,17 +76,17 @@ def _hit(client, path: str) -> tuple[int, int, bool, str]:
             )
             readback_path = parsed.path + (f"?{readback_query}" if readback_query else "")
             invalidate_cache()
-            readback = client.get(readback_path)
-            readback_payload = readback.get_json(silent=True)
-            if readback.status_code != 200:
+            persisted_payload = _read_json_cache_stale(
+                _market_signals_cache_key(str(payload.get("date") or ""))
+            )
+            readback_payload = persisted_payload
+            if not isinstance(readback_payload, dict):
                 return (
                     resp.status_code,
                     len(body),
                     False,
-                    f"{detail}; persisted readback http={readback.status_code}",
+                    f"{detail}; persisted cache missing path={readback_path}",
                 )
-            if not isinstance(readback_payload, dict):
-                return resp.status_code, len(body), False, f"{detail}; persisted readback is not JSON"
             if readback_payload.get("date") != payload.get("date"):
                 return resp.status_code, len(body), False, f"{detail}; persisted readback date mismatch"
             if not isinstance(readback_payload.get("signals"), dict):
@@ -94,10 +99,7 @@ def _hit(client, path: str) -> tuple[int, int, bool, str]:
                     f"{detail}; persisted signal count mismatch "
                     f"{len(readback_payload['signals'])}!={len(payload.get('signals') or {})}",
                 )
-            cache_state = readback.headers.get("X-Boatrace-Cache") or "missing"
-            if cache_state in ("cache-miss", "missing"):
-                return resp.status_code, len(body), False, f"{detail}; persisted cache_state={cache_state}"
-            detail = f"{detail}; persisted={cache_state}"
+            detail = f"{detail}; persisted=db"
         return resp.status_code, len(body), valid, detail
     return resp.status_code, len(body), True, "ok"
 
