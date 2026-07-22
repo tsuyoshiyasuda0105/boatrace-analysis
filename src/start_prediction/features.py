@@ -50,6 +50,16 @@ class PointInTimeFeatureBuilder:
     def __init__(self, conn):
         self.conn = conn
 
+    def _has_table(self, table_name: str) -> bool:
+        """Check optional feature tables without aborting a Postgres transaction."""
+        if getattr(self.conn, "_kind", "") == "postgres":
+            row = self.conn.execute("SELECT to_regclass(?)", (f"public.{table_name}",)).fetchone()
+            return bool(row and row[0])
+        row = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+        ).fetchone()
+        return bool(row)
+
     def build(self, race_id: str, stage: str = "post_exhibition") -> RaceFeatureSnapshot:
         race = _one(self.conn.execute(
             """SELECT race_id, race_date, stadium_number, race_number,
@@ -61,29 +71,42 @@ class PointInTimeFeatureBuilder:
         if not race:
             raise LookupError(f"race not found: {race_id}")
 
+        has_derived_start_stats = self._has_table("derived_start_stats")
+        derived_columns = (
+            "d.derived_avg_start_timing_180d, d.derived_start_count_180d, "
+            "d.derived_avg_start_timing_12, d.derived_start_count_12"
+            if has_derived_start_stats
+            else
+            "NULL AS derived_avg_start_timing_180d, 0 AS derived_start_count_180d, "
+            "NULL AS derived_avg_start_timing_12, 0 AS derived_start_count_12"
+        )
+        derived_join = (
+            "LEFT JOIN derived_start_stats d "
+            "ON d.race_id=e.race_id AND d.boat_number=e.boat_number"
+            if has_derived_start_stats else ""
+        )
         entries = _rows(self.conn.execute(
-            """SELECT e.*, p.weather_number, p.wind_speed, p.wind_direction_number,
+            f"""SELECT e.*, p.weather_number, p.wind_speed, p.wind_direction_number,
                       p.wave_height, p.temperature, p.water_temperature,
                       p.course_number AS exhibition_course_number,
                       p.exhibition_time, p.start_timing_exhibition,
                       p.stable_plate, p.live_updated_at,
-                      d.derived_avg_start_timing_180d, d.derived_start_count_180d,
-                      d.derived_avg_start_timing_12, d.derived_start_count_12,
+                      {derived_columns},
                       (SELECT a.accident_points FROM racer_accident_period_stats a
                         WHERE a.racer_number=e.racer_number
                           AND a.period_start <= (SELECT race_date FROM races WHERE race_id=e.race_id)
                           AND a.period_end >= (SELECT race_date FROM races WHERE race_id=e.race_id)
-                          AND DATE(a.updated_at) <= (SELECT race_date FROM races WHERE race_id=e.race_id)
+                          AND DATE(a.updated_at) <= DATE((SELECT race_date FROM races WHERE race_id=e.race_id))
                         ORDER BY a.updated_at DESC LIMIT 1) AS accident_points,
                       (SELECT a.accident_rate FROM racer_accident_period_stats a
                         WHERE a.racer_number=e.racer_number
                           AND a.period_start <= (SELECT race_date FROM races WHERE race_id=e.race_id)
                           AND a.period_end >= (SELECT race_date FROM races WHERE race_id=e.race_id)
-                          AND DATE(a.updated_at) <= (SELECT race_date FROM races WHERE race_id=e.race_id)
+                          AND DATE(a.updated_at) <= DATE((SELECT race_date FROM races WHERE race_id=e.race_id))
                         ORDER BY a.updated_at DESC LIMIT 1) AS accident_rate
                  FROM race_entries e
                  LEFT JOIN race_previews p ON p.race_id=e.race_id AND p.boat_number=e.boat_number
-                 LEFT JOIN derived_start_stats d ON d.race_id=e.race_id AND d.boat_number=e.boat_number
+                 {derived_join}
                 WHERE e.race_id=? ORDER BY e.boat_number""",
             (race_id,),
         ))
@@ -230,6 +253,8 @@ class PointInTimeFeatureBuilder:
         return out
 
     def _historical_motor_features(self, race: dict[str, Any], entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+        if not self._has_table("motor_cycle_stats"):
+            return {int(entry["boat_number"]): {} for entry in entries}
         out: dict[int, dict[str, Any]] = {}
         for entry in entries:
             row = _one(self.conn.execute(

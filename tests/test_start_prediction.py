@@ -88,6 +88,8 @@ def test_prediction_is_immutable_and_model_version_saved():
     assert first["prediction_id"] == second["prediction_id"]
     assert first["model_bundle_version"] == MODEL_VERSIONS["bundle"]
     assert second["feature_cutoff_at"] == "2026-07-22T10:00:00"
+    assert first["boats"][0]["exhibition_st"] == pytest.approx(.09)
+    assert first["boats"][0]["historical_avg_st"] == pytest.approx(.136)
 
 
 def test_result_evaluation_and_roi_payload():
@@ -250,3 +252,54 @@ def test_point_in_time_builder_excludes_future_rows_and_final_odds():
     assert post["boats"][0]["course_number"] == 6
     assert pre["boats"][0]["course_number"] == 1
     assert pre["boats"][0]["exhibition_st"] is None
+
+
+def test_point_in_time_builder_allows_missing_optional_derived_start_stats():
+    conn = sqlite3.connect(":memory:")
+    conn.executescript("""
+      CREATE TABLE races (race_id TEXT PRIMARY KEY,race_date TEXT,stadium_number INTEGER,
+        race_number INTEGER,race_grade_number INTEGER,race_title TEXT,race_subtitle TEXT,
+        race_distance INTEGER,race_closed_at TEXT,series_day INTEGER);
+      CREATE TABLE race_entries (race_id TEXT,boat_number INTEGER,racer_number INTEGER,
+        racer_name TEXT,class_number INTEGER,age INTEGER,weight REAL,flying_count INTEGER,
+        late_count INTEGER,avg_start_timing REAL,national_top_1_percent REAL,
+        national_top_2_percent REAL,national_top_3_percent REAL,local_top_1_percent REAL,
+        local_top_2_percent REAL,local_top_3_percent REAL,assigned_motor_number INTEGER,
+        assigned_motor_top_2_percent REAL,assigned_motor_top_3_percent REAL);
+      CREATE TABLE race_previews (race_id TEXT,boat_number INTEGER,weather_number INTEGER,
+        wind_speed REAL,wind_direction_number INTEGER,wave_height REAL,temperature REAL,
+        water_temperature REAL,course_number INTEGER,exhibition_time REAL,
+        start_timing_exhibition REAL,stable_plate INTEGER,live_updated_at TEXT);
+      CREATE TABLE race_results (race_id TEXT,boat_number INTEGER,finishing_position INTEGER,
+        course_number INTEGER,start_timing REAL);
+      CREATE TABLE racer_accident_period_stats (racer_number INTEGER,period_start TEXT,
+        period_end TEXT,accident_points INTEGER,accident_rate REAL,updated_at TEXT);
+      CREATE TABLE race_tides (race_id TEXT,tide_height_cm REAL,tide_phase TEXT,
+        minutes_from_high INTEGER,minutes_from_low INTEGER,tide_range_cm REAL,
+        tide_delta_60m_cm REAL,is_high_tide_zone INTEGER,is_low_tide_zone INTEGER,
+        source TEXT,fetched_at TEXT);
+      CREATE TABLE odds_trifecta (race_id TEXT,combination TEXT,odds REAL,is_final INTEGER,
+        recorded_at TEXT,snapshot_label TEXT);
+    """)
+    conn.execute(
+        "INSERT INTO races VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("TARGET", "2026-07-22", 24, 9, 5, "", "", 1800, "2026-07-22T21:25:00", 1),
+    )
+    for boat in range(1, 7):
+        conn.execute(
+            "INSERT INTO race_entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("TARGET", boat, 5000 + boat, f"R{boat}", 1, 35, 52, 0, 0, .15,
+             18, 40, 60, 20, 42, 62, 10 + boat, 35, 55),
+        )
+        conn.execute(
+            "INSERT INTO race_previews VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("TARGET", boat, 1, 3, 1, 2, 25, 23, boat, 6.7 + boat / 100,
+             .10 + boat / 100, 0, "2026-07-22T20:30:00"),
+        )
+
+    snapshot = PointInTimeFeatureBuilder(conn).build("TARGET", "post_exhibition").as_dict()
+
+    assert len(snapshot["boats"]) == 6
+    assert snapshot["boats"][0]["derived_st_180d"] is None
+    assert snapshot["boats"][0]["derived_st_count_180d"] == 0
+    assert snapshot["boats"][0]["motor_asof_top2"] is None

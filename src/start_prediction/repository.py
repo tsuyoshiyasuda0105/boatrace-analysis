@@ -210,6 +210,12 @@ class StartPredictionRepository:
 
     def _hydrate(self, head: dict[str, Any]) -> dict[str, Any]:
         pid = int(head["prediction_id"])
+        input_snapshot = _loads(head.get("input_snapshot"), {})
+        snapshot_boats = {
+            int(row["boat_number"]): row
+            for row in (input_snapshot.get("boats") or [])
+            if row.get("boat_number") is not None
+        }
         boats = _dicts(self.conn.execute(
             "SELECT * FROM race_start_prediction_boats WHERE prediction_id=? ORDER BY boat_number", (pid,)
         ))
@@ -218,8 +224,16 @@ class StartPredictionRepository:
         ))
         for b in boats:
             b["reasons"] = _loads(b.get("reasons"), [])
+            source = snapshot_boats.get(int(b["boat_number"]), {})
+            b["exhibition_st"] = source.get("exhibition_st")
+            b["exhibition_time"] = source.get("exhibition_time")
+            b["historical_avg_st"] = (
+                source.get("course_avg_st")
+                if source.get("course_avg_st") is not None
+                else source.get("derived_st_180d")
+            )
         out = dict(head)
-        out["input_snapshot"] = _loads(out.get("input_snapshot"), {})
+        out["input_snapshot"] = input_snapshot
         out["reasons"] = _loads(out.get("reasons"), [])
         out["boats"] = boats
         out["kimarite_scenarios"] = [s for s in scenarios if s["scenario_kind"] == "kimarite"]
