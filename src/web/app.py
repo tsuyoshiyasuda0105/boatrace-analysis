@@ -10647,7 +10647,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     }
     BOAT2_WALL_STRATEGIES = (
         {"key": "nov_wall_break_31_41_exa", "label": "11月 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "month": 11, "mode": "weak_score4", "shape": "1strong_m35", "recovery": 236.1, "hit_rate": 31.6, "n": 19, "tag": "11月 + 2号艇壁崩れ + 1号艇強M35"},
-        {"key": "kiryu_wall_break_31_41_exa", "label": "桐生 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "stadium": 1, "mode": "kiryu_weak_exact", "shape": "3strong", "recovery": 211.2, "hit_rate": 31.2, "n": 32, "tag": "桐生 + 2号艇壁崩れ精密 + 3号艇強"},
         {"key": "marugame_wall_hold_123_tri", "label": "丸亀 壁成立 1-2-3", "bet_type": "trifecta", "combos": ("1-2-3",), "bet_label": "3連単 1-2-3", "stadium": 15, "mode": "good_score4", "shape": "1strong_m35", "recovery": 195.8, "hit_rate": 31.6, "n": 19, "tag": "丸亀 + 2号艇壁成立 + 1号艇強M35"},
         {"key": "miyajima_wall_break_31_41_exa", "label": "宮島 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "stadium": 17, "mode": "miyajima_weak_exact", "shape": "3strong", "recovery": 182.2, "hit_rate": 38.9, "n": 18, "tag": "宮島 + 2号艇壁崩れ精密 + 3号艇強"},
         {"key": "july_wall_hold_12_exa", "label": "7月 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "month": 7, "mode": "good_score4", "shape": "3strong", "recovery": 169.6, "hit_rate": 38.5, "n": 26, "tag": "7月 + 2号艇壁成立 + 3号艇強"},
@@ -10661,7 +10660,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "toda_42_flow_tri": 400,
         "ashiya_4head_flow_tri": 2000,
         "nov_wall_break_31_41_exa": 200,
-        "kiryu_wall_break_31_41_exa": 200,
         "miyajima_wall_break_31_41_exa": 200,
         "miyajima_wall_hold_123_132_tri": 200,
         "tamagawa_late_wall_hold_123_132_tri": 200,
@@ -10905,7 +10903,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "omura_13_acc2_fl2_m23_exa",
                             "marugame_13_pts2_m23_exa",
                             "nov_wall_break_31_41_exa",
-                            "kiryu_wall_break_31_41_exa",
                             "marugame_wall_hold_123_tri",
                             "miyajima_wall_break_31_41_exa",
                             "july_wall_hold_12_exa",
@@ -14516,7 +14513,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if not _boat2_wall_daily_ok(strategy, ctx_bw):
                         continue
                     key_bw = strategy["key"]
-                    if key_bw in ("nov_wall_break_31_41_exa", "kiryu_wall_break_31_41_exa", "miyajima_wall_break_31_41_exa"):
+                    if key_bw in ("nov_wall_break_31_41_exa", "miyajima_wall_break_31_41_exa"):
                         hit_bw = (w1_bw == 3 and w2_bw == 1) or (w1_bw == 4 and w2_bw == 1)
                         pay_bw = int(pay_ex31_bw or 0) + int(pay_ex41_bw or 0)
                     elif key_bw in ("miyajima_wall_hold_123_132_tri", "tamagawa_late_wall_hold_123_132_tri"):
@@ -15222,7 +15219,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "biwako_coursefit_boat4_rank1_general_win",
         "biwako_coursefit_boat4_gap10_all_win",
         "nov_wall_break_31_41_exa",
-        "kiryu_wall_break_31_41_exa",
         "marugame_wall_hold_123_tri",
         "miyajima_wall_break_31_41_exa",
         "july_wall_hold_12_exa",
@@ -15466,7 +15462,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "biwako_coursefit_boat4_gap10_all_win": "biwako",
     })
     ROI_STRATEGY_VENUE_BY_KEY.update({
-        "kiryu_wall_break_31_41_exa": "kiryu",
         "hamanako_wall_hold_12_exa": "hamanako",
         "marugame_wall_hold_123_tri": "marugame",
         "miyajima_wall_break_31_41_exa": "miyajima",
