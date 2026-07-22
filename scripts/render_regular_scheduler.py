@@ -18,6 +18,7 @@ JST = timezone(timedelta(hours=9))
 BEFOREINFO_WINDOW_MIN = 5
 BEFOREINFO_WINDOW_MAX = 9
 BEFOREINFO_COOLDOWN_MIN = 8
+BEFOREINFO_WRITE_BATCH_SIZE = 6
 ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v32"
 
 
@@ -103,7 +104,6 @@ def record_task(task_name: str, run_date: str, status: str, detail: str | None =
 def run_beforeinfo(now: datetime) -> bool:
     from scripts.scrape_beforeinfo_live import (
         find_due_races,
-        find_market_candidate_races,
         find_recent_incomplete_races,
         _merge_due_races,
         scrape_one_race,
@@ -120,13 +120,14 @@ def run_beforeinfo(now: datetime) -> bool:
         window_max=BEFOREINFO_WINDOW_MAX,
         cooldown_min=BEFOREINFO_COOLDOWN_MIN,
     )
-    market_due = find_market_candidate_races(now, past_min=360, future_min=480)
     incomplete_due = find_recent_incomplete_races(now, past_min=900, future_min=20, limit=24)
-    if market_due:
-        print(f"[beforeinfo] market_due={len(market_due)}", flush=True)
     if incomplete_due:
         print(f"[beforeinfo] incomplete_due={len(incomplete_due)}", flush=True)
-    due = _merge_due_races(market_due, due, incomplete_due)
+    # Do not call the market-signals evaluator here. It may trigger a heavy ROI
+    # recomputation before the first preview row is saved. Morning candidates are
+    # already displayed without exhibition data; live collection only needs the
+    # close-time window plus a bounded recovery queue.
+    due = _merge_due_races(due, incomplete_due)
     print(f"[beforeinfo] due={len(due)}", flush=True)
     if not due:
         return True
@@ -162,18 +163,33 @@ def run_beforeinfo(now: datetime) -> bool:
         print(f"[original-exhibition] failed: {type(exc).__name__}: {exc}", flush=True)
 
     updates = []
+    summary = {"supabase_rows": 0, "local_rows": 0, "races": 0}
+
+    def flush_updates() -> None:
+        if not updates:
+            return
+        batch_summary = write_updates(
+            updates,
+            datetime.now().isoformat(timespec="seconds"),
+            also_local=False,
+        )
+        for key in summary:
+            summary[key] += int(batch_summary.get(key, 0) or 0)
+        updates.clear()
+
     for race_id, stadium, race_no, close in due:
         print(f"[beforeinfo] scrape {race_id} close={close.strftime('%H:%M')}", flush=True)
         page = scrape_one_race(stadium, race_no, now.date())
         if page:
             updates.append((race_id, page))
+            if len(updates) >= BEFOREINFO_WRITE_BATCH_SIZE:
+                flush_updates()
 
-    if not updates:
+    flush_updates()
+    if summary["races"] <= 0:
         print("[beforeinfo] no valid pages", flush=True)
-        return True
+        return False
 
-    now_iso = datetime.now().isoformat(timespec="seconds")
-    summary = write_updates(updates, now_iso, also_local=False)
     print(f"[beforeinfo] written={summary}", flush=True)
     if summary.get("races", 0) > 0:
         ok = run_py(["scripts/render_cache_predictions.py", "--date", now.date().isoformat()], timeout=1800)
@@ -575,7 +591,18 @@ def main() -> int:
 
     # Live beforeinfo/weather correction. The scrape function has its own cooldown.
     if 8 <= now.hour <= 22:
-        run_beforeinfo(now)
+        try:
+            beforeinfo_ok = run_beforeinfo(now)
+            record_task(
+                "render_beforeinfo_live",
+                today,
+                "success" if beforeinfo_ok else "failure",
+                detail=f"checked_at={now.isoformat(timespec='minutes')}",
+            )
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"[:1000]
+            print(f"[beforeinfo] failed: {detail}", flush=True)
+            record_task("render_beforeinfo_live", today, "failure", detail=detail)
         run_py(["scripts/generate_start_predictions.py", "--date", today], timeout=900)
         # run_beforeinfo rebuilds the snapshot only when source rows changed.
         # Recomputing it unconditionally here duplicated the heaviest query and

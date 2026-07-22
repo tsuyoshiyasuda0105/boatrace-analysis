@@ -219,23 +219,37 @@ def find_recent_incomplete_races(now_jst: datetime, past_min: int,
         _ensure_live_column(conn)
         rows = conn.execute(
             """
-            SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at
+            SELECT r.race_id,
+                   r.stadium_number,
+                   r.race_number,
+                   r.race_closed_at,
+                   COUNT(p.boat_number) AS n_rows,
+                   SUM(CASE WHEN p.exhibition_time IS NOT NULL
+                             AND p.exhibition_time != 0 THEN 1 ELSE 0 END) AS n_ex_time,
+                   SUM(CASE WHEN p.start_timing_exhibition IS NOT NULL THEN 1 ELSE 0 END) AS n_ex_st,
+                   SUM(CASE WHEN p.weather_number IS NOT NULL THEN 1 ELSE 0 END) AS n_weather,
+                   SUM(CASE WHEN p.wind_speed IS NOT NULL THEN 1 ELSE 0 END) AS n_wind
               FROM races r
+              LEFT JOIN race_previews p ON p.race_id = r.race_id
              WHERE r.race_date = ?
                AND r.race_closed_at IS NOT NULL
+             GROUP BY r.race_id, r.stadium_number, r.race_number, r.race_closed_at
              ORDER BY r.race_closed_at
             """,
             (target_date,),
         ).fetchall()
         due = []
-        for rid, stadium, rno, closed_at in rows:
+        for row in rows:
+            rid, stadium, rno, closed_at = row[:4]
             close = _parse_close_jst(closed_at, target_date)
             if close is None:
                 continue
             mins_until = (close - now_jst).total_seconds() / 60.0
             if mins_until < -abs(past_min) or mins_until > future_min:
                 continue
-            if not _preview_is_incomplete(conn, rid):
+            counts = [int(value or 0) for value in row[4:9]]
+            n_rows, n_ex_time, n_ex_st, n_weather, n_wind = counts
+            if n_rows >= 6 and n_ex_time >= 6 and n_ex_st >= 6 and n_weather >= 1 and n_wind >= 1:
                 continue
             due.append((rid, stadium, rno, close))
             if limit > 0 and len(due) >= limit:
