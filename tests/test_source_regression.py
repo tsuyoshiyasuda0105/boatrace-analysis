@@ -395,3 +395,27 @@ def test_market_signals_recent_empty_cache_self_heals():
     assert "and _is_empty_market_signals_payload(cached_payload)" in src
     assert "and _is_empty_market_signals_payload(stale_payload)" in src
     assert "and _is_empty_market_signals_payload(compat_payload)" in src
+
+
+def test_roi_daily_stats_do_not_count_unsettled_market_signal_candidates():
+    src = _read("src/web/app.py")
+    assert "def _settled_race_ids_for_range" in src
+    assert "def _dates_with_settled_results" in src
+    assert "def _clear_roi_result_metrics" in src
+    overlay_start = src.index("def _overlay_market_signal_cache_daily")
+    overlay_end = src.index("for row in cur:", overlay_start)
+    overlay = src[overlay_start:overlay_end]
+    assert "settled_race_ids = _settled_race_ids_for_range(from_date, to_date)" in overlay
+    assert "if race_id not in settled_race_ids:" in overlay
+    assert "continue" in overlay.split("if race_id not in settled_race_ids:", 1)[1].split("pay = sum", 1)[0]
+
+
+def test_roi_cache_only_clears_unsettled_day_metrics():
+    src = _read("src/web/app.py")
+    start = src.index("def _l4_daily_stats_cache_only")
+    end = src.index("def _l4_daily_stats(", start)
+    block = src[start:end]
+    assert "settled_dates = _dates_with_settled_results(from_date, to_date)" in block
+    assert "if rdate not in settled_dates:" in block
+    assert "_clear_roi_result_metrics(day)" in block
+    assert 'day["_roi_unsettled_result_guard"] = True' in block

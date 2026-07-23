@@ -70,7 +70,7 @@ _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
 MARKET_SIGNALS_CACHE_VERSION = "v20"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v10"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v11"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -10739,6 +10739,79 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 return False
         return day_d.get("_adopted_daily_select_version") in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS
 
+    def _settled_race_ids_for_range(from_date: str, to_date: str) -> set[str]:
+        """Race ids with confirmed result/payout rows.
+
+        Missing payout rows can mean either a losing ticket or an unfinished
+        race. Treat a race as settled only after result or payout data exists,
+        so today's pending candidates never become false -100% ROI rows.
+        """
+        try:
+            with db_connect() as conn_s:
+                rows_s = conn_s.execute(
+                    """
+                    SELECT DISTINCT r.race_id
+                      FROM races r
+                     WHERE r.race_date BETWEEN ? AND ?
+                       AND (
+                            EXISTS (
+                                SELECT 1
+                                  FROM race_results rr
+                                 WHERE rr.race_id = r.race_id
+                                   AND rr.finishing_position = 1
+                            )
+                         OR EXISTS (
+                                SELECT 1
+                                  FROM race_payouts rp
+                                 WHERE rp.race_id = r.race_id
+                            )
+                       )
+                    """,
+                    (from_date, to_date),
+                ).fetchall()
+            return {str(row[0]) for row in rows_s if row and row[0]}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("settled race lookup failed: %s", exc)
+            return set()
+
+    def _dates_with_settled_results(from_date: str, to_date: str) -> set[str]:
+        try:
+            with db_connect() as conn_s:
+                rows_s = conn_s.execute(
+                    """
+                    SELECT DISTINCT r.race_date
+                      FROM races r
+                     WHERE r.race_date BETWEEN ? AND ?
+                       AND (
+                            EXISTS (
+                                SELECT 1
+                                  FROM race_results rr
+                                 WHERE rr.race_id = r.race_id
+                                   AND rr.finishing_position = 1
+                            )
+                         OR EXISTS (
+                                SELECT 1
+                                  FROM race_payouts rp
+                                 WHERE rp.race_id = r.race_id
+                            )
+                       )
+                    """,
+                    (from_date, to_date),
+                ).fetchall()
+            return {str(row[0]) for row in rows_s if row and row[0]}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("settled date lookup failed: %s", exc)
+            return set()
+
+    def _clear_roi_result_metrics(day_d: dict) -> None:
+        for key in ROI_METRIC_KEYS:
+            day_d[f"{key}_bets"] = 0
+            day_d[f"{key}_hits"] = 0
+            day_d[f"{key}_pay"] = 0
+            day_d[f"{key}_roi"] = None
+            day_d[f"{key}_recovery"] = None
+            day_d[f"{key}_profit"] = 0
+
     def _l4_daily_stats_cache_only(from_date: str, to_date: str) -> list[dict]:
         """Read daily ROI stats from precomputed JSON cache only.
 
@@ -10787,6 +10860,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as exc:  # noqa: BLE001
             logger.warning("daily ROI cache-only lookup failed: %s", exc)
 
+        settled_dates = _dates_with_settled_results(from_date, to_date)
         rows: list[dict] = []
         cur = d_from
         while cur <= d_to:
@@ -10799,6 +10873,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 day.setdefault(f"{key}_bets", 0)
                 day.setdefault(f"{key}_hits", 0)
                 day.setdefault(f"{key}_pay", 0)
+            if rdate not in settled_dates:
+                _clear_roi_result_metrics(day)
+                day["_roi_unsettled_result_guard"] = True
             rows.append(day)
             cur += _timedelta(days=1)
         return rows
@@ -11544,11 +11621,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 logger.warning("market-signals adopted ROI payout lookup failed: %s", e)
                 return
 
+            settled_race_ids = _settled_race_ids_for_range(from_date, to_date)
             for rdate, selected in selected_by_date.items():
                 day_d = by_date.get(rdate)
                 if day_d is None:
                     continue
                 for race_id, level, parsed_bets in selected:
+                    if race_id not in settled_race_ids:
+                        continue
                     pay = sum(payout_by_signal.get((race_id, bet_type, combo), 0) for bet_type, combo in parsed_bets)
                     day_d[f"{level}_bets"] = int(day_d.get(f"{level}_bets", 0) or 0) + 1
                     if pay:
