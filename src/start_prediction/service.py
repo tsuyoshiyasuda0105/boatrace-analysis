@@ -56,6 +56,20 @@ class StartPredictionService:
             result = evaluate_prediction(conn, prediction)
             return repo.save_evaluation(int(prediction["prediction_id"]), result)
 
+    def timeline(self, race_id: str) -> dict[str, Any]:
+        with self.connection_factory() as conn:
+            repo = StartPredictionRepository(conn)
+            repo.ensure_schema()
+            pre = repo.get_latest(race_id, "pre_exhibition")
+            post = repo.get_latest(race_id, "post_exhibition")
+            actual = repo.actual_result(race_id)
+        return {
+            "race_id": race_id,
+            "pre_exhibition": pre,
+            "post_exhibition": post,
+            "actual": actual,
+        }
+
     def metrics(self, filters: dict[str, Any]) -> dict[str, Any]:
         default_from = (date.today() - timedelta(days=30)).isoformat()
         with self.connection_factory() as conn:

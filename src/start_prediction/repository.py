@@ -244,6 +244,37 @@ class StartPredictionRepository:
         out["evaluation"] = self._evaluation(evaluation[0]) if evaluation else None
         return out
 
+    def actual_result(self, race_id: str) -> dict[str, Any] | None:
+        rows = _dicts(self.conn.execute(
+            """SELECT boat_number, finishing_position, course_number, start_timing, remarks, kimarite
+                 FROM race_results WHERE race_id=? ORDER BY boat_number""",
+            (race_id,),
+        ))
+        if len(rows) < 6:
+            return None
+        finishers = sorted(rows, key=lambda x: int(x.get("finishing_position") or 99))
+        actual_order = [int(x["boat_number"]) for x in finishers[:3]]
+        starts = {
+            int(x["boat_number"]): float(x["start_timing"])
+            for x in rows
+            if x.get("start_timing") is not None
+        }
+        payouts = _dicts(self.conn.execute(
+            "SELECT bet_type, combination, payout FROM race_payouts WHERE race_id=? ORDER BY bet_type, combination",
+            (race_id,),
+        ))
+        actual_combo = "-".join(map(str, actual_order)) if len(actual_order) == 3 else None
+        return {
+            "race_id": race_id,
+            "results": rows,
+            "actual_order": actual_order,
+            "actual_combo": actual_combo,
+            "actual_first_boat": actual_order[0] if actual_order else None,
+            "actual_start_top_boat": min(starts, key=starts.get) if starts else None,
+            "actual_kimarite": str(finishers[0].get("kimarite") or "その他") if finishers else None,
+            "payouts": payouts,
+        }
+
     @staticmethod
     def _evaluation(row: dict[str, Any]) -> dict[str, Any]:
         out = dict(row)

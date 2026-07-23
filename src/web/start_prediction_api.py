@@ -39,6 +39,12 @@ def get_race_prediction(race_id: str):
     return jsonify(result)
 
 
+@bp.get("/api/predictions/races/<race_id>/timeline")
+@member_only_api
+def get_race_prediction_timeline(race_id: str):
+    return jsonify(_service().timeline(race_id))
+
+
 @bp.post("/api/predictions/races/<race_id>/evaluate")
 @member_only_api
 def evaluate_race_prediction(race_id: str):
