@@ -7,12 +7,21 @@
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
   const pct = (v) => `${(Number(v || 0) * 100).toFixed(1)}%`;
-  const num = (v, d = 3) => (v == null || v === "" ? "-" : Number(v).toFixed(d));
+  const num = (v, d = 3) => (v == null || v === "" || Number.isNaN(Number(v)) ? "-" : Number(v).toFixed(d));
+  const stText = (v) => {
+    if (v == null || v === "" || Number.isNaN(Number(v))) return "-";
+    return Number(v).toFixed(2).replace(/^0/, "");
+  };
   const lane = (n) => `<span class="lane lane-${esc(n)}">${esc(n)}</span>`;
+  const boatIcon = (n) => `<span class="start-boat-icon start-boat-${esc(n)}" aria-label="${esc(n)}号艇"></span>`;
   const stageLabel = { pre_exhibition: "展示前", post_exhibition: "展示後" };
+  const stageTitle = {
+    pre_exhibition: "展示前スタート仮説",
+    post_exhibition: "スタート展示補正",
+  };
   const stageSub = {
-    pre_exhibition: "前日・朝時点の選手、モーター、天候、潮で作る仮説",
-    post_exhibition: "展示ST、展示タイム、進入を反映した直前補正",
+    pre_exhibition: "展示前に見える選手・モーター・天候・潮から予測",
+    post_exhibition: "展示進入・展示ST・展示タイムで直前補正",
   };
 
   const bestBoat = (prediction, key) => {
@@ -29,28 +38,49 @@
     (actual?.results || []).map((r) => [Number(r.boat_number), r]),
   );
 
-  const renderBoatTrack = (prediction, actual) => {
-    const boats = prediction?.boats || [];
-    const resultByBoat = actualMap(actual);
-    const ordered = boats.length
-      ? [...boats].sort((a, b) => Number(a.predicted_start_rank || 9) - Number(b.predicted_start_rank || 9))
+  const boatOffset = (row, index) => {
+    const rank = Number(row.predicted_start_rank || index + 1);
+    const top = Number(row.start_top_probability || 0);
+    const st = Number(row.predicted_st || 0.16);
+    const raw = 68 - rank * 7 + top * 22 - Math.max(0, st - 0.12) * 120;
+    return Math.max(18, Math.min(78, raw));
+  };
+
+  const renderStartExhibitionPanel = (prediction, actual) => {
+    const boats = prediction?.boats?.length
+      ? [...prediction.boats].sort((a, b) => (
+        Number(a.entry_course || a.course_number || a.boat_number) -
+        Number(b.entry_course || b.course_number || b.boat_number)
+      ))
       : [1, 2, 3, 4, 5, 6].map((boat) => ({ boat_number: boat }));
-    return `<div class="start-boat-track">
-      ${ordered.map((b, idx) => {
-        const boat = Number(b.boat_number);
-        const result = resultByBoat[boat];
-        const finish = result?.finishing_position ? `${result.finishing_position}着` : "";
-        const actualSt = result?.start_timing == null ? "" : `本番ST ${num(result.start_timing, 2)}`;
-        return `<div class="start-boat-node${idx === 0 ? " is-front" : ""}">
-          <div class="start-boat-arrow">${lane(boat)}<span>→</span></div>
-          <div class="start-boat-meta">
-            <b>${idx + 1}位予測</b>
-            <span>予測ST ${num(b.predicted_st)}</span>
-            <span>STトップ ${pct(b.start_top_probability)}</span>
-            ${finish || actualSt ? `<small>${esc(finish)} ${esc(actualSt)}</small>` : ""}
-          </div>
-        </div>`;
-      }).join("")}
+    const resultByBoat = actualMap(actual);
+    return `<div class="start-exhibition-board">
+      <div class="start-exhibition-title">スタート展示</div>
+      <div class="start-exhibition-head">
+        <span>コース</span><span>並び</span><span>ST</span>
+      </div>
+      <div class="start-water-grid">
+        ${boats.map((b, idx) => {
+          const boat = Number(b.boat_number);
+          const course = Number(b.entry_course || b.course_number || boat);
+          const result = resultByBoat[boat];
+          const offset = boatOffset(b, idx);
+          const isTop = Number(b.predicted_start_rank || 9) === 1;
+          const finish = result?.finishing_position ? `${result.finishing_position}着` : "";
+          return `<div class="start-water-row${isTop ? " is-top" : ""}">
+            <div class="start-course-cell">${lane(course)}</div>
+            <div class="start-lane-water">
+              <span class="start-water-line"></span>
+              <span class="start-boat-position" style="left:${offset}%">${boatIcon(boat)}</span>
+            </div>
+            <div class="start-st-cell">
+              <b>${stText(b.predicted_st)}</b>
+              <small>${pct(b.start_top_probability)}</small>
+              ${finish ? `<em>${esc(finish)}</em>` : ""}
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
     </div>`;
   };
 
@@ -69,9 +99,9 @@
       return `<li><b>${esc(key)}</b><span>${pct(x.probability)}</span></li>`;
     }).join("");
     return `<article class="start-stage-card" data-stage-card="${stage}">
-      <div class="start-stage-title"><span>${esc(stageLabel[stage])}</span><b>信頼度 ${pct(prediction.confidence)}</b></div>
+      <div class="start-stage-title"><span>${esc(stageTitle[stage])}</span><b>信頼度 ${pct(prediction.confidence)}</b></div>
       <p>${esc(stageSub[stage])}</p>
-      ${renderBoatTrack(prediction, actual)}
+      ${renderStartExhibitionPanel(prediction, actual)}
       <div class="start-stage-facts">
         <div><span>ST先行</span><b>${startTop ? `${lane(startTop.boat_number)} ${pct(startTop.start_top_probability)}` : "-"}</b></div>
         <div><span>1M先頭</span><b>${prediction.first_mark_boat ? `${lane(prediction.first_mark_boat)} ${pct(prediction.first_mark_probability)}` : "-"}</b></div>
@@ -92,6 +122,22 @@
     }
     const resultByBoat = actualMap(actual);
     const predictionByBoat = boatMap(postPrediction);
+    const actualPrediction = {
+      boats: [1, 2, 3, 4, 5, 6].map((boat) => {
+        const result = resultByBoat[boat] || {};
+        return {
+          boat_number: boat,
+          entry_course: result.course_number || boat,
+          predicted_st: result.start_timing,
+          predicted_start_rank: result.start_timing == null ? 9 : null,
+          start_top_probability: boat === Number(actual.actual_start_top_boat) ? 1 : 0,
+        };
+      }).sort((a, b) => Number(a.boat_number) - Number(b.boat_number)),
+    };
+    actualPrediction.boats
+      .filter((b) => b.predicted_st != null)
+      .sort((a, b) => Number(a.predicted_st) - Number(b.predicted_st))
+      .forEach((b, i) => { b.predicted_start_rank = i + 1; });
     const rows = [1, 2, 3, 4, 5, 6].map((boat) => {
       const result = resultByBoat[boat] || {};
       const pred = predictionByBoat[boat] || {};
@@ -110,6 +156,7 @@
     }).join("");
     return `<article class="start-stage-card is-actual">
       <div class="start-stage-title"><span>本番結果</span><b>${esc(actual.actual_combo || "結果確定")}</b></div>
+      ${renderStartExhibitionPanel(actualPrediction, actual)}
       <div class="start-result-summary">
         <div><span>1着</span><b>${actual.actual_first_boat ? lane(actual.actual_first_boat) : "-"}</b></div>
         <div><span>STトップ</span><b>${actual.actual_start_top_boat ? lane(actual.actual_start_top_boat) : "-"}</b></div>
@@ -127,7 +174,7 @@
       <div>
         <span class="start-eyebrow">START FLOW ANALYSIS</span>
         <h3>展開予測タイムライン</h3>
-        <p>展示前の仮説、展示後の補正、本番結果を同じ流れで比較します。</p>
+        <p>展示前、展示後、本番結果をスタート展示形式で比較します。</p>
       </div>
       <div class="start-action-row">
         <button type="button" data-generate-start="pre_exhibition">展示前生成</button>
@@ -140,7 +187,7 @@
       ${renderStageCard("post_exhibition", post, actual)}
       ${renderActualCard(actual, post || pre)}
     </div>
-    <div class="start-comparison-note">選手ごとの傾向は、予測STと本番STの差、STトップ確率、決まり手のズレから蓄積して精度改善に使います。利益を保証するものではありません。</div>`;
+    <div class="start-comparison-note">艇の前後位置は予測ST順位、STトップ確率、予測STから算定した視覚表現です。公式の展示隊形そのものではなく、傾向比較用のモデル表示です。</div>`;
   };
 
   const loadTimeline = async () => {
@@ -162,8 +209,9 @@
   };
 
   root.addEventListener("click", async (event) => {
-    const generateButton = event.target.closest("[data-generate-start]");
-    const evaluateButton = event.target.closest("[data-evaluate-start]");
+    const target = event.target instanceof Element ? event.target : null;
+    const generateButton = target?.closest("[data-generate-start]");
+    const evaluateButton = target?.closest("[data-evaluate-start]");
     try {
       if (generateButton) {
         const stage = generateButton.dataset.generateStart || "post_exhibition";
