@@ -46,7 +46,39 @@
     return Math.max(18, Math.min(78, raw));
   };
 
+  const ensureUltraLightStyles = () => {
+    if (document.getElementById("start-ultra-light-styles")) return;
+    const style = document.createElement("style");
+    style.id = "start-ultra-light-styles";
+    style.textContent = `
+      .start-ultra-board{border:1px solid #1e3146;border-radius:12px;background:linear-gradient(180deg,#0b1624,#0d1a28);padding:12px 12px 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+      .start-ultra-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+      .start-ultra-head strong{font-size:14px;color:#e8f5ff;letter-spacing:.02em}
+      .start-ultra-head span{font-size:11px;color:#8fb0c9}
+      .start-ultra-flow{position:relative;padding-left:12px}
+      .start-ultra-flow:before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:rgba(215,232,247,.72);border-radius:999px}
+      .start-ultra-row{display:grid;grid-template-columns:28px minmax(0,170px) 52px;align-items:center;gap:8px;min-height:32px}
+      .start-ultra-row.is-top .start-ultra-arrow{color:#6be8ff;text-shadow:0 0 14px rgba(87,228,255,.32)}
+      .start-ultra-course .lane{width:24px;height:24px;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.18)}
+      .start-ultra-track{position:relative;height:14px;overflow:visible}
+      .start-ultra-arrow{position:absolute;top:-6px;transform:translateX(-50%);font-size:20px;line-height:1;font-weight:900;color:#d4e7f8}
+      .start-ultra-st{font-size:12px;font-weight:800;text-align:right;color:#eef8ff}
+      .start-ultra-st small{display:block;font-size:10px;color:#7fc9df;font-weight:700}
+      .start-ultra-st em{display:block;font-style:normal;font-size:10px;color:#ffd36a;margin-top:1px}
+      .start-ultra-legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:10px;font-size:11px;color:#89a5bc}
+      .start-ultra-legend span{display:inline-flex;align-items:center;gap:6px}
+      .start-ultra-legend b{color:#d6e7f5;font-size:15px;line-height:1}
+      @media(max-width:760px){
+        .start-ultra-row{grid-template-columns:26px minmax(0,132px) 46px;gap:7px;min-height:28px}
+        .start-ultra-arrow{font-size:18px;top:-5px}
+        .start-ultra-st{font-size:11px}
+      }
+    `;
+    document.head.appendChild(style);
+  };
+
   const renderStartExhibitionPanel = (prediction, actual) => {
+    ensureUltraLightStyles();
     const boats = prediction?.boats?.length
       ? [...prediction.boats].sort((a, b) => (
         Number(a.entry_course || a.course_number || a.boat_number) -
@@ -54,12 +86,12 @@
       ))
       : [1, 2, 3, 4, 5, 6].map((boat) => ({ boat_number: boat }));
     const resultByBoat = actualMap(actual);
-    return `<div class="start-exhibition-board">
-      <div class="start-exhibition-title">スタート展示</div>
-      <div class="start-exhibition-head">
-        <span>コース</span><span>並び</span><span>ST</span>
+    return `<div class="start-ultra-board">
+      <div class="start-ultra-head">
+        <strong>スタート簡易表示</strong>
+        <span>矢印で位置差を比較</span>
       </div>
-      <div class="start-water-grid">
+      <div class="start-ultra-flow">
         ${boats.map((b, idx) => {
           const boat = Number(b.boat_number);
           const course = Number(b.entry_course || b.course_number || boat);
@@ -67,19 +99,22 @@
           const offset = boatOffset(b, idx);
           const isTop = Number(b.predicted_start_rank || 9) === 1;
           const finish = result?.finishing_position ? `${result.finishing_position}着` : "";
-          return `<div class="start-water-row${isTop ? " is-top" : ""}">
-            <div class="start-course-cell">${lane(course)}</div>
-            <div class="start-lane-water">
-              <span class="start-water-line"></span>
-              <span class="start-boat-position" style="left:${offset}%">${boatIcon(boat)}</span>
+          return `<div class="start-ultra-row${isTop ? " is-top" : ""}">
+            <div class="start-ultra-course">${lane(course)}</div>
+            <div class="start-ultra-track">
+              <span class="start-ultra-arrow" style="left:${offset}%">→</span>
             </div>
-            <div class="start-st-cell">
+            <div class="start-ultra-st">
               <b>${stText(b.predicted_st)}</b>
               <small>${pct(b.start_top_probability)}</small>
               ${finish ? `<em>${esc(finish)}</em>` : ""}
             </div>
           </div>`;
         }).join("")}
+      </div>
+      <div class="start-ultra-legend">
+        <span><b>→</b>前に出る見込み</span>
+        <span>光る行 = ST先行候補</span>
       </div>
     </div>`;
   };
