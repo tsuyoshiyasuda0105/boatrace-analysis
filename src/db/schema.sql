@@ -153,6 +153,29 @@ CREATE TABLE IF NOT EXISTS motor_cycle_stats (
 CREATE INDEX IF NOT EXISTS idx_motor_cycle_stats_lookup
   ON motor_cycle_stats(stadium_number, motor_cycle_start, motor_number, through_race_date);
 
+CREATE TABLE IF NOT EXISTS motor_preinspection_stats (
+  stadium_number      INTEGER NOT NULL,
+  race_date           TEXT    NOT NULL,
+  source_name         TEXT    NOT NULL,
+  racer_number        INTEGER,
+  racer_name          TEXT,
+  racer_class         TEXT,
+  motor_number        INTEGER NOT NULL,
+  motor_win2_rate     REAL,
+  boat_number         INTEGER,
+  boat_win2_rate      REAL,
+  preinspection_time  REAL,
+  preinspection_rank  INTEGER,
+  raw_text            TEXT,
+  source_url          TEXT,
+  collected_at        TEXT,
+  PRIMARY KEY (stadium_number, race_date, source_name, motor_number, racer_number)
+);
+CREATE INDEX IF NOT EXISTS idx_motor_preinspection_lookup
+  ON motor_preinspection_stats(stadium_number, motor_number, race_date);
+CREATE INDEX IF NOT EXISTS idx_motor_preinspection_racer
+  ON motor_preinspection_stats(stadium_number, race_date, racer_number);
+
 CREATE TABLE IF NOT EXISTS race_previews (
   -- 直前情報。レース開始15-30分前に確定。1レース×6艇。
   race_id                  TEXT NOT NULL,

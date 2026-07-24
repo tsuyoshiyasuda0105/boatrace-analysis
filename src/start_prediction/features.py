@@ -23,6 +23,32 @@ def _f(value: Any, default: float | None = None) -> float | None:
         return default
 
 
+def _timestamp_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return text
+
+
+def _safe_cutoff(stage: str, race: dict[str, Any], entries: list[dict[str, Any]]) -> str:
+    if stage == "post_exhibition":
+        valid_updates = [
+            ts for ts in (_timestamp_or_none(e.get("live_updated_at")) for e in entries) if ts
+        ]
+        if valid_updates:
+            return max(valid_updates)
+        race_closed_at = _timestamp_or_none(race.get("race_closed_at"))
+        if race_closed_at:
+            return race_closed_at
+    return datetime.now().astimezone().isoformat()
+
+
 @dataclass(frozen=True)
 class RaceFeatureSnapshot:
     race: dict[str, Any]
@@ -49,6 +75,7 @@ class PointInTimeFeatureBuilder:
 
     def __init__(self, conn):
         self.conn = conn
+        self._columns_cache: dict[str, set[str]] = {}
 
     def _has_table(self, table_name: str) -> bool:
         """Check optional feature tables without aborting a Postgres transaction."""
@@ -59,6 +86,24 @@ class PointInTimeFeatureBuilder:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
         ).fetchone()
         return bool(row)
+
+    def _table_columns(self, table_name: str) -> set[str]:
+        cached = self._columns_cache.get(table_name)
+        if cached is not None:
+            return cached
+        if getattr(self.conn, "_kind", "") == "postgres":
+            rows = self.conn.execute(
+                """SELECT column_name
+                     FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name=?""",
+                (table_name,),
+            ).fetchall()
+            cols = {str(row[0]) for row in rows}
+        else:
+            rows = self.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            cols = {str(row[1]) for row in rows}
+        self._columns_cache[table_name] = cols
+        return cols
 
     def build(self, race_id: str, stage: str = "post_exhibition") -> RaceFeatureSnapshot:
         race = _one(self.conn.execute(
@@ -125,11 +170,13 @@ class PointInTimeFeatureBuilder:
 
         histories = self._historical_racer_features(race, entries)
         motor_histories = self._historical_motor_features(race, entries)
+        preinspection_histories = self._preinspection_features(race, entries, motor_histories)
         boats: list[dict[str, Any]] = []
         for entry in entries:
             boat = int(entry["boat_number"])
             hist = histories.get(boat, {})
             motor = motor_histories.get(boat, {})
+            preinspection = preinspection_histories.get(boat, {})
             preview_allowed = stage == "post_exhibition"
             # Exhibition entry is not available at the pre-exhibition stage.
             course = int(entry.get("exhibition_course_number") or boat) if preview_allowed else boat
@@ -150,8 +197,13 @@ class PointInTimeFeatureBuilder:
                 "derived_st_count_12": int(entry.get("derived_start_count_12") or 0),
                 "course_avg_st": _f(hist.get("course_avg_st")),
                 "course_st_count": int(hist.get("course_st_count") or 0),
+                "course_recent10_avg_st": _f(hist.get("course_recent10_avg_st")),
+                "course_recent10_count": int(hist.get("course_recent10_count") or 0),
+                "course_recent10_st_std": _f(hist.get("course_recent10_st_std")),
                 "st_std": _f(hist.get("st_std"), 0.045),
                 "exhibition_to_actual_bias": _f(hist.get("exhibition_to_actual_bias"), 0.04),
+                "racer_exhibition_bias_recent20": _f(hist.get("racer_exhibition_bias_recent20")),
+                "racer_exhibition_bias_count": int(hist.get("racer_exhibition_bias_count") or 0),
                 "course_win_rate": _f(hist.get("course_win_rate"), 0.0),
                 "course_top2_rate": _f(hist.get("course_top2_rate"), 0.0),
                 "course_top3_rate": _f(hist.get("course_top3_rate"), 0.0),
@@ -167,6 +219,17 @@ class PointInTimeFeatureBuilder:
                 "motor_asof_top2": _f(motor.get("top2_rate")),
                 "motor_asof_top3": _f(motor.get("top3_rate")),
                 "motor_asof_starts": int(motor.get("starts_count") or 0),
+                "motor_cycle_start": motor.get("motor_cycle_start"),
+                "motor_exhibition_bias": _f(motor.get("motor_exhibition_bias")),
+                "motor_exhibition_bias_count": int(motor.get("motor_exhibition_bias_count") or 0),
+                "motor_avg_st": _f(motor.get("motor_avg_st")),
+                "motor_st_count": int(motor.get("motor_st_count") or 0),
+                "preinspection_time": _f(preinspection.get("preinspection_time")),
+                "preinspection_rank": preinspection.get("preinspection_rank"),
+                "preinspection_date": preinspection.get("race_date"),
+                "preinspection_source": preinspection.get("source_name"),
+                "preinspection_time_vs_day_avg": _f(preinspection.get("preinspection_time_vs_day_avg")),
+                "preinspection_gap_to_best": _f(preinspection.get("preinspection_gap_to_best")),
                 "accident_rate": _f(entry.get("accident_rate"), 0.0),
                 "accident_points": int(entry.get("accident_points") or 0),
                 "exhibition_time": _f(entry.get("exhibition_time")) if preview_allowed else None,
@@ -193,8 +256,7 @@ class PointInTimeFeatureBuilder:
                 if b["exhibition_st"] is not None else None
             )
 
-        cutoff_values = [str(e.get("live_updated_at")) for e in entries if e.get("live_updated_at")]
-        cutoff = max(cutoff_values) if cutoff_values and stage == "post_exhibition" else datetime.now().astimezone().isoformat()
+        cutoff = _safe_cutoff(stage, race, entries)
         return RaceFeatureSnapshot(
             race=race, boats=boats, tide=tide, market=market,
             stage=stage, feature_cutoff_at=cutoff,
@@ -249,20 +311,147 @@ class PointInTimeFeatureBuilder:
             avg = _f(row.get("course_avg_st"))
             sq = _f(row.get("st_sq"))
             row["st_std"] = max(0.015, min(0.12, ((sq - avg * avg) ** 0.5))) if avg is not None and sq is not None and sq >= avg * avg else 0.045
+            recent = _one(self.conn.execute(
+                """SELECT COUNT(*) AS course_recent10_count,
+                          AVG(start_timing) AS course_recent10_avg_st,
+                          AVG(start_timing * start_timing) AS course_recent10_st_sq
+                     FROM (
+                           SELECT rr.start_timing
+                             FROM race_entries he
+                             JOIN races hr ON hr.race_id=he.race_id
+                             JOIN race_results rr ON rr.race_id=he.race_id AND rr.boat_number=he.boat_number
+                             LEFT JOIN race_previews rp ON rp.race_id=he.race_id AND rp.boat_number=he.boat_number
+                            WHERE he.racer_number=? AND hr.race_date < ?
+                              AND rr.start_timing IS NOT NULL
+                              AND COALESCE(rr.course_number, rp.course_number, he.boat_number)=?
+                            ORDER BY hr.race_date DESC, hr.race_id DESC
+                            LIMIT 10
+                          ) recent10""",
+                (entry["racer_number"], race["race_date"], course),
+            )) or {}
+            r_avg = _f(recent.get("course_recent10_avg_st"))
+            r_sq = _f(recent.get("course_recent10_st_sq"))
+            if r_avg is not None and r_sq is not None and r_sq >= r_avg * r_avg:
+                recent["course_recent10_st_std"] = max(0.015, min(0.12, ((r_sq - r_avg * r_avg) ** 0.5)))
+            else:
+                recent["course_recent10_st_std"] = None
+            row.update(recent)
+            bias = _one(self.conn.execute(
+                """SELECT COUNT(*) AS racer_exhibition_bias_count,
+                          AVG(start_timing - start_timing_exhibition) AS racer_exhibition_bias_recent20
+                     FROM (
+                           SELECT rr.start_timing, rp.start_timing_exhibition
+                             FROM race_entries he
+                             JOIN races hr ON hr.race_id=he.race_id
+                             JOIN race_results rr ON rr.race_id=he.race_id AND rr.boat_number=he.boat_number
+                             JOIN race_previews rp ON rp.race_id=he.race_id AND rp.boat_number=he.boat_number
+                            WHERE he.racer_number=? AND hr.race_date < ?
+                              AND rr.start_timing IS NOT NULL
+                              AND rp.start_timing_exhibition IS NOT NULL
+                            ORDER BY hr.race_date DESC, hr.race_id DESC
+                            LIMIT 20
+                          ) recent_bias""",
+                (entry["racer_number"], race["race_date"]),
+            )) or {}
+            row.update(bias)
             out[int(entry["boat_number"])] = row
         return out
 
     def _historical_motor_features(self, race: dict[str, Any], entries: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
         if not self._has_table("motor_cycle_stats"):
             return {int(entry["boat_number"]): {} for entry in entries}
+        motor_cols = self._table_columns("motor_cycle_stats")
+        cycle_select = ", motor_cycle_start" if "motor_cycle_start" in motor_cols else ""
         out: dict[int, dict[str, Any]] = {}
         for entry in entries:
             row = _one(self.conn.execute(
-                """SELECT starts_count, top2_rate, top3_rate, through_race_date
+                f"""SELECT starts_count, top2_rate, top3_rate, through_race_date{cycle_select}
                      FROM motor_cycle_stats
                     WHERE stadium_number=? AND motor_number=? AND through_race_date < ?
                     ORDER BY through_race_date DESC LIMIT 1""",
                 (race["stadium_number"], entry.get("assigned_motor_number"), race["race_date"]),
             )) or {}
+            cycle_start = row.get("motor_cycle_start")
+            cycle_clause = "AND hr.race_date >= ?" if cycle_start else ""
+            params: tuple[Any, ...] = (
+                race["stadium_number"],
+                entry.get("assigned_motor_number"),
+                race["race_date"],
+            )
+            if cycle_start:
+                params += (cycle_start,)
+            motor_bias = _one(self.conn.execute(
+                f"""SELECT COUNT(*) AS motor_exhibition_bias_count,
+                           AVG(rr.start_timing - rp.start_timing_exhibition) AS motor_exhibition_bias,
+                           AVG(rr.start_timing) AS motor_avg_st
+                      FROM race_entries he
+                      JOIN races hr ON hr.race_id=he.race_id
+                      JOIN race_results rr ON rr.race_id=he.race_id AND rr.boat_number=he.boat_number
+                      JOIN race_previews rp ON rp.race_id=he.race_id AND rp.boat_number=he.boat_number
+                     WHERE hr.stadium_number=? AND he.assigned_motor_number=?
+                       AND hr.race_date < ?
+                       {cycle_clause}
+                       AND rr.start_timing IS NOT NULL
+                       AND rp.start_timing_exhibition IS NOT NULL""",
+                params,
+            )) or {}
+            row.update(motor_bias)
+            row["motor_st_count"] = row.get("motor_exhibition_bias_count") or 0
             out[int(entry["boat_number"])] = row
+        return out
+
+    def _preinspection_features(
+        self,
+        race: dict[str, Any],
+        entries: list[dict[str, Any]],
+        motor_histories: dict[int, dict[str, Any]],
+    ) -> dict[int, dict[str, Any]]:
+        if not self._has_table("motor_preinspection_stats"):
+            return {int(entry["boat_number"]): {} for entry in entries}
+        out: dict[int, dict[str, Any]] = {}
+        for entry in entries:
+            boat = int(entry["boat_number"])
+            motor = motor_histories.get(boat, {})
+            cycle_start = motor.get("motor_cycle_start")
+            cycle_clause = "AND race_date >= ?" if cycle_start else ""
+            params: tuple[Any, ...] = (
+                race["stadium_number"],
+                entry.get("assigned_motor_number"),
+                race["race_date"],
+            )
+            if cycle_start:
+                params += (cycle_start,)
+            row = _one(self.conn.execute(
+                f"""SELECT race_date, source_name, preinspection_time, preinspection_rank
+                      FROM motor_preinspection_stats
+                     WHERE stadium_number=?
+                       AND motor_number=?
+                       AND race_date <= ?
+                       {cycle_clause}
+                       AND preinspection_time IS NOT NULL
+                     ORDER BY race_date DESC, preinspection_time ASC
+                     LIMIT 1""",
+                params,
+            )) or {}
+            if row:
+                benchmark = _one(self.conn.execute(
+                    """SELECT AVG(preinspection_time) AS day_avg,
+                              MIN(preinspection_time) AS day_best
+                         FROM motor_preinspection_stats
+                        WHERE stadium_number=?
+                          AND race_date=?
+                          AND source_name=?
+                          AND preinspection_time IS NOT NULL""",
+                    (race["stadium_number"], row.get("race_date"), row.get("source_name")),
+                )) or {}
+                t = _f(row.get("preinspection_time"))
+                avg = _f(benchmark.get("day_avg"))
+                best = _f(benchmark.get("day_best"))
+                row["preinspection_time_vs_day_avg"] = (
+                    avg - t if avg is not None and t is not None else None
+                )
+                row["preinspection_gap_to_best"] = (
+                    t - best if best is not None and t is not None else None
+                )
+            out[boat] = row
         return out

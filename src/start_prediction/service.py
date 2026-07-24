@@ -13,7 +13,10 @@ from .repository import StartPredictionRepository, _loads
 
 MODEL_FEATURES = [
     "course_avg_st", "derived_st_12", "derived_st_180d", "entry_avg_st",
+    "course_recent10_avg_st", "course_recent10_count",
     "exhibition_st", "exhibition_to_actual_bias", "st_std", "flying_count",
+    "racer_exhibition_bias_recent20", "motor_exhibition_bias", "motor_avg_st",
+    "preinspection_time", "preinspection_time_vs_day_avg", "preinspection_gap_to_best",
     "accident_rate", "wind_speed", "wave_height", "course_win_rate",
     "motor_asof_top2", "published_motor_top2", "exhibition_time",
     "national_top1", "local_top1", "stadium_number", "race_grade_number",

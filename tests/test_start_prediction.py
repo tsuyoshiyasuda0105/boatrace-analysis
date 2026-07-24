@@ -11,6 +11,13 @@ from src.start_prediction.features import PointInTimeFeatureBuilder
 from src.start_prediction.models import MODEL_VERSIONS, RuleEnsembleV1
 from src.start_prediction.repository import StartPredictionRepository
 from src.start_prediction.service import StartPredictionService
+from src.start_prediction.strategy_filters import (
+    StrategyBet,
+    StrategyCandidate,
+    parse_strategy_bets,
+    pass_combo_in_trifecta_top,
+    pass_head_first_probability,
+)
 from src.web.start_prediction_api import bp
 
 
@@ -208,6 +215,11 @@ def test_point_in_time_builder_excludes_future_rows_and_final_odds():
         source TEXT,fetched_at TEXT);
       CREATE TABLE motor_cycle_stats (stadium_number INTEGER,motor_number INTEGER,
         starts_count INTEGER,top2_rate REAL,top3_rate REAL,through_race_date TEXT);
+      CREATE TABLE motor_preinspection_stats (stadium_number INTEGER,race_date TEXT,
+        source_name TEXT,racer_number INTEGER,racer_name TEXT,racer_class TEXT,
+        motor_number INTEGER,motor_win2_rate REAL,boat_number INTEGER,boat_win2_rate REAL,
+        preinspection_time REAL,preinspection_rank INTEGER,raw_text TEXT,source_url TEXT,
+        collected_at TEXT);
       CREATE TABLE odds_trifecta (race_id TEXT,combination TEXT,odds REAL,is_final INTEGER,
         recorded_at TEXT,snapshot_label TEXT);
     """)
@@ -238,6 +250,16 @@ def test_point_in_time_builder_excludes_future_rows_and_final_odds():
                          (historical_id, boat, boat, 7 - boat, st))
         conn.execute("INSERT INTO motor_cycle_stats VALUES (?,?,?,?,?,?)", (1, 10 + boat, 20, 40, 60, "2026-01-09"))
         conn.execute("INSERT INTO motor_cycle_stats VALUES (?,?,?,?,?,?)", (1, 10 + boat, 30, 90, 95, "2026-01-11"))
+        conn.execute(
+            "INSERT INTO motor_preinspection_stats VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (1, "2026-01-09", "test", racer, f"R{boat}", "A1", 10 + boat,
+             35, boat, 40, 6.50 + boat / 100, boat, "", "", "2026-01-09T08:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO motor_preinspection_stats VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (1, "2026-01-11", "test", racer, f"R{boat}", "A1", 10 + boat,
+             35, boat, 40, 6.00, 1, "", "", "2026-01-11T08:00:00"),
+        )
         conn.execute("INSERT INTO racer_accident_period_stats VALUES (?,?,?,?,?,?)",
                      (racer, "2026-01-01", "2026-06-30", 20, .8, "2026-02-01"))
     conn.execute("INSERT INTO odds_trifecta VALUES ('TARGET','1-2-3',8.0,0,'2026-01-10T11:00:00','T-5')")
@@ -246,7 +268,13 @@ def test_point_in_time_builder_excludes_future_rows_and_final_odds():
     post = PointInTimeFeatureBuilder(conn).build("TARGET", "post_exhibition").as_dict()
     pre = PointInTimeFeatureBuilder(conn).build("TARGET", "pre_exhibition").as_dict()
     assert post["boats"][0]["course_avg_st"] == pytest.approx(.10)
+    assert post["boats"][0]["course_recent10_avg_st"] == pytest.approx(.10)
+    assert post["boats"][0]["course_recent10_count"] == 1
     assert post["boats"][0]["motor_asof_top2"] == pytest.approx(40)
+    assert post["boats"][0]["motor_exhibition_bias"] == pytest.approx(.04)
+    assert post["boats"][0]["motor_exhibition_bias_count"] == 1
+    assert post["boats"][0]["preinspection_time"] == pytest.approx(6.51)
+    assert post["boats"][0]["preinspection_time_vs_day_avg"] == pytest.approx(.025)
     assert post["boats"][0]["accident_rate"] == 0
     assert post["market"]["trifecta_odds"]["1-2-3"] == pytest.approx(8.0)
     assert post["boats"][0]["course_number"] == 6
@@ -294,12 +322,47 @@ def test_point_in_time_builder_allows_missing_optional_derived_start_stats():
         conn.execute(
             "INSERT INTO race_previews VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             ("TARGET", boat, 1, 3, 1, 2, 25, 23, boat, 6.7 + boat / 100,
-             .10 + boat / 100, 0, "2026-07-22T20:30:00"),
+             .10 + boat / 100, 0, "post-race"),
         )
 
     snapshot = PointInTimeFeatureBuilder(conn).build("TARGET", "post_exhibition").as_dict()
 
     assert len(snapshot["boats"]) == 6
+    assert snapshot["feature_cutoff_at"] == "2026-07-22T21:25:00"
     assert snapshot["boats"][0]["derived_st_180d"] is None
     assert snapshot["boats"][0]["derived_st_count_180d"] == 0
     assert snapshot["boats"][0]["motor_asof_top2"] is None
+
+
+def test_strategy_filter_parses_visible_bets_without_results():
+    bets = parse_strategy_bets("3連単 1-2-3 / 1-3-2 と 2連単 1-3")
+
+    assert bets == (
+        StrategyBet("trifecta", "1-2-3"),
+        StrategyBet("trifecta", "1-3-2"),
+        StrategyBet("exacta", "1-3"),
+    )
+
+
+def test_strategy_filter_uses_prediction_snapshot_not_payouts():
+    candidate = StrategyCandidate(
+        race_id="R1",
+        race_date="2026-07-22",
+        strategy_key="demo_tri",
+        label="demo",
+        bets=(StrategyBet("trifecta", "1-2-3"),),
+    )
+    prediction = {
+        "boats": [
+            {"boat_number": 1, "first_probability": 0.62, "start_top_probability": 0.20},
+            {"boat_number": 2, "first_probability": 0.12, "start_top_probability": 0.10},
+        ],
+        "trifectas": [
+            {"scenario_key": "1-2-3", "rank": 4, "probability": 0.08},
+        ],
+        "actual_snapshot": {"actual_combo": "9-9-9", "actual_trifecta_payout": 999999},
+    }
+
+    assert pass_head_first_probability(candidate, prediction, minimum=0.55).passed
+    assert pass_combo_in_trifecta_top(candidate, prediction, top_n=5).passed
+    assert not pass_combo_in_trifecta_top(candidate, prediction, top_n=3).passed

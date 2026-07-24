@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 
 MODEL_VERSIONS = {
-    "bundle": "start_development_v1",
-    "st": "st_model_v1_rule_ensemble",
+    "bundle": "start_development_v4_calibrated_exhibition",
+    "st": "st_model_v4_calibrated_exhibition_rule_ensemble",
     "start_rank": "start_rank_model_v1_mc",
     "development": "development_model_v1_rule",
     "finish": "finish_order_model_v1_plackett_luce",
@@ -45,23 +45,51 @@ class RuleEnsembleV1:
         for b in boats:
             exhibit_adjusted = None
             if b.get("exhibition_st") is not None:
-                exhibit_adjusted = b["exhibition_st"] + (b.get("exhibition_to_actual_bias") or 0.04)
+                bias_values: list[tuple[float | None, float]] = [
+                    (b.get("exhibition_to_actual_bias"), 0.45),
+                ]
+                if int(b.get("racer_exhibition_bias_count") or 0) >= 5:
+                    bias_values.append((b.get("racer_exhibition_bias_recent20"), 0.35))
+                if int(b.get("motor_exhibition_bias_count") or 0) >= 6:
+                    bias_values.append((b.get("motor_exhibition_bias"), 0.20))
+                exhibit_adjusted = b["exhibition_st"] + _weighted(bias_values, 0.04)
+            course_recent10 = (
+                b.get("course_recent10_avg_st")
+                if int(b.get("course_recent10_count") or 0) >= 3 else None
+            )
+            motor_avg_st = (
+                b.get("motor_avg_st")
+                if int(b.get("motor_st_count") or 0) >= 6 else None
+            )
+            preinspection_lift = b.get("preinspection_time_vs_day_avg")
+            preinspection_st_adjust = None
+            if preinspection_lift is not None:
+                preinspection_st_adjust = 0.17 - 0.012 * float(np.clip(preinspection_lift / 0.10, -1.0, 1.0))
             mean = _weighted([
-                (b.get("course_avg_st"), 0.28),
+                (course_recent10, 0.20),
+                (b.get("course_avg_st"), 0.22),
                 (b.get("derived_st_12"), 0.24),
-                (b.get("derived_st_180d"), 0.18),
+                (b.get("derived_st_180d"), 0.14),
                 (b.get("entry_avg_st"), 0.10),
-                (exhibit_adjusted, 0.30),
+                (motor_avg_st, 0.10),
+                (preinspection_st_adjust, 0.06),
+                # Walk-forward tests showed that exhibition ST is useful as a weak
+                # confirmation signal, but over-weighting it worsens actual ST MAE.
+                (exhibit_adjusted, 0.05),
             ], 0.17)
             caution = min(0.025, 0.004 * int(b.get("flying_count") or 0) + 0.008 * float(b.get("accident_rate") or 0))
             weather = 0.0015 * max(0.0, float(b.get("wind_speed") or 0) - 3) + 0.0007 * max(0.0, float(b.get("wave_height") or 0) - 3)
             mean = float(np.clip(mean + caution + weather, -0.05, 0.35))
-            sigma = float(np.clip(b.get("st_std") or 0.045, 0.018, 0.10))
+            sigma_source = (
+                b.get("course_recent10_st_std")
+                if int(b.get("course_recent10_count") or 0) >= 5 else b.get("st_std")
+            )
+            sigma = float(np.clip(sigma_source or 0.045, 0.018, 0.10))
             means.append(mean)
             sigmas.append(sigma)
             why = [f"コース別過去ST {b.get('course_avg_st'):.3f}" if b.get("course_avg_st") is not None else "コース別ST欠損"]
             if b.get("exhibition_st") is not None:
-                why.append(f"展示ST {b['exhibition_st']:.2f}を選手別差分で補正")
+                why.append(f"展示ST {b['exhibition_st']:.2f}は弱い補正として反映")
             if caution:
                 why.append("F持ち・事故率による慎重化補正")
             reasons.append(why)
@@ -83,12 +111,16 @@ class RuleEnsembleV1:
         exhibit = np.array([b.get("exhibition_time") if b.get("exhibition_time") is not None else 7.0 for b in boats])
         exhibit_score = -(exhibit - np.nanmin(exhibit)) * 2.8
         motor = np.array([(b.get("motor_asof_top2") or b.get("published_motor_top2") or 30.0) / 100 for b in boats])
+        preinspection = np.array([
+            float(np.clip((b.get("preinspection_time_vs_day_avg") or 0.0) / 0.10, -1.0, 1.0))
+            for b in boats
+        ])
         course_win = np.array([(b.get("course_win_rate") or 0.0) / 100 for b in boats])
         national = np.array([(b.get("national_top1") or 0.0) / 100 for b in boats])
         local = np.array([(b.get("local_top1") or 0.0) / 100 for b in boats])
         start_edge = (np.mean(means_a) - means_a) * 7.5
         lane = np.log(LANE_PRIOR[np.clip(courses - 1, 0, 5)])
-        strength = lane + start_edge + exhibit_score + 1.4 * motor + 1.8 * course_win + 1.0 * national + 0.7 * local
+        strength = lane + start_edge + exhibit_score + 1.4 * motor + 0.20 * preinspection + 1.8 * course_win + 1.0 * national + 0.7 * local
         leader_probs = _softmax(strength)
 
         attack_score = start_edge + exhibit_score + 1.2 * motor
