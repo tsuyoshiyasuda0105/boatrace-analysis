@@ -4149,23 +4149,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
 
         if not force_recompute:
-            payload = {
-                "date": target_date,
-                "cache_version": MARKET_SIGNALS_CACHE_VERSION,
-                "computed_at": None,
-                "n_races": 0,
-                "n_positive_ev": 0,
-                "n_l4": 0,
-                "n_morning_l4": 0,
-                "data_status": {
-                    **_load_market_data_status(),
-                    "cache_only": True,
-                    "cache_miss": True,
-                },
-                "accident_watch": {},
-                "signals": {},
-            }
-            return _market_json_response(payload, "cache-miss")
+            logger.warning(
+                "market-signals cache miss; fallback to inline recompute for %s",
+                target_date,
+            )
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
@@ -6045,6 +6032,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         def _pick_best_market_signal(*signals):
             adopted_priority_levels = {
+                "a1_ace_motor_123_corr_tri",
                 "g23_optb_tri",
                 "gmkf_132_tri",
                 "shimonoseki_123_tri",
@@ -8324,7 +8312,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     return None
 
             stadium = _to_int(ctx.get("stadium"))
-            boat1_class = _to_int(ctx.get("cls"))
+            boat1_class = _to_int(ctx.get("class"))
             boat1_motor = _to_float(ctx.get("boat1_motor_top2"))
             boat2_motor = _to_float(ctx.get("boat2_motor_top2"))
             boat4_class = _to_int(ctx.get("boat4_class"))
@@ -10637,6 +10625,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 tri124_132_watch = _safe_signal_eval("tri124_132_watch_no_data", _evaluate_tri124_132_trifecta_niche_watch, info)
                 shimonoseki_123_watch = _safe_signal_eval("shimonoseki_123_watch_no_data", _evaluate_shimonoseki_123_signal, info)
                 gamagori_watch = _safe_signal_eval("gamagori_watch_no_data", _evaluate_gamagori_adopted_signal, info)
+                a1_ace_motor_123_corr_watch = _safe_signal_eval(
+                    "a1_ace_motor_123_corr_watch_no_data",
+                    _evaluate_a1_ace_motor_123_corr_signal,
+                    info,
+                )
                 current_motor_adopted_watch = _safe_signal_eval(
                     "current_motor_adopted_watch_no_data",
                     _evaluate_current_motor_adopted_signal,
@@ -10696,6 +10689,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     g23_watch,
                     shimonoseki_123_watch,
                     tsu_suminoe_signal,
+                    a1_ace_motor_123_corr_watch,
                     current_motor_adopted_watch,
                     series13_adopted_watch,
                     accident_dent_adopted_watch,
