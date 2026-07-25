@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.db.connection import connect as db_connect
+import config
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -457,18 +458,22 @@ def accident_period_start(d: datetime) -> str:
     return f"{d.year - 1}-11-01"
 
 
+def _accident_local_mode() -> bool:
+    return not os.getenv("RENDER", "").strip()
+
+
 def run_accident_rebuild(date_from: str, date_to: str) -> bool:
-    return run_py(
-        ["scripts/rebuild_racer_accident_stats.py", "--from", date_from, "--to", date_to],
-        timeout=900,
-    )
+    args = ["scripts/rebuild_racer_accident_stats.py", "--from", date_from, "--to", date_to]
+    if _accident_local_mode():
+        args.insert(1, "--local")
+    return run_py(args, timeout=900)
 
 
 def run_accident_rank_snapshot(target_date: str) -> bool:
-    return run_py(
-        ["scripts/cache_racer_accident_rank_snapshot.py", "--date", target_date],
-        timeout=300,
-    )
+    args = ["scripts/cache_racer_accident_rank_snapshot.py", "--date", target_date]
+    if _accident_local_mode():
+        args.extend(["--db-path", config.DB_PATH])
+    return run_py(args, timeout=300)
 
 
 def latest_accident_snapshot_state() -> tuple[str | None, str | None]:
@@ -492,6 +497,26 @@ def latest_accident_snapshot_state() -> tuple[str | None, str | None]:
         return None, None
 
 
+def latest_completed_results_date() -> str | None:
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(r.race_date)
+                  FROM race_results rr
+                  JOIN races r ON r.race_id = rr.race_id
+                 WHERE rr.finishing_position IS NOT NULL
+                """
+            ).fetchone()
+        return str(row[0]) if row and row[0] else None
+    except Exception as exc:
+        print(
+            f"[accident-refresh] latest result-date check failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return None
+
+
 def run_accident_full_refresh(target_date: str) -> bool:
     target_dt = datetime.fromisoformat(target_date).replace(tzinfo=JST)
     ok = run_accident_rebuild(accident_period_start(target_dt), target_date)
@@ -501,8 +526,8 @@ def run_accident_full_refresh(target_date: str) -> bool:
 
 
 def run_accident_self_heal(now: datetime) -> bool:
-    """Rebuild yesterday's period when the materialized ranking is stale."""
-    target_date = (now.date() - timedelta(days=1)).isoformat()
+    """Rebuild the latest completed-results day when the materialized ranking is stale."""
+    target_date = latest_completed_results_date() or (now.date() - timedelta(days=1)).isoformat()
     latest_snapshot, latest_period_end = latest_accident_snapshot_state()
     if (
         latest_snapshot
