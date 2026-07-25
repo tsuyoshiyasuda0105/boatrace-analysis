@@ -69,7 +69,7 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v20"
+MARKET_SIGNALS_CACHE_VERSION = "v21"
 STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v11"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
@@ -2660,8 +2660,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # ファイル更新時刻ベースのハッシュを付ける
     import hashlib
     from pathlib import Path
+    static_root = Path(__file__).parent / "static"
     static_files = [
-        Path(__file__).parent / "static" / "style.css",
+        static_root / "style.css",
+        static_root / "race_detail.js",
+        static_root / "start_prediction.js",
     ]
     h = hashlib.md5()
     for f in static_files:
@@ -3836,6 +3839,240 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 logger.warning("data_status query failed: %s", e)
             return data_status
 
+        def _load_post_head_start_top_probabilities() -> dict[str, float]:
+            """Load post-exhibition start-top probability for the 1号艇.
+
+            This is used only as a forward-watch filter for L4参考. The query
+            reads prediction snapshots created before results evaluation and
+            never joins payouts, finishing positions, or kimarite.
+            """
+            try:
+                with db_connect() as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT p.race_id, b.start_top_probability
+                          FROM race_start_predictions p
+                          JOIN race_start_prediction_boats b
+                            ON b.prediction_id = p.prediction_id
+                          JOIN races r
+                            ON r.race_id = p.race_id
+                         WHERE r.race_date = ?
+                           AND p.prediction_stage = 'post_exhibition'
+                           AND b.boat_number = 1
+                         ORDER BY p.predicted_at DESC
+                        """,
+                        (target_date,),
+                    ).fetchall()
+                probs: dict[str, float] = {}
+                for rid, prob in rows:
+                    rid_s = str(rid or "")
+                    if not rid_s or rid_s in probs or prob is None:
+                        continue
+                    try:
+                        probs[rid_s] = float(prob)
+                    except (TypeError, ValueError):
+                        continue
+                return probs
+            except Exception as e:  # noqa: BLE001
+                logger.warning("post start-top probability lookup failed: %s", e)
+                return {}
+
+        def _load_start_prediction_head_probability_changes() -> dict[str, dict[int, dict[str, Any]]]:
+            """Load pre/post head first-probability deltas for today's races.
+
+            The decision uses only race_start_predictions snapshots. It does not
+            join results, payouts, or kimarite, so the same helper can be used
+            for live display and leak-safe forward monitoring.
+            """
+            try:
+                with db_connect() as conn:
+                    rows = conn.execute(
+                        """
+                        SELECT p.race_id,
+                               p.prediction_stage,
+                               b.boat_number,
+                               b.first_probability,
+                               p.predicted_at
+                          FROM race_start_predictions p
+                          JOIN race_start_prediction_boats b
+                            ON b.prediction_id = p.prediction_id
+                          JOIN races r
+                            ON r.race_id = p.race_id
+                         WHERE r.race_date = ?
+                           AND p.prediction_stage IN ('pre_exhibition', 'post_exhibition')
+                         ORDER BY p.predicted_at DESC
+                        """,
+                        (target_date,),
+                    ).fetchall()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("start prediction probability lookup failed: %s", e)
+                return {}
+
+            latest: dict[tuple[str, str, int], float] = {}
+            for rid, stage, boat_no, prob, _predicted_at in rows:
+                try:
+                    key = (str(rid or ""), str(stage or ""), int(boat_no))
+                    prob_v = float(prob)
+                except (TypeError, ValueError):
+                    continue
+                if not key[0] or key in latest:
+                    continue
+                latest[key] = prob_v
+
+            out: dict[str, dict[int, dict[str, Any]]] = {}
+            race_boats = {(rid, boat) for rid, _stage, boat in latest}
+            for rid, boat_no in race_boats:
+                pre = latest.get((rid, "pre_exhibition", boat_no))
+                post = latest.get((rid, "post_exhibition", boat_no))
+                if pre is None and post is None:
+                    continue
+                out.setdefault(rid, {})[boat_no] = {
+                    "pre": pre,
+                    "post": post,
+                    "delta": (post - pre) if pre is not None and post is not None else None,
+                    "passed": (post >= pre) if pre is not None and post is not None else None,
+                }
+            return out
+
+        START_PREDICTION_FILTER_TARGETS = {
+            "shimonoseki_123_tri": {
+                "head": 1,
+                "filtered_recovery": 185.8,
+                "filtered_n": 12,
+                "filtered_hit_rate": 33.3,
+            },
+            "suminoe_123_tri": {
+                "head": 1,
+                "filtered_recovery": 291.3,
+                "filtered_n": 15,
+                "filtered_hit_rate": 33.3,
+            },
+            "wakamatsu_13_weak2_strong3_exa": {
+                "head": 1,
+                "filtered_recovery": 288.0,
+                "filtered_n": 10,
+                "filtered_hit_rate": 30.0,
+            },
+        }
+
+        def _apply_start_prediction_filter_annotations(signal_rows: list[dict[str, Any]]) -> int:
+            changes = _load_start_prediction_head_probability_changes()
+            if not changes:
+                return 0
+            annotated = 0
+            for row in signal_rows:
+                l4 = row.get("l4") if isinstance(row, dict) else None
+                if not isinstance(l4, dict):
+                    continue
+                level = str(l4.get("level") or "")
+                cfg = START_PREDICTION_FILTER_TARGETS.get(level)
+                if not cfg:
+                    continue
+                rid = str(row.get("race_id") or "")
+                head_boat = int(cfg["head"])
+                change = (changes.get(rid) or {}).get(head_boat)
+                if not change:
+                    continue
+
+                pre = change.get("pre")
+                post = change.get("post")
+                passed = change.get("passed")
+                l4["start_prediction_filter"] = {
+                    "key": "post_head_prob_up",
+                    "head_boat": head_boat,
+                    "pre_head_first_probability": pre,
+                    "post_head_first_probability": post,
+                    "delta": change.get("delta"),
+                    "passed": passed,
+                }
+                l4["start_prediction_filter_key"] = "post_head_prob_up"
+                l4["start_prediction_filter_label"] = "展開予測フィルター"
+
+                if passed is True:
+                    l4["start_prediction_filter_status"] = "passed"
+                    l4["rank_label"] = f"{l4.get('rank_label') or '採用'}+展開"
+                    l4["recovery"] = float(cfg["filtered_recovery"])
+                    l4["n"] = int(cfg["filtered_n"])
+                    l4["hit_rate"] = float(cfg["filtered_hit_rate"])
+                    l4["tag"] = (
+                        f"{l4.get('tag') or ''} / 展開予測: 頭{head_boat}の1着確率 "
+                        f"{float(pre or 0) * 100:.1f}% -> {float(post or 0) * 100:.1f}%"
+                    ).strip(" /")
+                    row["expected_roi"] = (float(cfg["filtered_recovery"]) - 100.0) / 100.0
+                    row["title"] = l4.get("label") or row.get("title")
+                    row["is_positive_ev"] = True
+                elif passed is False:
+                    l4["start_prediction_filter_status"] = "failed"
+                    l4["is_after_exhibition_out"] = True
+                    l4["after_exhibition_out_reason"] = (
+                        f"展開予測: 頭{head_boat}の1着確率が上昇せず "
+                        f"{float(pre or 0) * 100:.1f}% -> {float(post or 0) * 100:.1f}%"
+                    )
+                else:
+                    l4["start_prediction_filter_status"] = "pending"
+                annotated += 1
+            return annotated
+
+        def _apply_l4_reference_start_prediction_candidates(signal_rows: list[dict[str, Any]]) -> int:
+            """Promote only L4参考 rows that pass the post-exhibition ST filter."""
+            probs = _load_post_head_start_top_probabilities()
+            if not probs:
+                return 0
+            promoted = 0
+            for row in signal_rows:
+                l4 = row.get("l4") if isinstance(row, dict) else None
+                if not isinstance(l4, dict) or l4.get("level") != "general":
+                    continue
+                rid = str(row.get("race_id") or "")
+                prob = probs.get(rid)
+                if prob is None or prob < 0.30:
+                    continue
+                l4.update({
+                    "level": "l4_reference_start_top30_candidate",
+                    "label": "🧪L4参考 ST展開候補",
+                    "recovery": 175.8,
+                    "bet": "3連単 1-2-3 100円",
+                    "n": 12,
+                    "hit_rate": 25.0,
+                    "rank": "watch",
+                    "rank_label": "展開候補",
+                    "rank_emoji": "🧪",
+                    "is_reference": True,
+                    "is_start_prediction_candidate": True,
+                    "start_top_probability_boat1": prob,
+                    "watch_strategy_labels": ["L4参考 ST展開候補"],
+                    "watch_strategy_bets": ["3連単 1-2-3 100円"],
+                    "tag": f"展示後ST展開: 1号艇スタートトップ確率 {prob * 100:.1f}% >= 30%",
+                })
+                row["tier"] = "start_prediction_watch"
+                row["source"] = "start_prediction_filter"
+                row["expected_roi"] = 0.758
+                row["title"] = l4["label"]
+                row["is_positive_ev"] = True
+                promoted += 1
+            return promoted
+
+        def _apply_start_prediction_filters_to_cached_payload(payload: Any) -> Any:
+            """Annotate cached market-signals with the current prediction filter.
+
+            Cache entries can outlive the code that created them. Apply this
+            lightweight overlay just before returning cached JSON so the live
+            list and ROI overlay use the same out/passed flags.
+            """
+            if not isinstance(payload, dict):
+                return payload
+            signals_map = payload.get("signals")
+            if not isinstance(signals_map, dict):
+                return payload
+            signal_rows = [s for s in signals_map.values() if isinstance(s, dict)]
+            if not signal_rows:
+                return payload
+            try:
+                _apply_start_prediction_filter_annotations(signal_rows)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("cached start-prediction filter overlay failed: %s", e)
+            return payload
+
         recent_cache_floor = (date.today() - timedelta(days=2)).isoformat()
 
         def _with_current_data_status(payload: Any) -> Any:
@@ -3866,7 +4103,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             and _is_empty_market_signals_payload(cached_payload)
         ):
             return _market_json_response(
-                _with_current_data_status(cached_payload), "fresh"
+                _with_current_data_status(
+                    _apply_start_prediction_filters_to_cached_payload(cached_payload)
+                ),
+                "fresh",
             )
         # Web worker を守るため、通常リクエストは live date でも stale を返す。
         # 展示・潮・直前オッズで採否が動く候補の再計算は Render Cron の
@@ -3877,7 +4117,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             and _is_empty_market_signals_payload(stale_payload)
         ):
             return _market_json_response(
-                _with_current_data_status(stale_payload), "stale"
+                _with_current_data_status(
+                    _apply_start_prediction_filters_to_cached_payload(stale_payload)
+                ),
+                "stale",
             )
 
         # Web and cron services can finish a rolling Render deploy at
@@ -3899,7 +4142,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 compat_payload["source_cache_version"] = compat_payload.get("cache_version")
                 compat_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
                 return _market_json_response(
-                    _with_current_data_status(compat_payload), "compat-stale"
+                    _with_current_data_status(
+                        _apply_start_prediction_filters_to_cached_payload(compat_payload)
+                    ),
+                    "compat-stale",
                 )
 
         if not force_recompute:
@@ -8060,6 +8306,62 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             return _pick_best_market_signal(*matched)
 
+        def _evaluate_a1_ace_motor_123_corr_signal(ctx: dict | None):
+            """A1 ace-motor 1-2-3 corrected venue strategy."""
+            if not ctx:
+                return None
+
+            def _to_float(value):
+                try:
+                    return float(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _to_int(value):
+                try:
+                    return int(value) if value is not None else None
+                except (TypeError, ValueError):
+                    return None
+
+            stadium = _to_int(ctx.get("stadium"))
+            boat1_class = _to_int(ctx.get("cls"))
+            boat1_motor = _to_float(ctx.get("boat1_motor_top2"))
+            boat2_motor = _to_float(ctx.get("boat2_motor_top2"))
+            boat4_class = _to_int(ctx.get("boat4_class"))
+            boat4_avg_st = _to_float(ctx.get("boat4_avg_st"))
+
+            if stadium is None or boat1_class is None:
+                return None
+            if stadium in (5, 7, 12, 21, 24):
+                return None
+            if boat1_class != 1:
+                return None
+            if boat1_motor is None or boat1_motor < 45.0:
+                return None
+            if boat2_motor is None or boat2_motor < 35.0:
+                return None
+            if boat4_class not in (3, 4):
+                return None
+            if boat4_avg_st is None or boat4_avg_st < 0.17:
+                return None
+
+            return {
+                "level": "a1_ace_motor_123_corr_tri",
+                "label": "1号艇A1エースM 1-2-3",
+                "bet": "3連単 1-2-3",
+                "rank": "trifecta_niche",
+                "rank_label": "3連単採用",
+                "rank_emoji": "3連単",
+                "recovery": 145.7,
+                "n": 151,
+                "hit_rate": 21.9,
+                "name": "A1エースM123",
+                "tag": "1号艇A1 + 1号艇モーター45%+ + 2号艇モーター35%+ + 4号艇B級 + 4号艇平均ST0.17以上",
+                "tetsuban_score": 6,
+                "timing_bucket": "preconfirmed",
+                "is_display_confirmed": True,
+            }
+
         def _evaluate_accident_dent_adopted_signal(ctx: dict | None):
             """Evaluate the leakage-safe accident-rate/ST dent portfolio."""
             matched = []
@@ -9758,6 +10060,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 _evaluate_current_motor_adopted_signal,
                 info,
             )
+            a1_ace_motor_123_corr_signal = _safe_signal_eval(
+                "a1_ace_motor_123_corr",
+                _evaluate_a1_ace_motor_123_corr_signal,
+                info,
+            )
             series13_adopted_signal = _safe_signal_eval(
                 "series13_adopted",
                 _evaluate_13_series_adopted_signal,
@@ -9978,6 +10285,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     g23_optb,
                     g23_watch,
                     tsu_suminoe_signal,
+                    a1_ace_motor_123_corr_signal,
                     current_motor_adopted_signal,
                     series13_adopted_signal,
                     accident_dent_adopted_signal,
@@ -10055,6 +10363,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     tri124_132_watch = _evaluate_tri124_132_trifecta_niche_watch(info)
                     shimonoseki_123_watch = _evaluate_shimonoseki_123_signal(info)
                     gamagori_watch = _evaluate_gamagori_adopted_signal(info)
+                    a1_ace_motor_123_corr_watch = _evaluate_a1_ace_motor_123_corr_signal(info)
                     current_motor_adopted_watch = _evaluate_current_motor_adopted_signal(info)
                     series13_adopted_watch = _evaluate_13_series_adopted_signal(info)
                     accident_dent_adopted_watch = _evaluate_accident_dent_adopted_signal(info)
@@ -10101,6 +10410,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         g23_watch,
                         shimonoseki_123_watch,
                         tsu_suminoe_signal,
+                        a1_ace_motor_123_corr_watch,
                         current_motor_adopted_watch,
                         series13_adopted_watch,
                         accident_dent_adopted_watch,
@@ -10510,6 +10820,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             logger.warning("course-fit live signals failed: %s", exc)
 
         data_status = _load_market_data_status()
+        try:
+            promoted_start_prediction_candidates = _apply_l4_reference_start_prediction_candidates(signals)
+            if promoted_start_prediction_candidates:
+                logger.info(
+                    "promoted %s L4 reference start-prediction candidates for %s",
+                    promoted_start_prediction_candidates,
+                    target_date,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("L4 reference start-prediction candidate promotion failed: %s", exc)
+
+        try:
+            annotated_start_prediction_filters = _apply_start_prediction_filter_annotations(signals)
+            if annotated_start_prediction_filters:
+                logger.info(
+                    "annotated %s adopted start-prediction filters for %s",
+                    annotated_start_prediction_filters,
+                    target_date,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("adopted start-prediction filter annotation failed: %s", exc)
 
         def _accident_watch_label(items: list[dict[str, Any]]) -> str:
             parts = []
@@ -10640,8 +10971,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
-    BOAT2_WALL_ADOPTED_CACHE_VERSION = "boat2_wall_adopted_v1"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v32"
+    BOAT2_WALL_ADOPTED_CACHE_VERSION = "boat2_wall_adopted_v2"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v33"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -10649,11 +10980,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "nov_wall_break_31_41_exa", "label": "11月 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "month": 11, "mode": "weak_score4", "shape": "1strong_m35", "recovery": 236.1, "hit_rate": 31.6, "n": 19, "tag": "11月 + 2号艇壁崩れ + 1号艇強M35"},
         {"key": "marugame_wall_hold_123_tri", "label": "丸亀 壁成立 1-2-3", "bet_type": "trifecta", "combos": ("1-2-3",), "bet_label": "3連単 1-2-3", "stadium": 15, "mode": "good_score4", "shape": "1strong_m35", "recovery": 195.8, "hit_rate": 31.6, "n": 19, "tag": "丸亀 + 2号艇壁成立 + 1号艇強M35"},
         {"key": "miyajima_wall_break_31_41_exa", "label": "宮島 壁崩れ 3/4攻め", "bet_type": "exacta", "combos": ("3-1", "4-1"), "bet_label": "2連単 3-1 / 4-1", "stadium": 17, "mode": "miyajima_weak_exact", "shape": "3strong", "recovery": 182.2, "hit_rate": 38.9, "n": 18, "tag": "宮島 + 2号艇壁崩れ精密 + 3号艇強"},
-        {"key": "july_wall_hold_12_exa", "label": "7月 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "month": 7, "mode": "good_score4", "shape": "3strong", "recovery": 169.6, "hit_rate": 38.5, "n": 26, "tag": "7月 + 2号艇壁成立 + 3号艇強"},
+        {"key": "july_wall_hold_12_exa", "label": "7月 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "month": 7, "mode": "good_score4", "shape": "3strong", "exclude_stadiums": (2, 3, 4), "recovery": 169.6, "hit_rate": 38.5, "n": 26, "tag": "7月 + 2号艇壁成立 + 3号艇強"},
         {"key": "shimonoseki_late_wall_hold_12_exa", "label": "下関後半 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "stadium": 19, "race_no_min": 7, "race_no_max": 12, "mode": "good_score4", "recovery": 166.4, "hit_rate": 56.0, "n": 25, "tag": "下関7-12R + 2号艇壁成立"},
         {"key": "hamanako_wall_hold_12_exa", "label": "浜名湖 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "stadium": 6, "mode": "good_score4", "shape": "1strong_2wall_low", "recovery": 162.1, "hit_rate": 47.4, "n": 19, "tag": "浜名湖 + 2号艇壁成立 + 1号艇強 + 2コース率低め"},
         {"key": "miyajima_wall_hold_123_132_tri", "label": "宮島 壁成立 123/132", "bet_type": "trifecta", "combos": ("1-2-3", "1-3-2"), "bet_label": "3連単 1-2-3 / 1-3-2", "stadium": 17, "mode": "good_score4", "shape": "3or4strong", "recovery": 155.7, "hit_rate": 33.3, "n": 21, "tag": "宮島 + 2号艇壁成立 + 3or4強"},
-        {"key": "g23_wall_hold_12_exa", "label": "G2/G3 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "grade_in": (3, 4), "mode": "good_score4", "shape": "1strong_3m35", "recovery": 153.2, "hit_rate": 42.1, "n": 19, "tag": "G2/G3 + 2号艇壁成立 + 1強3M35"},
+        {"key": "g23_wall_hold_12_exa", "label": "G2/G3 壁成立 1-2", "bet_type": "exacta", "combos": ("1-2",), "bet_label": "2連単 1-2", "grade_in": (3, 4), "mode": "good_score4", "shape": "1strong_3m35", "exclude_stadiums": (2, 3, 4), "recovery": 153.2, "hit_rate": 42.1, "n": 19, "tag": "G2/G3 + 2号艇壁成立 + 1強3M35"},
         {"key": "tamagawa_late_wall_hold_123_132_tri", "label": "多摩川後半 壁成立 123/132", "bet_type": "trifecta", "combos": ("1-2-3", "1-3-2"), "bet_label": "3連単 1-2-3 / 1-3-2", "stadium": 5, "race_no_min": 7, "race_no_max": 12, "mode": "good_score4", "recovery": 150.2, "hit_rate": 30.0, "n": 20, "tag": "多摩川7-12R + 2号艇壁成立"},
     )
     BET_UNIT_MAP = {
@@ -10999,6 +11330,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception:  # noqa: BLE001
             # cache テーブル無い (= migration 前) → 既存 SQL で全部計算
             pass
+        if force_full_scan or (os.getenv("BOATRACE_ADOPTED_SIGNAL_DUMP") or "").strip():
+            cached_by_date = {}
         # force_full_scan は l4_daily_summary の補完を止める意図で使う。
         # 検証済みの日別キャッシュまで全捨てすると、古い採用手法の月別実績が
         # 生SQL再計算だけに寄って欠けやすくなるため、キャッシュは利用する。
@@ -11587,6 +11920,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     level = str(l4.get("level") or "")
                     if level not in adopted_levels or level.startswith("morning_watch_"):
                         continue
+                    if l4.get("is_after_exhibition_out") or l4.get("start_prediction_filter_status") == "failed":
+                        continue
                     race_id = str(signal.get("race_id") or rid or "")
                     parsed_bets = _parse_market_signal_bets(l4)
                     if not race_id or not parsed_bets:
@@ -11827,7 +12162,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 avgst_v = float(avg_st_180 or 9.9)
             except (TypeError, ValueError):
                 avgst_v = 9.9
+            try:
+                boat4_avg_st_v = float(boat4_avg_st or 9.9)
+            except (TypeError, ValueError):
+                boat4_avg_st_v = 9.9
             escape_type_ok = cls == 1 and natl1_v >= 7.0 and local1_v >= 6.0 and avgst_v < 0.155
+            if (
+                is_done
+                and cls == 1
+                and stadium not in (5, 7, 12, 21, 24)
+                and b1_motor >= 45.0
+                and b2_motor >= 35.0
+                and int(boat4_class or 0) in (3, 4)
+                and boat4_avg_st_v >= 0.17
+            ):
+                _record_adopted_signal(
+                    race_id,
+                    rdate,
+                    "a1_ace_motor_123_corr_tri",
+                    145.7,
+                    tri_hit,
+                    int(tri_pay_v or 0),
+                )
             if is_done and grade == 5 and n_female == 0 and not is_rain_weather and escape_type_ok:
                 if stadium == 2 and b2_motor >= 45.0 and b1_motor >= 35.0 and race_id in odds_123_t5_5_10:
                     _record_adopted_signal(race_id, rdate, "toda_123_tri", 283.0, tri_hit, int(tri_pay_v or 0))
@@ -14387,6 +14743,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 return False
             if "stadium" in strategy and stadium_v != strategy["stadium"]:
                 return False
+            if "exclude_stadiums" in strategy and stadium_v in set(strategy["exclude_stadiums"]):
+                return False
             if "grade_in" in strategy and grade_v not in strategy["grade_in"]:
                 return False
             if strategy.get("race_no_min") is not None and (race_no_v is None or race_no_v < strategy["race_no_min"]):
@@ -14633,7 +14991,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("accident dent adopted daily stats failed: %s", e)
 
-        for adopted in _selected_adopted_signals_for_roi():
+        selected_adopted_signals_for_roi = _selected_adopted_signals_for_roi()
+        dump_path = (os.getenv("BOATRACE_ADOPTED_SIGNAL_DUMP") or "").strip()
+        if dump_path:
+            try:
+                with open(dump_path, "a", encoding="utf-8") as fp:
+                    for adopted_signal in selected_adopted_signals_for_roi:
+                        fp.write(json.dumps(adopted_signal, ensure_ascii=False, separators=(",", ":")) + "\n")
+            except Exception as e:
+                logger.warning("adopted signal dump failed: %s", e)
+
+        for adopted in selected_adopted_signals_for_roi:
             rdate = adopted["date"]
             d = by_date.get(rdate)
             if d is None:
@@ -15235,6 +15603,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return rows
 
     MARKET_SIGNAL_ADOPTED_LEVELS = (
+        "a1_ace_motor_123_corr_tri",
         "g23_optb_tri",
         "gmkf_132_tri",
         "shimonoseki_123_tri",
@@ -15345,6 +15714,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "morning_watch_amagasaki_12_acc3_fl3_exa",
         "morning_watch_omura_13_acc2_fl2_m23_exa",
         "morning_watch_marugame_13_pts2_m23_exa",
+        "l4_reference_start_top30_candidate",
     )
 
     MARKET_SIGNAL_EXTRA_SUPPORTED_LEVELS = (
@@ -15371,6 +15741,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     )
 
     ROI_STRATEGIES = (
+        {"key": "a1_ace_motor_123_corr_tri", "label": "1号艇A1エースM 1-2-3", "short": "a1ace123", "color": "#facc15", "timing": "previous_day"},
         {"key": "g23_optb_tri", "label": "G2/G3 1-2-3", "short": "g23", "color": "#ff006e", "timing": "same_day"},
         {"key": "gmkf_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
         {"key": "shimonoseki_123_tri", "label": "下関 1-2-3", "short": "shm123", "color": "#22c55e", "timing": "previous_day"},
