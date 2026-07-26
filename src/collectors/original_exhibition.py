@@ -22,11 +22,57 @@ logger = logging.getLogger(__name__)
 
 
 SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
+    1: [
+        (
+            "kiryu_cyokuzen",
+            "https://www.kiryu-kyotei.com/modules/yosou/cyokuzen.php?day={date}&race={rno}",
+        ),
+    ],
+    5: [
+        (
+            "tamagawa_oriten",
+            "https://boatrace-tamagawa.com/modules/yosou/oriten.php?day={date}&race={rno}",
+        ),
+    ],
+    6: [
+        (
+            "hamanako_cyokuzen",
+            "https://www.boatrace-hamanako.jp/modules/yosou/group-cyokuzen.php?day={date}&race={rno}&kind=2",
+        ),
+    ],
+    11: [
+        (
+            "biwako_cyokuzen",
+            "https://www.boatrace-biwako.jp/modules/yosou/cyokuzen.php?day={date}&race={rno}&kind=2",
+        ),
+    ],
     # Amagasaki introduced original exhibition times (1周 / まわり足) in 2021.
     13: [
+        (
+            "amagasaki_cyokuzen",
+            "https://boatrace-amagasaki.jp/modules/yosou/group-cyokuzen.php?day={date}&race={rno}&kind=2",
+        ),
         ("amagasaki_raceinfo", "https://www.boatrace-amagasaki.jp/modules/raceinfo/?page=index_racejoho&target_day={date}&rno={rno}"),
         ("amagasaki_raceinfo", "https://www.boatrace-amagasaki.jp/modules/raceinfo/?page=index_raceinfo&target_day={date}&rno={rno}"),
         ("amagasaki_raceinfo", "https://www.boatrace-amagasaki.jp/modules/raceinfo/?page=index&target_day={date}&rno={rno}"),
+    ],
+    17: [
+        (
+            "miyajima_kaisai_reload",
+            "https://www.boatrace-miyajima.com/race_common/require/kaisai_reload.php?race={rno}&date={date}",
+        ),
+    ],
+    18: [
+        (
+            "tokuyama_tenji_keisoku",
+            "https://www.boatrace-tokuyama.jp/tenji-keisoku/m/?day={date}&race={rno}",
+        ),
+    ],
+    22: [
+        (
+            "fukuoka_tenji_info",
+            "https://www.boatrace-fukuoka.com/modules/yosou/tenji_info.php?day={date}&race={rno}",
+        ),
     ],
     # Tsu and Edogawa pages are kept as candidates. Some dates only expose
     # archive/text pages, so rows are saved only when the parser finds a table.
@@ -35,9 +81,33 @@ SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
         ("tsu_raceinfo", "https://www.boatrace-tsu.com/modules/raceinfo/?page=index_raceinfo&target_day={date}&rno={rno}"),
         ("tsu_raceinfo", "https://www.boatrace-tsu.com/modules/raceinfo/?page=index&target_day={date}&rno={rno}"),
     ],
+    10: [
+        (
+            "mikuni_cyokuzen",
+            "https://www.boatrace-mikuni.jp/modules/yosou/group-cyokuzen.php?day={date}&race={rno}&kind=2",
+        ),
+    ],
+    16: [
+        (
+            "kojima_hjpc",
+            "https://hj.kojima-yosou.com/hjpc/index/{date}/{rno:02d}",
+        ),
+    ],
     3: [
         ("edogawa_raceinfo", "https://www.boatrace-edogawa.com/modules/kouryaku/race_betsu.php?day={date}&rno={rno}"),
         ("edogawa_raceinfo", "https://www.boatrace-edogawa.com/modules/raceresult/index.php?day={date}&rno={rno}"),
+    ],
+    # Omura keeps race-by-race original exhibition values in its syussou
+    # archive. The page includes lap, turn and straight times for all six boats.
+    24: [
+        (
+            "omura_syussou",
+            "https://www.omurakyotei.jp/yosou/sp/syussou/?day={date}&race={rno:02d}",
+        ),
+        (
+            "omura_syussou",
+            "https://omurakyotei.jp/yosou/sp/syussou/?day={date}&race={rno:02d}",
+        ),
     ],
 }
 
@@ -68,7 +138,7 @@ VENUE_DOMAINS: dict[int, str] = {
     21: "boatrace-ashiya.com",
     22: "boatrace-fukuoka.com",
     23: "boatrace-karatsu.jp",
-    24: "boatrace-omura.jp",
+    24: "omurakyotei.jp",
 }
 
 
@@ -109,12 +179,14 @@ _ALL_SOURCE_PATTERNS[3] = [
     *_ALL_SOURCE_PATTERNS[3],
 ]
 
-# Keep any hand-tuned patterns from the original map, but probe the full venue set.
+# Probe hand-tuned patterns before generic candidates. Confirmed venue adapters
+# should not pay for several known-dead generic requests first.
 for _stadium, _patterns in SOURCE_PATTERNS.items():
-    _ALL_SOURCE_PATTERNS.setdefault(_stadium, [])
-    for _pattern in _patterns:
-        if _pattern not in _ALL_SOURCE_PATTERNS[_stadium]:
-            _ALL_SOURCE_PATTERNS[_stadium].append(_pattern)
+    _generic = _ALL_SOURCE_PATTERNS.setdefault(_stadium, [])
+    _ALL_SOURCE_PATTERNS[_stadium] = [
+        *_patterns,
+        *(_pattern for _pattern in _generic if _pattern not in _patterns),
+    ]
 SOURCE_PATTERNS = _ALL_SOURCE_PATTERNS
 
 

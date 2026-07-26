@@ -69,8 +69,8 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v21"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v11"
+MARKET_SIGNALS_CACHE_VERSION = "v22"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v12"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -4518,6 +4518,45 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             pass
                         return {}
 
+                def _load_exact_snapshot_band_map(
+                    combination: str,
+                    min_odds: int,
+                    max_odds: int,
+                    snapshot_label: str,
+                ) -> dict[str, int]:
+                    """Load one exact pre-race snapshot without later-odds fallback."""
+                    try:
+                        cur = conn.execute(
+                            """
+                            SELECT r.race_id, o.odds * 100 AS payout
+                              FROM races r
+                              JOIN odds_trifecta o ON r.race_id = o.race_id
+                             WHERE r.race_date = ?
+                               AND o.combination = ?
+                               AND o.snapshot_label = ?
+                            """,
+                            (target_date, combination, snapshot_label),
+                        )
+                        out: dict[str, int] = {}
+                        for rid, payout in cur.fetchall():
+                            if payout and min_odds <= int(payout) < max_odds:
+                                out[rid] = int(payout)
+                        return out
+                    except Exception as e:
+                        logger.warning(
+                            "exact snapshot map failed [%s %s-%s %s]: %s",
+                            combination,
+                            min_odds,
+                            max_odds,
+                            snapshot_label,
+                            e,
+                        )
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                        return {}
+
                 toda123_live = _load_live_band_map("1-2-3", 500, 1000, "T-5min")
                 tsu143_live = _load_live_band_map("1-4-3", 500, 1000, "T-5min")
                 kojima123_live = _load_live_band_map("1-2-3", 200, 500, "T-5min")
@@ -4528,6 +4567,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 edogawa132_weak4_t5_live = _load_live_band_map("1-3-2", 1000, 1500, "T-5min")
                 karatsu123_weak4_t5_live = _load_live_band_map("1-2-3", 500, 1500, "T-5min")
                 suminoe124_weak3_t5_live = _load_live_band_map("1-2-4", 700, 1500, "T-5min")
+                omura124_original_t5_live = _load_exact_snapshot_band_map(
+                    "1-2-4", 1000, 2000, "T-5min"
+                )
 
                 try:
                     cur = conn.execute("""
@@ -7894,6 +7936,51 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 })
             return _pick_best_market_signal(*matched)
 
+        def _evaluate_omura_124_original_signal(
+            race_id: str,
+            stadium_number,
+            wind_speed,
+        ):
+            from src.evaluation.omura_124_original_strategy import (
+                HIT_RATE,
+                RECOVERY_RATE,
+                SAMPLE_SIZE,
+                STRATEGY_KEY,
+                matches_omura_124_original,
+            )
+
+            ranks = original_ex_bulk.get(race_id, {})
+            lap_rank = ranks.get("lap_rank", {}).get(4)
+            straight_rank = ranks.get("straight_rank", {}).get(4)
+            t5_payout = omura124_original_t5_live.get(race_id)
+            if not matches_omura_124_original(
+                stadium_number=stadium_number,
+                boat4_straight_rank=straight_rank,
+                boat4_lap_rank=lap_rank,
+                wind_speed=wind_speed,
+                t5_payout=t5_payout,
+            ):
+                return None
+            return {
+                "level": STRATEGY_KEY,
+                "label": "大村 展示足 1-2-4",
+                "bet": "3連単 1-2-4",
+                "rank": "trifecta_niche",
+                "rank_label": "展示後採用",
+                "rank_emoji": "3連単",
+                "recovery": RECOVERY_RATE,
+                "n": SAMPLE_SIZE,
+                "hit_rate": HIT_RATE,
+                "name": "大村展示足124",
+                "tag": (
+                    f"4号艇 直線{straight_rank}位 / 周回{lap_rank}位"
+                    f" / 風{float(wind_speed):g}m / T-5 {t5_payout / 100:.1f}倍"
+                ),
+                "tetsuban_score": 8,
+                "is_display_confirmed": True,
+                "timing_bucket": "same_day",
+            }
+
         def _evaluate_current_motor_adopted_signal(ctx: dict | None):
             """Evaluate newly adopted current-motor-period strategies."""
             if not ctx:
@@ -9726,6 +9813,45 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             except Exception:  # noqa: BLE001
                 return {}
 
+        def _bulk_load_original_exhibition_ranks(date_iso):
+            """Load original exhibition times and calculate per-race ranks."""
+            from src.evaluation.omura_124_original_strategy import (
+                rank_times_by_boat,
+            )
+
+            try:
+                with db_connect() as bconn:
+                    rows = bconn.execute(
+                        """
+                        SELECT x.race_id, x.boat_number,
+                               MIN(x.lap_time) AS lap_time,
+                               MIN(x.straight_time) AS straight_time
+                          FROM race_original_exhibitions x
+                          JOIN races r ON r.race_id = x.race_id
+                         WHERE r.race_date = ?
+                           AND r.stadium_number = 24
+                         GROUP BY x.race_id, x.boat_number
+                        """,
+                        (date_iso,),
+                    ).fetchall()
+                raw: dict[str, dict[str, dict[int, Optional[float]]]] = {}
+                for rid_v, boat_number, lap_time, straight_time in rows:
+                    values = raw.setdefault(
+                        rid_v, {"lap": {}, "straight": {}}
+                    )
+                    values["lap"][int(boat_number)] = lap_time
+                    values["straight"][int(boat_number)] = straight_time
+                return {
+                    rid_v: {
+                        "lap_rank": rank_times_by_boat(values["lap"]),
+                        "straight_rank": rank_times_by_boat(values["straight"]),
+                    }
+                    for rid_v, values in raw.items()
+                }
+            except Exception as e:  # noqa: BLE001
+                logger.warning("original exhibition rank bulk load failed: %s", e)
+                return {}
+
         def _compute_exhibition_bonus_for_l4(rid, ex_by_race):
             """L4 候補 race に対する展示タイム補助点を計算.
 
@@ -10178,6 +10304,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # bulk クエリに削減. 旧実装で 1race ≈ 100ms 程度かかっていた
         # 部分が dict lookup (O(1)) になる.
         ex_bulk = _bulk_load_exhibition_times(target_date)
+        original_ex_bulk = _bulk_load_original_exhibition_ranks(target_date)
 
         for rid, info in race_iterable.items():
             stadium = info.get("stadium")
@@ -10265,6 +10392,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "boat2_wall_adopted",
                 _evaluate_boat2_wall_adopted_signal,
                 info,
+            )
+            omura_124_original_signal = _safe_signal_eval(
+                "omura_124_original_t5",
+                _evaluate_omura_124_original_signal,
+                rid,
+                stadium,
+                wind_speed,
             )
 
             g23_optb = _safe_signal_eval(
@@ -10476,6 +10610,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     series13_adopted_signal,
                     accident_dent_adopted_signal,
                     boat2_wall_adopted_signal,
+                    omura_124_original_signal,
                     candidate_l4,
                     gamagori_adopted_signal,
                 )
@@ -10892,6 +11027,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     series13_adopted_watch,
                     accident_dent_adopted_watch,
                     boat2_wall_adopted_watch,
+                    omura_124_original_signal,
                     win_niche,
                     candidate_l4,
                     gamagori_watch,
@@ -11162,6 +11298,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION = "edogawa_132_weak4_t5_tri_v1"
     KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION = "karatsu_123_weak4_t5_tri_v1"
     SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION = "suminoe_124_weak3_t5_tri_v1"
+    OMURA_124_ORIGINAL_T5_TRI_CACHE_VERSION = "omura_124_original_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
     BOAT2_WALL_ADOPTED_CACHE_VERSION = "boat2_wall_adopted_v2"
     ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v33"
@@ -11241,6 +11378,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ("_edogawa_132_weak4_t5_tri_version", EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION),
             ("_karatsu_123_weak4_t5_tri_version", KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION),
             ("_suminoe_124_weak3_t5_tri_version", SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION),
+            ("_omura_124_original_t5_tri_version", OMURA_124_ORIGINAL_T5_TRI_CACHE_VERSION),
             ("_tokoname_12_late_a_exa_version", TOKONAME_12_LATE_A_EXA_CACHE_VERSION),
             ("_tokoname_14_winter_exa_version", TOKONAME_14_WINTER_EXA_CACHE_VERSION),
             ("_tokoname_123_late_exst_tri_version", TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION),
@@ -11909,9 +12047,51 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             odds_123_t5_2_5 = _load_snapshot_band_map("1-2-3", 2.0, 5.0, ("T-5min",))
             odds_123_t1_2_5 = _load_snapshot_band_map("1-2-3", 2.0, 5.0, ("T-1min",))
             odds_124_t5_7_15 = _load_snapshot_band_map("1-2-4", 7.0, 15.0, ("T-5min",))
+            odds_124_t5_10_20 = _load_snapshot_band_map("1-2-4", 10.0, 20.0, ("T-5min",))
             odds_132_t1_2_5 = _load_snapshot_band_map("1-3-2", 2.0, 5.0, ("T-1min",))
             odds_132_t5_10_15 = _load_snapshot_band_map("1-3-2", 10.0, 15.0, ("T-5min",))
             odds_143_t5_5_10 = _load_snapshot_band_map("1-4-3", 5.0, 10.0, ("T-5min",))
+
+            from src.evaluation.omura_124_original_strategy import (
+                matches_omura_124_original,
+                rank_times_by_boat,
+            )
+
+            try:
+                original_rows = conn.execute(
+                    """
+                    SELECT x.race_id, x.boat_number,
+                           MIN(x.lap_time) AS lap_time,
+                           MIN(x.straight_time) AS straight_time
+                      FROM race_original_exhibitions x
+                      JOIN races r ON r.race_id = x.race_id
+                     WHERE r.race_date BETWEEN ? AND ?
+                       AND r.stadium_number = 24
+                     GROUP BY x.race_id, x.boat_number
+                    """,
+                    (from_date, to_date),
+                ).fetchall()
+            except Exception as e:
+                logger.warning("Omura original exhibition ROI load failed: %s", e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                original_rows = []
+            original_raw: dict[str, dict[str, dict[int, Optional[float]]]] = {}
+            for rid_v, boat_number, lap_time, straight_time in original_rows:
+                values = original_raw.setdefault(
+                    rid_v, {"lap": {}, "straight": {}}
+                )
+                values["lap"][int(boat_number)] = lap_time
+                values["straight"][int(boat_number)] = straight_time
+            original_rank_history = {
+                rid_v: {
+                    "lap_rank": rank_times_by_boat(values["lap"]),
+                    "straight_rank": rank_times_by_boat(values["straight"]),
+                }
+                for rid_v, values in original_raw.items()
+            }
 
         # 日別に集計
         by_date: dict[str, dict] = {}
@@ -12282,6 +12462,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 d.setdefault(f"{key}_hits", 0)
                 d.setdefault(f"{key}_pay", 0)
             tri_pay_v = int(tri_pay or 0) if tri_hit else 0
+            original_ranks = original_rank_history.get(race_id, {})
+            if is_done and matches_omura_124_original(
+                stadium_number=stadium,
+                boat4_straight_rank=original_ranks.get("straight_rank", {}).get(4),
+                boat4_lap_rank=original_ranks.get("lap_rank", {}).get(4),
+                wind_speed=wind_speed,
+                t5_payout=odds_124_t5_10_20.get(race_id),
+            ):
+                _record_adopted_signal(
+                    race_id,
+                    rdate,
+                    "omura_124_original_t5_tri",
+                    294.4,
+                    w1 == 1 and w2 == 2 and w3 == 4,
+                    int(pay_124 or 0),
+                )
 
             try:
                 b2_motor = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
@@ -15279,6 +15475,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_edogawa_132_weak4_t5_tri_version"] = EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION
                         day_d["_karatsu_123_weak4_t5_tri_version"] = KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION
                         day_d["_suminoe_124_weak3_t5_tri_version"] = SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION
+                        day_d["_omura_124_original_t5_tri_version"] = OMURA_124_ORIGINAL_T5_TRI_CACHE_VERSION
                         day_d["_tokoname_12_late_a_exa_version"] = TOKONAME_12_LATE_A_EXA_CACHE_VERSION
                         day_d["_tokoname_14_winter_exa_version"] = TOKONAME_14_WINTER_EXA_CACHE_VERSION
                         day_d["_tokoname_123_late_exst_tri_version"] = TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION
@@ -15852,6 +16049,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "edogawa_132_weak4_t5_tri",
         "karatsu_123_weak4_t5_tri",
         "suminoe_124_weak3_t5_tri",
+        "omura_124_original_t5_tri",
         "tokoname_coursefit_boat2_win",
         "tokoname_coursefit_boat3_general_win",
         "biwako_coursefit_boat4_gap10_general_win",
@@ -15980,6 +16178,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "edogawa_132_weak4_t5_tri", "label": "江戸川 1-3-2 弱4型", "short": "edg132w4", "color": "#f43f5e", "timing": "same_day"},
         {"key": "karatsu_123_weak4_t5_tri", "label": "唐津 1-2-3 弱4型", "short": "kar123w4", "color": "#06b6d4", "timing": "same_day"},
         {"key": "suminoe_124_weak3_t5_tri", "label": "住之江 1-2-4 弱3型", "short": "sum124w3", "color": "#f59e0b", "timing": "same_day"},
+        {"key": "omura_124_original_t5_tri", "label": "大村 展示足 1-2-4", "short": "omu124orig", "color": "#06b6d4", "timing": "same_day"},
     )
     ROI_STRATEGIES = ROI_STRATEGIES + (
         {"key": "tamagawa_13_acc2n30_m3_40_exa", "label": "多摩川 1-3 事故2型", "short": "tama13a", "color": "#22c55e", "timing": "previous_day"},
@@ -16050,6 +16249,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "omura_123_tri": "omura",
         "omura_132_tri": "omura",
         "omura_132_weak2_ex3_tri": "omura",
+        "omura_124_original_t5_tri": "omura",
         "ashiya_boat4_exa": "ashiya",
         "hamanako_14_exa": "hamanako",
         "tokuyama_123_tri": "tokuyama",
