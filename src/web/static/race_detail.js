@@ -15,6 +15,7 @@
   const posClass = (value) => value ? `f-${Number(value)}` : "";
   const toneClass = (tone) => tone === "up" ? "is-up" : tone === "down" ? "is-down" : "is-flat";
   const historyCache = new Map();
+  const racerDetailCache = new Map();
 
   const meter = (label, value) => {
     const safeValue = value == null ? null : Math.max(0, Math.min(100, Number(value)));
@@ -152,7 +153,6 @@
         <td>${num(current.exhibition_time)}</td>
         <td>${num(current.start_timing_exhibition)}</td>
         <td><span class="motor-history-inline ${toneClass(liveSignal.trend_tone)}">${esc(signalLabel(liveSignal))}</span></td>
-        <td class="left">-</td>
       </tr>
     `;
 
@@ -161,13 +161,16 @@
         <td>${esc(r.race_date)}</td>
         <td>${esc(r.race_number)}R</td>
         <td><span class="lane lane-${esc(r.boat_number)} motor-mini-lane">${esc(r.boat_number)}</span></td>
-        <td class="left">${esc(r.racer_name)}<div class="racer-meta">No. ${esc(r.racer_number)}</div></td>
+        <td class="left">
+          ${esc(r.racer_name)}
+          <div class="racer-meta">No. ${esc(r.racer_number)}</div>
+          ${r.kimarite ? `<span class="kimarite-mini">${esc(r.kimarite)}</span>` : ""}
+        </td>
         <td>${esc(r.course_number ?? "-")}</td>
         <td>${num(r.start_timing)}</td>
         <td>${num(r.exhibition_time)}</td>
         <td>${num(r.start_timing_exhibition)}</td>
         <td><span class="finish-badge ${posClass(r.finishing_position)}">${esc(r.finishing_position ?? "-")}着</span></td>
-        <td class="left">${esc(r.kimarite || "-")}</td>
       </tr>
     `).join("");
 
@@ -185,12 +188,43 @@
           <thead>
             <tr>
               <th>日付</th><th>R</th><th>艇</th><th class="left">選手</th>
-              <th>進入</th><th>ST</th><th>展示T</th><th>展示ST</th><th>着</th><th class="left">決まり手</th>
+              <th>進入</th><th>ST</th><th>展示T</th><th>展示ST</th><th>着</th>
             </tr>
           </thead>
           <tbody>${currentRowHtml}${body}</tbody>
         </table>
       </div>
+    `;
+  };
+
+  const courseStatsGrid = (title, rows) => `
+    <div class="racer-course-block">
+      <div class="racer-course-title">${esc(title)}</div>
+      <div class="racer-course-grid">
+        ${(rows || []).map((r) => `
+          <div class="racer-course-card">
+            <span>${esc(r.course)}C</span>
+            <b>${pct(r.win_rate)}</b>
+            <small>${esc(r.wins ?? 0)}/${esc(r.starts ?? 0)}勝</small>
+            <em>直近10ST ${r.recent10_avg_st == null ? "-" : Number(r.recent10_avg_st).toFixed(3)} (${esc(r.recent10_st_n ?? 0)})</em>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+
+  const renderRacerDetail = (data) => {
+    const current = data.current || {};
+    return `
+      <div class="racer-detail-head">
+        <div>
+          <strong>${esc(current.racer_name || "-")}</strong>
+          <span>No. ${esc(current.racer_number || "-")} / ${esc(current.class_label || "-")} / ${esc(current.stadium_name || "-")}</span>
+        </div>
+        <small>${esc(data.note || "")}</small>
+      </div>
+      ${courseStatsGrid(`${esc(current.stadium_name || "当地")} 1C-6C 1着率`, data.venue_courses)}
+      ${courseStatsGrid("全会場 1C-6C 1着率", data.national_courses)}
     `;
   };
 
@@ -222,6 +256,51 @@
     }
     return historyCache.get(key);
   };
+
+  const fetchRacerDetail = (button) => {
+    const boatNumber = button.dataset.boatNumber;
+    const raceId = button.dataset.raceId;
+    const key = `${raceId}:${boatNumber}`;
+    if (!racerDetailCache.has(key)) {
+      racerDetailCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/racer-detail/${boatNumber}?v=${encodeURIComponent(staticVersion)}`, {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        cache: "force-cache",
+      }).then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }).catch((err) => {
+        racerDetailCache.delete(key);
+        throw err;
+      }));
+    }
+    return racerDetailCache.get(key);
+  };
+
+  document.querySelectorAll(".racer-detail-btn").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const boatNumber = button.dataset.boatNumber;
+      const row = document.getElementById(`racer-detail-row-${boatNumber}`);
+      const panel = row?.querySelector("[data-racer-detail-panel]");
+      if (!row || !panel) return;
+      if (!row.hidden && panel.dataset.loaded === "1") {
+        row.hidden = true;
+        button.setAttribute("aria-expanded", "false");
+        return;
+      }
+      row.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      if (panel.dataset.loaded === "1") return;
+      panel.innerHTML = '<div class="motor-history-loading">選手詳細を読み込み中...</div>';
+      try {
+        const data = await fetchRacerDetail(button);
+        panel.innerHTML = renderRacerDetail(data);
+        panel.dataset.loaded = "1";
+      } catch (err) {
+        panel.innerHTML = `<div class="motor-history-empty">選手詳細の取得に失敗しました: ${esc(err.message || "")}</div>`;
+      }
+    });
+  });
 
   document.querySelectorAll(".motor-history-btn").forEach((button) => {
     button.addEventListener("click", async () => {

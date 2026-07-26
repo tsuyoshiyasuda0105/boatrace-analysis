@@ -769,6 +769,179 @@ def _race_entry_fallback_rows(race_id: str) -> list[dict]:
     return fallback
 
 
+def _motor_fact_grade(score: Optional[float]) -> dict[str, Any]:
+    if score is None:
+        return {"label": "-", "tone": "unknown", "score": None}
+    score = float(score)
+    if score >= 68:
+        return {"label": "◎", "tone": "aa", "score": round(score, 1)}
+    if score >= 55:
+        return {"label": "〇", "tone": "good", "score": round(score, 1)}
+    if score >= 40:
+        return {"label": "△", "tone": "flat", "score": round(score, 1)}
+    return {"label": "×", "tone": "weak", "score": round(score, 1)}
+
+
+def _attach_motor_fact_grades(race_id: str, preds: list[dict], info: Optional[dict[str, Any]] = None) -> None:
+    """Attach lightweight pre-result motor labels for the race table."""
+    if not preds:
+        return
+    info = info or _race_basic_info(race_id)
+    ex_vals = [_safe_float(p.get("exhibition_time")) for p in preds]
+    ex_vals = [v for v in ex_vals if v is not None]
+    ex_st_vals = [_safe_float(p.get("start_timing_exhibition")) for p in preds]
+    ex_st_vals = [v for v in ex_st_vals if v is not None]
+    motor_vals = [_safe_float(p.get("assigned_motor_top_2_percent")) for p in preds]
+    motor_vals = [v for v in motor_vals if v is not None]
+    avg_ex = _mean_or_none(ex_vals)
+    avg_ex_st = _mean_or_none(ex_st_vals)
+    avg_motor = _mean_or_none(motor_vals)
+
+    ace_threshold = None
+    if info:
+        cycle_start = _motor_cycle_start(info["race_date"], int(info["stadium_number"]))
+        params: list[Any] = [info["stadium_number"], info["race_date"]]
+        cycle_sql = ""
+        if cycle_start:
+            cycle_sql = "AND r.race_date >= ?"
+            params.append(cycle_start)
+        try:
+            with db_connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT MAX(e.assigned_motor_top_2_percent)
+                      FROM races r
+                      JOIN race_entries e ON e.race_id = r.race_id
+                     WHERE r.stadium_number = ?
+                       AND r.race_date <= ?
+                       {cycle_sql}
+                       AND e.assigned_motor_number IS NOT NULL
+                       AND e.assigned_motor_top_2_percent IS NOT NULL
+                     GROUP BY e.assigned_motor_number
+                    """,
+                    tuple(params),
+                ).fetchall()
+            rates = sorted(float(r[0]) for r in rows if r and r[0] is not None)
+            if rates:
+                idx = max(0, min(len(rates) - 1, int(len(rates) * 0.95)))
+                ace_threshold = rates[idx]
+        except Exception:
+            logger.debug("ace motor threshold failed: %s", race_id, exc_info=True)
+
+    for p in preds:
+        ex_time = _safe_float(p.get("exhibition_time"))
+        ex_st = _safe_float(p.get("start_timing_exhibition"))
+        motor_rate = _safe_float(p.get("assigned_motor_top_2_percent"))
+
+        dash_score = None
+        if ex_st is not None or ex_time is not None:
+            dash_score = 50.0
+            if ex_st is not None and avg_ex_st is not None:
+                dash_score += _clamp((avg_ex_st - ex_st) / 0.08 * 24.0, -24.0, 24.0)
+            if ex_time is not None and avg_ex is not None:
+                dash_score += _clamp((avg_ex - ex_time) / 0.12 * 12.0, -12.0, 12.0)
+
+        turn_score = None
+        if ex_time is not None and avg_ex is not None:
+            turn_score = 50.0 + _clamp((avg_ex - ex_time) / 0.12 * 30.0, -30.0, 30.0)
+            if ex_st is not None and avg_ex_st is not None:
+                turn_score += _clamp((avg_ex_st - ex_st) / 0.10 * 8.0, -8.0, 8.0)
+
+        straight_score = None
+        if ex_time is not None or motor_rate is not None:
+            straight_score = 50.0
+            if ex_time is not None and avg_ex is not None:
+                straight_score += _clamp((avg_ex - ex_time) / 0.12 * 22.0, -22.0, 22.0)
+            if motor_rate is not None and avg_motor is not None:
+                straight_score += _clamp((motor_rate - avg_motor) / 20.0 * 14.0, -14.0, 14.0)
+
+        p["motor_dash_grade"] = _motor_fact_grade(dash_score)
+        p["motor_turn_grade"] = _motor_fact_grade(turn_score)
+        p["motor_straight_grade"] = _motor_fact_grade(straight_score)
+        p["is_ace_motor"] = bool(
+            motor_rate is not None
+            and ace_threshold is not None
+            and motor_rate >= ace_threshold
+        )
+
+
+def _racer_course_detail_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    if boat_number < 1 or boat_number > 6:
+        return None
+    info = info or _race_basic_info(race_id)
+    if not info:
+        return None
+    with db_connect() as conn:
+        current = conn.execute(
+            """
+            SELECT racer_number, racer_name, class_number, branch_number
+              FROM race_entries
+             WHERE race_id = ? AND boat_number = ?
+            """,
+            (race_id, boat_number),
+        ).fetchone()
+        if not current:
+            return None
+        racer_number, racer_name, class_number, branch_number = current
+        rows = conn.execute(
+            """
+            SELECT r.stadium_number, r.race_date, r.race_number,
+                   COALESCE(NULLIF(rr.course_number, 0), e.boat_number) AS course_number,
+                   rr.finishing_position, rr.start_timing
+              FROM races r
+              JOIN race_entries e ON e.race_id = r.race_id
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+             WHERE e.racer_number = ?
+               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+               AND rr.finishing_position IS NOT NULL
+             ORDER BY r.race_date DESC, r.race_number DESC
+             LIMIT 800
+            """,
+            (racer_number, info["race_date"], info["race_date"], info["race_number"]),
+        ).fetchall()
+
+    def build_stats(venue_only: bool) -> list[dict[str, Any]]:
+        out = []
+        for course in range(1, 7):
+            targets = [
+                r for r in rows
+                if _safe_int(r[3]) == course
+                and (not venue_only or _safe_int(r[0]) == _safe_int(info["stadium_number"]))
+            ]
+            starts = len(targets)
+            wins = sum(1 for r in targets if _safe_int(r[4]) == 1)
+            st_recent = [float(r[5]) for r in targets if r[5] is not None][:10]
+            out.append(
+                {
+                    "course": course,
+                    "starts": starts,
+                    "wins": wins,
+                    "win_rate": round(wins / starts * 100.0, 1) if starts else None,
+                    "recent10_avg_st": round(_mean_or_none(st_recent), 3) if st_recent else None,
+                    "recent10_st_n": len(st_recent),
+                }
+            )
+        return out
+
+    return {
+        "current": {
+            "race_id": race_id,
+            "boat_number": boat_number,
+            "racer_number": racer_number,
+            "racer_name": racer_name,
+            "class_label": _class_label(class_number),
+            "branch_number": branch_number,
+            "stadium_number": info["stadium_number"],
+            "stadium_name": info.get("stadium_name", ""),
+        },
+        "venue_courses": build_stats(venue_only=True),
+        "national_courses": build_stats(venue_only=False),
+        "note": "現在レースより前の結果だけで集計しています。",
+    }
+
+
 @lru_cache(maxsize=20000)
 def _racer_names(race_id: str) -> dict[int, str]:
     with db_connect() as conn:
@@ -3054,6 +3227,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     fallback_notice = "予測データ未投入のため、出走表ベースの詳細を表示しています。"
             _attach_kimarite_skill_tags(race_id, preds)
             _attach_accident_watch_tags(race_id, preds)
+            _attach_motor_fact_grades(race_id, preds, info=info)
             t_tags = time.perf_counter() - t1
         except Exception as e:
             logger.exception("prediction failed: %s", race_id)
@@ -3073,6 +3247,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if preds:
                 _attach_kimarite_skill_tags(race_id, preds)
                 _attach_accident_watch_tags(race_id, preds)
+                _attach_motor_fact_grades(race_id, preds, info=info)
                 html = render_template(
                     "race.html",
                     info=info,
@@ -3331,6 +3506,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if cached_payload is not None:
             return jsonify(cached_payload)
         payload = _motor_history_payload(race_id, boat_number, info=info)
+        if payload is None:
+            return jsonify({"error": "entry not found"}), 404
+        _write_json_cache(cache_key, payload)
+        return jsonify(payload)
+
+    @app.route("/api/race/<race_id>/racer-detail/<int:boat_number>")
+    @member_only_api
+    @cached(ttl=1800, past_ttl=86400)
+    def race_racer_detail(race_id: str, boat_number: int):
+        if boat_number < 1 or boat_number > 6:
+            return jsonify({"error": "invalid boat_number"}), 400
+        info = _race_basic_info(race_id)
+        if not info:
+            return jsonify({"error": "entry not found"}), 404
+        today_iso = date.today().isoformat()
+        cache_key = f"racer_detail:{race_id}:{boat_number}"
+        cached_payload = _read_json_cache(
+            cache_key,
+            1800 if info["race_date"] >= today_iso else 86400,
+        )
+        if cached_payload is not None:
+            return jsonify(cached_payload)
+        payload = _racer_course_detail_payload(race_id, boat_number, info=info)
         if payload is None:
             return jsonify({"error": "entry not found"}), 404
         _write_json_cache(cache_key, payload)

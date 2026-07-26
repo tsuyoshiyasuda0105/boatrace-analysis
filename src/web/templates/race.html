@@ -430,9 +430,9 @@
             <th>モーター2連率</th>
             <th>展示T</th>
             <th>展示ST</th>
-            <th>1着確率</th>
-            <th>2着以内</th>
-            <th>3着以内</th>
+            <th>出足</th>
+            <th>回り足</th>
+            <th>直線</th>
             {% if has_result_col %}
               <th>結果</th>
             {% endif %}
@@ -447,7 +447,17 @@
               <td class="left">
                 <span class="lane lane-{{ p.boat_number }}">{{ p.boat_number }}</span>
                 <span style="display: inline-block; vertical-align: middle;">
-                  <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
+                  <button
+                    type="button"
+                    class="racer-detail-btn"
+                    data-race-id="{{ info.race_id }}"
+                    data-boat-number="{{ p.boat_number }}"
+                    aria-expanded="false"
+                    aria-controls="racer-detail-row-{{ p.boat_number }}"
+                    title="選手のコース別成績を表示"
+                  >
+                    <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
+                  </button>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
                   {% if p.has_accident_watch %}
                     {% set accident_tone = 'unknown' %}
@@ -497,6 +507,9 @@
                       {% if p.assigned_motor_number is defined and p.assigned_motor_number is not none %}
                         <span class="motor-no">M{{ p.assigned_motor_number }}</span>
                       {% endif %}
+                      {% if p.is_ace_motor %}
+                        <span class="ace-motor-tag">ACE</span>
+                      {% endif %}
                     </button>
                     <div class="motor-inline-signals" data-motor-inline-signals="{{ p.boat_number }}"></div>
                   </div>
@@ -507,22 +520,16 @@
               <td>{{ '%.2f' | format(p.exhibition_time) if p.exhibition_time is not none else '—' }}</td>
               <td>{{ '%.2f' | format(p.start_timing_exhibition) if p.start_timing_exhibition is not none else '—' }}</td>
               <td>
-                <div class="prob-cell {% if loop.index == 1 %}first{% endif %}">
-                  <div class="prob-bar"><span style="width: {{ (p.prob_first * 100) | round(1) }}%"></span></div>
-                  <span class="prob-num">{{ '%.1f' | format(p.prob_first * 100) }}%</span>
-                </div>
+                {% set dash = p.motor_dash_grade if p.motor_dash_grade is defined else {'label': '-', 'tone': 'unknown'} %}
+                <span class="foot-grade is-{{ dash.tone }}" title="推定出足 {{ dash.score if dash.score is not none else '-' }}pt">{{ dash.label }}</span>
               </td>
               <td>
-                <div class="prob-cell">
-                  <div class="prob-bar"><span style="width: {{ (p.prob_top_2 * 100) | round(1) }}%"></span></div>
-                  <span class="prob-num">{{ '%.1f' | format(p.prob_top_2 * 100) }}%</span>
-                </div>
+                {% set turn = p.motor_turn_grade if p.motor_turn_grade is defined else {'label': '-', 'tone': 'unknown'} %}
+                <span class="foot-grade is-{{ turn.tone }}" title="推定回り足 {{ turn.score if turn.score is not none else '-' }}pt">{{ turn.label }}</span>
               </td>
               <td>
-                <div class="prob-cell">
-                  <div class="prob-bar"><span style="width: {{ (p.prob_top_3 * 100) | round(1) }}%"></span></div>
-                  <span class="prob-num">{{ '%.1f' | format(p.prob_top_3 * 100) }}%</span>
-                </div>
+                {% set straight = p.motor_straight_grade if p.motor_straight_grade is defined else {'label': '-', 'tone': 'unknown'} %}
+                <span class="foot-grade is-{{ straight.tone }}" title="推定直線 {{ straight.score if straight.score is not none else '-' }}pt">{{ straight.label }}</span>
               </td>
               {% if has_result_col %}
                 <td>
@@ -533,6 +540,13 @@
                   {% endif %}
                 </td>
               {% endif %}
+            </tr>
+            <tr class="racer-detail-row" id="racer-detail-row-{{ p.boat_number }}" hidden>
+              <td colspan="{{ 12 if has_result_col else 11 }}">
+                <div class="racer-detail-panel" data-racer-detail-panel="{{ p.boat_number }}">
+                  <div class="motor-history-loading">選手詳細を読み込み中...</div>
+                </div>
+              </td>
             </tr>
             <tr class="motor-history-row" id="motor-history-row-{{ p.boat_number }}" hidden>
               <td colspan="{{ 12 if has_result_col else 11 }}">
