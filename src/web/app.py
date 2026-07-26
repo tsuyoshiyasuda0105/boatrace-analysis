@@ -77,8 +77,8 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v22"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v12"
+MARKET_SIGNALS_CACHE_VERSION = "v23"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v13"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -93,14 +93,10 @@ def _market_signals_cache_key(target_date: str) -> str:
 
 def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
     """Return recent cache generations for zero-downtime cron rollouts."""
-    try:
-        current = int(MARKET_SIGNALS_CACHE_VERSION.removeprefix("v"))
-    except (TypeError, ValueError):
-        return []
-    return [
-        f"market_signals:v{version}:{target_date}"
-        for version in range(current - 1, max(current - 3, 0), -1)
-    ]
+    # Market-signal cache versions encode strategy conditions. Serving an older
+    # generation can make the live ROI list disagree with the ROI dashboard after
+    # a condition fix, so cache misses must recompute instead of falling back.
+    return []
 
 
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
@@ -6424,6 +6420,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 return False
             if int(n_female_count or 0) <= 0:
                 return True
+            level = str(signal.get("level") or "")
+            if (
+                signal.get("is_exacta_niche")
+                or signal.get("is_trifecta_niche")
+                or signal.get("is_win_niche")
+                or level in set(ROI_STRATEGY_KEYS)
+            ):
+                return True
             return bool(signal.get("allow_female_market_signal"))
 
         def _prefer_adopted_signal_over_general200(selected, adopted):
@@ -11317,7 +11321,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     OMURA_124_ORIGINAL_T5_TRI_CACHE_VERSION = "omura_124_original_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
     BOAT2_WALL_ADOPTED_CACHE_VERSION = "boat2_wall_adopted_v2"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v33"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v34"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }

@@ -23,7 +23,7 @@ BEFOREINFO_WRITE_BATCH_SIZE = 6
 # Keep this in sync with src.web.app.ADOPTED_DAILY_SELECT_VERSION.
 # If this lags behind, the self-heal path treats fresh ROI rows as stale and
 # can leave the dashboard looking empty after a successful cron run.
-ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v33"
+ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v34"
 
 
 def jst_now() -> datetime:

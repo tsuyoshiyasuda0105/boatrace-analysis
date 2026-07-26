@@ -26,7 +26,7 @@ from scripts.ensure_performance_indexes import ensure_performance_indexes  # noq
 
 MODES = ("signals", "realtime", "morning-check", "daily-reconcile", "nightly")
 JST = ZoneInfo("Asia/Tokyo")
-ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v33"
+ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v34"
 
 
 def _validate_market_signal_response(resp, path: str) -> tuple[bool, str]:
