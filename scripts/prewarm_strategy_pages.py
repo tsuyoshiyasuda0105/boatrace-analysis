@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import argparse
@@ -19,11 +20,13 @@ from src.web.app import (  # noqa: E402
     _market_signals_cache_key,
     _read_json_cache_stale,
 )
+from src.db.connection import connect as db_connect  # noqa: E402
 from scripts.ensure_performance_indexes import ensure_performance_indexes  # noqa: E402
 
 
 MODES = ("signals", "realtime", "morning-check", "daily-reconcile", "nightly")
 JST = ZoneInfo("Asia/Tokyo")
+ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v33"
 
 
 def _validate_market_signal_response(resp, path: str) -> tuple[bool, str]:
@@ -57,6 +60,68 @@ def _validate_market_signal_response(resp, path: str) -> tuple[bool, str]:
         f"computed_at={payload['computed_at']} signals={len(payload['signals'])} "
         f"source={count}/{total}"
     )
+
+
+def _validate_member_strategy_cache(path: str) -> tuple[bool, str]:
+    """Confirm recomputed ROI pages actually wrote finalized daily rows."""
+    parsed = urlparse(path)
+    if parsed.path != "/member/strategy" or "recompute=1" not in path:
+        return True, "ok"
+
+    qs = parse_qs(parsed.query)
+    from_s = (qs.get("from") or [None])[0]
+    to_s = (qs.get("to") or [None])[0]
+    if not from_s or not to_s:
+        return True, "ok"
+
+    today_s = datetime.now(JST).date().isoformat()
+    try:
+        # Do not require today's row. It is still provisional while races are
+        # running, and the dashboard should not fail because today is incomplete.
+        if from_s >= today_s:
+            return True, "no finalized dates"
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    r.race_date,
+                    COUNT(DISTINCT r.race_id) AS n_total,
+                    COUNT(DISTINCT rr.race_id) AS n_result,
+                    c.stats_json
+                FROM races r
+                LEFT JOIN race_results rr ON rr.race_id = r.race_id
+                LEFT JOIN l4_daily_stats_cache c ON c.race_date = r.race_date
+                WHERE r.race_date BETWEEN ? AND ?
+                  AND r.race_date < ?
+                GROUP BY r.race_date, c.stats_json
+                ORDER BY r.race_date
+                """,
+                (from_s, to_s, today_s),
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        return False, f"roi daily cache validation failed: {exc}"
+
+    missing: list[str] = []
+    checked = 0
+    for rdate, n_total, n_result, stats_json in rows:
+        if int(n_total or 0) <= 0 or int(n_result or 0) <= 0:
+            continue
+        checked += 1
+        if not stats_json:
+            missing.append(f"{rdate}:missing")
+            continue
+        try:
+            payload = json.loads(stats_json)
+        except Exception:
+            missing.append(f"{rdate}:invalid-json")
+            continue
+        version = payload.get("_adopted_daily_select_version")
+        if version != ROI_DAILY_CACHE_VERSION:
+            missing.append(f"{rdate}:version={version or '-'}")
+
+    if missing:
+        return False, "roi daily cache missing/invalid " + ",".join(missing[:8])
+    return True, f"roi daily cache verified dates={checked}"
 
 
 def _hit(client, path: str) -> tuple[int, int, bool, str]:
@@ -100,6 +165,9 @@ def _hit(client, path: str) -> tuple[int, int, bool, str]:
                     f"{len(readback_payload['signals'])}!={len(payload.get('signals') or {})}",
                 )
             detail = f"{detail}; persisted=db"
+        return resp.status_code, len(body), valid, detail
+    if path.startswith("/member/strategy") and "recompute=1" in path:
+        valid, detail = _validate_member_strategy_cache(path)
         return resp.status_code, len(body), valid, detail
     return resp.status_code, len(body), True, "ok"
 

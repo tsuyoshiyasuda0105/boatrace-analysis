@@ -17,6 +17,7 @@ import time
 from datetime import date, datetime
 from functools import lru_cache
 from typing import Optional, Any
+from zoneinfo import ZoneInfo
 
 from datetime import timedelta
 
@@ -28,6 +29,13 @@ from datetime import timedelta
 os.environ.setdefault("TZ", "Asia/Tokyo")
 if hasattr(time, "tzset"):
     time.tzset()
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst_iso() -> str:
+    """Return today's date in JST, independent of OS/TZ quirks."""
+    return datetime.now(JST).date().isoformat()
 
 from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 
@@ -11759,7 +11767,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return stats_by_date
 
         # === B. cache に無い日付を識別 ===
-        today_iso = _date.today().isoformat()
+        today_iso = _today_jst_iso()
         try:
             d_from = _date.fromisoformat(from_date)
             d_to = _date.fromisoformat(to_date)
@@ -11771,7 +11779,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except ValueError:
             all_dates = []
 
-        recent_recompute_from = (today_iso and (_date.today() - _timedelta(days=RECENT_ADOPTED_RECOMPUTE_DAYS)).isoformat())
+        recent_recompute_from = (
+            _date.fromisoformat(today_iso) - _timedelta(days=RECENT_ADOPTED_RECOMPUTE_DAYS)
+        ).isoformat()
         missing_dates = [
             d for d in all_dates
             if d not in cached_by_date
@@ -15432,7 +15442,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 for rdate, day_d in by_date.items():
                     if rdate >= today_iso:
                         continue  # 当日/未来日は save しない
-                    if rdate not in missing_dates:
+                    if (not force_full_scan) and rdate not in missing_dates:
                         continue  # cache に既にあったものは再 save 不要
                     try:
                         day_d["_strict_odds_only"] = rdate >= STRICT_ODDS_DAILY_START
@@ -15492,18 +15502,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_boat2_wall_adopted_version"] = BOAT2_WALL_ADOPTED_CACHE_VERSION
                         day_d["_accident_dent_version"] = ACCIDENT_DENT_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
-                        sjson = _json.dumps(day_d, ensure_ascii=False)
+                        def _roi_cache_json_default(value):
+                            try:
+                                from decimal import Decimal as _Decimal
+
+                                if isinstance(value, _Decimal):
+                                    return float(value)
+                            except Exception:  # noqa: BLE001
+                                pass
+                            return str(value)
+
+                        sjson = _json.dumps(
+                            day_d,
+                            ensure_ascii=False,
+                            default=_roi_cache_json_default,
+                        )
                         conn_s.execute(
                             "INSERT OR REPLACE INTO l4_daily_stats_cache "
                             "(race_date, stats_json, cached_at) VALUES (?, ?, ?)",
                             (rdate, sjson, now_iso),
                         )
-                    except (TypeError, ValueError):
-                        pass
+                    except (TypeError, ValueError) as exc:
+                        logger.warning("daily ROI cache encode skipped date=%s: %s", rdate, exc)
                 conn_s.commit()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             # cache 保存に失敗してもアプリ動作は続行
-            pass
+            logger.warning("daily ROI cache save failed: %s", exc)
 
         # === D. cache hit 分と SQL 結果をマージ ===
         result_by_date = dict(by_date)  # SQL 結果をベース
@@ -15519,6 +15543,103 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 result_by_date[rdate] = day_d
 
         finalized_rows = _finalize_l4_daily_rows(_merge_course_fit_daily(result_by_date))
+        if force_full_scan:
+            # The recompute path is used by Render prewarm/nightly jobs. Persist
+            # the exact finalized rows returned to the page so cache-only page
+            # loads cannot drift behind successful recomputations.
+            try:
+                from datetime import datetime as _dt
+
+                now_iso = _dt.now().isoformat(timespec="seconds")
+
+                def _roi_cache_json_default(value):
+                    try:
+                        from decimal import Decimal as _Decimal
+
+                        if isinstance(value, _Decimal):
+                            return float(value)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return str(value)
+
+                required_versions = (
+                    ("_mid132_odds_version", MID132_ODDS_CACHE_VERSION),
+                    ("_amagasaki_motor_exa_version", AMAGASAKI_MOTOR_EXA_CACHE_VERSION),
+                    ("_amagasaki_13_exa_version", AMAGASAKI_13_EXA_CACHE_VERSION),
+                    ("_omura_13_exa_version", OMURA_13_EXA_CACHE_VERSION),
+                    ("_ashiya_boat4_exa_version", ASHIYA_BOAT4_EXA_CACHE_VERSION),
+                    ("_ashiya_4head_flow_tri_version", ASHIYA_4HEAD_FLOW_TRI_CACHE_VERSION),
+                    ("_hamanako_14_exa_version", HAMANAKO_14_EXA_CACHE_VERSION),
+                    ("_omura_14_exa_version", OMURA_14_EXA_CACHE_VERSION),
+                    ("_kiryu_win2_version", KIRYU_WIN2_CACHE_VERSION),
+                    ("_general200_version", GENERAL200_CACHE_VERSION),
+                    ("_general_c_tri_version", GENERAL_C_TRI_CACHE_VERSION),
+                    ("_boat3_niche_version", BOAT3_NICHE_CACHE_VERSION),
+                    ("_tsu_123_tri_version", TSU_123_TRI_CACHE_VERSION),
+                    ("_suminoe_123_tri_version", SUMINOE_123_TRI_CACHE_VERSION),
+                    ("_tokuyama_123_tri_version", TOKUYAMA_123_TRI_CACHE_VERSION),
+                    ("_tokuyama_12a_exa_version", TOKUYAMA_12A_EXA_CACHE_VERSION),
+                    ("_tokuyama_13_exa_version", TOKUYAMA_13_EXA_CACHE_VERSION),
+                    ("_shimonoseki_123_tri_version", SHIMONOSEKI_123_TRI_CACHE_VERSION),
+                    ("_shimonoseki_132_tri_version", SHIMONOSEKI_132_TRI_CACHE_VERSION),
+                    ("_kojima_124_tri_version", KOJIMA_124_TRI_CACHE_VERSION),
+                    ("_kojima_13_exa_version", KOJIMA_13_EXA_CACHE_VERSION),
+                    ("_tsu_124_tri_version", TSU_124_TRI_CACHE_VERSION),
+                    ("_omura_123_tri_version", OMURA_123_TRI_CACHE_VERSION),
+                    ("_omura_132_tri_version", OMURA_132_TRI_CACHE_VERSION),
+                    ("_amagasaki_143_tri_version", AMAGASAKI_143_TRI_CACHE_VERSION),
+                    ("_miyajima_tide_132_tri_version", MIYAJIMA_TIDE_132_TRI_CACHE_VERSION),
+                    ("_miyajima_fl_132_tri_version", MIYAJIMA_FL_132_TRI_CACHE_VERSION),
+                    ("_gamagori_tide_132_tri_version", GAMAGORI_TIDE_132_TRI_CACHE_VERSION),
+                    ("_gamagori_123_general_practical_tri_version", GAMAGORI_123_GENERAL_PRACTICAL_TRI_CACHE_VERSION),
+                    ("_gamagori_13_exa_version", GAMAGORI_13_EXA_CACHE_VERSION),
+                    ("_marugame_123_tri_version", MARUGAME_123_TRI_CACHE_VERSION),
+                    ("_marugame_tide_123_tri_version", MARUGAME_TIDE_123_TRI_CACHE_VERSION),
+                    ("_fukuoka_tide_132_tri_version", FUKUOKA_TIDE_132_TRI_CACHE_VERSION),
+                    ("_gmkf_132_tri_version", GMKF_132_TRI_CACHE_VERSION),
+                    ("_toda_42_flow_tri_version", TODA_42_FLOW_TRI_CACHE_VERSION),
+                    ("_toda_123_tri_version", TODA_123_TRI_CACHE_VERSION),
+                    ("_tsu_143_tri_version", TSU_143_TRI_CACHE_VERSION),
+                    ("_kojima_123_tri_version", KOJIMA_123_TRI_CACHE_VERSION),
+                    ("_gamagori_123_tri_version", GAMAGORI_123_TRI_CACHE_VERSION),
+                    ("_naruto_123_tri_version", NARUTO_123_TRI_CACHE_VERSION),
+                    ("_karatsu_132_tri_version", KARATSU_132_TRI_CACHE_VERSION),
+                    ("_marugame_123_weak4_t5_tri_version", MARUGAME_123_WEAK4_T5_TRI_CACHE_VERSION),
+                    ("_marugame_123_late_weak4_t5_tri_version", MARUGAME_123_LATE_WEAK4_T5_TRI_CACHE_VERSION),
+                    ("_edogawa_132_weak4_t5_tri_version", EDOGAWA_132_WEAK4_T5_TRI_CACHE_VERSION),
+                    ("_karatsu_123_weak4_t5_tri_version", KARATSU_123_WEAK4_T5_TRI_CACHE_VERSION),
+                    ("_suminoe_124_weak3_t5_tri_version", SUMINOE_124_WEAK3_T5_TRI_CACHE_VERSION),
+                    ("_omura_124_original_t5_tri_version", OMURA_124_ORIGINAL_T5_TRI_CACHE_VERSION),
+                    ("_tokoname_12_late_a_exa_version", TOKONAME_12_LATE_A_EXA_CACHE_VERSION),
+                    ("_tokoname_14_winter_exa_version", TOKONAME_14_WINTER_EXA_CACHE_VERSION),
+                    ("_tokoname_123_late_exst_tri_version", TOKONAME_123_LATE_EXST_TRI_CACHE_VERSION),
+                    ("_heiwajima_13_acc2_late_exa_version", HEIWAJIMA_13_ACC2_LATE_EXA_CACHE_VERSION),
+                    ("_accident_tag_adopted_version", ACCIDENT_TAG_ADOPTED_CACHE_VERSION),
+                    ("_course_fit_win_version", COURSE_FIT_WIN_CACHE_VERSION),
+                    ("_boat2_wall_adopted_version", BOAT2_WALL_ADOPTED_CACHE_VERSION),
+                    ("_accident_dent_version", ACCIDENT_DENT_CACHE_VERSION),
+                )
+                with db_connect() as conn_s:
+                    for day_d in finalized_rows:
+                        rdate = str(day_d.get("date") or "")
+                        if not rdate or rdate >= today_iso:
+                            continue
+                        day_d["_strict_odds_only"] = rdate >= STRICT_ODDS_DAILY_START
+                        for version_key, expected_version in required_versions:
+                            day_d[version_key] = expected_version
+                        day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
+                        for key in ROI_STRATEGY_KEYS:
+                            day_d.setdefault(f"{key}_bets", 0)
+                            day_d.setdefault(f"{key}_hits", 0)
+                            day_d.setdefault(f"{key}_pay", 0)
+                        conn_s.execute(
+                            "INSERT OR REPLACE INTO l4_daily_stats_cache "
+                            "(race_date, stats_json, cached_at) VALUES (?, ?, ?)",
+                            (rdate, _json.dumps(day_d, ensure_ascii=False, default=_roi_cache_json_default), now_iso),
+                        )
+                    conn_s.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("finalized ROI cache persist failed: %s", exc)
         return sorted(finalized_rows, key=lambda x: x["date"], reverse=True)
 
     def _l4_races_for_date(target_date: str) -> list[dict]:
