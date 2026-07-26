@@ -2087,23 +2087,52 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
     with db_connect() as conn:
         current_row = conn.execute(
             """
-            SELECT assigned_motor_number, assigned_motor_top_2_percent,
-                   assigned_motor_top_3_percent, racer_name, racer_number,
+            WITH original AS (
+                SELECT race_id, boat_number,
+                       MIN(lap_time) AS dash_time,
+                       MIN(turn_time) AS turn_time,
+                       MIN(straight_time) AS straight_time
+                  FROM race_original_exhibitions
+                 WHERE race_id = ? AND boat_number = ?
+                 GROUP BY race_id, boat_number
+            )
+            SELECT race_entries.assigned_motor_number,
+                   race_entries.assigned_motor_top_2_percent,
+                   race_entries.assigned_motor_top_3_percent,
+                   race_entries.racer_name,
+                   race_entries.racer_number,
                    NULLIF(pv.exhibition_time, 0) AS exhibition_time,
-                   pv.start_timing_exhibition
+                   pv.start_timing_exhibition,
+                   original.dash_time,
+                   original.turn_time,
+                   original.straight_time
               FROM race_entries
               LEFT JOIN race_previews pv
                 ON pv.race_id = race_entries.race_id
                AND pv.boat_number = race_entries.boat_number
+              LEFT JOIN original
+                ON original.race_id = race_entries.race_id
+               AND original.boat_number = race_entries.boat_number
              WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
             """,
-            (race_id, boat_number),
+            (race_id, boat_number, race_id, boat_number),
         ).fetchone()
 
     if not current_row:
         return None
 
-    motor_no, motor_top2, motor_top3, current_racer, current_racer_number, current_ex_time, current_ex_st = current_row
+    (
+        motor_no,
+        motor_top2,
+        motor_top3,
+        current_racer,
+        current_racer_number,
+        current_ex_time,
+        current_ex_st,
+        current_dash_time,
+        current_turn_time,
+        current_straight_time,
+    ) = current_row
     cycle_start = _motor_cycle_start(info["race_date"], info["stadium_number"])
     current = {
         "race_id": race_id,
@@ -2121,14 +2150,14 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "motor_replacement_month": _MOTOR_REPLACEMENT_MONTH.get(info["stadium_number"]),
         "exhibition_time": current_ex_time,
         "start_timing_exhibition": current_ex_st,
+        "dash_time": current_dash_time,
+        "turn_time": current_turn_time,
+        "straight_time": current_straight_time,
     }
     if motor_no is None:
         return {
             "current": current,
             "summary": {},
-            "profile": _motor_profile_from_history([]),
-            "lift": _racer_lift_profile([], {}),
-            "live_signal": _motor_history_live_signal(current, [], {}),
             "history": [],
         }
 
@@ -2171,6 +2200,17 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
                    AND rr.finishing_position IS NOT NULL
                  ORDER BY r.race_date DESC, r.race_number DESC
                  LIMIT 10
+            ),
+            original AS (
+                SELECT x.race_id, x.boat_number,
+                       MIN(x.lap_time) AS dash_time,
+                       MIN(x.turn_time) AS turn_time,
+                       MIN(x.straight_time) AS straight_time
+                  FROM race_original_exhibitions x
+                  JOIN hist h
+                    ON h.race_id = x.race_id
+                   AND h.boat_number = x.boat_number
+                 GROUP BY x.race_id, x.boat_number
             )
             SELECT h.race_id, h.race_date, h.race_number,
                    h.boat_number, h.racer_name, h.racer_number,
@@ -2179,6 +2219,9 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
                    h.exhibition_time, h.start_timing_exhibition,
                    h.finishing_position, h.course_number,
                    h.start_timing,
+                   original.dash_time,
+                   original.turn_time,
+                   original.straight_time,
                    COALESCE(
                        h.boat_kimarite,
                        (
@@ -2190,6 +2233,9 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
                        )
                    ) AS kimarite
               FROM hist h
+              LEFT JOIN original
+                ON original.race_id = h.race_id
+               AND original.boat_number = h.boat_number
              ORDER BY h.race_date DESC, h.race_number DESC
             """,
             tuple(params),
@@ -2200,7 +2246,8 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "racer_name", "racer_number", "motor_top_2_percent",
         "motor_top_3_percent", "exhibition_time",
         "start_timing_exhibition", "finishing_position",
-        "course_number", "start_timing", "kimarite",
+        "course_number", "start_timing", "dash_time",
+        "turn_time", "straight_time", "kimarite",
     ]
     history = [dict(zip(keys, row)) for row in rows]
 
@@ -2224,48 +2271,9 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "avg_start_timing_exhibition": _mean_or_none([float(v) for v in ex_st_vals]),
     }
 
-    with db_connect() as conn:
-        racer_rows = conn.execute(
-            """
-            SELECT NULLIF(pv.exhibition_time, 0) AS exhibition_time,
-                   pv.start_timing_exhibition,
-                   rr.start_timing,
-                   rr.finishing_position
-              FROM races r
-              JOIN race_entries e
-                ON e.race_id = r.race_id
-              JOIN race_results rr
-                ON rr.race_id = e.race_id
-               AND rr.boat_number = e.boat_number
-              LEFT JOIN race_previews pv
-                ON pv.race_id = e.race_id
-               AND pv.boat_number = e.boat_number
-             WHERE e.racer_number = ?
-               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
-               AND rr.finishing_position IS NOT NULL
-             ORDER BY r.race_date DESC, r.race_number DESC
-             LIMIT 20
-            """,
-            (current_racer_number, info["race_date"], info["race_date"], info["race_number"]),
-        ).fetchall()
-
-    racer_baseline = {
-        "starts": len(racer_rows),
-        "avg_exhibition_time": _mean_or_none([float(r[0]) for r in racer_rows if r[0] is not None]),
-        "avg_start_timing_exhibition": _mean_or_none([float(r[1]) for r in racer_rows if r[1] is not None]),
-        "avg_start_timing": _mean_or_none([float(r[2]) for r in racer_rows if r[2] is not None]),
-        "avg_finish_position": _mean_or_none([float(r[3]) for r in racer_rows if r[3] is not None]),
-    }
-
-    profile = _motor_profile_from_history(history)
-    lift = _racer_lift_profile(history, racer_baseline)
-    live_signal = _motor_history_live_signal(current, history, racer_baseline)
     return {
         "current": current,
         "summary": summary,
-        "profile": profile,
-        "lift": lift,
-        "live_signal": live_signal,
         "history": history,
     }
 
