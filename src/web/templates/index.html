@@ -352,6 +352,45 @@
           // on click. Avoid background-prefetching several detail pages from
           // the race list because it competes with market-signal rendering.
         };
+        const raceDetailWarmups = new Map();
+        const warmRaceDetailOnIntent = (anchor) => {
+          const href = anchor?.getAttribute?.('href') || '';
+          if (!/^\/race\/\d{8}-\d{2}-\d{2}(?:[?#].*)?$/.test(href)) return;
+          if (raceDetailWarmups.has(href)) return;
+          const controller = new AbortController();
+          const timer = window.setTimeout(() => {
+            raceDetailWarmups.set(href, { controller, started: true });
+            fetch(href, {
+              credentials: 'same-origin',
+              cache: 'default',
+              signal: controller.signal,
+              priority: 'low',
+              headers: { 'X-Race-Detail-Warmup': '1' },
+            }).catch(() => {});
+          }, 180);
+          raceDetailWarmups.set(href, { controller, timer, started: false });
+        };
+        const cancelRaceDetailWarmup = (anchor) => {
+          const href = anchor?.getAttribute?.('href') || '';
+          const warmup = raceDetailWarmups.get(href);
+          if (!warmup || warmup.started) return;
+          window.clearTimeout(warmup.timer);
+          raceDetailWarmups.delete(href);
+        };
+        document.addEventListener('pointerover', (event) => {
+          const anchor = event.target.closest?.('a[href^="/race/"]');
+          if (anchor) warmRaceDetailOnIntent(anchor);
+        }, { passive: true });
+        document.addEventListener('pointerout', (event) => {
+          const anchor = event.target.closest?.('a[href^="/race/"]');
+          if (anchor && !anchor.contains(event.relatedTarget)) {
+            cancelRaceDetailWarmup(anchor);
+          }
+        }, { passive: true });
+        document.addEventListener('focusin', (event) => {
+          const anchor = event.target.closest?.('a[href^="/race/"]');
+          if (anchor) warmRaceDetailOnIntent(anchor);
+        });
 
         const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
           '&': '&amp;',
@@ -1621,7 +1660,21 @@ function updateClosedRaceTiles() {
         updateClosedRaceTiles();
         if (marketSignalsLoaded) {
           try { renderDataStatus(marketDataStatusCache || {}); } catch (e) {}
-          try { renderTodaysPicks(); } catch (e) { console.warn('initial picks render failed:', e); }
+          const hydrateInitialPicks = () => {
+            try {
+              renderTodaysPicks();
+            } catch (e) {
+              console.warn('initial picks render failed:', e);
+            }
+          };
+          // The server-rendered ROI rows can paint immediately. Reclassifying
+          // rows and attaching every race-card badge is secondary work, so do
+          // it after the browser has had a chance to show the list.
+          if ('requestIdleCallback' in window) {
+            window.requestIdleCallback(hydrateInitialPicks, { timeout: 750 });
+          } else {
+            window.setTimeout(hydrateInitialPicks, 100);
+          }
         }
 
         // 1-2-3 オッズ推移を初回 + 20秒毎に取得
@@ -1646,7 +1699,21 @@ function updateClosedRaceTiles() {
           }
         }
 
-        refreshDashboard();
+        if (marketSignalsLoaded) {
+          // The ROI rows and signal payload are already embedded in the HTML.
+          // Only enrich the visible rows with odds now; refresh signals on the
+          // regular clock so the first paint does not repeat the same request.
+          loadOdds123Timeline()
+            .then(() => {
+              updateNextRaces();
+              updateClosedRaceTiles();
+            })
+            .catch(() => {});
+        } else {
+          // A cold server cache has no embedded signals, so request the
+          // lightweight pending/cache response immediately.
+          refreshDashboard();
+        }
         setInterval(refreshDashboard, 30000);
         document.addEventListener('visibilitychange', () => {
           if (!document.hidden) refreshDashboard();

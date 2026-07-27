@@ -1042,13 +1042,32 @@ def _kimarite_skill_tags_for_race_cached(
     cached_payload = _read_json_cache(cache_key, cache_ttl)
     if isinstance(cached_payload, dict):
         return cached_payload
+    stale_payload = _read_json_cache_stale(cache_key)
+    if isinstance(stale_payload, dict):
+        return stale_payload
     payload = _kimarite_skill_tags_for_race(race_id)
     _write_json_cache(cache_key, payload)
     return payload
 
 
-def _attach_kimarite_skill_tags(race_id: str, preds: list[dict]) -> None:
-    tags = _kimarite_skill_tags_for_race_cached(race_id)
+def _kimarite_skill_tags_for_race_cache_only(race_id: str) -> dict[int, dict]:
+    """Return the last generated tags without historical aggregation."""
+    cache_key = f"race_kimarite_tags:{race_id}"
+    payload = _read_json_cache_stale(cache_key)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _attach_kimarite_skill_tags(
+    race_id: str,
+    preds: list[dict],
+    *,
+    allow_recompute: bool = True,
+) -> None:
+    tags = (
+        _kimarite_skill_tags_for_race_cached(race_id)
+        if allow_recompute
+        else _kimarite_skill_tags_for_race_cache_only(race_id)
+    )
     if not tags:
         return
     for p in preds:
@@ -2450,10 +2469,18 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "avg_start_timing_exhibition": _mean_or_none([float(v) for v in ex_st_vals]),
     }
 
+    racer_baseline = _racer_history_baseline(current_racer_number, info["stadium_number"])
+    profile = _motor_profile_from_history(history)
+    racer_lift = _racer_lift_profile(history, racer_baseline)
+    live_signal = _motor_history_live_signal(current, history, racer_baseline)
+
     return {
         "current": current,
         "summary": summary,
         "history": history,
+        "profile": profile,
+        "racer_lift": racer_lift,
+        "live_signal": live_signal,
     }
 
 
@@ -3366,22 +3393,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             roi_picks_visible=roi_picks_visible,
             empty=False,
         ))
-        # backlog item 11: market-signals を HTTP/2 preload で先取り
-        # ブラウザは HTML パース前に /api/market-signals に並列リクエストを
-        # 飛ばすので、JS が呼ぶ頃には返答がキャッシュ済 → 体感速度向上
-        link_headers = [
-            f'</api/market-signals?date={target_date}&ui_v={MARKET_SIGNALS_CACHE_VERSION}>; rel=preload; as=fetch; crossorigin'
-        ]
-        upcoming_races = []
-        for r in races_list:
-            if int(r.get("results_count") or 0) > 0:
-                continue
-            closed_at = str(r.get("race_closed_at") or "")
-            upcoming_races.append((closed_at, str(r.get("race_id") or "")))
-        for _, rid in sorted(upcoming_races)[:3]:
-            if rid:
-                link_headers.append(f'</race/{rid}>; rel=prefetch; as=document')
-        resp.headers["Link"] = ", ".join(link_headers)
+        # The current market-signal payload and ROI rows are already embedded
+        # in this response. Preloading that API duplicated work, while
+        # prefetching race details could start motor-history queries before the
+        # user selected a race. Keep initial bandwidth and DB capacity focused
+        # on rendering this page.
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         resp.headers["Pragma"] = "no-cache"
         return resp
@@ -3412,7 +3428,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 preds = _race_entry_fallback_rows(race_id)
                 if preds:
                     fallback_notice = "予測データ未投入のため、出走表ベースの詳細を表示しています。"
-            _attach_kimarite_skill_tags(race_id, preds)
+            # Historical kimarite aggregation can scan years of results for
+            # six racers. The detail page must not block on that cold query;
+            # use an existing fresh/stale cache and let background/API work
+            # populate missing tags.
+            _attach_kimarite_skill_tags(
+                race_id,
+                preds,
+                allow_recompute=False,
+            )
             _attach_accident_watch_tags(race_id, preds)
             _attach_motor_fact_grades(race_id, preds, info=info)
             t_tags = time.perf_counter() - t1
@@ -3432,7 +3456,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 user_msg = f"予測エラー: {err_str[:200]}"
             preds = _race_entry_fallback_rows(race_id)
             if preds:
-                _attach_kimarite_skill_tags(race_id, preds)
+                _attach_kimarite_skill_tags(
+                    race_id,
+                    preds,
+                    allow_recompute=False,
+                )
                 _attach_accident_watch_tags(race_id, preds)
                 _attach_motor_fact_grades(race_id, preds, info=info)
                 html = render_template(
