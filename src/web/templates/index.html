@@ -687,7 +687,10 @@
                           + ` | 的中率 ${sig.l4.exacta_niche_hit_rate}%`
                           + ` | 買い目: ${sig.l4.bet || ''} 100円`
                           + ` | 条件: ${sig.l4.exacta_niche_tag || ''}`
-                          + ` | 相性: ${sig.l4.exacta_niche_ahead}/${sig.l4.exacta_niche_meetings}`;
+                          + ` | 優勢: ${sig.l4.exacta_niche_ahead}/${sig.l4.exacta_niche_meetings}`;
+                    if (sig.l4.recommended_min_odds != null) {
+                      title += ` | 推奨最低オッズ ${Number(sig.l4.recommended_min_odds).toFixed(1)}倍以上`;
+                    }
                   }
                   if (sig.l4.is_trifecta_niche) {
                     title = `${sig.l4.label} | 3連単ニッチ | 検証ROI ${l4Rec}% (n=${l4N})`
@@ -799,6 +802,9 @@
                   const pro = '';
                   const portfolio = sig.l4.is_portfolio_strong ? ' 🔥強' : '';
                   const exacta = sig.l4.is_exacta_niche ? ' 🎯2連単' : '';
+                  const exactaMinOdds = (sig.l4.is_exacta_niche && sig.l4.recommended_min_odds != null)
+                    ? ` >=${Number(sig.l4.recommended_min_odds).toFixed(1)}`
+                    : '';
                   const winNiche = sig.l4.is_win_niche ? ' 🎯単勝' : '';
                   const ashiyaWatchSuffix = sig.l4.is_ashiya_boat4_watch
                     ? ` ST${Number(sig.l4.ashiya_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.ashiya_boat4_course4_win_rate || 0).toFixed(1)}%`
@@ -807,7 +813,7 @@
                     ? ` ST${Number(sig.l4.miyajima_boat4_course4_avg_st || 0).toFixed(2)} 勝${Number(sig.l4.miyajima_boat4_course4_win_rate || 0).toFixed(1)}%`
                     : '';
                   const accidentWatch = sig.l4.has_accident_watch ? ' 事故0.70+' : '';
-                  l4Badge.textContent = `${sig.l4.label}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${portfolio}${exacta}${winNiche}${accidentWatch}`;
+                  l4Badge.textContent = `${sig.l4.label}${exactaMinOdds}${ashiyaWatchSuffix}${miyajimaWatchSuffix} ${l4Rec}%${onec80}${portfolio}${exacta}${winNiche}${accidentWatch}`;
                   item.appendChild(l4Badge);
                   if (sig.l4.is_portfolio_strong) {
                     const ps = document.createElement('span');

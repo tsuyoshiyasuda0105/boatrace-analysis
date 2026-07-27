@@ -7945,6 +7945,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "level": "gamagori_13_exa",
                     "label": "蒲郡 1-3",
                     "bet": "2連単 1-3",
+                    "recommended_min_odds": 3.7,
                     "rank": "exacta_niche",
                     "rank_label": "2連単採用",
                     "recovery": 154.9,
@@ -8562,6 +8563,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "level": "heiwajima_13_acc2_late_exa",
                     "label": "平和島 1-3",
                     "bet": "2連単 1-3",
+                    "recommended_min_odds": 3.8,
                     "rank": "exacta_niche",
                     "rank_label": "2連単採用",
                     "rank_emoji": "2連単",
@@ -8585,6 +8587,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "level": "tamagawa_13_weak_sashi2_exa",
                     "label": "多摩川 1-3",
                     "bet": "2連単 1-3",
+                    "recommended_min_odds": 2.0,
                     "rank": "exacta_niche",
                     "rank_label": "2連単採用",
                     "rank_emoji": "2連単",
@@ -8836,6 +8839,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "level": "tokuyama_12a_exa",
                     "label": "徳山 1-2 強化A",
                     "bet": "2連単 1-2",
+                    "recommended_min_odds": 2.5,
                     "rank": "exacta_niche",
                     "rank_label": "2連単採用",
                     "recovery": 166.9,
@@ -8907,6 +8911,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "level": "kojima_13_exa",
                     "label": "児島 1-3",
                     "bet": "2連単 1-3",
+                    "recommended_min_odds": 4.0,
                     "rank": "exacta_niche",
                     "rank_label": "2連単採用",
                     "recovery": 171.4,
@@ -9008,6 +9013,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "recovery": 207.3,
                     "n": 59,
                     "bet": "2連単 1-3",
+                    "recommended_min_odds": 4.8,
                     "rank": "exacta_niche",
                     "rank_label": "2連単ニッチ",
                     "rank_emoji": "2R",
@@ -11528,15 +11534,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if not isinstance(day_d, dict):
                         continue
                     if not _adopted_daily_cache_is_valid(str(rdate), day_d):
-                        has_displayable_adopted_metric = any(
-                            f"{key}_bets" in day_d
-                            or f"{key}_hits" in day_d
-                            or f"{key}_pay" in day_d
-                            for key in ROI_STRATEGY_KEYS
-                        )
-                        if not has_displayable_adopted_metric:
-                            continue
-                        day_d["_roi_cache_partial"] = True
+                        continue
                     by_date[str(rdate)] = day_d
         except Exception as exc:  # noqa: BLE001
             logger.warning("daily ROI cache-only lookup failed: %s", exc)
@@ -12262,9 +12260,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ROI used to re-run strategy-specific backtests and could count
             strategies that were never shown to the user for that day. When a
             market-signals cache exists, replace adopted-strategy daily counts
-            with exactly the adopted rows displayed by that payload. If the
-            historical payload is missing, retain the deterministic raw
-            reconstruction instead of turning a real day into a false zero.
+            with exactly the adopted rows displayed by that payload. For recent
+            days, a missing market-signals cache is not allowed to fall back to
+            raw reconstruction because it makes the ROI dashboard disagree with
+            the visible high-ROI list.
             """
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS) & set(ROI_STRATEGY_KEYS)
             if not adopted_levels:
@@ -12292,16 +12291,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     or payload.get("cache_version") != MARKET_SIGNALS_CACHE_VERSION
                 ):
                     if recent_floor and rdate >= recent_floor:
+                        _clear_adopted_counts(day_d)
                         day_d["_adopted_from_market_signals_cache"] = False
-                        day_d["_adopted_market_signals_cache_missing"] = False
-                        day_d["_adopted_from_raw_fallback"] = True
+                        day_d["_adopted_market_signals_cache_missing"] = True
+                        day_d["_adopted_from_raw_fallback"] = False
                     continue
                 signals = payload.get("signals") or {}
                 if not isinstance(signals, dict):
                     if recent_floor and rdate >= recent_floor:
+                        _clear_adopted_counts(day_d)
                         day_d["_adopted_from_market_signals_cache"] = False
-                        day_d["_adopted_market_signals_cache_missing"] = False
-                        day_d["_adopted_from_raw_fallback"] = True
+                        day_d["_adopted_market_signals_cache_missing"] = True
+                        day_d["_adopted_from_raw_fallback"] = False
                     continue
 
                 selected: list[tuple[str, str, list[tuple[str, str]]]] = []
@@ -16270,7 +16271,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "shimonoseki_123_tri", "label": "下関 1-2-3", "short": "shm123", "color": "#22c55e", "timing": "previous_day"},
         {"key": "tsu_124_tri", "label": "津 1-2-4", "short": "tsu124", "color": "#0ea5e9", "timing": "previous_day"},
         {"key": "amagasaki_143_tri", "label": "尼崎 1-4-3", "short": "ama143", "color": "#f97316", "timing": "same_day"},
-        {"key": "amagasaki_13_exa", "label": "尼崎 1-3", "short": "ama13", "color": "#2dd4bf", "timing": "same_day"},
+        {"key": "amagasaki_13_exa", "label": "尼崎 1-3 (>=4.8)", "short": "ama13", "color": "#2dd4bf", "timing": "same_day"},
         {"key": "omura_13_exa", "label": "大村 1-3", "short": "omu13", "color": "#f472b6", "timing": "same_day"},
         {"key": "ashiya_boat4_exa", "label": "芦屋 4-1", "short": "ashiya41", "color": "#ef4444", "timing": "same_day"},
         {"key": "hamanako_14_exa", "label": "浜名湖 1-4", "short": "hama14", "color": "#f59e0b", "timing": "previous_day"},
@@ -16279,7 +16280,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "tokuyama_13_exa", "label": "徳山 1-3", "short": "tky13", "color": "#22d3ee", "timing": "same_day"},
         {"key": "shimonoseki_132_tri", "label": "下関 1-3-2", "short": "shm132", "color": "#84cc16", "timing": "previous_day"},
         {"key": "kojima_124_tri", "label": "児島 1-2-4", "short": "koj124", "color": "#10b981", "timing": "previous_day"},
-        {"key": "kojima_13_exa", "label": "児島 1-3", "short": "koj13", "color": "#14b8a6", "timing": "same_day"},
+        {"key": "kojima_13_exa", "label": "児島 1-3 (>=4.0)", "short": "koj13", "color": "#14b8a6", "timing": "same_day"},
         {"key": "marugame_123_tri", "label": "丸亀 1-2-3", "short": "mgm123", "color": "#8b5cf6", "timing": "same_day"},
         {"key": "omura_123_tri", "label": "大村 1-2-3", "short": "omu123", "color": "#ec4899", "timing": "same_day"},
         {"key": "omura_132_tri", "label": "大村 1-3-2", "short": "omu132", "color": "#d946ef", "timing": "previous_day"},
@@ -16290,8 +16291,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "marugame_tide_123_tri", "label": "丸亀 潮 1-2-3", "short": "mgmt123", "color": "#a855f7", "timing": "previous_day"},
         {"key": "fukuoka_tide_132_tri", "label": "福岡 潮 1-3-2", "short": "fkk132", "color": "#0f766e", "timing": "previous_day"},
         {"key": "gamagori_123_general_practical_tri", "label": "蒲郡 一般 1-2-3", "short": "gama123g", "color": "#fde047", "timing": "previous_day"},
-        {"key": "gamagori_13_exa", "label": "蒲郡 1-3", "short": "gama13", "color": "#22d3ee", "timing": "same_day"},
-        {"key": "tokuyama_12a_exa", "label": "徳山 1-2 A", "short": "tky12a", "color": "#60a5fa", "timing": "same_day"},
+        {"key": "gamagori_13_exa", "label": "蒲郡 1-3 (>=3.7)", "short": "gama13", "color": "#22d3ee", "timing": "same_day"},
+        {"key": "tokuyama_12a_exa", "label": "徳山 1-2 A (>=2.5)", "short": "tky12a", "color": "#60a5fa", "timing": "same_day"},
         {"key": "tokoname_12_late_a_exa", "label": "常滑 1-2 後半A級安定型", "short": "tok12late", "color": "#3b82f6", "timing": "previous_day"},
         {"key": "tokoname_14_winter_exa", "label": "常滑 1-4 冬型", "short": "tok14winter", "color": "#60a5fa", "timing": "previous_day"},
         {"key": "tokoname_123_late_exst_tri", "label": "常滑 1-2-3 後半展示ST型", "short": "tok123late", "color": "#2563eb", "timing": "same_day"},
@@ -16304,8 +16305,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "tri134_acc2_ex3_tri", "label": "1-3-4 全場型", "short": "tri134", "color": "#f97316", "timing": "previous_day"},
         {"key": "omura_132_weak2_ex3_tri", "label": "大村 1-3-2 弱2展示", "short": "omu132w", "color": "#d946ef", "timing": "previous_day"},
         {"key": "wakamatsu_13_weak2_strong3_exa", "label": "若松 1-3", "short": "waka13", "color": "#0ea5e9", "timing": "previous_day"},
-        {"key": "heiwajima_13_acc2_late_exa", "label": "平和島 1-3", "short": "hei13", "color": "#38bdf8", "timing": "previous_day"},
-        {"key": "tamagawa_13_weak_sashi2_exa", "label": "多摩川 1-3", "short": "tama13", "color": "#14b8a6", "timing": "previous_day"},
+        {"key": "heiwajima_13_acc2_late_exa", "label": "平和島 1-3 (>=3.8)", "short": "hei13", "color": "#38bdf8", "timing": "previous_day"},
+        {"key": "tamagawa_13_weak_sashi2_exa", "label": "多摩川 1-3 (>=2.0)", "short": "tama13", "color": "#14b8a6", "timing": "previous_day"},
         {"key": "marugame_123_weak4_t5_tri", "label": "丸亀 1-2-3 弱4型", "short": "mgm123w4", "color": "#7c3aed", "timing": "same_day"},
         {"key": "marugame_123_late_weak4_t5_tri", "label": "丸亀 1-2-3 後半弱4型", "short": "mgm123lw4", "color": "#9333ea", "timing": "same_day"},
         {"key": "edogawa_132_weak4_t5_tri", "label": "江戸川 1-3-2 弱4型", "short": "edg132w4", "color": "#f43f5e", "timing": "same_day"},
