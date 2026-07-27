@@ -58,6 +58,11 @@ def task_success_exists(task_name: str, run_date: str) -> bool:
         return False
 
 
+def signal_refresh_task_name(now: datetime) -> str:
+    slot = now.minute // 30
+    return f"render_signal_refresh_{now.hour:02d}_{slot}"
+
+
 def ensure_task_runs_table() -> None:
     with db_connect() as conn:
         conn.executescript("""
@@ -144,7 +149,8 @@ def run_beforeinfo(now: datetime) -> bool:
             "[beforeinfo-tides] "
             f"target={tide_summary.get('target_races', 0)} "
             f"rows={tide_summary.get('rows', 0)} "
-            f"stations={tide_summary.get('stations', 0)}",
+            f"stations={tide_summary.get('stations', 0)} "
+            f"failures={tide_summary.get('station_failures', 0)}",
             flush=True,
         )
     except Exception as exc:
@@ -197,7 +203,13 @@ def run_beforeinfo(now: datetime) -> bool:
     print(f"[beforeinfo] written={summary}", flush=True)
     if summary.get("races", 0) > 0:
         ok = run_py(["scripts/render_cache_predictions.py", "--date", now.date().isoformat()], timeout=1800)
-        ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
+        slot_task = signal_refresh_task_name(now)
+        if not task_success_exists(slot_task, now.date().isoformat()):
+            slot_ok = run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
+            record_task(slot_task, now.date().isoformat(), "success" if slot_ok else "failure")
+            ok &= slot_ok
+        else:
+            print(f"[beforeinfo] skip signals prewarm; slot already fresh {slot_task}", flush=True)
         return ok
     return True
 
@@ -411,8 +423,8 @@ def run_signal_refresh_slot(now: datetime) -> bool:
     failure must not block the whole 30-minute slot.
     """
     today = now.date().isoformat()
-    slot = now.minute // 10
-    task = f"render_signal_refresh_{now.hour:02d}_{slot}"
+    slot = now.minute // 30
+    task = signal_refresh_task_name(now)
     if task_success_exists(task, today):
         print(f"[signal-refresh] already succeeded slot={now.hour:02d}:{slot}", flush=True)
         return True

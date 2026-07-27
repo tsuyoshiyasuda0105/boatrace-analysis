@@ -590,8 +590,15 @@ def refresh_tides_for_races(
 
         rows: list[dict] = []
         station_fetches = 0
+        station_failures = 0
+        failed_codes: list[str] = []
         for (_primary_code, year), info in grouped.items():
-            used_code, text = _fetch_station_text(info["codes"], year, timeout=timeout)
+            try:
+                used_code, text = _fetch_station_text(info["codes"], year, timeout=timeout)
+            except Exception:
+                station_failures += 1
+                failed_codes.append(str(info["codes"][0]))
+                continue
             station_fetches += 1
             payload = parse_jma_tide_text(
                 text,
@@ -622,6 +629,8 @@ def refresh_tides_for_races(
             "target_races": len(races),
             "rows": n,
             "stations": station_fetches,
+            "station_failures": station_failures,
+            "failed_codes": failed_codes,
         }
     finally:
         conn.close()
