@@ -143,30 +143,10 @@ VENUE_DOMAINS: dict[int, str] = {
 
 
 def _default_patterns(stadium: int) -> list[tuple[str, str]]:
-    domain = VENUE_DOMAINS.get(stadium)
-    if not domain:
-        return []
-    source_name = f"venue_{stadium:02d}_raceinfo"
-    hosts = [f"www.{domain}", domain]
-    patterns: list[tuple[str, str]] = []
-    for host in hosts:
-        patterns.extend(
-            [
-                (
-                    source_name,
-                    f"https://{host}/modules/raceinfo/?page=index_racejoho&target_day={{date}}&rno={{rno}}",
-                ),
-                (
-                    source_name,
-                    f"https://{host}/modules/raceinfo/?page=index_raceinfo&target_day={{date}}&rno={{rno}}",
-                ),
-                (
-                    source_name,
-                    f"https://{host}/modules/raceinfo/?page=index&target_day={{date}}&rno={{rno}}",
-                ),
-            ]
-        )
-    return patterns
+    # Generic probing across all venues made the Render cron spend time on dead
+    # or unsupported raceinfo hosts. Keep only explicit venue-tested patterns
+    # so live beforeinfo work stays responsive.
+    return []
 
 
 _ALL_SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {

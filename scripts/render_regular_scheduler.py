@@ -544,6 +544,12 @@ def run_accident_self_heal(now: datetime) -> bool:
         )
         return True
 
+    slot_task = f"render_accident_refresh_slot_{now.hour:02d}"
+    run_date = now.date().isoformat()
+    if task_attempt_exists(slot_task, run_date):
+        print(f"[accident-refresh] stale but already attempted slot={now.hour:02d}", flush=True)
+        return False
+
     print(
         "[accident-refresh] stale "
         f"snapshot={latest_snapshot or '-'} period_end={latest_period_end or '-'} "
@@ -551,6 +557,7 @@ def run_accident_self_heal(now: datetime) -> bool:
         flush=True,
     )
     ok = run_accident_full_refresh(target_date)
+    record_task(slot_task, run_date, "success" if ok else "failure", detail=f"target={target_date}")
     verified_snapshot, verified_period_end = latest_accident_snapshot_state() if ok else (None, None)
     ok = bool(
         ok

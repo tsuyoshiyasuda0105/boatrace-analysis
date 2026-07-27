@@ -332,11 +332,7 @@ def iter_events(conn: sqlite3.Connection, date_from: str, date_to: str, rules: d
         SELECT r.race_id, r.race_date, r.stadium_number, r.race_number,
                e.racer_number, rr.boat_number, rr.course_number,
                e.class_number,
-               CASE
-                 WHEN COALESCE(r.is_yusho, 0) = 1
-                   OR COALESCE(r.race_subtitle, '') LIKE '%優勝戦%'
-                 THEN 1 ELSE 0
-               END AS is_yusho,
+               COALESCE(r.is_yusho, 0) AS is_yusho,
                rr.remarks
           FROM race_results rr
           JOIN races r ON r.race_id = rr.race_id
@@ -434,14 +430,10 @@ def load_entry_lookup(conn: sqlite3.Connection, race_date: str) -> tuple[dict[tu
         SELECT r.race_id, r.race_date, r.stadium_number, r.race_number,
                e.racer_number, e.boat_number, rr.course_number,
                e.class_number,
-               CASE
-                 WHEN COALESCE(r.is_yusho, 0) = 1
-                   OR COALESCE(r.race_subtitle, '') LIKE '%優勝戦%'
-                 THEN 1 ELSE 0
-               END AS is_yusho
+               COALESCE(r.is_yusho, 0) AS is_yusho
           FROM races r
           JOIN race_entries e ON e.race_id = r.race_id
-          LEFT JOIN race_results rr
+         LEFT JOIN race_results rr
             ON rr.race_id = r.race_id
            AND rr.boat_number = e.boat_number
          WHERE r.race_date = ?

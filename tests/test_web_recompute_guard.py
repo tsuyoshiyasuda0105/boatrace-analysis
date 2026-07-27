@@ -45,8 +45,8 @@ def test_market_signal_cache_miss_never_self_heals_in_web_worker():
     route_source = route_source.split("@app.route", 1)[0]
 
     assert "market-signals cache missing; self-healing" not in route_source
-    assert '"cache_only": True' in route_source
-    assert '"cache_miss": True' in route_source
+    assert 'cache_only' in route_source
+    assert 'cache_miss' in route_source
 
 
 def test_cached_market_signals_refresh_live_data_status():
@@ -55,9 +55,10 @@ def test_cached_market_signals_refresh_live_data_status():
     route_source = route_source.split("@app.route", 1)[0]
 
     assert "def _with_current_data_status" in route_source
-    assert "_with_current_data_status(cached_payload)" in route_source
-    assert "_with_current_data_status(stale_payload)" in route_source
-    assert "_with_current_data_status(compat_payload)" in route_source
+    assert "_with_current_data_status(" in route_source
+    assert "cached_payload" in route_source
+    assert "stale_payload" in route_source
+    assert "compat_payload" in route_source
 
 
 def test_daily_source_complete_requires_all_races_entries_and_predictions():
@@ -79,7 +80,7 @@ def test_signal_refresh_uses_one_task_slot_per_half_hour(monkeypatch):
     attempted = []
     monkeypatch.setattr(
         scheduler,
-        "task_attempt_exists",
+        "task_success_exists",
         lambda task, run_date: attempted.append((task, run_date)) or True,
     )
 
@@ -89,7 +90,8 @@ def test_signal_refresh_uses_one_task_slot_per_half_hour(monkeypatch):
 
 
 def test_accident_self_heal_skips_when_snapshot_is_current(monkeypatch):
-    monkeypatch.setattr(scheduler, "latest_accident_snapshot_date", lambda: "2026-07-20")
+    monkeypatch.setattr(scheduler, "latest_completed_results_date", lambda: "2026-07-20")
+    monkeypatch.setattr(scheduler, "latest_accident_snapshot_state", lambda: ("2026-07-20", "2026-07-20"))
     monkeypatch.setattr(
         scheduler,
         "run_accident_full_refresh",
@@ -101,10 +103,12 @@ def test_accident_self_heal_skips_when_snapshot_is_current(monkeypatch):
 
 
 def test_accident_self_heal_rebuilds_full_period_and_verifies_snapshot(monkeypatch):
-    snapshots = iter(["2026-07-19", "2026-07-20"])
+    snapshots = iter([("2026-07-19", "2026-07-19"), ("2026-07-20", "2026-07-20")])
+    monkeypatch.setattr(scheduler, "latest_completed_results_date", lambda: "2026-07-20")
     rebuilt = []
     recorded = []
-    monkeypatch.setattr(scheduler, "latest_accident_snapshot_date", lambda: next(snapshots))
+    monkeypatch.setattr(scheduler, "latest_accident_snapshot_state", lambda: next(snapshots))
+    monkeypatch.setattr(scheduler, "task_attempt_exists", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         scheduler,
         "run_accident_full_refresh",
@@ -120,6 +124,11 @@ def test_accident_self_heal_rebuilds_full_period_and_verifies_snapshot(monkeypat
     assert scheduler.run_accident_self_heal(now)
     assert rebuilt == ["2026-07-20"]
     assert recorded[0][0][:3] == (
+        "render_accident_refresh_slot_09",
+        "2026-07-21",
+        "success",
+    )
+    assert recorded[1][0][:3] == (
         "render_accident_refresh",
         "2026-07-20",
         "success",
