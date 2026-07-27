@@ -134,6 +134,8 @@ CREATE INDEX IF NOT EXISTS idx_entries_racer ON race_entries(racer_number);
 CREATE INDEX IF NOT EXISTS idx_entries_motor ON race_entries(assigned_motor_number);
 CREATE INDEX IF NOT EXISTS idx_entries_race_boat
   ON race_entries(race_id, boat_number);
+CREATE INDEX IF NOT EXISTS idx_entries_motor_race_boat
+  ON race_entries(assigned_motor_number, race_id, boat_number);
 
 CREATE TABLE IF NOT EXISTS motor_cycle_stats (
   stadium_number      INTEGER NOT NULL,
@@ -230,6 +232,8 @@ CREATE TABLE IF NOT EXISTS race_original_exhibitions (
 );
 CREATE INDEX IF NOT EXISTS idx_original_exhibitions_race
   ON race_original_exhibitions(race_id);
+CREATE INDEX IF NOT EXISTS idx_original_exhibitions_race_boat
+  ON race_original_exhibitions(race_id, boat_number);
 
 CREATE TABLE IF NOT EXISTS race_results (
   -- レース結果。1レース×6艇。

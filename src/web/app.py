@@ -77,7 +77,7 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v23"
+MARKET_SIGNALS_CACHE_VERSION = "v24"
 STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v13"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
@@ -1508,14 +1508,10 @@ def _detect_market_inefficiency(
                             "bet": "3連単 1-2-3 を 100円",
                             "expected_roi": 1.427,
                         })
-                    # 一般戦 (大多数): 147.7% (CI 134.0-160.2, n=1,776)
+                    # 一般戦は現在の採用手法から外したため、レース詳細の
+                    # +EV表示には出さない。
                     elif grade == 5:
-                        extras.append({
-                            "label": "🎯 L4 一般戦 (3連単1-2-3 推奨)",
-                            "msg": "一般戦 + 1号艇A1 + B除外 + 本命500-1k で 3連単 1-2-3 = 検証 回収率 147.7% (CI 134.0%-160.2%, n=1,776, HIT 21.4%)",
-                            "bet": "3連単 1-2-3 を 100円",
-                            "expected_roi": 1.477,
-                        })
+                        pass
                     # それ以外 (G3 等)
                     else:
                         extras.append({
@@ -1566,12 +1562,7 @@ def _detect_market_inefficiency(
                     f"確定オッズが500-1000円帯になれば 3連単1-2-3 を厚めに"
                 )
             elif grade == 5:  # 一般戦
-                morning_l4["title"] = "🌅 朝L4 一般戦候補"
-                morning_l4["msg"] = (
-                    f"一般戦 + 1号艇A1 + B除外 + 予測 {p1*100:.1f}%。"
-                    f"L4 一般戦版 は検証 回収率 147.7% (CI 134-160%)。"
-                    f"確定後 500-1000円帯なら 3連単1-2-3 を実行"
-                )
+                return None
             return morning_l4
 
         # A2 派生 / 旧 predicted_* は L4 戦略対象外なので表示しない
@@ -2164,39 +2155,70 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
     if not info:
         return None
 
-    with db_connect() as conn:
-        current_row = conn.execute(
-            """
-            WITH original AS (
-                SELECT race_id, boat_number,
-                       MIN(lap_time) AS dash_time,
-                       MIN(turn_time) AS turn_time,
-                       MIN(straight_time) AS straight_time
-                  FROM race_original_exhibitions
-                 WHERE race_id = ? AND boat_number = ?
-                 GROUP BY race_id, boat_number
-            )
-            SELECT race_entries.assigned_motor_number,
-                   race_entries.assigned_motor_top_2_percent,
-                   race_entries.assigned_motor_top_3_percent,
-                   race_entries.racer_name,
-                   race_entries.racer_number,
-                   NULLIF(pv.exhibition_time, 0) AS exhibition_time,
-                   pv.start_timing_exhibition,
-                   original.dash_time,
-                   original.turn_time,
-                   original.straight_time
-              FROM race_entries
-              LEFT JOIN race_previews pv
-                ON pv.race_id = race_entries.race_id
-               AND pv.boat_number = race_entries.boat_number
-              LEFT JOIN original
-                ON original.race_id = race_entries.race_id
-               AND original.boat_number = race_entries.boat_number
-             WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
-            """,
-            (race_id, boat_number, race_id, boat_number),
-        ).fetchone()
+    current_sql_with_original = """
+        WITH original AS (
+            SELECT race_id, boat_number,
+                   MIN(lap_time) AS dash_time,
+                   MIN(turn_time) AS turn_time,
+                   MIN(straight_time) AS straight_time
+              FROM race_original_exhibitions
+             WHERE race_id = ? AND boat_number = ?
+             GROUP BY race_id, boat_number
+        )
+        SELECT race_entries.assigned_motor_number,
+               race_entries.assigned_motor_top_2_percent,
+               race_entries.assigned_motor_top_3_percent,
+               race_entries.racer_name,
+               race_entries.racer_number,
+               NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+               pv.start_timing_exhibition,
+               original.dash_time,
+               original.turn_time,
+               original.straight_time
+          FROM race_entries
+          LEFT JOIN race_previews pv
+            ON pv.race_id = race_entries.race_id
+           AND pv.boat_number = race_entries.boat_number
+          LEFT JOIN original
+            ON original.race_id = race_entries.race_id
+           AND original.boat_number = race_entries.boat_number
+         WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
+    """
+    current_sql_basic = """
+        SELECT race_entries.assigned_motor_number,
+               race_entries.assigned_motor_top_2_percent,
+               race_entries.assigned_motor_top_3_percent,
+               race_entries.racer_name,
+               race_entries.racer_number,
+               NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+               pv.start_timing_exhibition,
+               NULL AS dash_time,
+               NULL AS turn_time,
+               NULL AS straight_time
+          FROM race_entries
+          LEFT JOIN race_previews pv
+            ON pv.race_id = race_entries.race_id
+           AND pv.boat_number = race_entries.boat_number
+         WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
+    """
+    try:
+        with db_connect() as conn:
+            current_row = conn.execute(
+                current_sql_with_original,
+                (race_id, boat_number, race_id, boat_number),
+            ).fetchone()
+    except Exception:
+        logger.warning(
+            "motor history original exhibition current load failed; fallback basic: %s boat=%s",
+            race_id,
+            boat_number,
+            exc_info=True,
+        )
+        with db_connect() as conn:
+            current_row = conn.execute(
+                current_sql_basic,
+                (race_id, boat_number),
+            ).fetchone()
 
     if not current_row:
         return None
@@ -2252,74 +2274,127 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
     if cycle_start:
         params.append(cycle_start)
 
-    with db_connect() as conn:
-        rows = conn.execute(
-            f"""
-            WITH hist AS (
-                SELECT r.race_id, r.race_date, r.race_number,
-                       e.boat_number, e.racer_name, e.racer_number,
-                       e.assigned_motor_top_2_percent,
-                       e.assigned_motor_top_3_percent,
-                       NULLIF(pv.exhibition_time, 0) AS exhibition_time,
-                       pv.start_timing_exhibition,
-                       rr.finishing_position, rr.course_number,
-                       rr.start_timing, NULLIF(rr.kimarite, '') AS boat_kimarite
-                  FROM races r
-                  JOIN race_entries e
-                    ON e.race_id = r.race_id
-                  JOIN race_results rr
-                    ON rr.race_id = e.race_id
-                   AND rr.boat_number = e.boat_number
-                  LEFT JOIN race_previews pv
-                    ON pv.race_id = e.race_id
-                   AND pv.boat_number = e.boat_number
-                 WHERE r.stadium_number = ?
-                   AND e.assigned_motor_number = ?
-                   AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
-                   {cycle_filter_sql}
-                   AND rr.finishing_position IS NOT NULL
-                 ORDER BY r.race_date DESC, r.race_number DESC
-                 LIMIT 10
-            ),
-            original AS (
-                SELECT x.race_id, x.boat_number,
-                       MIN(x.lap_time) AS dash_time,
-                       MIN(x.turn_time) AS turn_time,
-                       MIN(x.straight_time) AS straight_time
-                  FROM race_original_exhibitions x
-                  JOIN hist h
-                    ON h.race_id = x.race_id
-                   AND h.boat_number = x.boat_number
-                 GROUP BY x.race_id, x.boat_number
-            )
-            SELECT h.race_id, h.race_date, h.race_number,
-                   h.boat_number, h.racer_name, h.racer_number,
-                   h.assigned_motor_top_2_percent,
-                   h.assigned_motor_top_3_percent,
-                   h.exhibition_time, h.start_timing_exhibition,
-                   h.finishing_position, h.course_number,
-                   h.start_timing,
-                   original.dash_time,
-                   original.turn_time,
-                   original.straight_time,
-                   COALESCE(
-                       h.boat_kimarite,
-                       (
-                           SELECT MAX(NULLIF(kimarite, ''))
-                             FROM race_results kr
-                            WHERE kr.race_id = h.race_id
-                              AND kr.kimarite IS NOT NULL
-                              AND kr.kimarite <> ''
-                       )
-                   ) AS kimarite
-              FROM hist h
-              LEFT JOIN original
-                ON original.race_id = h.race_id
-               AND original.boat_number = h.boat_number
-             ORDER BY h.race_date DESC, h.race_number DESC
-            """,
-            tuple(params),
-        ).fetchall()
+    history_sql_with_original = f"""
+        WITH hist AS (
+            SELECT r.race_id, r.race_date, r.race_number,
+                   e.boat_number, e.racer_name, e.racer_number,
+                   e.assigned_motor_top_2_percent,
+                   e.assigned_motor_top_3_percent,
+                   NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                   pv.start_timing_exhibition,
+                   rr.finishing_position, rr.course_number,
+                   rr.start_timing, NULLIF(rr.kimarite, '') AS boat_kimarite
+              FROM races r
+              JOIN race_entries e
+                ON e.race_id = r.race_id
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+              LEFT JOIN race_previews pv
+                ON pv.race_id = e.race_id
+               AND pv.boat_number = e.boat_number
+             WHERE r.stadium_number = ?
+               AND e.assigned_motor_number = ?
+               AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+               {cycle_filter_sql}
+               AND rr.finishing_position IS NOT NULL
+             ORDER BY r.race_date DESC, r.race_number DESC
+             LIMIT 10
+        ),
+        original AS (
+            SELECT x.race_id, x.boat_number,
+                   MIN(x.lap_time) AS dash_time,
+                   MIN(x.turn_time) AS turn_time,
+                   MIN(x.straight_time) AS straight_time
+              FROM race_original_exhibitions x
+              JOIN hist h
+                ON h.race_id = x.race_id
+               AND h.boat_number = x.boat_number
+             GROUP BY x.race_id, x.boat_number
+        )
+        SELECT h.race_id, h.race_date, h.race_number,
+               h.boat_number, h.racer_name, h.racer_number,
+               h.assigned_motor_top_2_percent,
+               h.assigned_motor_top_3_percent,
+               h.exhibition_time, h.start_timing_exhibition,
+               h.finishing_position, h.course_number,
+               h.start_timing,
+               original.dash_time,
+               original.turn_time,
+               original.straight_time,
+               COALESCE(
+                   h.boat_kimarite,
+                   (
+                       SELECT MAX(NULLIF(kimarite, ''))
+                         FROM race_results kr
+                        WHERE kr.race_id = h.race_id
+                          AND kr.kimarite IS NOT NULL
+                          AND kr.kimarite <> ''
+                   )
+               ) AS kimarite
+          FROM hist h
+          LEFT JOIN original
+            ON original.race_id = h.race_id
+           AND original.boat_number = h.boat_number
+         ORDER BY h.race_date DESC, h.race_number DESC
+    """
+    history_sql_basic = f"""
+        SELECT r.race_id, r.race_date, r.race_number,
+               e.boat_number, e.racer_name, e.racer_number,
+               e.assigned_motor_top_2_percent,
+               e.assigned_motor_top_3_percent,
+               NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+               pv.start_timing_exhibition,
+               rr.finishing_position, rr.course_number,
+               rr.start_timing,
+               NULL AS dash_time,
+               NULL AS turn_time,
+               NULL AS straight_time,
+               COALESCE(
+                   NULLIF(rr.kimarite, ''),
+                   (
+                       SELECT MAX(NULLIF(kimarite, ''))
+                         FROM race_results kr
+                        WHERE kr.race_id = r.race_id
+                          AND kr.kimarite IS NOT NULL
+                          AND kr.kimarite <> ''
+                   )
+               ) AS kimarite
+          FROM races r
+          JOIN race_entries e
+            ON e.race_id = r.race_id
+          JOIN race_results rr
+            ON rr.race_id = e.race_id
+           AND rr.boat_number = e.boat_number
+          LEFT JOIN race_previews pv
+            ON pv.race_id = e.race_id
+           AND pv.boat_number = e.boat_number
+         WHERE r.stadium_number = ?
+           AND e.assigned_motor_number = ?
+           AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+           {cycle_filter_sql}
+           AND rr.finishing_position IS NOT NULL
+         ORDER BY r.race_date DESC, r.race_number DESC
+         LIMIT 10
+    """
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                history_sql_with_original,
+                tuple(params),
+            ).fetchall()
+    except Exception:
+        logger.warning(
+            "motor history original exhibition history load failed; fallback basic: %s boat=%s",
+            race_id,
+            boat_number,
+            exc_info=True,
+        )
+        with db_connect() as conn:
+            rows = conn.execute(
+                history_sql_basic,
+                tuple(params),
+            ).fetchall()
 
     keys = [
         "race_id", "race_date", "race_number", "boat_number",
@@ -6156,82 +6231,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         def _evaluate_l4_general_200(stadium, grade, cls, natl_1=None,
                                      boat2_top2=None, boat2_exhibition_time=None,
                                      boat3_exhibition_time=None, ex_st=None):
-            """L4 general-race strengthened watch.
-
-            Backtest memo (2025-02-01 to 2026-06-24):
-              general + B-excluded + boat1 A1 + 1-2-3 payout 500-999
-              + boat1 national win >= 7% + boat2 top2 >= 40%
-              + boat2 exhibition time faster than boat3
-              => n=164, hit=36.0%, recovery=251.6%.
-              + boat1 exhibition ST < 0.18 => n=150, hit=37.3%, recovery=259.3%.
-            """
-            b_excluded = stadium not in EXCLUDE_B if stadium is not None else False
-            if not (grade == 5 and cls == 1 and b_excluded):
-                return None
-            try:
-                n1 = float(natl_1) if natl_1 is not None else 0.0
-            except (TypeError, ValueError):
-                n1 = 0.0
-            try:
-                b2 = float(boat2_top2) if boat2_top2 is not None else 0.0
-            except (TypeError, ValueError):
-                b2 = 0.0
-            if n1 < 7.0 or b2 < 40.0:
-                return None
-
-            b2_ex = None
-            b3_ex = None
-            try:
-                if boat2_exhibition_time is not None:
-                    b2_ex = float(boat2_exhibition_time)
-                if boat3_exhibition_time is not None:
-                    b3_ex = float(boat3_exhibition_time)
-            except (TypeError, ValueError):
-                b2_ex = b3_ex = None
-            has_exhibition = b2_ex is not None and b3_ex is not None
-            b2_faster = bool(has_exhibition and b2_ex < b3_ex)
-            try:
-                ex_st_f = float(ex_st) if ex_st is not None else None
-            except (TypeError, ValueError):
-                ex_st_f = None
-            ex_st_good = ex_st_f is not None and ex_st_f < 0.18
-
-            if has_exhibition and not b2_faster:
-                return None
-
-            active = b2_faster
-            recovery = 259.3 if ex_st_good else 251.6
-            n = 150 if ex_st_good else 164
-            hit_rate = 37.3 if ex_st_good else 36.0
-            level = "l4_general_200" if active else "morning_watch_l4_general_200"
-            label = "L4一般200" if active else "朝監視 L4一般200"
-            return {
-                "level": level,
-                "label": label,
-                "recovery": recovery,
-                "bet": "3連単 1-2-3",
-                "n": n,
-                "rank": "general200",
-                "rank_label": "一般200",
-                "rank_emoji": "強",
-                "natl_1": natl_1,
-                "local_1": None,
-                "is_l4_general_200": True,
-                "is_morning": not active,
-                "is_morning_watch": not active,
-                "is_reference": False,
-                "general200_hit_rate": hit_rate,
-                "general200_recovery": recovery,
-                "general200_n": n,
-                "general200_boat2_top2": b2,
-                "general200_boat2_exhibition_time": b2_ex,
-                "general200_boat3_exhibition_time": b3_ex,
-                "general200_boat2_faster": b2_faster,
-                "general200_ex_st": ex_st_f,
-                "general200_ex_st_good": ex_st_good,
-                "tetsuban_score": 5 if active else 4,
-                "tetsuban_label": "一般200 強" if active else "一般200 監視",
-            }
+            """Retired L4 general-race watch; kept as a no-op compatibility hook."""
+            return None
 
         def _apply_l4_general_200(base, general200):
             if not general200:

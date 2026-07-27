@@ -101,7 +101,6 @@
 
         <h5>📌 参考バッジ (ROI 計算外、本日候補リスト除外)</h5>
         <ul class="legend-list">
-          <li>📌 <b>L4 一般戦×A1</b>: 一般戦は ROI 147.7% で低めのため除外 (バッジは表示)</li>
           <li>☔ <b>L4 (雨除外)</b>: 雨予報のレース (ROI 100% で break-even のため除外)</li>
         </ul>
 
@@ -765,23 +764,6 @@
                     const cwr = (sig.l4.course1_winrate * 100).toFixed(0);
                     const cst = sig.l4.course1_starts;
                     title += ` | 🚀1c80: 過去6ヶ月 1コース1着率 ${cwr}% (${cst}戦), 検証ROI ${sig.l4.recovery_1c80}% → 資金多め推奨`;
-                  }
-                  if (sig.l4.is_l4_general_200) {
-                    title += ` | L4一般200: 回収率 ${sig.l4.general200_recovery}%`
-                          + ` / 的中率 ${sig.l4.general200_hit_rate}% / n=${sig.l4.general200_n}`
-                          + ` | 条件: 一般戦+B除外+1号艇A1+全国1着率7%以上+2号艇2連率40%以上`;
-                    if (sig.l4.general200_boat2_exhibition_time != null) {
-                      title += ` | 2号艇展示T ${Number(sig.l4.general200_boat2_exhibition_time).toFixed(2)}`;
-                    }
-                    if (sig.l4.general200_boat3_exhibition_time != null) {
-                      title += ` | 3号艇展示T ${Number(sig.l4.general200_boat3_exhibition_time).toFixed(2)}`;
-                    }
-                    title += sig.l4.general200_boat2_faster
-                      ? ' | 展示条件OK: 2号艇が3号艇より速い'
-                      : ' | 朝監視: 展示条件待ち';
-                    if (sig.l4.general200_ex_st != null) {
-                      title += ` | 1号艇展示ST ${Number(sig.l4.general200_ex_st).toFixed(2)}`;
-                    }
                   }
                   if (sig.l4.is_portfolio_strong) {
                     title += ` | 🔥強バッジ: 10年検証 回収率 ${sig.l4.portfolio_recovery}%`

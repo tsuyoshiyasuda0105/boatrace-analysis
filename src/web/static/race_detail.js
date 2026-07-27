@@ -154,7 +154,7 @@
       historyCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}?v=${encodeURIComponent(staticVersion)}`, {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
-        cache: "force-cache",
+        cache: "no-store",
       }).then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

@@ -22,6 +22,14 @@ DDL: tuple[str, ...] = (
       ON race_entries(race_id, boat_number)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_entries_racer_race
+      ON race_entries(racer_number, race_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_entries_motor_race_boat
+      ON race_entries(assigned_motor_number, race_id, boat_number)
+    """,
+    """
     CREATE INDEX IF NOT EXISTS idx_results_race_boat_finish
       ON race_results(race_id, boat_number, finishing_position)
     """,
@@ -32,6 +40,10 @@ DDL: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_previews_race_boat
       ON race_previews(race_id, boat_number)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_original_exhibitions_race_boat
+      ON race_original_exhibitions(race_id, boat_number)
     """,
     """
     CREATE TABLE IF NOT EXISTS l4_daily_stats_cache (
