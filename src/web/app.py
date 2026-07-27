@@ -78,7 +78,7 @@ _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
 MARKET_SIGNALS_CACHE_VERSION = "v24"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v13"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v14"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -1263,6 +1263,60 @@ def _motor_profile_from_history(history: list[dict[str, Any]]) -> dict[str, Any]
         "recent_scores": recent_scores,
         "note": "展示タイム・展示ST・着順効率からの推定です。",
     }
+
+def _racer_history_baseline(racer_number: Optional[int], stadium_number: Optional[int]) -> dict[str, Any]:
+    baseline = {
+        "starts": 0,
+        "avg_exhibition_time": None,
+        "avg_start_timing_exhibition": None,
+        "avg_start_timing": None,
+        "avg_finish_position": None,
+    }
+    if not racer_number:
+        return baseline
+
+    try:
+        racer_number = int(racer_number)
+    except Exception:
+        return baseline
+
+    params: list[Any] = [racer_number]
+    stadium_sql = ""
+    if stadium_number:
+        stadium_sql = " AND r.stadium_number = ?"
+        params.append(int(stadium_number))
+
+    sql = f"""
+        SELECT COUNT(*) AS starts,
+               AVG(NULLIF(pv.exhibition_time, 0)) AS avg_exhibition_time,
+               AVG(NULLIF(pv.start_timing_exhibition, 0)) AS avg_start_timing_exhibition,
+               AVG(NULLIF(rr.start_timing, 0)) AS avg_start_timing,
+               AVG(NULLIF(rr.finishing_position, 0)) AS avg_finish_position
+          FROM race_entries e
+          JOIN races r
+            ON r.race_id = e.race_id
+          LEFT JOIN race_previews pv
+            ON pv.race_id = e.race_id
+           AND pv.boat_number = e.boat_number
+          LEFT JOIN race_results rr
+            ON rr.race_id = e.race_id
+           AND rr.boat_number = e.boat_number
+         WHERE e.racer_number = ?
+           {stadium_sql}
+    """
+
+    with db_connect() as conn:
+        row = conn.execute(sql, tuple(params)).fetchone()
+
+    if not row:
+        return baseline
+
+    baseline["starts"] = int(row[0] or 0)
+    baseline["avg_exhibition_time"] = float(row[1]) if row[1] is not None else None
+    baseline["avg_start_timing_exhibition"] = float(row[2]) if row[2] is not None else None
+    baseline["avg_start_timing"] = float(row[3]) if row[3] is not None else None
+    baseline["avg_finish_position"] = float(row[4]) if row[4] is not None else None
+    return baseline
 
 
 def _racer_lift_profile(history: list[dict[str, Any]], racer_baseline: dict[str, Any]) -> dict[str, Any]:
@@ -11657,6 +11711,38 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             day_d[f"{key}_recovery"] = None
             day_d[f"{key}_profit"] = 0
 
+    def _roi_cache_day_has_saved_metrics(day_d: dict) -> bool:
+        return any(
+            f"{key}_bets" in day_d or f"{key}_hits" in day_d or f"{key}_pay" in day_d
+            for key in ROI_METRIC_KEYS
+        )
+
+    def _normalize_roi_cache_day(day_d: dict) -> dict:
+        """Make old daily ROI cache rows displayable after strategy changes.
+
+        Strategy definitions change often during research. The web display must
+        not zero out historical rows just because a newly added strategy/version
+        key is missing. Missing metrics are treated as zero, while already saved
+        hit/pay/profit fields are preserved.
+        """
+        for key in ROI_METRIC_KEYS:
+            bets = int(day_d.get(f"{key}_bets", 0) or 0)
+            hits = int(day_d.get(f"{key}_hits", 0) or 0)
+            pay = int(day_d.get(f"{key}_pay", 0) or 0)
+            unit = int(BET_UNIT_MAP.get(key, 100) or 100)
+            stake = unit * bets
+            day_d[f"{key}_bets"] = bets
+            day_d[f"{key}_hits"] = hits
+            day_d[f"{key}_pay"] = pay
+            if bets > 0 and day_d.get(f"{key}_recovery") is None:
+                day_d[f"{key}_recovery"] = pay / stake * 100 if stake else None
+            if bets > 0 and day_d.get(f"{key}_roi") is None:
+                recovery = day_d.get(f"{key}_recovery")
+                day_d[f"{key}_roi"] = (recovery - 100) if recovery is not None else None
+            if day_d.get(f"{key}_profit") is None:
+                day_d[f"{key}_profit"] = pay - stake
+        return day_d
+
     def _l4_daily_stats_cache_only(from_date: str, to_date: str) -> list[dict]:
         """Read daily ROI stats from precomputed JSON cache only.
 
@@ -11692,8 +11778,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     if not isinstance(day_d, dict):
                         continue
                     if not _adopted_daily_cache_is_valid(str(rdate), day_d):
-                        continue
-                    by_date[str(rdate)] = day_d
+                        if not _roi_cache_day_has_saved_metrics(day_d):
+                            continue
+                        day_d["_adopted_daily_cache_stale"] = True
+                    by_date[str(rdate)] = _normalize_roi_cache_day(day_d)
         except Exception as exc:  # noqa: BLE001
             logger.warning("daily ROI cache-only lookup failed: %s", exc)
 
@@ -11710,6 +11798,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 day.setdefault(f"{key}_bets", 0)
                 day.setdefault(f"{key}_hits", 0)
                 day.setdefault(f"{key}_pay", 0)
+                day.setdefault(f"{key}_roi", None)
+                day.setdefault(f"{key}_recovery", None)
+                day.setdefault(f"{key}_profit", 0)
             if rdate not in settled_dates:
                 _clear_roi_result_metrics(day)
                 day["_roi_unsettled_result_guard"] = True
