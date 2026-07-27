@@ -170,6 +170,18 @@
     <div class="motor-history-loading">展開予測を読み込み中...</div>
   </section>
 
+  <section class="motor-inspector-shell" id="motor-inspector-shell" hidden>
+    <div class="motor-inspector-head">
+      <div>
+        <h3>モーター履歴</h3>
+        <p>モーター2連率を押すと、当該モーターの直近推移と選手情報を表示します。</p>
+      </div>
+    </div>
+    <div class="motor-inspector-body" data-motor-inspector-body>
+      <div class="motor-history-loading">モーター履歴を読み込み中...</div>
+    </div>
+  </section>
+
   {% if error %}
     <div class="error-box">予測エラー: {{ error }}</div>
   {% elif not preds %}
@@ -500,7 +512,6 @@
                       data-race-id="{{ info.race_id }}"
                       data-boat-number="{{ p.boat_number }}"
                       aria-expanded="false"
-                      aria-controls="motor-history-row-{{ p.boat_number }}"
                       title="このモーターの直近履歴を表示"
                     >
                       <span class="motor-rate">{{ '%.2f' | format(p.assigned_motor_top_2_percent) }}</span>
@@ -539,20 +550,6 @@
                   {% endif %}
                 </td>
               {% endif %}
-            </tr>
-            <tr class="racer-detail-row" id="racer-detail-row-{{ p.boat_number }}" hidden>
-              <td colspan="{{ 12 if has_result_col else 11 }}">
-                <div class="racer-detail-panel" data-racer-detail-panel="{{ p.boat_number }}">
-                  <div class="motor-history-loading">選手詳細を読み込み中...</div>
-                </div>
-              </td>
-            </tr>
-            <tr class="motor-history-row" id="motor-history-row-{{ p.boat_number }}" hidden>
-              <td colspan="{{ 12 if has_result_col else 11 }}">
-                <div class="motor-history-panel" data-motor-history-panel="{{ p.boat_number }}">
-                  <div class="motor-history-loading">モーター履歴を読み込み中...</div>
-                </div>
-              </td>
             </tr>
           {% endfor %}
         </tbody>
