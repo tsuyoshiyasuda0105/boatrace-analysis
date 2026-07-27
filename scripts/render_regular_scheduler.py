@@ -202,6 +202,9 @@ def run_beforeinfo(now: datetime) -> bool:
 
     print(f"[beforeinfo] written={summary}", flush=True)
     if summary.get("races", 0) > 0:
+        # Keep the high-ROI list visible even if prediction refresh is slow.
+        # A second prewarm after prediction refresh still runs below when due.
+        run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
         ok = run_py(["scripts/render_cache_predictions.py", "--date", now.date().isoformat()], timeout=1800)
         slot_task = signal_refresh_task_name(now)
         if not task_success_exists(slot_task, now.date().isoformat()):
@@ -221,6 +224,9 @@ def run_morning(now: datetime) -> bool:
     ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
+    # Prewarm before the heavier prediction refresh so the UI does not show an
+    # empty high-ROI list if prediction generation or syncing stalls.
+    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "morning-check"], timeout=1800)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "morning-check"], timeout=1800)
