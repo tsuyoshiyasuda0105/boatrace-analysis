@@ -803,32 +803,11 @@ def _attach_motor_fact_grades(race_id: str, preds: list[dict], info: Optional[di
 
     ace_threshold = None
     if info:
-        cycle_start = _motor_cycle_start(info["race_date"], int(info["stadium_number"]))
-        params: list[Any] = [info["stadium_number"], info["race_date"]]
-        cycle_sql = ""
-        if cycle_start:
-            cycle_sql = "AND r.race_date >= ?"
-            params.append(cycle_start)
         try:
-            with db_connect() as conn:
-                rows = conn.execute(
-                    f"""
-                    SELECT MAX(e.assigned_motor_top_2_percent)
-                      FROM races r
-                      JOIN race_entries e ON e.race_id = r.race_id
-                     WHERE r.stadium_number = ?
-                       AND r.race_date <= ?
-                       {cycle_sql}
-                       AND e.assigned_motor_number IS NOT NULL
-                       AND e.assigned_motor_top_2_percent IS NOT NULL
-                     GROUP BY e.assigned_motor_number
-                    """,
-                    tuple(params),
-                ).fetchall()
-            rates = sorted(float(r[0]) for r in rows if r and r[0] is not None)
-            if rates:
-                idx = max(0, min(len(rates) - 1, int(len(rates) * 0.95)))
-                ace_threshold = rates[idx]
+            ace_threshold = _ace_motor_threshold(
+                int(info["stadium_number"]),
+                str(info["race_date"]),
+            )
         except Exception:
             logger.debug("ace motor threshold failed: %s", race_id, exc_info=True)
 
@@ -867,6 +846,36 @@ def _attach_motor_fact_grades(race_id: str, preds: list[dict], info: Optional[di
             and ace_threshold is not None
             and motor_rate >= ace_threshold
         )
+
+
+@lru_cache(maxsize=2048)
+def _ace_motor_threshold(stadium_number: int, race_date: str) -> Optional[float]:
+    cycle_start = _motor_cycle_start(race_date, stadium_number)
+    params: list[Any] = [stadium_number, race_date]
+    cycle_sql = ""
+    if cycle_start:
+        cycle_sql = "AND r.race_date >= ?"
+        params.append(cycle_start)
+    with db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT MAX(e.assigned_motor_top_2_percent)
+              FROM races r
+              JOIN race_entries e ON e.race_id = r.race_id
+             WHERE r.stadium_number = ?
+               AND r.race_date <= ?
+               {cycle_sql}
+               AND e.assigned_motor_number IS NOT NULL
+               AND e.assigned_motor_top_2_percent IS NOT NULL
+             GROUP BY e.assigned_motor_number
+            """,
+            tuple(params),
+        ).fetchall()
+    rates = sorted(float(r[0]) for r in rows if r and r[0] is not None)
+    if not rates:
+        return None
+    idx = max(0, min(len(rates) - 1, int(len(rates) * 0.95)))
+    return rates[idx]
 
 
 def _racer_course_detail_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
@@ -1886,39 +1895,11 @@ def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
     racer_numbers = sorted(racer_numbers_set)
     if not racer_numbers:
         return
-    placeholders = ",".join("?" for _ in racer_numbers)
     try:
-        with db_connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT racer_number,
-                       MAX(accident_rate) AS accident_rate,
-                       MAX(accident_points) AS accident_points,
-                       MAX(starts_count) AS starts_count
-                  FROM racer_accident_period_stats
-                 WHERE period_start = ?
-                   AND racer_number IN ({placeholders})
-                   AND source_kind = 'reconstructed'
-                   AND rule_version = 'official_table_2025_05_reconstructed_v2'
-                 GROUP BY racer_number
-                """,
-                (period_start, *racer_numbers),
-            ).fetchall()
+        by_racer = _accident_watch_map(period_start, tuple(racer_numbers))
     except Exception as exc:
         logger.warning("race detail accident tag query failed for %s: %s", race_id, exc)
         return
-
-    by_racer = {}
-    for racer_number, rate, points, starts in rows:
-        try:
-            key = int(racer_number)
-        except Exception:
-            continue
-        by_racer[key] = {
-            "rate": round(float(rate or 0.0), 3),
-            "points": int(points or 0),
-            "starts": int(starts or 0),
-        }
     for p in preds:
         try:
             racer_number = int(p.get("racer_number"))
@@ -1931,6 +1912,41 @@ def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
         p["accident_points"] = acc["points"]
         p["accident_starts"] = acc["starts"]
         p["has_accident_watch"] = acc["rate"] >= 0.7
+
+
+@lru_cache(maxsize=4096)
+def _accident_watch_map(period_start: str, racer_numbers: tuple[int, ...]) -> dict[int, dict[str, int | float]]:
+    if not racer_numbers:
+        return {}
+    placeholders = ",".join("?" for _ in racer_numbers)
+    with db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT racer_number,
+                   MAX(accident_rate) AS accident_rate,
+                   MAX(accident_points) AS accident_points,
+                   MAX(starts_count) AS starts_count
+              FROM racer_accident_period_stats
+             WHERE period_start = ?
+               AND racer_number IN ({placeholders})
+               AND source_kind = 'reconstructed'
+               AND rule_version = 'official_table_2025_05_reconstructed_v2'
+             GROUP BY racer_number
+            """,
+            (period_start, *racer_numbers),
+        ).fetchall()
+    out: dict[int, dict[str, int | float]] = {}
+    for racer_number, rate, points, starts in rows:
+        try:
+            key = int(racer_number)
+        except Exception:
+            continue
+        out[key] = {
+            "rate": round(float(rate or 0.0), 3),
+            "points": int(points or 0),
+            "starts": int(starts or 0),
+        }
+    return out
 
 
 def _branch_label(branch_number: Any) -> str:
