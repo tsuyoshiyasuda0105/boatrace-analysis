@@ -4534,10 +4534,33 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 )
 
         if not force_recompute:
+            # A cold market-signals cache used to fall through to the full
+            # strategy scan on the user's web request. That path joins and
+            # annotates many strategy sources and can block the ROI list for
+            # tens of seconds. Render prewarm is the only process allowed to
+            # rebuild this payload; the web request returns a cheap pending
+            # payload and the next cron refresh fills the cache.
             logger.warning(
-                "market-signals cache miss; fallback to inline recompute for %s",
+                "market-signals cache miss; return pending payload for %s",
                 target_date,
             )
+            pending_payload = {
+                "date": target_date,
+                "cache_version": MARKET_SIGNALS_CACHE_VERSION,
+                "computed_at": datetime.now().isoformat(timespec="seconds"),
+                "n_races": 0,
+                "n_positive_ev": 0,
+                "n_l4": 0,
+                "n_morning_l4": 0,
+                "data_status": {
+                    **_load_market_data_status(),
+                    "cache_miss": True,
+                    "cache_only": True,
+                },
+                "accident_watch": {},
+                "signals": {},
+            }
+            return _market_json_response(pending_payload, "pending")
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
@@ -11341,18 +11364,24 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     filtered_signals.append(s)
             signals = filtered_signals
 
+        # The per-race accident watch blob is display-only and can become large.
+        # Keep adopted accident strategy conditions, but do not attach the extra
+        # tag payload to the high-ROI list unless explicitly requested for
+        # diagnostics.
+        include_accident_watch_payload = request.args.get("include_accident_watch") == "1"
         accident_watch_payload = {}
-        for rid, info in all_race_info.items():
-            items = info.get("accident_watch") or []
-            if not items:
-                continue
-            accident_watch_payload[rid] = {
-                "items": items,
-                "boats": info.get("accident_watch_boats") or [],
-                "max_rate": info.get("max_accident_rate"),
-                "max_points": info.get("max_accident_points"),
-                "label": _accident_watch_label(items),
-            }
+        if include_accident_watch_payload:
+            for rid, info in all_race_info.items():
+                items = info.get("accident_watch") or []
+                if not items:
+                    continue
+                accident_watch_payload[rid] = {
+                    "items": items,
+                    "boats": info.get("accident_watch_boats") or [],
+                    "max_rate": info.get("max_accident_rate"),
+                    "max_points": info.get("max_accident_points"),
+                    "label": _accident_watch_label(items),
+                }
 
         payload = {
             "date": target_date,
