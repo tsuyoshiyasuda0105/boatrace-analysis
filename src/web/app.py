@@ -2081,6 +2081,82 @@ def _build_type_label(top_kimarite: Optional[str], current_course: int, course_d
     return "標準型"
 
 
+def _original_exhibition_quality_mark(rank: Optional[int]) -> Optional[str]:
+    if rank is None:
+        return None
+    try:
+        rank_int = int(rank)
+    except (TypeError, ValueError):
+        return None
+    if rank_int <= 1:
+        return "◎"
+    if rank_int == 2:
+        return "〇"
+    if rank_int <= 4:
+        return "△"
+    return "×"
+
+
+def _original_exhibition_quality_marks(race_ids: list[str]) -> dict[str, dict[int, dict[str, Any]]]:
+    unique_race_ids = [rid for rid in dict.fromkeys(race_ids) if rid]
+    if not unique_race_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_race_ids)
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT race_id, boat_number,
+                       MIN(lap_time) AS dash_time,
+                       MIN(turn_time) AS turn_time,
+                       MIN(straight_time) AS straight_time
+                  FROM race_original_exhibitions
+                 WHERE race_id IN ({placeholders})
+                 GROUP BY race_id, boat_number
+                """,
+                tuple(unique_race_ids),
+            ).fetchall()
+    except Exception:
+        logger.exception("original exhibition quality mark load failed")
+        return {}
+
+    raw: dict[str, dict[int, dict[str, Optional[float]]]] = {}
+    for rid, boat_no, dash_time, turn_time, straight_time in rows:
+        raw.setdefault(str(rid), {})[int(boat_no)] = {
+            "dash_time": dash_time,
+            "turn_time": turn_time,
+            "straight_time": straight_time,
+        }
+
+    out: dict[str, dict[int, dict[str, Any]]] = {}
+    metric_map = {
+        "dash_time": ("dash_rank", "dash_mark"),
+        "turn_time": ("turn_rank", "turn_mark"),
+        "straight_time": ("straight_rank", "straight_mark"),
+    }
+    for rid, boat_values in raw.items():
+        out.setdefault(rid, {})
+        for metric, (rank_key, mark_key) in metric_map.items():
+            comparable = [
+                (boat_no, float(values[metric]))
+                for boat_no, values in boat_values.items()
+                if values.get(metric) is not None
+            ]
+            if len(comparable) < 3:
+                continue
+            comparable.sort(key=lambda item: item[1])
+            last_value = None
+            current_rank = 0
+            for index, (boat_no, value) in enumerate(comparable, start=1):
+                if last_value is None or value != last_value:
+                    current_rank = index
+                    last_value = value
+                target = out.setdefault(rid, {}).setdefault(boat_no, {})
+                target[rank_key] = current_rank
+                target[mark_key] = _original_exhibition_quality_mark(current_rank)
+    return out
+
+
 def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
     if boat_number < 1 or boat_number > 6:
         return None
@@ -2254,6 +2330,14 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "turn_time", "straight_time", "kimarite",
     ]
     history = [dict(zip(keys, row)) for row in rows]
+    quality_marks = _original_exhibition_quality_marks(
+        [race_id] + [str(row.get("race_id")) for row in history if row.get("race_id")]
+    )
+    current.update(quality_marks.get(race_id, {}).get(int(boat_number), {}))
+    for row in history:
+        row.update(
+            quality_marks.get(str(row.get("race_id")), {}).get(int(row.get("boat_number") or 0), {})
+        )
 
     starts = len(history)
     wins = sum(1 for r in history if r.get("finishing_position") == 1)
@@ -3510,7 +3594,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not info:
             return jsonify({"error": "entry not found"}), 404
         today_iso = date.today().isoformat()
-        cache_key = f"motor_history:{race_id}:{boat_number}"
+        cache_key = f"motor_history_v2:{race_id}:{boat_number}"
         cached_payload = _read_json_cache(
             cache_key,
             1800 if info["race_date"] >= today_iso else 86400,

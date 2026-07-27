@@ -12,6 +12,22 @@
   const pct = (value) => value == null ? "-" : `${Number(value).toFixed(1)}%`;
   const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
   const posClass = (value) => value ? `f-${Number(value)}` : "";
+  const qualityTone = (mark) => ({
+    "◎": "excellent",
+    "〇": "good",
+    "△": "fair",
+    "×": "poor",
+  }[mark] || "empty");
+  const qualityCell = (mark, value) => {
+    const displayMark = mark || "-";
+    const timeText = value == null ? "" : num(value);
+    return `
+      <span class="motor-quality-mark is-${qualityTone(displayMark)}" title="${timeText}">
+        <b>${esc(displayMark)}</b>
+        ${timeText ? `<small>${esc(timeText)}</small>` : ""}
+      </span>
+    `;
+  };
   const historyCache = new Map();
   const racerDetailCache = new Map();
 
@@ -42,9 +58,9 @@
         <td>-</td>
         <td>${num(current.exhibition_time)}</td>
         <td>${num(current.start_timing_exhibition)}</td>
-        <td>${num(current.dash_time)}</td>
-        <td>${num(current.turn_time)}</td>
-        <td>${num(current.straight_time)}</td>
+        <td>${qualityCell(current.dash_mark, current.dash_time)}</td>
+        <td>${qualityCell(current.turn_mark, current.turn_time)}</td>
+        <td>${qualityCell(current.straight_mark, current.straight_time)}</td>
         <td>-</td>
       </tr>
     `;
@@ -61,9 +77,9 @@
         <td>${esc(r.course_number ?? "-")}</td>
         <td>${num(r.exhibition_time)}</td>
         <td>${num(r.start_timing_exhibition)}</td>
-        <td>${num(r.dash_time)}</td>
-        <td>${num(r.turn_time)}</td>
-        <td>${num(r.straight_time)}</td>
+        <td>${qualityCell(r.dash_mark, r.dash_time)}</td>
+        <td>${qualityCell(r.turn_mark, r.turn_time)}</td>
+        <td>${qualityCell(r.straight_mark, r.straight_time)}</td>
         <td>${resultHtml(r.finishing_position, r.kimarite)}</td>
       </tr>
     `).join("");
