@@ -20,6 +20,9 @@ BEFOREINFO_WINDOW_MIN = 5
 BEFOREINFO_WINDOW_MAX = 9
 BEFOREINFO_COOLDOWN_MIN = 8
 BEFOREINFO_WRITE_BATCH_SIZE = 6
+ORIGINAL_EXHIBITION_RECOVERY_PAST_MIN = 240
+ORIGINAL_EXHIBITION_RECOVERY_FUTURE_MIN = 30
+ORIGINAL_EXHIBITION_RECOVERY_LIMIT = 48
 # Keep this in sync with src.web.app.ADOPTED_DAILY_SELECT_VERSION.
 # If this lags behind, the self-heal path treats fresh ROI rows as stale and
 # can leave the dashboard looking empty after a successful cron run.
@@ -38,6 +41,73 @@ def run_py(args: list[str], timeout: int = 1800) -> bool:
     elapsed = time.monotonic() - started
     print(f"exit={proc.returncode} elapsed={elapsed:.1f}s", flush=True)
     return proc.returncode == 0
+
+
+def _parse_race_close_jst(closed_at, race_date: str) -> datetime | None:
+    if isinstance(closed_at, datetime):
+        return closed_at.replace(tzinfo=JST) if closed_at.tzinfo is None else closed_at
+    if not isinstance(closed_at, str):
+        return None
+    try:
+        if " " in closed_at and len(closed_at) >= 16:
+            dt = datetime.fromisoformat(closed_at)
+        else:
+            time_part = closed_at if len(closed_at) >= 5 else f"{closed_at}:00"
+            dt = datetime.fromisoformat(f"{race_date} {time_part}")
+    except (TypeError, ValueError):
+        return None
+    return dt.replace(tzinfo=JST)
+
+
+def find_missing_original_exhibition_races(
+    now: datetime,
+    *,
+    past_min: int = ORIGINAL_EXHIBITION_RECOVERY_PAST_MIN,
+    future_min: int = ORIGINAL_EXHIBITION_RECOVERY_FUTURE_MIN,
+    limit: int = ORIGINAL_EXHIBITION_RECOVERY_LIMIT,
+) -> list[tuple[str, int, int, datetime]]:
+    from src.collectors import original_exhibition as original_exhibition_collector
+
+    supported = sorted(
+        int(stadium)
+        for stadium, patterns in original_exhibition_collector.SOURCE_PATTERNS.items()
+        if patterns
+    )
+    if not supported:
+        return []
+
+    target_date = now.date().isoformat()
+    placeholders = ",".join("?" for _ in supported)
+    with db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
+                   COUNT(oe.race_id) AS original_rows
+              FROM races r
+              LEFT JOIN race_original_exhibitions oe ON oe.race_id = r.race_id
+             WHERE r.race_date = ?
+               AND r.stadium_number IN ({placeholders})
+               AND r.race_closed_at IS NOT NULL
+             GROUP BY r.race_id, r.stadium_number, r.race_number, r.race_closed_at
+             ORDER BY r.race_closed_at
+            """,
+            (target_date, *supported),
+        ).fetchall()
+
+    due: list[tuple[str, int, int, datetime]] = []
+    for race_id, stadium, race_no, closed_at, original_rows in rows:
+        if int(original_rows or 0) > 0:
+            continue
+        close = _parse_race_close_jst(closed_at, target_date)
+        if close is None:
+            continue
+        mins_until = (close - now).total_seconds() / 60.0
+        if mins_until < -abs(past_min) or mins_until > future_min:
+            continue
+        due.append((race_id, int(stadium), int(race_no), close))
+        if limit > 0 and len(due) >= limit:
+            break
+    return due
 
 
 def task_success_exists(task_name: str, run_date: str) -> bool:
@@ -137,29 +207,35 @@ def run_beforeinfo(now: datetime) -> bool:
     # already displayed without exhibition data; live collection only needs the
     # close-time window plus a bounded recovery queue.
     due = _merge_due_races(due, incomplete_due)
+    original_due = find_missing_original_exhibition_races(now)
+    if original_due:
+        print(f"[original-exhibition] missing_due={len(original_due)}", flush=True)
+    original_due = _merge_due_races(due, original_due)
     print(f"[beforeinfo] due={len(due)}", flush=True)
-    if not due:
+    if not due and not original_due:
         return True
 
-    try:
-        tide_summary = tide_collector.refresh_tides_for_races(
-            [race_id for race_id, _stadium, _race_no, _close in due]
-        )
-        print(
-            "[beforeinfo-tides] "
-            f"target={tide_summary.get('target_races', 0)} "
-            f"rows={tide_summary.get('rows', 0)} "
-            f"stations={tide_summary.get('stations', 0)} "
-            f"failures={tide_summary.get('station_failures', 0)}",
-            flush=True,
-        )
-    except Exception as exc:
-        print(f"[beforeinfo-tides] failed: {type(exc).__name__}: {exc}", flush=True)
+    if due:
+        try:
+            tide_summary = tide_collector.refresh_tides_for_races(
+                [race_id for race_id, _stadium, _race_no, _close in due]
+            )
+            print(
+                "[beforeinfo-tides] "
+                f"target={tide_summary.get('target_races', 0)} "
+                f"rows={tide_summary.get('rows', 0)} "
+                f"stations={tide_summary.get('stations', 0)} "
+                f"failures={tide_summary.get('station_failures', 0)}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[beforeinfo-tides] failed: {type(exc).__name__}: {exc}", flush=True)
 
+    original_ok = True
     try:
         s = original_exhibition_collector.collect_for_races(
             now.date(),
-            [(race_id, stadium, race_no) for race_id, stadium, race_no, _close in due],
+            [(race_id, stadium, race_no) for race_id, stadium, race_no, _close in original_due],
             force=False,
             save_html=False,
         )
@@ -170,7 +246,11 @@ def run_beforeinfo(now: datetime) -> bool:
             flush=True,
         )
     except Exception as exc:
+        original_ok = False
         print(f"[original-exhibition] failed: {type(exc).__name__}: {exc}", flush=True)
+
+    if not due:
+        return original_ok
 
     updates = []
     summary = {"supabase_rows": 0, "local_rows": 0, "races": 0}
@@ -196,9 +276,30 @@ def run_beforeinfo(now: datetime) -> bool:
                 flush_updates()
 
     flush_updates()
+
+    # Some venue-specific original exhibition pages appear a little later than
+    # the official beforeinfo page. Retry once after the live scrape writes.
+    try:
+        s = original_exhibition_collector.collect_for_races(
+            now.date(),
+            [(race_id, stadium, race_no) for race_id, stadium, race_no, _close in original_due],
+            force=False,
+            save_html=False,
+        )
+        if s.get("races_targeted", 0):
+            print(
+                "[original-exhibition-retry] "
+                f"targeted={s['races_targeted']} fetched={s['pages_fetched']} "
+                f"found={s['races_found']} rows={s['rows_inserted']}",
+                flush=True,
+            )
+    except Exception as exc:
+        original_ok = False
+        print(f"[original-exhibition-retry] failed: {type(exc).__name__}: {exc}", flush=True)
+
     if summary["races"] <= 0:
         print("[beforeinfo] no valid pages", flush=True)
-        return False
+        return original_ok
 
     print(f"[beforeinfo] written={summary}", flush=True)
     if summary.get("races", 0) > 0:
