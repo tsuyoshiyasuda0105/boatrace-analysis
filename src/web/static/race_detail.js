@@ -30,82 +30,160 @@
     return "flat";
   };
 
-  const qualityTone = (mark) => ({ "◎": "excellent", "○": "good", "△": "fair", "×": "poor" }[mark] || "empty");
-  const qualityCell = (mark, value) => {
+  const qualityTone = (mark) => ({
+    "◎": "excellent",
+    "○": "good",
+    "〇": "good",
+    "△": "fair",
+    "×": "poor",
+  }[mark] || "empty");
+
+  const qualityCell = (mark, rank) => {
     const displayMark = mark || "-";
     return `
       <span class="motor-quality-mark is-${qualityTone(displayMark)}">
         <b>${esc(displayMark)}</b>
-        ${value == null ? "" : `<small>${esc(num(value))}</small>`}
+        ${rank == null ? "" : `<small>${esc(rank)}位</small>`}
       </span>`;
   };
 
-  const renderMotorProfile = (data) => {
-    const current = data.current || {};
-    const summary = data.summary || {};
-    const profile = data.profile || {};
-    const liveSignal = data.live_signal || {};
-    const racerLift = data.racer_lift || {};
-    const recentScores = Array.isArray(profile.recent_scores) ? profile.recent_scores : [];
+  const laneColor = (boat) => ({
+    1: "#f8fafc",
+    2: "#111827",
+    3: "#ff5c70",
+    4: "#4b8bff",
+    5: "#ffcf33",
+    6: "#32d17d",
+  }[Number(boat)] || "#94a3b8");
 
-    const metricCard = (label, value) => `
-      <div class="motor-meter">
-        <div class="motor-meter-head">
-          <span>${esc(label)}</span>
-          <b>${esc(scoreLabel(value))}</b>
-        </div>
-        <div class="motor-meter-track">
-          <div class="motor-meter-fill" style="width:${Math.max(0, Math.min(100, Number(value || 0)))}%"></div>
-        </div>
-      </div>`;
+  const parseCurrentRaceRows = () => {
+    const rows = Array.from(document.querySelectorAll(".preds-table tbody tr"));
+    const boats = rows.map((row) => {
+      const lane = row.querySelector(".lane");
+      const boatNumber = Number(lane?.textContent?.trim() || 0);
+      const name = row.querySelector(".racer-name")?.textContent?.trim() || "";
+      const footGrades = row.querySelectorAll(".foot-grade");
+      const getGrade = (idx) => {
+        const el = footGrades[idx];
+        if (!el) return { label: "-", score: null };
+        const label = (el.textContent || "").trim() || "-";
+        const title = el.getAttribute("title") || "";
+        const match = title.match(/(-?\d+(?:\.\d+)?)/);
+        return { label, score: match ? Number(match[1]) : null };
+      };
+      return {
+        boatNumber,
+        name,
+        dash: getGrade(0),
+        turn: getGrade(1),
+        straight: getGrade(2),
+      };
+    }).filter((row) => row.boatNumber >= 1 && row.boatNumber <= 6);
 
+    const assignRank = (key) => {
+      const sortable = boats.filter((row) => row[key].score != null).sort((a, b) => b[key].score - a[key].score);
+      let lastScore = null;
+      let lastRank = 0;
+      sortable.forEach((row, index) => {
+        const score = row[key].score;
+        if (lastScore == null || score !== lastScore) {
+          lastRank = index + 1;
+          lastScore = score;
+        }
+        row[key].rank = lastRank;
+      });
+    };
+    assignRank("dash");
+    assignRank("turn");
+    assignRank("straight");
+
+    boats.forEach((row) => {
+      const scores = [row.dash.score, row.turn.score, row.straight.score].filter((v) => v != null);
+      row.totalScore = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+    });
+    const sortableTotal = boats.filter((row) => row.totalScore != null).sort((a, b) => b.totalScore - a.totalScore);
+    let lastScore = null;
+    let lastRank = 0;
+    sortableTotal.forEach((row, index) => {
+      if (lastScore == null || row.totalScore !== lastScore) {
+        lastRank = index + 1;
+        lastScore = row.totalScore;
+      }
+      row.totalRank = lastRank;
+    });
+    return boats;
+  };
+
+  const buildPositionRows = (historyData) => {
+    const rows = Array.isArray(historyData?.position_rows) ? historyData.position_rows : [];
+    if (rows.length) {
+      const rankToScore = (rank) => rank == null ? null : Math.max(8, 100 - ((Number(rank) - 1) * 18));
+      const boats = rows.map((row) => {
+        const dash = { label: row.dash_mark || "-", score: rankToScore(row.dash_rank), rank: row.dash_rank ?? null };
+        const turn = { label: row.turn_mark || "-", score: rankToScore(row.turn_rank), rank: row.turn_rank ?? null };
+        const straight = { label: row.straight_mark || "-", score: rankToScore(row.straight_rank), rank: row.straight_rank ?? null };
+        const scores = [dash.score, turn.score, straight.score].filter((v) => v != null);
+        return {
+          boatNumber: Number(row.boat_number || 0),
+          name: row.racer_name || "",
+          dash,
+          turn,
+          straight,
+          totalScore: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null,
+        };
+      }).filter((row) => row.boatNumber >= 1 && row.boatNumber <= 6);
+      const sortableTotal = boats.filter((row) => row.totalScore != null).sort((a, b) => b.totalScore - a.totalScore);
+      let lastScore = null;
+      let lastRank = 0;
+      sortableTotal.forEach((row, index) => {
+        if (lastScore == null || row.totalScore !== lastScore) {
+          lastRank = index + 1;
+          lastScore = row.totalScore;
+        }
+        row.totalRank = lastRank;
+      });
+      return boats;
+    }
+    return parseCurrentRaceRows();
+  };
+
+  const renderPositionChart = (historyData, currentBoatNumber) => {
+    const boats = buildPositionRows(historyData);
+    if (!boats.length) return "";
+    const currentBoat = boats.find((row) => Number(row.boatNumber) === Number(currentBoatNumber));
+    const currentLabel = currentBoat
+      ? `${currentBoat.dash.label} / ${currentBoat.turn.label} / ${currentBoat.straight.label}`
+      : "-";
+    const badgeLabel = currentBoat?.totalScore == null ? "計測待ち" : `総合 ${scoreLabel(currentBoat.totalScore)}`;
     return `
-      <div class="motor-profile">
-        <div class="motor-profile-head">
-          <div class="motor-profile-title">
+      <div class="motor-position-panel">
+        <div class="motor-position-head">
+          <div>
             <strong>6艇ポジション</strong>
-            <span>M${esc(current.motor_number ?? "-")} / モーター推移と当日変化</span>
+            <span>${esc(currentLabel)}</span>
           </div>
           <div class="motor-profile-badges">
-            <span class="motor-condition-badge is-${esc(toneClass(profile.condition_tone))}">${esc(profile.condition_label || "標準")}</span>
-            <span class="motor-style-chip">${esc(profile.style_label || "バランス型")}</span>
-            <span class="motor-style-chip is-score">総合 ${esc(scoreLabel(profile.condition_score))}</span>
+            <span class="motor-style-chip">${esc(badgeLabel)}</span>
           </div>
         </div>
-        <div class="motor-profile-meters">
-          ${metricCard("出足", profile.dash_score)}
-          ${metricCard("回り足", profile.turn_score)}
-          ${metricCard("直線", profile.stretch_score)}
-        </div>
-        <div class="racer-lift-panel">
-          <div class="racer-lift-head">
-            <div class="racer-lift-title">
-              <strong>当日変化</strong>
-              <span>今節成績と上昇傾向、引き出し力をまとめます。</span>
-            </div>
-            <div class="motor-profile-badges">
-              <span class="motor-condition-badge is-${esc(toneClass(liveSignal.trend_tone))}">上昇 ${liveSignal.trend_value == null ? "-" : (Number(liveSignal.trend_value) > 0 ? "+" : "") + num(liveSignal.trend_value)}</span>
-              <span class="motor-condition-badge is-${esc(toneClass(racerLift.tone))}">引き出し ${racerLift.value == null ? "-" : (Number(racerLift.value) > 0 ? "+" : "") + num(racerLift.value)}</span>
-            </div>
-          </div>
-          <div class="racer-lift-grid">
-            <div><span>今節1着率</span><b>${pct(summary.win_rate)}</b></div>
-            <div><span>今節2連率</span><b>${pct(summary.top2_rate)}</b></div>
-            <div><span>当日上昇</span><b>${esc(scoreLabel(liveSignal.trend_score))}</b></div>
-            <div><span>引き出し力</span><b>${esc(scoreLabel(racerLift.score))}</b></div>
-          </div>
-        </div>
-        ${recentScores.length ? `
-          <div class="motor-trend-strip">
-            ${recentScores.map((row) => `
-              <div class="motor-trend-card is-${esc(scoreClass(row.score))}">
-                <span>${esc(row.race_date || "")} ${esc(row.race_number || "")}R</span>
-                <b>${esc(scoreLabel(row.score))}</b>
-                <small>${esc(row.label || "")}</small>
+        <div class="motor-position-board">
+          <div class="motor-position-axis motor-position-axis-y">回り足 強い ↑</div>
+          <div class="motor-position-axis motor-position-axis-x">出足 強い →</div>
+          <div class="motor-position-note">円が大きいほど直線上位</div>
+          ${boats.map((row) => {
+            const x = row.dash.score == null ? 50 : Math.max(6, Math.min(94, row.dash.score));
+            const y = row.turn.score == null ? 50 : Math.max(6, Math.min(94, 100 - row.turn.score));
+            const size = row.straight.score == null ? 42 : Math.max(34, Math.min(72, 24 + (row.straight.score * 0.55)));
+            const active = Number(row.boatNumber) === Number(currentBoatNumber) ? " is-active" : "";
+            const ring = row.totalRank === 1 ? " is-top" : "";
+            return `
+              <div class="motor-position-bubble${active}${ring}" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;border-color:${laneColor(row.boatNumber)};">
+                <span class="motor-position-bubble-core lane-${esc(row.boatNumber)}">${esc(row.boatNumber)}</span>
+                <small>総合 ${esc(row.totalRank || "-")}位 / 6</small>
               </div>
-            `).join("")}
-          </div>
-        ` : ""}
+            `;
+          }).join("")}
+        </div>
       </div>`;
   };
 
@@ -116,14 +194,14 @@
       <tr${idx === 0 ? ' class="motor-history-current-row"' : ""}>
         <td>${esc(r.race_date || "")}</td>
         <td>${esc(r.race_number || "")}R</td>
-        <td><span class="lane lane-${esc(r.boat_number || "") } motor-mini-lane">${esc(r.boat_number || "")}</span></td>
+        <td><span class="lane lane-${esc(r.boat_number || "")} motor-mini-lane">${esc(r.boat_number || "")}</span></td>
         <td class="left">${esc(r.racer_name || "")}<div class="racer-meta">${esc(r.racer_number || "")}</div></td>
         <td>${esc(r.course_number ?? "-")}</td>
         <td>${num(r.exhibition_time)}</td>
         <td>${num(r.start_timing_exhibition)}</td>
-        <td>${qualityCell(r.dash_mark, r.dash_time)}</td>
-        <td>${qualityCell(r.turn_mark, r.turn_time)}</td>
-        <td>${qualityCell(r.straight_mark, r.straight_time)}</td>
+        <td>${qualityCell(r.dash_mark, r.dash_rank)}</td>
+        <td>${qualityCell(r.turn_mark, r.turn_rank)}</td>
+        <td>${qualityCell(r.straight_mark, r.straight_rank)}</td>
         <td>${r.finishing_position == null ? "-" : `<span class="finish-badge ${posClass(r.finishing_position)}">${esc(r.finishing_position)}着</span>`}</td>
       </tr>`).join("");
     return `
@@ -170,13 +248,15 @@
       ${courseStatsGrid("全国 コース別", data.national_courses)}`;
   };
 
-  const renderInspector = (historyData, racerData) => `
+  const renderHistoryOnly = (historyData) => `
     <div class="motor-inspector-stack">
       <div class="motor-history-panel">
-        ${renderMotorProfile(historyData)}
+        ${renderPositionChart(historyData, historyData.current?.boat_number)}
         ${renderHistoryTable(historyData)}
       </div>
-      <div class="racer-detail-panel motor-inspector-racer">${renderRacerDetail(racerData)}</div>
+      <div class="racer-detail-panel motor-inspector-racer" data-racer-detail-panel>
+        <div class="motor-history-loading">選手情報を読み込み中...</div>
+      </div>
     </div>`;
 
   const fetchHistory = (raceId, boatNumber) => {
@@ -225,12 +305,16 @@
       inspectorShell.hidden = false;
       inspectorBody.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
       try {
-        const [historyData, racerData] = await Promise.all([
-          fetchHistory(raceId, boatNumber),
-          fetchRacerDetail(raceId, boatNumber),
-        ]);
-        inspectorBody.innerHTML = renderInspector(historyData, racerData);
+        const historyData = await fetchHistory(raceId, boatNumber);
+        inspectorBody.innerHTML = renderHistoryOnly(historyData);
         inspectorShell.scrollIntoView({ behavior: "smooth", block: "start" });
+        fetchRacerDetail(raceId, boatNumber).then((racerData) => {
+          const panel = inspectorBody.querySelector("[data-racer-detail-panel]");
+          if (panel) panel.innerHTML = renderRacerDetail(racerData);
+        }).catch((err) => {
+          const panel = inspectorBody.querySelector("[data-racer-detail-panel]");
+          if (panel) panel.innerHTML = `<div class="motor-history-empty">選手情報の取得に失敗しました: ${esc(err.message || "")}</div>`;
+        });
       } catch (err) {
         inspectorBody.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました: ${esc(err.message || "")}</div>`;
       }
@@ -265,7 +349,7 @@
           <span class="niche-title">${esc(sig.title || "")}</span>
           <span class="niche-boat"><span class="lane lane-${esc(sig.boat_number)}">${esc(sig.boat_number)}</span><span class="niche-meta">${esc(sig.class_label || "")} / tilt ${Number(sig.tilt || 0) > 0 ? "+" : ""}${Number(sig.tilt || 0).toFixed(1)}</span></span>
         </div>
-        <div class="niche-body"><div class="niche-desc">${esc(sig.desc || "")}</div><div class="niche-recommend"><b>評価:</b> ${esc(sig.recommend || "")}</div>${sig.warning ? `<div class="niche-warning">注意 ${esc(sig.warning)}</div>` : ""}</div>
+        <div class="niche-body"><div class="niche-desc">${esc(sig.desc || "")}</div><div class="niche-recommend"><b>推奨:</b> ${esc(sig.recommend || "")}</div>${sig.warning ? `<div class="niche-warning">注意 ${esc(sig.warning)}</div>` : ""}</div>
       </div>`).join("")}</div>`;
   };
 

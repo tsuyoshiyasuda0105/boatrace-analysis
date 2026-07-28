@@ -2237,6 +2237,64 @@ def _original_exhibition_quality_marks(race_ids: list[str]) -> dict[str, dict[in
     return out
 
 
+def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                WITH original AS (
+                    SELECT race_id, boat_number,
+                           MIN(lap_time) AS dash_time,
+                           MIN(turn_time) AS turn_time,
+                           MIN(straight_time) AS straight_time
+                      FROM race_original_exhibitions
+                     WHERE race_id = ?
+                     GROUP BY race_id, boat_number
+                )
+                SELECT e.boat_number,
+                       e.racer_name,
+                       NULLIF(pv.exhibition_time, 0) AS exhibition_time,
+                       pv.start_timing_exhibition,
+                       original.dash_time,
+                       original.turn_time,
+                       original.straight_time
+                  FROM race_entries e
+                  LEFT JOIN race_previews pv
+                    ON pv.race_id = e.race_id
+                   AND pv.boat_number = e.boat_number
+                  LEFT JOIN original
+                    ON original.race_id = e.race_id
+                   AND original.boat_number = e.boat_number
+                 WHERE e.race_id = ?
+                 ORDER BY e.boat_number
+                """,
+                (race_id, race_id),
+            ).fetchall()
+    except Exception:
+        logger.warning("current race position rows load failed: %s", race_id, exc_info=True)
+        return []
+
+    if not rows:
+        return []
+
+    marks_by_boat = _original_exhibition_quality_marks([race_id]).get(race_id, {})
+    out: list[dict[str, Any]] = []
+    for boat_no, racer_name, exhibition_time, exhibition_st, dash_time, turn_time, straight_time in rows:
+        row = {
+            "boat_number": int(boat_no),
+            "racer_name": racer_name,
+            "exhibition_time": exhibition_time,
+            "start_timing_exhibition": exhibition_st,
+            "dash_time": dash_time,
+            "turn_time": turn_time,
+            "straight_time": straight_time,
+        }
+        row.update(marks_by_boat.get(int(boat_no), {}))
+        out.append(row)
+
+    return out
+
+
 def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
     if boat_number < 1 or boat_number > 6:
         return None
@@ -2503,6 +2561,16 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
             quality_marks.get(str(row.get("race_id")), {}).get(int(row.get("boat_number") or 0), {})
         )
 
+    position_rows = _current_race_position_rows(race_id)
+    current_position = next((row for row in position_rows if int(row.get("boat_number") or 0) == int(boat_number)), None)
+    if current_position:
+        for key in (
+            "dash_rank", "dash_mark", "turn_rank", "turn_mark", "straight_rank", "straight_mark",
+            "dash_time", "turn_time", "straight_time",
+        ):
+            if current.get(key) is None and current_position.get(key) is not None:
+                current[key] = current_position.get(key)
+
     starts = len(history)
     wins = sum(1 for r in history if r.get("finishing_position") == 1)
     top2 = sum(1 for r in history if (r.get("finishing_position") or 99) <= 2)
@@ -2532,6 +2600,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "current": current,
         "summary": summary,
         "history": history,
+        "position_rows": position_rows,
         "profile": profile,
         "racer_lift": racer_lift,
         "live_signal": live_signal,
@@ -3767,7 +3836,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not info:
             return jsonify({"error": "entry not found"}), 404
         today_iso = date.today().isoformat()
-        cache_key = f"motor_history_v2:{race_id}:{boat_number}"
+        cache_key = f"motor_history_v4:{race_id}:{boat_number}"
         cached_payload = _read_json_cache(
             cache_key,
             1800 if info["race_date"] >= today_iso else 86400,
