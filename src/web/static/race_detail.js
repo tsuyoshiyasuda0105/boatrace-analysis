@@ -156,9 +156,9 @@
       : "-";
     const badgeLabel = currentBoat?.totalScore == null ? "計測待ち" : `総合 ${scoreLabel(currentBoat.totalScore)}`;
     return `
-      <div class="motor-position-panel">
-        <div class="motor-position-head">
-          <div>
+      <div class="motor-position-panel" style="margin:0 0 12px;padding:12px;border:1px solid rgba(0,212,255,.16);border-radius:8px;background:rgba(6,18,34,.72);">
+        <div class="motor-position-head" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+          <div style="display:grid;gap:4px;">
             <strong>6艇ポジション</strong>
             <span>${esc(currentLabel)}</span>
           </div>
@@ -166,10 +166,10 @@
             <span class="motor-style-chip">${esc(badgeLabel)}</span>
           </div>
         </div>
-        <div class="motor-position-board">
-          <div class="motor-position-axis motor-position-axis-y">回り足 強い ↑</div>
-          <div class="motor-position-axis motor-position-axis-x">出足 強い →</div>
-          <div class="motor-position-note">円が大きいほど直線上位</div>
+        <div class="motor-position-board" style="position:relative;height:420px;overflow:hidden;border-radius:10px;border:1px solid rgba(0,212,255,.12);background:linear-gradient(rgba(0,212,255,.10), rgba(0,212,255,.10)) 0 20%/100% 1px no-repeat,linear-gradient(rgba(0,212,255,.10), rgba(0,212,255,.10)) 0 40%/100% 1px no-repeat,linear-gradient(rgba(0,212,255,.10), rgba(0,212,255,.10)) 0 60%/100% 1px no-repeat,linear-gradient(rgba(0,212,255,.10), rgba(0,212,255,.10)) 0 80%/100% 1px no-repeat,linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,.10)) 20% 0/1px 100% no-repeat,linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,.10)) 40% 0/1px 100% no-repeat,linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,.10)) 60% 0/1px 100% no-repeat,linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,.10)) 80% 0/1px 100% no-repeat,linear-gradient(135deg, rgba(13,22,34,.98), rgba(5,22,31,.98));">
+          <div class="motor-position-axis motor-position-axis-y" style="position:absolute;left:14px;top:14px;color:#d9faff;font-size:14px;font-weight:800;">回り足 強い ↑</div>
+          <div class="motor-position-axis motor-position-axis-x" style="position:absolute;right:14px;bottom:14px;color:#d9faff;font-size:14px;font-weight:800;">出足 強い →</div>
+          <div class="motor-position-note" style="position:absolute;left:14px;bottom:14px;color:rgba(217,250,255,.78);font-size:12px;">円が大きいほど直線上位</div>
           ${boats.map((row) => {
             const x = row.dash.score == null ? 50 : Math.max(6, Math.min(94, row.dash.score));
             const y = row.turn.score == null ? 50 : Math.max(6, Math.min(94, 100 - row.turn.score));
@@ -177,9 +177,9 @@
             const active = Number(row.boatNumber) === Number(currentBoatNumber) ? " is-active" : "";
             const ring = row.totalRank === 1 ? " is-top" : "";
             return `
-              <div class="motor-position-bubble${active}${ring}" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;border-color:${laneColor(row.boatNumber)};">
-                <span class="motor-position-bubble-core lane-${esc(row.boatNumber)}">${esc(row.boatNumber)}</span>
-                <small>総合 ${esc(row.totalRank || "-")}位 / 6</small>
+              <div class="motor-position-bubble${active}${ring}" style="position:absolute;z-index:2;transform:translate(-50%,-50%);left:${x}%;top:${y}%;width:${size}px;height:${size}px;border:3px solid ${laneColor(row.boatNumber)};border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(8,17,29,.86);box-shadow:${Number(row.boatNumber) === Number(currentBoatNumber) ? '0 0 0 4px rgba(0,212,255,.16),0 10px 30px rgba(0,0,0,.42)' : row.totalRank === 1 ? '0 0 0 4px rgba(52,232,144,.18),0 10px 30px rgba(0,0,0,.42)' : '0 10px 30px rgba(0,0,0,.32)'};">
+                <span class="motor-position-bubble-core lane-${esc(row.boatNumber)}" style="width:72%;height:72%;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;">${esc(row.boatNumber)}</span>
+                <small style="position:absolute;left:50%;bottom:-24px;transform:translateX(-50%);padding:3px 8px;border-radius:999px;background:rgba(10,18,30,.92);border:1px solid rgba(0,212,255,.16);color:#d9faff;font-size:11px;font-weight:700;white-space:nowrap;">総合 ${esc(row.totalRank || "-")}位 / 6</small>
               </div>
             `;
           }).join("")}
@@ -305,10 +305,12 @@
       inspectorShell.hidden = false;
       inspectorBody.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
       try {
-        const historyData = await fetchHistory(raceId, boatNumber);
+        const historyPromise = fetchHistory(raceId, boatNumber);
+        const racerPromise = fetchRacerDetail(raceId, boatNumber);
+        const historyData = await historyPromise;
         inspectorBody.innerHTML = renderHistoryOnly(historyData);
-        inspectorShell.scrollIntoView({ behavior: "smooth", block: "start" });
-        fetchRacerDetail(raceId, boatNumber).then((racerData) => {
+        inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
+        racerPromise.then((racerData) => {
           const panel = inspectorBody.querySelector("[data-racer-detail-panel]");
           if (panel) panel.innerHTML = renderRacerDetail(racerData);
         }).catch((err) => {
