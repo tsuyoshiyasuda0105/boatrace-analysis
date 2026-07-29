@@ -11,6 +11,7 @@ Flask Web UI: 予測表示
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import time
@@ -77,8 +78,8 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v24"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v14"
+MARKET_SIGNALS_CACHE_VERSION = "v25"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v15"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -86,9 +87,22 @@ EXPENSIVE_RECOMPUTE_TRIGGERS = {
 }
 
 
+def _strategy_definition_signature() -> str:
+    """Invalidate derived page caches when adopted strategy definitions change."""
+    try:
+        strategy_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "adopted_strategies.md",
+        )
+        data = open(strategy_file, "rb").read()
+        return hashlib.sha1(data).hexdigest()[:10]
+    except Exception:
+        return "nosig"
+
+
 def _market_signals_cache_key(target_date: str) -> str:
     """Return the single cache key shared by the page and signal API."""
-    return f"market_signals:{MARKET_SIGNALS_CACHE_VERSION}:{target_date}"
+    return f"market_signals:{MARKET_SIGNALS_CACHE_VERSION}:{_strategy_definition_signature()}:{target_date}"
 
 
 def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
@@ -101,7 +115,7 @@ def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
 
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
     suffix = ":".join(str(p) for p in parts)
-    return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{suffix}"
+    return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{_strategy_definition_signature()}:{suffix}"
 
 
 def _is_expensive_recompute_allowed() -> bool:
@@ -2031,7 +2045,11 @@ def _branch_label(branch_number: Any) -> str:
 
 
 def _class_label(class_number: Any) -> str:
-    return {1: "A1", 2: "A2", 3: "B1", 4: "B2"}.get(class_number, "-")
+    try:
+        n = int(class_number)
+    except (TypeError, ValueError):
+        return "-"
+    return {1: "A1", 2: "A2", 3: "B1", 4: "B2"}.get(n, "-")
 
 
 def _accident_rank_tone(class_number: Any, accident_rate: Any) -> str:
@@ -2317,6 +2335,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
                race_entries.assigned_motor_top_3_percent,
                race_entries.racer_name,
                race_entries.racer_number,
+               race_entries.class_number,
                NULLIF(pv.exhibition_time, 0) AS exhibition_time,
                pv.start_timing_exhibition,
                original.dash_time,
@@ -2337,6 +2356,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
                race_entries.assigned_motor_top_3_percent,
                race_entries.racer_name,
                race_entries.racer_number,
+               race_entries.class_number,
                NULLIF(pv.exhibition_time, 0) AS exhibition_time,
                pv.start_timing_exhibition,
                NULL AS dash_time,
@@ -2376,6 +2396,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         motor_top3,
         current_racer,
         current_racer_number,
+        current_class_number,
         current_ex_time,
         current_ex_st,
         current_dash_time,
@@ -2390,6 +2411,8 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "boat_number": boat_number,
         "racer_name": current_racer,
         "racer_number": current_racer_number,
+        "class_number": current_class_number,
+        "class_label": _class_label(current_class_number),
         "stadium_number": info["stadium_number"],
         "stadium_name": info.get("stadium_name", ""),
         "motor_number": motor_no,
@@ -2424,7 +2447,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
     history_sql_with_original = f"""
         WITH hist AS (
             SELECT r.race_id, r.race_date, r.race_number,
-                   e.boat_number, e.racer_name, e.racer_number,
+                   e.boat_number, e.racer_name, e.racer_number, e.class_number,
                    e.assigned_motor_top_2_percent,
                    e.assigned_motor_top_3_percent,
                    NULLIF(pv.exhibition_time, 0) AS exhibition_time,
@@ -2460,7 +2483,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
              GROUP BY x.race_id, x.boat_number
         )
         SELECT h.race_id, h.race_date, h.race_number,
-               h.boat_number, h.racer_name, h.racer_number,
+               h.boat_number, h.racer_name, h.racer_number, h.class_number,
                h.assigned_motor_top_2_percent,
                h.assigned_motor_top_3_percent,
                h.exhibition_time, h.start_timing_exhibition,
@@ -2487,7 +2510,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
     """
     history_sql_basic = f"""
         SELECT r.race_id, r.race_date, r.race_number,
-               e.boat_number, e.racer_name, e.racer_number,
+               e.boat_number, e.racer_name, e.racer_number, e.class_number,
                e.assigned_motor_top_2_percent,
                e.assigned_motor_top_3_percent,
                NULLIF(pv.exhibition_time, 0) AS exhibition_time,
@@ -2545,7 +2568,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
 
     keys = [
         "race_id", "race_date", "race_number", "boat_number",
-        "racer_name", "racer_number", "motor_top_2_percent",
+        "racer_name", "racer_number", "class_number", "motor_top_2_percent",
         "motor_top_3_percent", "exhibition_time",
         "start_timing_exhibition", "finishing_position",
         "course_number", "start_timing", "dash_time",
@@ -2557,6 +2580,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
     )
     current.update(quality_marks.get(race_id, {}).get(int(boat_number), {}))
     for row in history:
+        row["class_label"] = _class_label(row.get("class_number"))
         row.update(
             quality_marks.get(str(row.get("race_id")), {}).get(int(row.get("boat_number") or 0), {})
         )
@@ -3836,7 +3860,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not info:
             return jsonify({"error": "entry not found"}), 404
         today_iso = date.today().isoformat()
-        cache_key = f"motor_history_v4:{race_id}:{boat_number}"
+        cache_key = f"motor_history_v5:{race_id}:{boat_number}"
         cached_payload = _read_json_cache(
             cache_key,
             1800 if info["race_date"] >= today_iso else 86400,
@@ -6584,6 +6608,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "gamagori_tide_132_tri",
                 "marugame_tide_123_tri",
                 "fukuoka_tide_132_tri",
+                "fukuoka_ex12_b_exa",
+                "fukuoka_tri124_c",
+                "fukuoka_123_late_foot_tri",
                 "gamagori_123_general_practical_tri",
                 "gamagori_13_exa",
                 "tokuyama_12a_exa",
@@ -8276,6 +8303,99 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "is_display_confirmed": True,
                 "timing_bucket": "same_day",
             }
+
+        def _evaluate_fukuoka_exhibition_foot_signal(
+            race_id: str,
+            stadium_number,
+            race_number,
+            wind_speed,
+        ):
+            if race_id is None:
+                return None
+            try:
+                stadium_v = int(stadium_number) if stadium_number is not None else None
+                race_no_v = int(race_number) if race_number is not None else None
+                wind_v = float(wind_speed) if wind_speed is not None else None
+            except (TypeError, ValueError):
+                return None
+            if stadium_v != 22 or race_no_v is None or race_no_v < 9 or wind_v is None or wind_v > 3.0:
+                return None
+
+            ranks = original_ex_bulk.get(race_id, {})
+            lap_rank = ranks.get("lap_rank", {})
+            straight_rank = ranks.get("straight_rank", {})
+            b1_lap = lap_rank.get(1)
+            b1_straight = straight_rank.get(1)
+            b2_lap = lap_rank.get(2)
+            b2_straight = straight_rank.get(2)
+            b3_lap = lap_rank.get(3)
+            b3_straight = straight_rank.get(3)
+            b4_lap = lap_rank.get(4)
+            b4_straight = straight_rank.get(4)
+
+            ex12_match = all(v is not None for v in (b1_lap, b1_straight, b2_lap, b2_straight)) and (
+                b1_lap <= 2 and b1_straight <= 2 and b2_lap <= 2 and b2_straight <= 2
+            )
+            tri124_match = all(v is not None for v in (b1_lap, b1_straight, b2_lap, b2_straight, b4_lap, b4_straight)) and (
+                b1_lap <= 2 and b1_straight <= 2 and b2_lap <= 4 and b2_straight <= 4 and b4_lap <= 4 and b4_straight <= 3
+            )
+            tri123_match = all(v is not None for v in (b1_lap, b1_straight, b2_lap, b2_straight, b3_lap, b3_straight)) and (
+                b1_lap <= 2 and b1_straight <= 3 and b2_lap <= 2 and b2_straight <= 2 and b3_lap <= 5 and b3_straight <= 3
+            )
+
+            matched = []
+            if ex12_match:
+                matched.append({
+                    "level": "fukuoka_ex12_b_exa",
+                    "label": "福岡 EX12_B",
+                    "bet": "2連単 1-2",
+                    "rank": "exacta_niche",
+                    "rank_label": "展示足採用",
+                    "rank_emoji": "2連単",
+                    "recovery": 153.3,
+                    "n": 18,
+                    "hit_rate": 66.7,
+                    "name": "福岡EX12_B",
+                    "tag": f"後半戦 / 1直{b1_straight}位・1周{b1_lap}位 / 2直{b2_straight}位・2周{b2_lap}位 / 風{wind_v:g}m",
+                    "tetsuban_score": 8,
+                    "is_display_confirmed": True,
+                    "timing_bucket": "same_day",
+                })
+            if tri124_match:
+                matched.append({
+                    "level": "fukuoka_tri124_c",
+                    "label": "福岡 TRI124_C",
+                    "bet": "3連単 1-2-4",
+                    "rank": "trifecta_niche",
+                    "rank_label": "展示足採用",
+                    "rank_emoji": "3連単",
+                    "recovery": 320.0,
+                    "n": 15,
+                    "hit_rate": 33.3,
+                    "name": "福岡TRI124_C",
+                    "tag": f"後半戦 / 1直{b1_straight}位・1周{b1_lap}位 / 2直{b2_straight}位・2周{b2_lap}位 / 4直{b4_straight}位・4周{b4_lap}位 / 風{wind_v:g}m",
+                    "tetsuban_score": 9,
+                    "is_display_confirmed": True,
+                    "timing_bucket": "same_day",
+                })
+            if tri123_match:
+                matched.append({
+                    "level": "fukuoka_123_late_foot_tri",
+                    "label": "福岡 1-2-3 後半展示足型",
+                    "bet": "3連単 1-2-3",
+                    "rank": "trifecta_niche",
+                    "rank_label": "展示足採用",
+                    "rank_emoji": "3連単",
+                    "recovery": 237.3,
+                    "n": 11,
+                    "hit_rate": 45.5,
+                    "name": "福岡123後半展示足",
+                    "tag": f"後半戦 / 1直{b1_straight}位・1周{b1_lap}位 / 2直{b2_straight}位・2周{b2_lap}位 / 3直{b3_straight}位・3周{b3_lap}位",
+                    "tetsuban_score": 8,
+                    "is_display_confirmed": True,
+                    "timing_bucket": "same_day",
+                })
+            return _pick_best_market_signal(*matched)
 
         def _evaluate_current_motor_adopted_signal(ctx: dict | None):
             """Evaluate newly adopted current-motor-period strategies."""
@@ -10701,6 +10821,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 stadium,
                 wind_speed,
             )
+            fukuoka_exhibition_foot_signal = _safe_signal_eval(
+                "fukuoka_exhibition_foot",
+                _evaluate_fukuoka_exhibition_foot_signal,
+                rid,
+                stadium,
+                race_no_info,
+                wind_speed,
+            )
 
             g23_optb = _safe_signal_eval(
                 "g23_optb",
@@ -10912,6 +11040,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     accident_dent_adopted_signal,
                     boat2_wall_adopted_signal,
                     omura_124_original_signal,
+                    fukuoka_exhibition_foot_signal,
                     candidate_l4,
                     gamagori_adopted_signal,
                 )
@@ -13267,6 +13396,42 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         race_id, rdate, "fukuoka_tide_132_tri", 470.0,
                         w1 == 1 and w2 == 3 and w3 == 2,
                         int(pay_132 or 0),
+                    )
+
+            if is_done and stadium == 22 and rn >= 9 and _wind_speed is not None and _wind_speed <= 3.0:
+                _lap_rank = original_ranks.get("lap_rank", {})
+                _straight_rank = original_ranks.get("straight_rank", {})
+                b1_lap = _lap_rank.get(1)
+                b1_straight = _straight_rank.get(1)
+                b2_lap = _lap_rank.get(2)
+                b2_straight = _straight_rank.get(2)
+                b3_lap = _lap_rank.get(3)
+                b3_straight = _straight_rank.get(3)
+                b4_lap = _lap_rank.get(4)
+                b4_straight = _straight_rank.get(4)
+                if all(v is not None for v in (b1_lap, b1_straight, b2_lap, b2_straight)) and (
+                    b1_lap <= 2 and b1_straight <= 2 and b2_lap <= 2 and b2_straight <= 2
+                ):
+                    _record_adopted_signal(
+                        race_id, rdate, "fukuoka_ex12_b_exa", 153.3,
+                        w1 == 1 and w2 == 2,
+                        int(ex_pay or 0),
+                    )
+                if all(v is not None for v in (b1_lap, b1_straight, b2_lap, b2_straight, b4_lap, b4_straight)) and (
+                    b1_lap <= 2 and b1_straight <= 2 and b2_lap <= 4 and b2_straight <= 4 and b4_lap <= 4 and b4_straight <= 3
+                ):
+                    _record_adopted_signal(
+                        race_id, rdate, "fukuoka_tri124_c", 320.0,
+                        w1 == 1 and w2 == 2 and w3 == 4,
+                        int(pay_124 or 0),
+                    )
+                if all(v is not None for v in (b1_lap, b1_straight, b2_lap, b2_straight, b3_lap, b3_straight)) and (
+                    b1_lap <= 2 and b1_straight <= 3 and b2_lap <= 2 and b2_straight <= 2 and b3_lap <= 5 and b3_straight <= 3
+                ):
+                    _record_adopted_signal(
+                        race_id, rdate, "fukuoka_123_late_foot_tri", 237.3,
+                        tri_hit,
+                        int(tri_pay_v or 0),
                     )
 
             if is_done and stadium == 8:
@@ -16469,6 +16634,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "gamagori_tide_132_tri",
         "marugame_tide_123_tri",
         "fukuoka_tide_132_tri",
+        "fukuoka_ex12_b_exa",
+        "fukuoka_tri124_c",
+        "fukuoka_123_late_foot_tri",
         "gamagori_123_general_practical_tri",
         "gamagori_13_exa",
         "tokuyama_12a_exa",
@@ -16608,6 +16776,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "gamagori_tide_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gama132", "color": "#fb923c", "timing": "previous_day"},
         {"key": "marugame_tide_123_tri", "label": "丸亀 潮 1-2-3", "short": "mgmt123", "color": "#a855f7", "timing": "previous_day"},
         {"key": "fukuoka_tide_132_tri", "label": "福岡 潮 1-3-2", "short": "fkk132", "color": "#0f766e", "timing": "previous_day"},
+        {"key": "fukuoka_ex12_b_exa", "label": "福岡 EX12_B", "short": "fkkex12b", "color": "#14b8a6", "timing": "same_day"},
+        {"key": "fukuoka_tri124_c", "label": "福岡 TRI124_C", "short": "fkk124c", "color": "#06b6d4", "timing": "same_day"},
+        {"key": "fukuoka_123_late_foot_tri", "label": "福岡 1-2-3 後半展示足型", "short": "fkk123foot", "color": "#22c55e", "timing": "same_day"},
         {"key": "gamagori_123_general_practical_tri", "label": "蒲郡 一般 1-2-3", "short": "gama123g", "color": "#fde047", "timing": "previous_day"},
         {"key": "gamagori_13_exa", "label": "蒲郡 1-3 (>=3.7)", "short": "gama13", "color": "#22d3ee", "timing": "same_day"},
         {"key": "tokuyama_12a_exa", "label": "徳山 1-2 A (>=2.5)", "short": "tky12a", "color": "#60a5fa", "timing": "same_day"},
@@ -16719,6 +16890,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "gamagori_13_exa": "gamagori",
         "gamagori_123_tri": "gamagori",
         "fukuoka_tide_132_tri": "fukuoka",
+        "fukuoka_ex12_b_exa": "fukuoka",
+        "fukuoka_tri124_c": "fukuoka",
+        "fukuoka_123_late_foot_tri": "fukuoka",
         "tokoname_12_late_a_exa": "tokoname",
         "tokoname_14_winter_exa": "tokoname",
         "tokoname_123_late_exst_tri": "tokoname",
