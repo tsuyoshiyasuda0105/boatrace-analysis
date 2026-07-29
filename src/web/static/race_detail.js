@@ -14,6 +14,24 @@
   const pct = (value) => value == null ? "-" : `${Number(value).toFixed(1)}%`;
   const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
   const posClass = (value) => value ? `f-${Number(value)}` : "";
+  const classLabelFromNumber = (value) => ({
+    1: "A1",
+    2: "A2",
+    3: "B1",
+    4: "B2",
+  }[Number(value)] || "-");
+  const classBadgeTone = (label) => {
+    if (label === "A1") return "is-a1";
+    if (label === "A2") return "is-a2";
+    if (label === "B1") return "is-b1";
+    if (label === "B2") return "is-b2";
+    return "";
+  };
+  const racerClassBadge = (row) => {
+    const label = row?.class_label || classLabelFromNumber(row?.class_number);
+    if (!label || label === "-") return "";
+    return `<span class="racer-class-badge ${classBadgeTone(label)}">${esc(label)}</span>`;
+  };
   const historyCache = new Map();
   const racerDetailCache = new Map();
   const scoreClass = (value) => {
@@ -116,7 +134,10 @@
 
   const buildPositionRows = (historyData) => {
     const rows = Array.isArray(historyData?.position_rows) ? historyData.position_rows : [];
-    if (rows.length) {
+    const hasMeaningfulRanks = rows.filter((row) => (
+      row?.dash_rank != null || row?.turn_rank != null || row?.straight_rank != null
+    )).length >= 3;
+    if (rows.length && hasMeaningfulRanks) {
       const rankToScore = (rank) => rank == null ? null : Math.max(8, 100 - ((Number(rank) - 1) * 18));
       const boats = rows.map((row) => {
         const dash = { label: row.dash_mark || "-", score: rankToScore(row.dash_rank), rank: row.dash_rank ?? null };
@@ -142,7 +163,9 @@
         }
         row.totalRank = lastRank;
       });
-      return boats;
+      if (boats.some((row) => row.totalScore != null)) {
+        return boats;
+      }
     }
     return parseCurrentRaceRows();
   };
@@ -195,7 +218,7 @@
         <td>${esc(r.race_date || "")}</td>
         <td>${esc(r.race_number || "")}R</td>
         <td><span class="lane lane-${esc(r.boat_number || "")} motor-mini-lane">${esc(r.boat_number || "")}</span></td>
-        <td class="left">${esc(r.racer_name || "")}<div class="racer-meta">${esc(r.racer_number || "")}</div></td>
+        <td class="left"><div class="motor-history-racer-line"><span>${esc(r.racer_name || "")}</span>${racerClassBadge(r)}</div><div class="racer-meta">${esc(r.racer_number || "")}</div></td>
         <td>${esc(r.course_number ?? "-")}</td>
         <td>${num(r.exhibition_time)}</td>
         <td>${num(r.start_timing_exhibition)}</td>
