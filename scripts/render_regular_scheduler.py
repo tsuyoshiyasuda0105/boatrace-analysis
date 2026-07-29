@@ -23,6 +23,9 @@ BEFOREINFO_WRITE_BATCH_SIZE = 6
 ORIGINAL_EXHIBITION_RECOVERY_PAST_MIN = 240
 ORIGINAL_EXHIBITION_RECOVERY_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_RECOVERY_LIMIT = 48
+ORIGINAL_EXHIBITION_CATCHUP_PAST_MIN = 36 * 60
+ORIGINAL_EXHIBITION_CATCHUP_FUTURE_MIN = 30
+ORIGINAL_EXHIBITION_CATCHUP_LIMIT = 96
 # Keep this in sync with src.web.app.ADOPTED_DAILY_SELECT_VERSION.
 # If this lags behind, the self-heal path treats fresh ROI rows as stale and
 # can leave the dashboard looking empty after a successful cron run.
@@ -62,6 +65,7 @@ def _parse_race_close_jst(closed_at, race_date: str) -> datetime | None:
 def find_missing_original_exhibition_races(
     now: datetime,
     *,
+    target_date: str | None = None,
     past_min: int = ORIGINAL_EXHIBITION_RECOVERY_PAST_MIN,
     future_min: int = ORIGINAL_EXHIBITION_RECOVERY_FUTURE_MIN,
     limit: int = ORIGINAL_EXHIBITION_RECOVERY_LIMIT,
@@ -76,7 +80,7 @@ def find_missing_original_exhibition_races(
     if not supported:
         return []
 
-    target_date = now.date().isoformat()
+    target_date = target_date or now.date().isoformat()
     placeholders = ",".join("?" for _ in supported)
     with db_connect() as conn:
         rows = conn.execute(
@@ -108,6 +112,46 @@ def find_missing_original_exhibition_races(
         if limit > 0 and len(due) >= limit:
             break
     return due
+
+
+def original_exhibition_daily_counts(target_date: str) -> dict[str, int]:
+    from src.collectors import original_exhibition as original_exhibition_collector
+
+    supported = sorted(
+        int(stadium)
+        for stadium, patterns in original_exhibition_collector.SOURCE_PATTERNS.items()
+        if patterns
+    )
+    if not supported:
+        return {"expected_races": 0, "imported_races": 0, "rows": 0}
+
+    placeholders = ",".join("?" for _ in supported)
+    with db_connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+              (SELECT COUNT(*)
+                 FROM races
+                WHERE race_date = ?
+                  AND stadium_number IN ({placeholders})) AS expected_races,
+              (SELECT COUNT(DISTINCT oe.race_id)
+                 FROM race_original_exhibitions oe
+                 JOIN races r ON r.race_id = oe.race_id
+                WHERE r.race_date = ?
+                  AND r.stadium_number IN ({placeholders})) AS imported_races,
+              (SELECT COUNT(*)
+                 FROM race_original_exhibitions oe
+                 JOIN races r ON r.race_id = oe.race_id
+                WHERE r.race_date = ?
+                  AND r.stadium_number IN ({placeholders})) AS rows
+            """,
+            (target_date, *supported, target_date, *supported, target_date, *supported),
+        ).fetchone()
+    return {
+        "expected_races": int(row[0] or 0),
+        "imported_races": int(row[1] or 0),
+        "rows": int(row[2] or 0),
+    }
 
 
 def task_success_exists(task_name: str, run_date: str) -> bool:
@@ -544,6 +588,75 @@ def run_signal_refresh_slot(now: datetime) -> bool:
     return ok
 
 
+def run_original_exhibition_catchup(now: datetime, target_date: str, *, label: str) -> bool:
+    """Fill missed original exhibition rows without waiting for manual repair.
+
+    Live collection still runs around close time. This catch-up path exists for
+    venue pages that appear late, transient fetch failures, or Render restarts.
+    It only targets races that are already closed or close very soon.
+    """
+    task = f"render_original_exhibition_{label}_{now.hour:02d}"
+    if task_attempt_exists(task, target_date):
+        print(f"[original-exhibition-catchup] already attempted task={task} date={target_date}", flush=True)
+        return True
+
+    before_counts = original_exhibition_daily_counts(target_date)
+    due = find_missing_original_exhibition_races(
+        now,
+        target_date=target_date,
+        past_min=ORIGINAL_EXHIBITION_CATCHUP_PAST_MIN,
+        future_min=ORIGINAL_EXHIBITION_CATCHUP_FUTURE_MIN,
+        limit=ORIGINAL_EXHIBITION_CATCHUP_LIMIT,
+    )
+    print(
+        "[original-exhibition-catchup] "
+        f"date={target_date} expected={before_counts['expected_races']} "
+        f"imported={before_counts['imported_races']} due={len(due)}",
+        flush=True,
+    )
+    if not due:
+        record_task(
+            task,
+            target_date,
+            "success",
+            detail=(
+                f"expected={before_counts['expected_races']} "
+                f"imported={before_counts['imported_races']} rows={before_counts['rows']} "
+                "due=0"
+            ),
+        )
+        return True
+
+    from src.collectors import original_exhibition as original_exhibition_collector
+
+    ok = True
+    detail = ""
+    try:
+        s = original_exhibition_collector.collect_for_races(
+            datetime.fromisoformat(target_date).date(),
+            [(race_id, stadium, race_no) for race_id, stadium, race_no, _close in due],
+            force=False,
+            save_html=False,
+            pattern_limit=8,
+        )
+        after_counts = original_exhibition_daily_counts(target_date)
+        detail = (
+            f"expected={after_counts['expected_races']} "
+            f"imported={after_counts['imported_races']} rows={after_counts['rows']} "
+            f"due={len(due)} targeted={s['races_targeted']} "
+            f"fetched={s['pages_fetched']} found={s['races_found']} "
+            f"inserted={s['rows_inserted']}"
+        )
+        print(f"[original-exhibition-catchup] {detail}", flush=True)
+    except Exception as exc:
+        ok = False
+        detail = f"{type(exc).__name__}: {exc}"[:1000]
+        print(f"[original-exhibition-catchup] failed: {detail}", flush=True)
+
+    record_task(task, target_date, "success" if ok else "failure", detail=detail)
+    return ok
+
+
 def run_tides(now: datetime) -> bool:
     year_from = now.year
     year_to = (now.date() + timedelta(days=1)).year
@@ -787,6 +900,18 @@ def main() -> int:
         # run_beforeinfo rebuilds the snapshot only when source rows changed.
         # Recomputing it unconditionally here duplicated the heaviest query and
         # could overlap the next five-minute cron run.
+
+    # Original exhibition pages can appear later than the official beforeinfo
+    # rows. Recover missed rows once per hour so motor-rank UI does not stay
+    # blank after a transient fetch failure or Render restart.
+    if now.minute < 5 and 8 <= now.hour <= 23:
+        run_original_exhibition_catchup(now, today, label="today")
+
+    # The previous day's late races are no longer in the live close-time window.
+    # Check them during the morning window and fill anything still missing.
+    if now.minute < 5 and 6 <= now.hour <= 10:
+        yesterday = (now.date() - timedelta(days=1)).isoformat()
+        run_original_exhibition_catchup(now, yesterday, label="yesterday")
 
     # A dedicated prewarm service is optional. Keep the existing five-minute
     # scheduler self-contained and guarantee a fresh snapshot twice per hour.
