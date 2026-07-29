@@ -163,7 +163,7 @@
         }
         row.totalRank = lastRank;
       });
-      if (boats.some((row) => row.totalScore != null)) {
+      if (boats.length >= 3 && boats.some((row) => row.totalScore != null)) {
         return boats;
       }
     }
@@ -288,7 +288,7 @@
       historyCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/motor-history/${boatNumber}?v=${encodeURIComponent(staticVersion)}`, {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
-        cache: "force-cache",
+        cache: "no-store",
       }).then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -306,7 +306,7 @@
       racerDetailCache.set(key, fetch(`/api/race/${encodeURIComponent(raceId)}/racer-detail/${boatNumber}?v=${encodeURIComponent(staticVersion)}`, {
         credentials: "same-origin",
         headers: { Accept: "application/json" },
-        cache: "force-cache",
+        cache: "no-store",
       }).then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

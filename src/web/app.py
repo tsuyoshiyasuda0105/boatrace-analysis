@@ -2255,6 +2255,29 @@ def _original_exhibition_quality_marks(race_ids: list[str]) -> dict[str, dict[in
     return out
 
 
+def _apply_motor_position_ranks(rows: list[dict[str, Any]], metric_key: str, rank_key: str, mark_key: str) -> None:
+    comparable: list[tuple[dict[str, Any], float]] = []
+    for row in rows:
+        value = row.get(metric_key)
+        if value is None:
+            continue
+        try:
+            comparable.append((row, float(value)))
+        except (TypeError, ValueError):
+            continue
+    if len(comparable) < 2:
+        return
+    comparable.sort(key=lambda item: item[1])
+    last_value = None
+    current_rank = 0
+    for index, (row, value) in enumerate(comparable, start=1):
+        if last_value is None or value != last_value:
+            current_rank = index
+            last_value = value
+        row[rank_key] = current_rank
+        row[mark_key] = _original_exhibition_quality_mark(current_rank)
+
+
 def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     try:
         with db_connect() as conn:
@@ -2271,12 +2294,19 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
                 )
                 SELECT e.boat_number,
                        e.racer_name,
+                       e.assigned_motor_number,
+                       e.assigned_motor_top_2_percent,
+                       r.stadium_number,
+                       r.race_date,
+                       r.race_number,
                        NULLIF(pv.exhibition_time, 0) AS exhibition_time,
                        pv.start_timing_exhibition,
                        original.dash_time,
                        original.turn_time,
                        original.straight_time
                   FROM race_entries e
+                  JOIN races r
+                    ON r.race_id = e.race_id
                   LEFT JOIN race_previews pv
                     ON pv.race_id = e.race_id
                    AND pv.boat_number = e.boat_number
@@ -2297,10 +2327,31 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
     marks_by_boat = _original_exhibition_quality_marks([race_id]).get(race_id, {})
     out: list[dict[str, Any]] = []
-    for boat_no, racer_name, exhibition_time, exhibition_st, dash_time, turn_time, straight_time in rows:
+    race_stadium = None
+    race_date = None
+    race_number = None
+    for (
+        boat_no,
+        racer_name,
+        motor_no,
+        motor_top2,
+        stadium_number,
+        current_race_date,
+        current_race_number,
+        exhibition_time,
+        exhibition_st,
+        dash_time,
+        turn_time,
+        straight_time,
+    ) in rows:
+        race_stadium = stadium_number
+        race_date = current_race_date
+        race_number = current_race_number
         row = {
             "boat_number": int(boat_no),
             "racer_name": racer_name,
+            "motor_number": motor_no,
+            "motor_top_2_percent": motor_top2,
             "exhibition_time": exhibition_time,
             "start_timing_exhibition": exhibition_st,
             "dash_time": dash_time,
@@ -2310,6 +2361,97 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
         row.update(marks_by_boat.get(int(boat_no), {}))
         out.append(row)
 
+    meaningful_rows = [
+        row for row in out
+        if row.get("dash_rank") is not None
+        or row.get("turn_rank") is not None
+        or row.get("straight_rank") is not None
+    ]
+    if len(meaningful_rows) >= 3:
+        return out
+
+    motor_numbers = [
+        int(row["motor_number"])
+        for row in out
+        if row.get("motor_number") is not None
+    ]
+    if not motor_numbers or race_stadium is None or not race_date or race_number is None:
+        for row in out:
+            if row.get("motor_top_2_percent") is not None:
+                row["_dash_metric"] = -float(row["motor_top_2_percent"])
+                row["_turn_metric"] = -float(row["motor_top_2_percent"])
+                row["_straight_metric"] = -float(row["motor_top_2_percent"])
+        _apply_motor_position_ranks(out, "_dash_metric", "dash_rank", "dash_mark")
+        _apply_motor_position_ranks(out, "_turn_metric", "turn_rank", "turn_mark")
+        _apply_motor_position_ranks(out, "_straight_metric", "straight_rank", "straight_mark")
+        return out
+
+    cycle_start = _motor_cycle_start(str(race_date), int(race_stadium))
+    placeholders = ",".join("?" for _ in motor_numbers)
+    cycle_filter_sql = "AND r.race_date >= ?" if cycle_start else ""
+    params: list[Any] = [
+        int(race_stadium),
+        str(race_date),
+        str(race_date),
+        int(race_number),
+        *motor_numbers,
+    ]
+    if cycle_start:
+        params.append(cycle_start)
+    try:
+        with db_connect() as conn:
+            hist_rows = conn.execute(
+                f"""
+                SELECT e.assigned_motor_number,
+                       AVG(NULLIF(x.lap_time, 0)) AS avg_dash_time,
+                       AVG(NULLIF(x.turn_time, 0)) AS avg_turn_time,
+                       AVG(NULLIF(x.straight_time, 0)) AS avg_straight_time
+                  FROM race_original_exhibitions x
+                  JOIN races r
+                    ON r.race_id = x.race_id
+                  JOIN race_entries e
+                    ON e.race_id = x.race_id
+                   AND e.boat_number = x.boat_number
+                 WHERE r.stadium_number = ?
+                   AND (r.race_date < ? OR (r.race_date = ? AND r.race_number < ?))
+                   AND e.assigned_motor_number IN ({placeholders})
+                   {cycle_filter_sql}
+                 GROUP BY e.assigned_motor_number
+                """,
+                tuple(params),
+            ).fetchall()
+    except Exception:
+        logger.warning("current race historical motor position load failed: %s", race_id, exc_info=True)
+        hist_rows = []
+
+    hist_by_motor = {
+        int(motor_no): {
+            "dash": dash_time,
+            "turn": turn_time,
+            "straight": straight_time,
+        }
+        for motor_no, dash_time, turn_time, straight_time in hist_rows
+        if motor_no is not None
+    }
+    for row in out:
+        motor_no = row.get("motor_number")
+        hist = hist_by_motor.get(int(motor_no)) if motor_no is not None else None
+        motor_top2 = row.get("motor_top_2_percent")
+        fallback_value = None
+        if motor_top2 is not None:
+            try:
+                fallback_value = -float(motor_top2)
+            except (TypeError, ValueError):
+                fallback_value = None
+        row["_dash_metric"] = (hist or {}).get("dash") if (hist or {}).get("dash") is not None else fallback_value
+        row["_turn_metric"] = (hist or {}).get("turn") if (hist or {}).get("turn") is not None else fallback_value
+        row["_straight_metric"] = (
+            (hist or {}).get("straight") if (hist or {}).get("straight") is not None else fallback_value
+        )
+
+    _apply_motor_position_ranks(out, "_dash_metric", "dash_rank", "dash_mark")
+    _apply_motor_position_ranks(out, "_turn_metric", "turn_rank", "turn_mark")
+    _apply_motor_position_ranks(out, "_straight_metric", "straight_rank", "straight_mark")
     return out
 
 
@@ -2431,6 +2573,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
             "current": current,
             "summary": {},
             "history": [],
+            "position_rows": _current_race_position_rows(race_id),
         }
 
     cycle_filter_sql = "AND r.race_date >= ?" if cycle_start else ""
@@ -3860,13 +4003,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not info:
             return jsonify({"error": "entry not found"}), 404
         today_iso = date.today().isoformat()
-        cache_key = f"motor_history_v5:{race_id}:{boat_number}"
+        cache_key = f"motor_history_v7:{race_id}:{boat_number}"
         cached_payload = _read_json_cache(
             cache_key,
             1800 if info["race_date"] >= today_iso else 86400,
         )
         if cached_payload is not None:
-            return jsonify(cached_payload)
+            position_rows = cached_payload.get("position_rows") if isinstance(cached_payload, dict) else None
+            position_boats: set[int] = set()
+            if isinstance(position_rows, list):
+                for row in position_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        boat_no = int(row.get("boat_number") or 0)
+                    except (TypeError, ValueError):
+                        boat_no = 0
+                    if 1 <= boat_no <= 6:
+                        position_boats.add(boat_no)
+            if len(position_boats) >= 6:
+                return jsonify(cached_payload)
+            logger.info(
+                "motor history cache ignored because position rows are incomplete: %s boat=%s rows=%s",
+                race_id,
+                boat_number,
+                len(position_boats),
+            )
         payload = _motor_history_payload(race_id, boat_number, info=info)
         if payload is None:
             return jsonify({"error": "entry not found"}), 404
