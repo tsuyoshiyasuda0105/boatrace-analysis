@@ -153,6 +153,33 @@ def test_tamagawa_original_exhibition_source_and_parallel_columns():
     assert rows[0]["straight_time"] == 7.01
 
 
+def test_shimonoseki_confirmed_source_and_parallel_columns():
+    source_name, pattern = SOURCE_PATTERNS[19][0]
+    names = "".join(f'<div class="com-rname">Racer {n}</div>' for n in range(1, 7))
+    html = names + "".join(
+        [
+            '<div class="col6">Lap</div>',
+            *[f'<div class="col6">{36.6 + n / 100:.2f}</div>' for n in range(1, 7)],
+            '<div class="col7">Turn</div>',
+            *[f'<div class="col7">{5.2 + n / 100:.2f}</div>' for n in range(1, 7)],
+            '<div class="col8">Straight</div>',
+            *[f'<div class="col8">{7.3 + n / 100:.2f}</div>' for n in range(1, 7)],
+        ]
+    )
+
+    rows = parse_original_exhibition(html)
+
+    assert source_name == "shimonoseki_group_cyokuzen"
+    assert pattern.format(date="20260729", rno=11) == (
+        "https://www.boatrace-shimonoseki.jp/modules/yosou/"
+        "group-cyokuzen.php?day=20260729&race=11&kind=2"
+    )
+    assert len(rows) == 6
+    assert rows[0]["lap_time"] == 36.61
+    assert rows[0]["turn_time"] == 5.21
+    assert rows[0]["straight_time"] == 7.31
+
+
 def test_mikuni_confirmed_source():
     source_name, pattern = SOURCE_PATTERNS[10][0]
 

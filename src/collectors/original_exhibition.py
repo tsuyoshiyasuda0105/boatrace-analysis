@@ -68,6 +68,12 @@ SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
             "https://www.boatrace-tokuyama.jp/tenji-keisoku/m/?day={date}&race={rno}",
         ),
     ],
+    19: [
+        (
+            "shimonoseki_group_cyokuzen",
+            "https://www.boatrace-shimonoseki.jp/modules/yosou/group-cyokuzen.php?day={date}&race={rno}&kind=2",
+        ),
+    ],
     22: [
         (
             "fukuoka_tenji_info",
