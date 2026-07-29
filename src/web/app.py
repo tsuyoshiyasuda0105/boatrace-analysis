@@ -78,7 +78,7 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v25"
+MARKET_SIGNALS_CACHE_VERSION = "v26"
 STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v15"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
@@ -4708,15 +4708,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "compat-stale",
                 )
 
-        if not force_recompute:
-            # A cold market-signals cache used to fall through to the full
-            # strategy scan on the user's web request. That path joins and
-            # annotates many strategy sources and can block the ROI list for
-            # tens of seconds. Render prewarm is the only process allowed to
-            # rebuild this payload; the web request returns a cheap pending
-            # payload and the next cron refresh fills the cache.
+        if not force_recompute and target_date < recent_cache_floor:
+            # Old dates are not used for live betting. Keep them cheap on a
+            # cold cache, but never let recent/today pages show an empty high-ROI
+            # list just because the cache generation changed before cron warmed it.
             logger.warning(
-                "market-signals cache miss; return pending payload for %s",
+                "market-signals old-date cache miss; return pending payload for %s",
                 target_date,
             )
             pending_payload = {
@@ -4736,6 +4733,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "signals": {},
             }
             return _market_json_response(pending_payload, "pending")
+
+        if not force_recompute:
+            logger.warning(
+                "market-signals recent cache miss; rebuilding synchronously for %s",
+                target_date,
+            )
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
