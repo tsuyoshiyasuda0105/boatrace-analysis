@@ -155,20 +155,45 @@ def live_matches(ctx: dict[str, Any] | None) -> list[AccidentDentStrategy]:
     return [strategy for strategy in ACCIDENT_DENT_STRATEGIES if matches_strategy(strategy, ctx)]
 
 
+def _has_table(conn, table_name: str) -> bool:
+    try:
+        if getattr(conn, "_kind", "") == "postgres":
+            row = conn.execute("SELECT to_regclass(?)", (f"public.{table_name}",)).fetchone()
+            return bool(row and row[0])
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+        return bool(row)
+    except Exception:
+        return False
+
+
 def iter_backtest_matches(conn, from_date: str, to_date: str) -> Iterable[dict[str, Any]]:
     """Yield historical matches with accident rate frozen before each race day."""
     warmup = assessment_start(from_date)
+    has_derived_start_stats = _has_table(conn, "derived_start_stats")
+    derived_cols = (
+        "ds.derived_avg_start_timing_180d, ds.derived_start_count_180d,"
+        if has_derived_start_stats
+        else "NULL AS derived_avg_start_timing_180d, 0 AS derived_start_count_180d,"
+    )
+    derived_join = (
+        "LEFT JOIN derived_start_stats ds "
+        "ON ds.race_id = e.race_id AND ds.boat_number = e.boat_number"
+        if has_derived_start_stats
+        else ""
+    )
     rows = conn.execute(
-        """
+        f"""
         SELECT r.race_id, r.race_date, r.stadium_number, r.race_number,
                e.boat_number, e.racer_number, e.class_number,
-               ds.derived_avg_start_timing_180d, ds.derived_start_count_180d,
+               {derived_cols}
                e.national_top_1_percent, e.national_top_2_percent,
                e.assigned_motor_top_2_percent
           FROM races r
           JOIN race_entries e ON e.race_id = r.race_id
-          LEFT JOIN derived_start_stats ds
-            ON ds.race_id = e.race_id AND ds.boat_number = e.boat_number
+          {derived_join}
          WHERE r.race_date BETWEEN ? AND ?
          ORDER BY r.race_date, r.race_id, e.boat_number
         """,

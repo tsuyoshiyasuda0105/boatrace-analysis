@@ -8,6 +8,20 @@ from typing import Any
 from .schema import SCHEMA_SQL
 
 
+DERIVED_START_STATS_SQL = """
+CREATE TABLE IF NOT EXISTS derived_start_stats (
+  race_id TEXT NOT NULL,
+  boat_number INTEGER NOT NULL,
+  derived_avg_start_timing_180d REAL,
+  derived_start_count_180d INTEGER NOT NULL DEFAULT 0,
+  derived_avg_start_timing_12 REAL,
+  derived_start_count_12 INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (race_id, boat_number)
+)
+"""
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
@@ -35,6 +49,14 @@ class StartPredictionRepository:
     def ensure_schema(self) -> None:
         if isinstance(self.conn, sqlite3.Connection):
             self.conn.executescript(SCHEMA_SQL)
+            self.conn.commit()
+            return
+        if getattr(self.conn, "_kind", "") == "postgres":
+            self.conn.execute(DERIVED_START_STATS_SQL)
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_derived_start_stats_race "
+                "ON derived_start_stats(race_id)"
+            )
             self.conn.commit()
 
     def register_models(self, versions: dict[str, str], feature_names: list[str]) -> None:
