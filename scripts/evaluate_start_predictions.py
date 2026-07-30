@@ -12,18 +12,36 @@ from src.db.connection import connect
 from src.start_prediction import StartPredictionService
 
 
-def due_race_ids(date_from: str, date_to: str) -> list[str]:
+def _load_due_predictions(conn, date_from: str, date_to: str) -> list[tuple[str, str]]:
+    rows = conn.execute(
+        """SELECT p.race_id, p.prediction_stage
+             FROM race_start_predictions p
+             JOIN races r ON r.race_id=p.race_id
+             LEFT JOIN race_start_prediction_evaluations e ON e.prediction_id=p.prediction_id
+            WHERE r.race_date BETWEEN ? AND ?
+              AND e.prediction_id IS NULL
+              AND p.prediction_id = (
+                    SELECT MAX(p2.prediction_id)
+                      FROM race_start_predictions p2
+                     WHERE p2.race_id=p.race_id
+                       AND p2.prediction_stage=p.prediction_stage
+                  )
+              AND EXISTS (
+                    SELECT 1
+                      FROM race_results rr
+                     WHERE rr.race_id=p.race_id
+                     GROUP BY rr.race_id
+                    HAVING COUNT(DISTINCT rr.boat_number)=6
+                  )
+            ORDER BY p.race_id, p.prediction_stage""",
+        (date_from, date_to),
+    ).fetchall()
+    return [(str(row[0]), str(row[1])) for row in rows]
+
+
+def due_predictions(date_from: str, date_to: str) -> list[tuple[str, str]]:
     with connect() as conn:
-        return [str(row[0]) for row in conn.execute(
-            """SELECT p.race_id
-                 FROM race_start_predictions p
-                 JOIN races r ON r.race_id=p.race_id
-                 JOIN race_results rr ON rr.race_id=p.race_id
-                 LEFT JOIN race_start_prediction_evaluations e ON e.prediction_id=p.prediction_id
-                WHERE r.race_date BETWEEN ? AND ? AND e.prediction_id IS NULL
-                GROUP BY p.race_id HAVING COUNT(rr.boat_number)=6
-                ORDER BY p.race_id""", (date_from, date_to)
-        ).fetchall()]
+        return _load_due_predictions(conn, date_from, date_to)
 
 
 def main() -> int:
@@ -35,19 +53,23 @@ def main() -> int:
     service = StartPredictionService()
     done = failed = 0
     try:
-        race_ids = due_race_ids(date_from, args.date)
+        predictions = due_predictions(date_from, args.date)
     except Exception as exc:
         if "does not exist" in str(exc) or "no such table" in str(exc):
             print("[start-evaluation] prediction schema not initialized yet", flush=True)
             return 0
         raise
-    for race_id in race_ids:
+    for race_id, stage in predictions:
         try:
-            service.evaluate(race_id, "post_exhibition")
+            service.evaluate(race_id, stage)
             done += 1
         except Exception as exc:
             failed += 1
-            print(f"[start-evaluation] failed race_id={race_id} error={type(exc).__name__}: {exc}", flush=True)
+            print(
+                f"[start-evaluation] failed race_id={race_id} stage={stage} "
+                f"error={type(exc).__name__}: {exc}",
+                flush=True,
+            )
     print(f"[start-evaluation] from={date_from} to={args.date} due={done+failed} done={done} failed={failed}", flush=True)
     return 0 if failed == 0 else 1
 

@@ -105,6 +105,12 @@ class PointInTimeFeatureBuilder:
         self._columns_cache[table_name] = cols
         return cols
 
+    def _date_sql(self, expression: str) -> str:
+        """Return an explicit date expression for the active database."""
+        if getattr(self.conn, "_kind", "") == "postgres":
+            return f"CAST({expression} AS DATE)"
+        return f"DATE({expression})"
+
     def build(self, race_id: str, stage: str = "post_exhibition") -> RaceFeatureSnapshot:
         race = _one(self.conn.execute(
             """SELECT race_id, race_date, stadium_number, race_number,
@@ -130,6 +136,12 @@ class PointInTimeFeatureBuilder:
             "ON d.race_id=e.race_id AND d.boat_number=e.boat_number"
             if has_derived_start_stats else ""
         )
+        race_date_sql = self._date_sql(
+            "(SELECT race_date FROM races WHERE race_id=e.race_id)"
+        )
+        accident_period_start_sql = self._date_sql("a.period_start")
+        accident_period_end_sql = self._date_sql("a.period_end")
+        accident_updated_sql = self._date_sql("a.updated_at")
         entries = _rows(self.conn.execute(
             f"""SELECT e.*, p.weather_number, p.wind_speed, p.wind_direction_number,
                       p.wave_height, p.temperature, p.water_temperature,
@@ -139,15 +151,15 @@ class PointInTimeFeatureBuilder:
                       {derived_columns},
                       (SELECT a.accident_points FROM racer_accident_period_stats a
                         WHERE a.racer_number=e.racer_number
-                          AND a.period_start <= (SELECT race_date FROM races WHERE race_id=e.race_id)
-                          AND a.period_end >= (SELECT race_date FROM races WHERE race_id=e.race_id)
-                          AND DATE(a.updated_at) <= DATE((SELECT race_date FROM races WHERE race_id=e.race_id))
+                          AND {accident_period_start_sql} <= {race_date_sql}
+                          AND {accident_period_end_sql} >= {race_date_sql}
+                          AND {accident_updated_sql} <= {race_date_sql}
                         ORDER BY a.updated_at DESC LIMIT 1) AS accident_points,
                       (SELECT a.accident_rate FROM racer_accident_period_stats a
                         WHERE a.racer_number=e.racer_number
-                          AND a.period_start <= (SELECT race_date FROM races WHERE race_id=e.race_id)
-                          AND a.period_end >= (SELECT race_date FROM races WHERE race_id=e.race_id)
-                          AND DATE(a.updated_at) <= DATE((SELECT race_date FROM races WHERE race_id=e.race_id))
+                          AND {accident_period_start_sql} <= {race_date_sql}
+                          AND {accident_period_end_sql} >= {race_date_sql}
+                          AND {accident_updated_sql} <= {race_date_sql}
                         ORDER BY a.updated_at DESC LIMIT 1) AS accident_rate
                  FROM race_entries e
                  LEFT JOIN race_previews p ON p.race_id=e.race_id AND p.boat_number=e.boat_number
