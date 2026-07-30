@@ -113,6 +113,149 @@ def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
     return []
 
 
+def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
+    """Fill lightweight race-grid badges for cache-only market signal payloads."""
+    if not isinstance(payload, dict):
+        return payload
+    existing = payload.get("race_badges")
+    if isinstance(existing, dict) and existing:
+        return payload
+    payload = dict(payload)
+    payload["race_badges"] = {}
+    payload_date = str(payload.get("date") or target_date)
+    try:
+        accident_period_start = _accident_period_start_for_date(payload_date)
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.race_id,
+                       r.stadium_number,
+                       e.boat_number,
+                       e.racer_number,
+                       e.class_number,
+                       e.assigned_motor_top_2_percent,
+                       ras.accident_rate,
+                       ras.accident_points,
+                       ras.starts_count
+                  FROM races r
+                  JOIN race_entries e ON e.race_id = r.race_id
+                  LEFT JOIN (
+                        SELECT racer_number,
+                               MAX(accident_rate) AS accident_rate,
+                               MAX(accident_points) AS accident_points,
+                               MAX(starts_count) AS starts_count
+                          FROM racer_accident_period_stats
+                         WHERE period_start = ?
+                           AND source_kind = 'reconstructed'
+                           AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                         GROUP BY racer_number
+                  ) ras ON ras.racer_number = e.racer_number
+                 WHERE r.race_date = ?
+                 ORDER BY r.race_id, e.boat_number
+                """,
+                (accident_period_start, payload_date),
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("market race badge hydration failed: %s", exc)
+        return payload
+
+    by_race: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        rid = str(row[0])
+        try:
+            boat_no = int(row[2])
+        except Exception:
+            continue
+        info = by_race.setdefault(
+            rid,
+            {
+                "stadium": _safe_int(row[1]),
+                "accident_items": [],
+                "ace_items": [],
+            },
+        )
+        rate = _safe_float(row[6])
+        if rate is not None and rate >= 0.7:
+            info["accident_items"].append(
+                {
+                    "boat": boat_no,
+                    "racer": _safe_int(row[3]),
+                    "class_number": _safe_int(row[4]),
+                    "class_label": _class_label(row[4]),
+                    "tone": _accident_rank_tone(row[4], rate),
+                    "rate": round(float(rate), 3),
+                    "points": int(row[7] or 0),
+                    "starts": int(row[8] or 0),
+                }
+            )
+
+        motor_rate = _safe_float(row[5])
+        if motor_rate is not None:
+            info["ace_items"].append(
+                {
+                    "boat": boat_no,
+                    "rate": round(float(motor_rate), 1),
+                }
+            )
+
+    race_badges: dict[str, dict[str, Any]] = {}
+    ace_threshold_cache: dict[int, Optional[float]] = {}
+    for rid, info in by_race.items():
+        badge_info: dict[str, Any] = {}
+        accident_items = info.get("accident_items") or []
+        if accident_items:
+            accident_items.sort(
+                key=lambda x: (
+                    float(x.get("rate") or 0.0),
+                    int(x.get("points") or 0),
+                ),
+                reverse=True,
+            )
+            display_items = accident_items[:3]
+            label_parts = []
+            for item in display_items:
+                cls = item.get("class_label")
+                cls_part = f"{cls} " if cls and cls != "-" else ""
+                label_parts.append(f"{item.get('boat')}号:{cls_part}{float(item.get('rate') or 0):.2f}")
+            badge_info["accident"] = {
+                "items": display_items,
+                "boats": [x.get("boat") for x in accident_items if x.get("boat") is not None],
+                "max_rate": accident_items[0].get("rate"),
+                "max_points": accident_items[0].get("points"),
+                "label": "事故率0.70+ " + ", ".join(label_parts),
+            }
+
+        stadium_no = _safe_int(info.get("stadium"))
+        if stadium_no is not None:
+            if stadium_no not in ace_threshold_cache:
+                ace_threshold_cache[stadium_no] = _ace_motor_threshold(stadium_no, payload_date)
+            threshold = ace_threshold_cache.get(stadium_no)
+            if threshold is not None:
+                ace_items = [
+                    {
+                        **item,
+                        "threshold": round(float(threshold), 1),
+                    }
+                    for item in (info.get("ace_items") or [])
+                    if _safe_float(item.get("rate")) is not None
+                    and float(item.get("rate")) >= float(threshold)
+                ]
+                if ace_items:
+                    ace_items.sort(key=lambda x: float(x.get("rate") or 0.0), reverse=True)
+                    badge_info["ace_motor"] = {
+                        "items": ace_items[:3],
+                        "boats": [x["boat"] for x in ace_items],
+                        "max_rate": max(float(x["rate"]) for x in ace_items),
+                        "threshold": round(float(threshold), 1),
+                        "label": " / ".join(f"{x['boat']}号M{x['rate']:.1f}" for x in ace_items[:3]),
+                    }
+
+        if badge_info:
+            race_badges[rid] = badge_info
+    payload["race_badges"] = race_badges
+    return payload
+
+
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
     suffix = ":".join(str(p) for p in parts)
     return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{_strategy_definition_signature()}:{suffix}"
@@ -3617,6 +3760,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if signal_payload is None and target_date < today_iso:
                 signal_payload = _read_json_cache_stale(signal_cache_key)
             signal_payload = signal_payload or {}
+            signal_payload = _hydrate_market_race_badges(signal_payload, target_date)
             signals = (signal_payload or {}).get("signals") or {}
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
             adopted_watch_levels = set(MARKET_SIGNAL_WATCH_LEVELS)
@@ -4501,6 +4645,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # v6: avoid serving stale empty signals after race data catches up.
         cache_key = _market_signals_cache_key(target_date)
         def _market_json_response(payload: Any, cache_state: str):
+            payload = _hydrate_market_race_badges(payload, target_date)
             resp = jsonify(payload)
             resp.headers["X-Boatrace-Cache"] = cache_state
             resp.headers["Cache-Control"] = "no-store, max-age=0"

@@ -640,7 +640,7 @@
               const badge = document.createElement('span');
               badge.className = 'ace-motor-watch-badge';
               const boats = Array.isArray(ace.boats) && ace.boats.length ? ace.boats.slice(0, 3).join(',') : '';
-              badge.textContent = boats ? `エースM ${boats}` : 'エースM';
+              badge.textContent = boats ? `S級M ${boats}` : 'S級M';
               badge.title = ace.label || '現行モーター期の上位モーター';
               anchor.appendChild(badge);
             }
