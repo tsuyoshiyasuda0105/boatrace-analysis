@@ -348,7 +348,7 @@
         );
         const SHOW_STRATEGY_RACE_CHIPS = false;
         const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge';
-        const BADGE_SELECTOR = '.l4-badge, .accident-watch-badge, .ace-motor-watch-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
+        const STRATEGY_BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetails = () => {
           // Race detail pages now load heavy motor/history/affinity data lazily
           // on click. Avoid background-prefetching several detail pages from
@@ -602,7 +602,7 @@
 
         function removeStrategyBadges(item) {
           if (!item) return;
-          item.querySelectorAll(BADGE_SELECTOR).forEach((el) => el.remove());
+          item.querySelectorAll(STRATEGY_BADGE_SELECTOR).forEach((el) => el.remove());
         }
 
         function accidentToneFromItems(items) {
@@ -716,12 +716,14 @@
             marketSignalsCache = signals;
             raceBadgesCache = raceBadges;
             marketSignalsDigest = nextDigest;
+            // Race cards may be rebuilt independently of market signals.
+            // Restore lightweight data badges even when the signal digest is unchanged.
+            renderLightweightRaceBadges(raceBadges, accidentWatch);
             if (nextDigest === lastRenderedSignalsDigest) {
               return;
             }
             getRaceItems(true).forEach(removeStrategyBadges);
             const raceItemMap = getRaceItemMap(true);
-            renderLightweightRaceBadges(raceBadges, accidentWatch);
             if (SHOW_STRATEGY_RACE_CHIPS) {
               for (const [raceId, acc] of Object.entries(accidentWatch)) {
               try {
