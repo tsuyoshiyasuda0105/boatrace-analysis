@@ -4870,12 +4870,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "compat-stale",
                 )
 
-        if not force_recompute and target_date < recent_cache_floor:
-            # Old dates are not used for live betting. Keep them cheap on a
-            # cold cache, but never let recent/today pages show an empty high-ROI
-            # list just because the cache generation changed before cron warmed it.
+        if not force_recompute:
+            # Normal web requests must stay cache-only. If the cache is cold,
+            # return a lightweight pending payload and let Render Cron or an
+            # explicitly allowed recompute rebuild the heavy market signals.
             logger.warning(
-                "market-signals old-date cache miss; return pending payload for %s",
+                "market-signals cache miss; return pending payload for %s",
                 target_date,
             )
             pending_payload = {
@@ -4892,15 +4892,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "cache_only": True,
                 },
                 "accident_watch": {},
+                "race_badges": {},
                 "signals": {},
             }
             return _market_json_response(pending_payload, "pending")
-
-        if not force_recompute:
-            logger.warning(
-                "market-signals recent cache miss; rebuilding synchronously for %s",
-                target_date,
-            )
 
         # ★パフォーマンス最適化 (backlog item 11):
         # 旧実装は 8 個の SQL × 3 個の db_connect() で Supabase 往復が
@@ -5214,6 +5209,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                e5.assigned_motor_top_2_percent AS boat5_motor_top2,
                                (COALESCE(e5.flying_count, 0) + COALESCE(e5.late_count, 0)) AS boat5_fl_sum,
                                NULLIF(pv5.exhibition_time, 0) AS boat5_exhibition_time,
+                               e6.assigned_motor_top_2_percent AS boat6_motor_top2,
                                NULLIF(pv6.exhibition_time, 0) AS boat6_exhibition_time,
                                (COALESCE(e6.flying_count, 0) + COALESCE(e6.late_count, 0)) AS boat6_fl_sum,
                                pv.wave_height AS wave_height,
@@ -5329,6 +5325,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "boat5_motor_top2": rec.get("boat5_motor_top2"),
                             "boat5_fl_sum": rec.get("boat5_fl_sum"),
                             "boat5_exhibition_time": rec.get("boat5_exhibition_time"),
+                            "boat6_motor_top2": rec.get("boat6_motor_top2"),
                             "boat6_exhibition_time": rec.get("boat6_exhibition_time"),
                             "boat6_fl_sum": rec.get("boat6_fl_sum"),
                             "wave_height": rec.get("wave_height"),
@@ -9162,6 +9159,148 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             return _pick_best_market_signal(*matched)
 
+        ACE_KIMARITE_WIN_CACHE_VERSION = "ace_kimarite_win_v1"
+        ACE_KIMARITE_WIN_STRATEGIES = (
+            {"key": "kiryu_win4_ace_kimarite_late", "label": "桐生 4単 後半エース決まり手", "stadium": 1, "boat": 4, "race_min": 7, "race_max": 12, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 329.8, "hit_rate": 38.2, "n": 55, "odds_min": 5.0},
+            {"key": "amagasaki_win3_ace_kimarite_late", "label": "尼崎 3単 後半エース決まり手", "stadium": 13, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 422.3, "hit_rate": 45.6, "n": 57, "odds_min": 4.0},
+            {"key": "amagasaki_win3_ace_kimarite_m40", "label": "尼崎 3単 M40", "stadium": 13, "boat": 3, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 40.0, "attack_wins_min": 1, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 397.9, "hit_rate": 36.2, "n": 47, "odds_min": 5.0},
+            {"key": "amagasaki_win3_ace_kimarite_no_rain", "label": "尼崎 3単 雨除外", "stadium": 13, "boat": 3, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 401.6, "hit_rate": 38.6, "n": 44, "odds_min": 5.0},
+            {"key": "amagasaki_win3_ace_kimarite_late_no_rain", "label": "尼崎 3単 後半雨除外", "stadium": 13, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 371.4, "hit_rate": 38.6, "n": 44, "odds_min": 3.0},
+            {"key": "amagasaki_win3_ace_kimarite_all", "label": "尼崎 3単 エース決まり手", "stadium": 13, "boat": 3, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 345.5, "hit_rate": 34.3, "n": 67, "odds_min": 5.0},
+            {"key": "naruto_win4_ace_kimarite_all", "label": "鳴門 4単 エース決まり手", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 484.9, "hit_rate": 32.5, "n": 77, "odds_min": 6.0},
+            {"key": "naruto_win4_ace_kimarite_no_rain", "label": "鳴門 4単 雨除外", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 1, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 434.2, "hit_rate": 35.4, "n": 48, "odds_min": 6.0},
+            {"key": "naruto_win3_ace_kimarite_late_no_rain", "label": "鳴門 3単 後半雨除外", "stadium": 14, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 285.6, "hit_rate": 30.5, "n": 59, "odds_min": 5.0},
+            {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73, "odds_min": 6.0},
+        )
+
+        def _ace_ctx_value(ctx: dict | None, *keys):
+            if not ctx:
+                return None
+            for key in keys:
+                if key in ctx and ctx.get(key) is not None:
+                    return ctx.get(key)
+            return None
+
+        def _ace_float(value):
+            try:
+                return float(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        def _ace_int(value):
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        def _ace_race_date(ctx: dict | None):
+            raw = _ace_ctx_value(ctx, "race_date", "date")
+            if raw:
+                return str(raw)[:10]
+            rid = str(_ace_ctx_value(ctx, "race_id") or "")
+            if len(rid) >= 8 and rid[:8].isdigit():
+                return f"{rid[:4]}-{rid[4:6]}-{rid[6:8]}"
+            return None
+
+        @lru_cache(maxsize=20000)
+        def _historical_attack_kimarite_stats(racer_number: int, course_number: int, before_date: str):
+            try:
+                with db_connect() as conn_h:
+                    row_h = conn_h.execute(
+                        """
+                        SELECT
+                            COUNT(*) AS starts,
+                            SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins,
+                            SUM(CASE
+                                    WHEN rr.finishing_position = 1
+                                     AND COALESCE(rr.kimarite, '') IN ('まくり', 'まくり差し')
+                                    THEN 1 ELSE 0
+                                END) AS attack_wins
+                          FROM race_results rr
+                          JOIN races r ON r.race_id = rr.race_id
+                          LEFT JOIN race_entries re
+                            ON re.race_id = rr.race_id
+                           AND re.racer_number = rr.racer_number
+                         WHERE rr.racer_number = ?
+                           AND COALESCE(rr.course_number, re.boat_number) = ?
+                           AND r.race_date < ?
+                        """,
+                        (racer_number, course_number, before_date),
+                    ).fetchone()
+            except Exception as e:
+                logger.warning("ace kimarite history lookup failed racer=%s course=%s: %s", racer_number, course_number, e)
+                return {"starts": 0, "wins": 0, "attack_wins": 0, "attack_rate": 0.0}
+            starts = int((row_h[0] if row_h else 0) or 0)
+            wins = int((row_h[1] if row_h else 0) or 0)
+            attack_wins = int((row_h[2] if row_h else 0) or 0)
+            attack_rate = (attack_wins / starts * 100.0) if starts else 0.0
+            return {"starts": starts, "wins": wins, "attack_wins": attack_wins, "attack_rate": attack_rate}
+
+        def _match_ace_kimarite_win_strategies(ctx: dict | None):
+            stadium = _ace_int(_ace_ctx_value(ctx, "stadium", "stadium_number"))
+            race_no = _ace_int(_ace_ctx_value(ctx, "race_number", "race_no"))
+            weather = _ace_int(_ace_ctx_value(ctx, "weather", "weather_number"))
+            race_date = _ace_race_date(ctx)
+            boat1_motor = _ace_float(_ace_ctx_value(ctx, "boat1_motor_top2"))
+            if stadium is None or race_no is None or race_date is None or boat1_motor is None:
+                return []
+
+            matched = []
+            for strategy in ACE_KIMARITE_WIN_STRATEGIES:
+                if stadium != strategy["stadium"]:
+                    continue
+                if strategy["race_min"] is not None and race_no < strategy["race_min"]:
+                    continue
+                if strategy["race_max"] is not None and race_no > strategy["race_max"]:
+                    continue
+                if strategy["rain_exclude"] and weather == 3:
+                    continue
+                if boat1_motor > strategy["boat1_motor_max"]:
+                    continue
+                target_boat = int(strategy["boat"])
+                target_motor = _ace_float(_ace_ctx_value(ctx, f"boat{target_boat}_motor_top2"))
+                racer_number = _ace_int(_ace_ctx_value(ctx, f"boat{target_boat}_racer", f"boat{target_boat}_racer_number"))
+                if target_motor is None or target_motor < strategy["target_motor_min"] or racer_number is None:
+                    continue
+                kim_stats = _historical_attack_kimarite_stats(racer_number, target_boat, race_date)
+                if kim_stats["attack_wins"] < strategy["attack_wins_min"]:
+                    continue
+                if kim_stats["attack_rate"] < strategy["attack_rate_min"]:
+                    continue
+                matched.append((strategy, kim_stats))
+            return matched
+
+        def _evaluate_ace_kimarite_win_signal(ctx: dict | None):
+            matches = _match_ace_kimarite_win_strategies(ctx)
+            if not matches:
+                return None
+            strategy, kim_stats = max(matches, key=lambda item: (float(item[0]["recovery"]), int(item[0]["n"])))
+            boat = int(strategy["boat"])
+            return {
+                "level": strategy["key"],
+                "label": f"{strategy['label']} {strategy['recovery']}%",
+                "bet": f"単勝 {boat}",
+                "rank": "win_niche",
+                "rank_label": "単勝採用",
+                "rank_emoji": "単",
+                "recovery": strategy["recovery"],
+                "n": strategy["n"],
+                "hit_rate": strategy["hit_rate"],
+                "recommended_min_odds": strategy["odds_min"],
+                "name": strategy["label"],
+                "tag": f"{boat}号艇M{strategy['target_motor_min']:.0f}+ / 攻め勝ち{strategy['attack_wins_min']}+ / 攻め率{strategy['attack_rate_min']:.0f}%+ / 1号艇M{strategy['boat1_motor_max']:.0f}以下",
+                "boat1_note": (
+                    f"検証回収率 {strategy['recovery']}% (n={strategy['n']})\n"
+                    f"買い目: 単勝 {boat} 100円\n"
+                    f"的中率 {strategy['hit_rate']}% / 攻め勝ち {kim_stats['attack_wins']} / 攻め率 {kim_stats['attack_rate']:.1f}%"
+                ),
+                "tetsuban_score": 7,
+                "timing_bucket": "preconfirmed",
+                "is_win_niche": True,
+                "is_display_confirmed": True,
+                "uses_rain_filter": bool(strategy["rain_exclude"]),
+            }
+
         def _evaluate_a1_ace_motor_123_corr_signal(ctx: dict | None):
             """A1 ace-motor 1-2-3 corrected venue strategy."""
             if not ctx:
@@ -11175,6 +11314,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     boat3_top2=boat3_pred_top2,
                     boat4_top2=boat4_pred_top2,
                 )
+                ace_kimarite_win_signal = _safe_signal_eval(
+                    "ace_kimarite_win",
+                    _evaluate_ace_kimarite_win_signal,
+                    info,
+                )
                 l4 = _pick_best_market_signal(
                     l4,
                     exacta_niche,
@@ -11190,6 +11334,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     miyajima_fl132_signal,
                     tide_tri,
                     win_niche,
+                    ace_kimarite_win_signal,
                     boat3_trifecta_niche,
                     tri124_132_niche,
                     shimonoseki_123_signal,
@@ -11305,6 +11450,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         boat3_top2=boat3_pred_top2,
                         boat4_top2=boat4_pred_top2,
                     )
+                    ace_kimarite_win_watch = _safe_signal_eval(
+                        "ace_kimarite_win_watch",
+                        _evaluate_ace_kimarite_win_signal,
+                        info,
+                    )
                     morning_l4 = _pick_best_market_signal(
                         morning_l4,
                         exacta_niche_watch,
@@ -11332,6 +11482,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         accident_dent_adopted_watch,
                         boat2_wall_adopted_watch,
                         win_niche_watch,
+                        ace_kimarite_win_watch,
                         candidate_l4,
                         gamagori_watch,
                     )
@@ -11598,6 +11749,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     boat3_top2=boat3_pred_top2,
                     boat4_top2=boat4_pred_top2,
                 )
+                ace_kimarite_win_watch = _safe_signal_eval(
+                    "ace_kimarite_win_watch_no_data",
+                    _evaluate_ace_kimarite_win_signal,
+                    info,
+                )
                 morning_l4 = _pick_best_market_signal(
                     morning_l4,
                     exacta_niche,
@@ -11624,6 +11780,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     boat2_wall_adopted_watch,
                     omura_124_original_signal,
                     win_niche,
+                    ace_kimarite_win_watch,
                     candidate_l4,
                     gamagori_watch,
                 )
@@ -11828,6 +11985,51 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "label": _accident_watch_label(items),
                 }
 
+        # Lightweight badges for the race grid. Keep this separate from the
+        # high-ROI strategy payload so the top page does not need to render
+        # dozens of strategy chips per race.
+        race_badges: dict[str, dict[str, Any]] = {}
+        ace_threshold_cache: dict[int, Optional[float]] = {}
+        for rid, info in all_race_info.items():
+            badge_info: dict[str, Any] = {}
+            accident_items = info.get("accident_watch") or []
+            if accident_items:
+                display_items = accident_items[:3]
+                badge_info["accident"] = {
+                    "items": display_items,
+                    "boats": info.get("accident_watch_boats") or [],
+                    "max_rate": info.get("max_accident_rate"),
+                    "max_points": info.get("max_accident_points"),
+                    "label": _accident_watch_label(display_items),
+                }
+
+            stadium_no = _safe_int(info.get("stadium"))
+            if stadium_no is not None:
+                if stadium_no not in ace_threshold_cache:
+                    ace_threshold_cache[stadium_no] = _ace_motor_threshold(stadium_no, target_date)
+                ace_threshold = ace_threshold_cache.get(stadium_no)
+                if ace_threshold is not None:
+                    ace_items: list[dict[str, Any]] = []
+                    for boat_no in range(1, 7):
+                        rate = _safe_float(info.get(f"boat{boat_no}_motor_top2"))
+                        if rate is not None and rate >= ace_threshold:
+                            ace_items.append({
+                                "boat": boat_no,
+                                "rate": round(rate, 1),
+                                "threshold": round(float(ace_threshold), 1),
+                            })
+                    if ace_items:
+                        badge_info["ace_motor"] = {
+                            "items": ace_items[:3],
+                            "boats": [x["boat"] for x in ace_items],
+                            "max_rate": max(float(x["rate"]) for x in ace_items),
+                            "threshold": round(float(ace_threshold), 1),
+                            "label": " / ".join(f"{x['boat']}号M{x['rate']:.1f}" for x in ace_items[:3]),
+                        }
+
+            if badge_info:
+                race_badges[rid] = badge_info
+
         payload = {
             "date": target_date,
             "cache_version": MARKET_SIGNALS_CACHE_VERSION,
@@ -11838,6 +12040,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "n_morning_l4": sum(1 for s in signals if s.get("l4") and s["l4"].get("is_morning")),
             "data_status": data_status,
             "accident_watch": accident_watch_payload,
+            "race_badges": race_badges,
             "signals": {s["race_id"]: s for s in signals},
         }
         # Zero candidates is also a valid computed result. Persist it so
@@ -11902,7 +12105,21 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     OMURA_124_ORIGINAL_T5_TRI_CACHE_VERSION = "omura_124_original_t5_tri_v1"
     COURSE_FIT_WIN_CACHE_VERSION = "course_fit_win_v1"
     BOAT2_WALL_ADOPTED_CACHE_VERSION = "boat2_wall_adopted_v2"
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v34"
+    ACE_KIMARITE_WIN_CACHE_VERSION = "ace_kimarite_win_v1"
+    ACE_KIMARITE_WIN_STRATEGY_DEFS = (
+        {"key": "kiryu_win4_ace_kimarite_late", "label": "桐生 4単 後半エース決まり手", "stadium": 1, "boat": 4, "race_min": 7, "race_max": 12, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 329.8, "hit_rate": 38.2, "n": 55},
+        {"key": "amagasaki_win3_ace_kimarite_late", "label": "尼崎 3単 後半エース決まり手", "stadium": 13, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 422.3, "hit_rate": 45.6, "n": 57},
+        {"key": "amagasaki_win3_ace_kimarite_m40", "label": "尼崎 3単 M40", "stadium": 13, "boat": 3, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 40.0, "attack_wins_min": 1, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 397.9, "hit_rate": 36.2, "n": 47},
+        {"key": "amagasaki_win3_ace_kimarite_no_rain", "label": "尼崎 3単 雨除外", "stadium": 13, "boat": 3, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 401.6, "hit_rate": 38.6, "n": 44},
+        {"key": "amagasaki_win3_ace_kimarite_late_no_rain", "label": "尼崎 3単 後半雨除外", "stadium": 13, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 371.4, "hit_rate": 38.6, "n": 44},
+        {"key": "amagasaki_win3_ace_kimarite_all", "label": "尼崎 3単 エース決まり手", "stadium": 13, "boat": 3, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 345.5, "hit_rate": 34.3, "n": 67},
+        {"key": "naruto_win4_ace_kimarite_all", "label": "鳴門 4単 エース決まり手", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 484.9, "hit_rate": 32.5, "n": 77},
+        {"key": "naruto_win4_ace_kimarite_no_rain", "label": "鳴門 4単 雨除外", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 1, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 434.2, "hit_rate": 35.4, "n": 48},
+        {"key": "naruto_win3_ace_kimarite_late_no_rain", "label": "鳴門 3単 後半雨除外", "stadium": 14, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 285.6, "hit_rate": 30.5, "n": 59},
+        {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73},
+    )
+    ACE_KIMARITE_WIN_KEYS = tuple(s["key"] for s in ACE_KIMARITE_WIN_STRATEGY_DEFS)
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v35"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -11988,6 +12205,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ("_course_fit_win_version", COURSE_FIT_WIN_CACHE_VERSION),
             ("_boat2_wall_adopted_version", BOAT2_WALL_ADOPTED_CACHE_VERSION),
             ("_accident_dent_version", ACCIDENT_DENT_CACHE_VERSION),
+            ("_ace_kimarite_win_version", ACE_KIMARITE_WIN_CACHE_VERSION),
         )
         for version_key, expected_version in required_versions:
             if day_d.get(version_key) != expected_version:
@@ -12279,6 +12497,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "miyajima_wall_hold_123_132_tri",
                             "g23_wall_hold_12_exa",
                             "tamagawa_late_wall_hold_123_132_tri",
+                            *ACE_KIMARITE_WIN_KEYS,
                         )
                         for prefix in adopted_metric_prefixes:
                             day_d.setdefault(f"{prefix}_bets", 0)
@@ -12500,6 +12719,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     e3.national_top_1_percent AS boat3_natl_1,
                     e3.assigned_motor_top_2_percent AS boat3_motor_top2,
                     e4.class_number AS boat4_class,
+                    e4.racer_number AS boat4_racer,
                     e4.local_top_1_percent AS boat4_local_1,
                     e4.national_top_1_percent AS boat4_natl_1,
                     e4.avg_start_timing AS boat4_avg_st,
@@ -12525,6 +12745,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     res3.boat_number AS w3,
                     pw.payout AS win_pay,
                     pw2.payout AS win2_pay,
+                    pw3.payout AS win3_pay,
+                    pw4.payout AS win4_pay,
                     pe.payout AS exacta_pay,
                     pe13.payout AS exacta_13_pay,
                     pe14.payout AS exacta_14_pay,
@@ -12634,6 +12856,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 LEFT JOIN race_results res3 ON res3.race_id = r.race_id AND res3.finishing_position=3
                 LEFT JOIN race_payouts pw ON pw.race_id = r.race_id AND pw.bet_type='win' AND pw.combination='1'
                 LEFT JOIN race_payouts pw2 ON pw2.race_id = r.race_id AND pw2.bet_type='win' AND pw2.combination='2'
+                LEFT JOIN race_payouts pw3 ON pw3.race_id = r.race_id AND pw3.bet_type='win' AND pw3.combination='3'
+                LEFT JOIN race_payouts pw4 ON pw4.race_id = r.race_id AND pw4.bet_type='win' AND pw4.combination='4'
                 LEFT JOIN race_payouts pe ON pe.race_id = r.race_id AND pe.bet_type='exacta' AND pe.combination='1-2'
                 LEFT JOIN race_payouts pe13 ON pe13.race_id = r.race_id AND pe13.bet_type='exacta' AND pe13.combination='1-3'
                 LEFT JOIN race_payouts pe14 ON pe14.race_id = r.race_id AND pe14.bet_type='exacta' AND pe14.combination='1-4'
@@ -16154,6 +16378,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_course_fit_win_version"] = COURSE_FIT_WIN_CACHE_VERSION
                         day_d["_boat2_wall_adopted_version"] = BOAT2_WALL_ADOPTED_CACHE_VERSION
                         day_d["_accident_dent_version"] = ACCIDENT_DENT_CACHE_VERSION
+                        day_d["_ace_kimarite_win_version"] = ACE_KIMARITE_WIN_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
                         def _roi_cache_json_default(value):
                             try:
@@ -16271,6 +16496,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ("_course_fit_win_version", COURSE_FIT_WIN_CACHE_VERSION),
                     ("_boat2_wall_adopted_version", BOAT2_WALL_ADOPTED_CACHE_VERSION),
                     ("_accident_dent_version", ACCIDENT_DENT_CACHE_VERSION),
+                    ("_ace_kimarite_win_version", ACE_KIMARITE_WIN_CACHE_VERSION),
                 )
                 with db_connect() as conn_s:
                     for day_d in finalized_rows:

@@ -332,6 +332,7 @@
         let marketSignalsLoading = false;
         let marketSignalsLoaded = Boolean(initialMarketSignalsPayload && initialMarketSignalsPayload.signals);
         let marketSignalsCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.signals) || {};
+        let raceBadgesCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.race_badges) || {};
         let marketSignalsDigest = '';
         let odds123Digest = '';
         let lastRenderedSignalsDigest = '';
@@ -342,9 +343,12 @@
         let raceItemMapCache = null;
         marketSignalsDigest = buildSignalsDigest(
           marketSignalsCache,
-          (initialMarketSignalsPayload && initialMarketSignalsPayload.accident_watch) || {}
+          (initialMarketSignalsPayload && initialMarketSignalsPayload.accident_watch) || {},
+          raceBadgesCache
         );
-        const BADGE_SELECTOR = '.l4-badge, .accident-watch-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
+        const SHOW_STRATEGY_RACE_CHIPS = false;
+        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge';
+        const BADGE_SELECTOR = '.l4-badge, .accident-watch-badge, .ace-motor-watch-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetails = () => {
           // Race detail pages now load heavy motor/history/affinity data lazily
           // on click. Avoid background-prefetching several detail pages from
@@ -447,7 +451,7 @@
           return raceItemMapCache;
         }
 
-        function buildSignalsDigest(signals, accidentWatch) {
+        function buildSignalsDigest(signals, accidentWatch, raceBadges) {
           const rows = Object.entries(signals || {}).map(([raceId, sig]) => {
             const l4 = sig && sig.l4 ? sig.l4 : {};
             return [
@@ -473,6 +477,18 @@
               acc.label || '',
               acc.max_rate ?? '',
               Array.isArray(acc.boats) ? acc.boats.join(',') : '',
+            ].join(':'));
+          });
+          Object.entries(raceBadges || {}).forEach(([raceId, badges]) => {
+            const accident = badges?.accident || {};
+            const ace = badges?.ace_motor || {};
+            rows.push([
+              raceId,
+              'badges',
+              accident.max_rate ?? '',
+              Array.isArray(accident.boats) ? accident.boats.join(',') : '',
+              ace.max_rate ?? '',
+              Array.isArray(ace.boats) ? ace.boats.join(',') : '',
             ].join(':'));
           });
           rows.sort();
@@ -589,6 +605,48 @@
           item.querySelectorAll(BADGE_SELECTOR).forEach((el) => el.remove());
         }
 
+        function accidentToneFromItems(items) {
+          const primary = Array.isArray(items) ? items[0] : null;
+          if (!primary) return 'unknown';
+          return primary.tone || 'unknown';
+        }
+
+        function renderLightweightRaceBadges(raceBadges, accidentWatch) {
+          getRaceItems(true).forEach((item) => {
+            item.querySelectorAll(LIGHT_BADGE_SELECTOR).forEach((el) => el.remove());
+          });
+          const raceItemMap = getRaceItemMap(true);
+          const merged = { ...(raceBadges || {}) };
+          Object.entries(accidentWatch || {}).forEach(([raceId, acc]) => {
+            const slot = merged[raceId] || {};
+            slot.accident = acc;
+            merged[raceId] = slot;
+          });
+          Object.entries(merged).forEach(([raceId, badges]) => {
+            const item = raceItemMap.get(raceId);
+            if (!item) return;
+            const anchor = item.querySelector('a') || item;
+            const accident = badges?.accident;
+            if (accident) {
+              const maxRate = Number(accident.max_rate || 0);
+              const badge = document.createElement('span');
+              badge.className = `accident-watch-badge accident-risk-${accidentToneFromItems(accident.items)}`;
+              badge.textContent = maxRate ? `事故${maxRate.toFixed(2)}` : '事故0.70+';
+              badge.title = accident.label || '事故率0.70以上の選手が出走';
+              anchor.appendChild(badge);
+            }
+            const ace = badges?.ace_motor;
+            if (ace) {
+              const badge = document.createElement('span');
+              badge.className = 'ace-motor-watch-badge';
+              const boats = Array.isArray(ace.boats) && ace.boats.length ? ace.boats.slice(0, 3).join(',') : '';
+              badge.textContent = boats ? `エースM ${boats}` : 'エースM';
+              badge.title = ace.label || '現行モーター期の上位モーター';
+              anchor.appendChild(badge);
+            }
+          });
+        }
+
         function buildOddsDigest(oddsMap) {
           const rows = [];
           Object.entries(oddsMap || {}).forEach(([raceId, snap]) => {
@@ -653,15 +711,19 @@
             marketDataStatusCache = data.data_status || {};
             renderDataStatus(data.data_status || {});
             const accidentWatch = data.accident_watch || {};
-            const nextDigest = buildSignalsDigest(signals, accidentWatch);
+            const raceBadges = data.race_badges || {};
+            const nextDigest = buildSignalsDigest(signals, accidentWatch, raceBadges);
             marketSignalsCache = signals;
+            raceBadgesCache = raceBadges;
             marketSignalsDigest = nextDigest;
             if (nextDigest === lastRenderedSignalsDigest) {
               return;
             }
             getRaceItems(true).forEach(removeStrategyBadges);
             const raceItemMap = getRaceItemMap(true);
-            for (const [raceId, acc] of Object.entries(accidentWatch)) {
+            renderLightweightRaceBadges(raceBadges, accidentWatch);
+            if (SHOW_STRATEGY_RACE_CHIPS) {
+              for (const [raceId, acc] of Object.entries(accidentWatch)) {
               try {
                 const item = raceItemMap.get(raceId);
                 if (!item) continue;
@@ -678,10 +740,12 @@
                 console.warn('accident-watch badge failed:', raceId, e);
               }
             }
+            }
             for (const [raceId, sig] of Object.entries(signals)) {
               try {
                 const item = raceItemMap.get(raceId);
                 if (!item) continue;
+                if (!SHOW_STRATEGY_RACE_CHIPS) continue;
 
                 if (sig.l4 && !isLegacyL4HighGradeSignal(sig.l4, null) && isSupportedStrategySignal(sig.l4, null)) {
                   const l4Badge = document.createElement('span');
@@ -1660,6 +1724,11 @@ function updateClosedRaceTiles() {
           try { renderDataStatus(marketDataStatusCache || {}); } catch (e) {}
           const hydrateInitialPicks = () => {
             try {
+              getRaceItems(true).forEach(removeStrategyBadges);
+              renderLightweightRaceBadges(
+                raceBadgesCache,
+                (initialMarketSignalsPayload && initialMarketSignalsPayload.accident_watch) || {}
+              );
               renderTodaysPicks();
             } catch (e) {
               console.warn('initial picks render failed:', e);

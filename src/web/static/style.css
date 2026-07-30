@@ -2369,6 +2369,47 @@ main h2 {
 .motor-history-table td.left {
   text-align: left;
 }
+.motor-history-racer-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.racer-class-badge {
+  display: inline-flex;
+  min-width: 28px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.12);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+.racer-class-badge.is-a1 {
+  border-color: rgba(34, 211, 238, 0.75);
+  background: rgba(103, 232, 249, 0.95);
+  color: #05202a;
+}
+.racer-class-badge.is-a2 {
+  border-color: rgba(34, 197, 94, 0.75);
+  background: rgba(134, 239, 172, 0.95);
+  color: #052e16;
+}
+.racer-class-badge.is-b1 {
+  border-color: rgba(245, 158, 11, 0.75);
+  background: rgba(253, 230, 138, 0.95);
+  color: #422006;
+}
+.racer-class-badge.is-b2 {
+  border-color: rgba(248, 113, 113, 0.75);
+  background: rgba(254, 202, 202, 0.95);
+  color: #3f1d1d;
+}
 .motor-mini-lane {
   width: 24px;
   height: 24px;
@@ -2489,6 +2530,119 @@ main h2 {
 }
 
 
+
+
+.motor-position-panel {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid rgba(0, 212, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(6, 18, 34, 0.72);
+}
+.motor-position-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.motor-position-head strong {
+  display: block;
+  color: var(--accent);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.motor-position-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.motor-position-board {
+  position: relative;
+  height: 420px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 212, 255, 0.12);
+  background:
+    linear-gradient(rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 0 20%/100% 1px no-repeat,
+    linear-gradient(rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 0 40%/100% 1px no-repeat,
+    linear-gradient(rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 0 60%/100% 1px no-repeat,
+    linear-gradient(rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 0 80%/100% 1px no-repeat,
+    linear-gradient(90deg, rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 20% 0/1px 100% no-repeat,
+    linear-gradient(90deg, rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 40% 0/1px 100% no-repeat,
+    linear-gradient(90deg, rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 60% 0/1px 100% no-repeat,
+    linear-gradient(90deg, rgba(0, 212, 255, 0.10), rgba(0, 212, 255, 0.10)) 80% 0/1px 100% no-repeat,
+    linear-gradient(135deg, rgba(13, 22, 34, 0.98), rgba(5, 22, 31, 0.98));
+}
+.motor-position-axis,
+.motor-position-note {
+  position: absolute;
+  z-index: 1;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 800;
+}
+.motor-position-axis-y {
+  top: 12px;
+  left: 14px;
+}
+.motor-position-axis-x {
+  right: 16px;
+  bottom: 14px;
+}
+.motor-position-note {
+  top: 12px;
+  right: 16px;
+}
+.motor-position-bubble {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+  background: rgba(11, 17, 27, 0.70);
+}
+.motor-position-bubble.is-active {
+  box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.16), 0 10px 30px rgba(0, 0, 0, 0.42);
+}
+.motor-position-bubble.is-top {
+  box-shadow: 0 0 0 4px rgba(52, 232, 144, 0.18), 0 10px 30px rgba(0, 0, 0, 0.42);
+}
+.motor-position-bubble-core {
+  width: 72%;
+  height: 72%;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 900;
+  color: #fff;
+}
+.motor-position-bubble small {
+  position: absolute;
+  left: 50%;
+  bottom: -24px;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(10, 18, 30, 0.92);
+  border: 1px solid rgba(0, 212, 255, 0.16);
+  color: #e2e8f0;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .motor-position-board {
+    height: 340px;
+  }
+}
 .motor-profile {
   margin: 0 0 12px;
   padding: 12px;
@@ -3563,19 +3717,63 @@ main h2 {
   box-shadow: 0 0 12px rgba(248, 113, 113, 0.55), inset 0 0 10px rgba(127, 29, 29, 0.35);
 }
 
-.accident-watch-badge {
-  display: inline-block;
+.accident-watch-badge,
+.ace-motor-watch-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 3px 8px;
-  margin-left: 6px;
   border-radius: 10px;
-  border: 1px solid rgba(248, 113, 113, 0.9);
-  background: linear-gradient(135deg, rgba(127, 29, 29, 0.95), rgba(30, 41, 59, 0.9));
-  color: #fecaca;
   font-size: 10px;
   font-weight: 900;
   font-family: var(--font-mono, monospace);
-  box-shadow: 0 0 10px rgba(248, 113, 113, 0.45);
+  line-height: 1.2;
   cursor: help;
+}
+
+.race-item a .accident-watch-badge,
+.race-item a .ace-motor-watch-badge {
+  position: absolute;
+  bottom: 4px;
+  z-index: 4;
+  max-width: calc(50% - 6px);
+  min-height: 18px;
+  padding: 2px 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+.race-item a .accident-watch-badge {
+  left: 4px;
+}
+
+.race-item a .ace-motor-watch-badge {
+  right: 4px;
+}
+
+.accident-watch-badge {
+  border: 1px solid rgba(248, 113, 113, 0.9);
+  background: linear-gradient(135deg, rgba(127, 29, 29, 0.95), rgba(30, 41, 59, 0.9));
+  color: #fecaca;
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.45);
+}
+
+.ace-motor-watch-badge {
+  border: 1px solid rgba(250, 204, 21, 0.95);
+  background: linear-gradient(135deg, rgba(113, 63, 18, 0.96), rgba(250, 204, 21, 0.84));
+  color: #1f1300;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.32);
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.42);
+}
+
+.race-item.done .accident-watch-badge,
+.race-item.done .ace-motor-watch-badge,
+.race-item.is-closed .accident-watch-badge,
+.race-item.is-closed .ace-motor-watch-badge {
+  opacity: 1;
+  filter: none;
 }
 /* SG/G1/G2/G3 は全て「お金を入れるレース」 → backlog item 8/10:
    ロイヤルゴールド系で統一 (旧 G2 の赤橙、G1 のピンク→橙は紫的に見えると
