@@ -49,16 +49,26 @@ def test_market_signal_cache_miss_never_self_heals_in_web_worker():
     assert 'cache_miss' in route_source
 
 
-def test_cached_market_signals_refresh_live_data_status():
+def test_cached_market_signals_are_returned_without_live_db_overlays():
     source = Path("src/web/app.py").read_text(encoding="utf-8")
     route_source = source.split("def market_signals_for_date():", 1)[1]
     route_source = route_source.split("@app.route", 1)[0]
 
-    assert "def _with_current_data_status" in route_source
-    assert "_with_current_data_status(" in route_source
-    assert "cached_payload" in route_source
-    assert "stale_payload" in route_source
-    assert "compat_payload" in route_source
+    cache_return_source = route_source.split(
+        "cached_payload = None if force_recompute", 1
+    )[1].split("# Cache versions", 1)[0]
+    assert "_read_json_cache_stale(cache_key)" in cache_return_source
+    assert '_market_json_response(cached_payload, "snapshot")' in cache_return_source
+    assert "_with_current_data_status(" not in cache_return_source
+    assert "_apply_start_prediction_filters_to_cached_payload(" not in cache_return_source
+
+
+def test_market_signals_do_not_use_a_second_flask_response_cache():
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    route_prefix = source.split("def market_signals_for_date():", 1)[0]
+    route_prefix = route_prefix.rsplit("@app.route", 1)[1]
+
+    assert "@cached(" not in route_prefix
 
 
 def test_daily_source_complete_requires_all_races_entries_and_predictions():

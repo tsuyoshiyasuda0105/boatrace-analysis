@@ -4652,7 +4652,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     #   past_ttl=3600: 過去日リクエストは確定済データなので 1 時間キャッシュ
     #   bulk fetch (top-pick/exhibition) との組合せで、 当日ピーク時の処理時間が
     #   さらに削減される (44.8x 高速化 with bulk + キャッシュ命中時はほぼ 0ms).
-    @cached(ttl=60, past_ttl=3600)
     def market_signals_for_date():
         """指定日のレース一覧で「市場非効率ベース +EV」シグナルを返す。
         判定優先度 (L4 戦略の定義に合わせ T-X 1-2-3 オッズを最優先):
@@ -4668,7 +4667,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # v6: avoid serving stale empty signals after race data catches up.
         cache_key = _market_signals_cache_key(target_date)
         def _market_json_response(payload: Any, cache_state: str):
-            payload = _hydrate_market_race_badges(payload, target_date)
             resp = jsonify(payload)
             resp.headers["X-Boatrace-Cache"] = cache_state
             resp.headers["Cache-Control"] = "no-store, max-age=0"
@@ -4987,32 +4985,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             refreshed["data_status"] = current_status
             return refreshed
 
-        cached_payload = None if force_recompute else _read_json_cache(cache_key, cache_ttl)
+        # Render cron owns signal generation. Browser requests read the durable
+        # snapshot once and do not run live DB overlays or a second response cache.
+        cached_payload = None if force_recompute else _read_json_cache_stale(cache_key)
         if cached_payload is not None and not (
             target_date >= recent_cache_floor
             and _is_empty_market_signals_payload(cached_payload)
         ):
-            return _market_json_response(
-                _with_current_data_status(
-                    _apply_start_prediction_filters_to_cached_payload(cached_payload)
-                ),
-                "fresh",
-            )
+            return _market_json_response(cached_payload, "snapshot")
         # Web worker を守るため、通常リクエストは live date でも stale を返す。
         # 展示・潮・直前オッズで採否が動く候補の再計算は Render Cron の
         # recompute=1 に限定する。
-        stale_payload = None if force_recompute else _read_json_cache_stale(cache_key)
-        if stale_payload is not None and not (
-            target_date >= recent_cache_floor
-            and _is_empty_market_signals_payload(stale_payload)
-        ):
-            return _market_json_response(
-                _with_current_data_status(
-                    _apply_start_prediction_filters_to_cached_payload(stale_payload)
-                ),
-                "stale",
-            )
-
         # Cache versions and strategy signatures can change during a rolling
         # deploy. Keep serving the latest fully computed snapshot until the
         # background prewarmer replaces it, instead of turning the list blank.
@@ -5034,14 +5017,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     last_good_payload.get("cache_version")
                 )
                 last_good_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
-                return _market_json_response(
-                    _with_current_data_status(
-                        _apply_start_prediction_filters_to_cached_payload(
-                            last_good_payload
-                        )
-                    ),
-                    "last-good",
-                )
+                return _market_json_response(last_good_payload, "last-good")
 
         # Web and cron services can finish a rolling Render deploy at
         # different times. Reuse the last two generations instead of turning
@@ -5061,12 +5037,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 compat_payload = dict(compat_payload)
                 compat_payload["source_cache_version"] = compat_payload.get("cache_version")
                 compat_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
-                return _market_json_response(
-                    _with_current_data_status(
-                        _apply_start_prediction_filters_to_cached_payload(compat_payload)
-                    ),
-                    "compat-stale",
-                )
+                return _market_json_response(compat_payload, "compat-stale")
 
         if not force_recompute:
             # Normal web requests must stay cache-only. If the cache is cold,
@@ -5085,7 +5056,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "n_l4": 0,
                 "n_morning_l4": 0,
                 "data_status": {
-                    **_load_market_data_status(),
                     "cache_miss": True,
                     "cache_only": True,
                 },
