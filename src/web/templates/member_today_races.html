@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ target_date }} 本日のレース | BOATRACE WEB{% endblock %}
+{% block content %}
+  <div class="today-races-heading">
+    <div>
+      <h2>本日のレース</h2>
+      <p class="meta">{{ target_date }} / ROIが高いレース候補 {{ pick_rows|length }}件</p>
+    </div>
+    <a href="{{ url_for('races', date=target_date) }}" class="nav-btn">全レースを見る</a>
+  </div>
+
+  {% macro picks_table(rows, empty_message) %}
+    <div class="today-races-table-wrap">
+      <table class="todays-picks-table">
+        <thead>
+          <tr>
+            <th>締切</th>
+            <th>会場 R</th>
+            <th>候補</th>
+            <th>買い目</th>
+            <th>検証回収率</th>
+            <th>的中率</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in rows %}
+          <tr class="todays-pick-row {% if p.closed %}is-closed{% endif %}">
+            <td class="pick-time" data-label="締切">{{ p.time or "-" }}</td>
+            <td class="pick-place" data-label="会場"><strong>{{ p.place }}</strong></td>
+            <td class="pick-type" data-label="候補">
+              <div class="pick-candidate-main">{{ p.label or p.rank }}</div>
+              {% if p.condition %}<div class="pick-candidate-sub">{{ p.condition }}</div>{% endif %}
+            </td>
+            <td class="pick-bet" data-label="買い目">{{ p.bet or "-" }}</td>
+            <td class="pick-rec" data-label="回収"><strong>{% if p.recovery is not none %}{{ p.recovery }}%{% else %}-{% endif %}</strong></td>
+            <td class="pick-hit" data-label="的中率">{% if p.hit_rate is not none %}{{ p.hit_rate }}%{% else %}-{% endif %}</td>
+            <td class="pick-link" data-label=""><a href="{{ url_for('race_detail', race_id=p.race_id) }}">詳細</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="empty">{{ empty_message }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endmacro %}
+
+  {% if not roi_picks_visible %}
+    <p class="empty">ROI候補一覧は現在非表示です。</p>
+  {% else %}
+    <section class="todays-picks-panel today-races-panel">
+      <section class="todays-picks-group">
+        <h3>採用確定</h3>
+        <p class="meta">前日・潮・展示など、必要な条件が確定した候補です。</p>
+        {{ picks_table(confirmed_rows, "採用確定レースはありません") }}
+      </section>
+
+      <section class="todays-picks-group">
+        <h3>当日条件待ち</h3>
+        <p class="meta">展示、直前オッズ、潮位などの確定を待っている候補です。</p>
+        {{ picks_table(waiting_rows, "条件待ちレースはありません") }}
+      </section>
+
+      <section class="todays-picks-group">
+        <h3>本日終了した該当レース</h3>
+        {{ picks_table(closed_rows, "終了した該当レースはありません") }}
+      </section>
+    </section>
+  {% endif %}
+
+  <script>
+    window.setTimeout(() => window.location.reload(), 300000);
+  </script>
+{% endblock %}

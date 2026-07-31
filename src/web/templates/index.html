@@ -152,7 +152,7 @@
     </section>
 
     <!-- 本日の L4 投票候補リスト (時系列、 JS で動的更新) -->
-    {% if roi_picks_visible %}
+    {% if roi_picks_visible and show_today_picks_panel|default(false) %}
     <section class="todays-picks-panel" id="todays-picks-panel" data-initial-pick-count="{{ initial_pick_rows|length }}" {% if not initial_pick_rows %}hidden{% endif %}>
       <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}ROIが高いレース候補
         {% if target_date != today_iso %}<span class="past-tag">過去日 (全レース締切済)</span>{% endif %}
@@ -686,10 +686,11 @@
         function isSupportedStrategySignal(l4Data, l4El) {
           if (!l4Data && !l4El) return false;
           const level = String(l4Data?.level || '');
+          const levels = [level, ...(l4Data?.matched_levels || []).map(String)];
           const text = `${l4El?.textContent || ''} ${l4El?.title || ''} ${l4Data?.label || ''} ${l4Data?.bet || ''}`.trim();
           const classList = Array.from(l4El?.classList || []);
           const supportedLevels = new Set({{ market_signal_supported_levels|tojson }});
-          if (supportedLevels.has(level)) return true;
+          if (levels.some(item => supportedLevels.has(item))) return true;
 
           const supportedClassPrefixes = {{ market_signal_supported_class_prefixes|tojson }};
           if (classList.some(cls => supportedClassPrefixes.includes(cls))) return true;
@@ -721,7 +722,11 @@
               return;
             }
             marketSignalsPending = false;
-            const signals = data.signals || {};
+            const incomingSignals = data.signals || {};
+            const signals = Object.keys(incomingSignals).length > 0
+              || Object.keys(marketSignalsCache || {}).length === 0
+              ? incomingSignals
+              : marketSignalsCache;
             marketSignalsLoaded = true;
             marketDataStatusCache = dataStatus;
             renderDataStatus(dataStatus);

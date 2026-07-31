@@ -3703,6 +3703,119 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             status_info["checks"]["today_counts"] = {"error": str(e)}
         return status_info, http_status
 
+    def _market_pick_rows_for_display(
+        target_date: str,
+        races_list: list[dict],
+        *,
+        visible: bool,
+    ) -> tuple[list[dict], dict]:
+        """Read the precomputed market snapshot and format the dedicated list."""
+        if not visible:
+            return [], {}
+
+        race_by_id = {str(r.get("race_id")): r for r in races_list}
+        today_iso = date.today().isoformat()
+        cache_ttl = 15 if target_date >= today_iso else 3600
+        signal_cache_key = _market_signals_cache_key(target_date)
+        signal_payload = _read_json_cache(signal_cache_key, cache_ttl)
+        if _is_pending_market_signals_payload(signal_payload):
+            signal_payload = None
+        if signal_payload is None and target_date < today_iso:
+            signal_payload = _read_json_cache_stale(signal_cache_key)
+            if _is_pending_market_signals_payload(signal_payload):
+                signal_payload = None
+        if signal_payload is None:
+            last_good_payload = _read_json_cache_stale(
+                _market_signals_last_good_cache_key(target_date)
+            )
+            if (
+                isinstance(last_good_payload, dict)
+                and last_good_payload.get("date") == target_date
+                and not _is_pending_market_signals_payload(last_good_payload)
+                and isinstance(last_good_payload.get("signals"), dict)
+            ):
+                signal_payload = last_good_payload
+
+        signal_payload = _hydrate_market_race_badges(
+            signal_payload or {},
+            target_date,
+        )
+        signals = signal_payload.get("signals") or {}
+        adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
+        adopted_watch_levels = set(MARKET_SIGNAL_WATCH_LEVELS)
+        rows: list[dict] = []
+
+        for race_id, sig in signals.items():
+            l4 = (sig or {}).get("l4") or {}
+            if int((sig or {}).get("n_female") or 0) > 0 and not l4.get(
+                "allow_female_market_signal"
+            ):
+                continue
+            if l4.get("is_female_present") and not l4.get(
+                "allow_female_market_signal"
+            ):
+                continue
+
+            level = str(l4.get("level") or "")
+            levels = {level}
+            levels.update(str(x) for x in (l4.get("matched_levels") or []) if x)
+            has_adopted = bool(levels & adopted_levels)
+            has_watch = bool(levels & adopted_watch_levels)
+            if not (has_adopted or has_watch):
+                continue
+            if l4.get("is_reference") and level in ("morning_general", "general"):
+                continue
+
+            race = race_by_id.get(str(race_id))
+            if not race:
+                continue
+            closed_at = str(race.get("race_closed_at") or "")
+            is_closed = int(race.get("results_count") or 0) > 0
+            status = "closed" if is_closed else ("confirmed" if has_adopted else "waiting")
+            strategy_labels = [
+                str(x) for x in (l4.get("watch_strategy_labels") or []) if x
+            ]
+            strategy_bets = [
+                str(x) for x in (l4.get("watch_strategy_bets") or []) if x
+            ]
+            condition = (
+                l4.get("tag")
+                or l4.get("trifecta_niche_tag")
+                or l4.get("exacta_niche_tag")
+                or (" / ".join(strategy_labels) if strategy_labels else "")
+                or ""
+            )
+            bet = l4.get("bet") or (
+                " / ".join(strategy_bets) if strategy_bets else ""
+            )
+            rows.append(
+                {
+                    "race_id": race_id,
+                    "closed_at": closed_at,
+                    "time": closed_at[-8:-3] if len(closed_at) >= 8 else closed_at,
+                    "remaining": "締切済" if is_closed else "",
+                    "rank": l4.get("rank_label") or l4.get("rank") or "候補",
+                    "place": (
+                        f"{race.get('stadium_name') or ''} "
+                        f"{race.get('race_number')}R"
+                    ),
+                    "label": l4.get("label") or "",
+                    "bet": bet,
+                    "condition": condition,
+                    "recovery": l4.get("recovery"),
+                    "n": l4.get("n"),
+                    "hit_rate": (
+                        l4.get("hit_rate")
+                        or l4.get("hitRate")
+                        or l4.get("win_rate")
+                    ),
+                    "closed": is_closed,
+                    "status": status,
+                }
+            )
+        rows.sort(key=lambda row: row.get("closed_at") or "")
+        return rows, signal_payload
+
     @app.route("/")
     @login_required
     def index():
@@ -3773,79 +3886,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             stadium_groups[sn]["races"].append(r)
 
+        # The top page no longer waits for ROI candidate cache hydration.
+        # Candidate rows live on /member/today-races and are refreshed there.
         initial_pick_rows = []
-        try:
-            race_by_id = {str(r.get("race_id")): r for r in races_list}
-            today_iso = date.today().isoformat()
-            cache_ttl = 15 if target_date >= today_iso else 3600
-            signal_cache_key = _market_signals_cache_key(target_date)
-            signal_payload = _read_json_cache(signal_cache_key, cache_ttl)
-            if signal_payload is None and target_date < today_iso:
-                signal_payload = _read_json_cache_stale(signal_cache_key)
-            if signal_payload is None:
-                last_good_payload = _read_json_cache_stale(
-                    _market_signals_last_good_cache_key(target_date)
-                )
-                if (
-                    isinstance(last_good_payload, dict)
-                    and last_good_payload.get("date") == target_date
-                    and not _is_pending_market_signals_payload(last_good_payload)
-                    and isinstance(last_good_payload.get("signals"), dict)
-                ):
-                    signal_payload = last_good_payload
-            signal_payload = signal_payload or {}
-            signal_payload = _hydrate_market_race_badges(signal_payload, target_date)
-            signals = (signal_payload or {}).get("signals") or {}
-            adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
-            adopted_watch_levels = set(MARKET_SIGNAL_WATCH_LEVELS)
-            for race_id, sig in signals.items():
-                if not roi_picks_visible:
-                    break
-                l4 = (sig or {}).get("l4") or {}
-                if int((sig or {}).get("n_female") or 0) > 0 and not l4.get("allow_female_market_signal"):
-                    continue
-                if l4.get("is_female_present") and not l4.get("allow_female_market_signal"):
-                    continue
-                level = str(l4.get("level") or "")
-                levels = {level}
-                levels.update(str(x) for x in (l4.get("matched_levels") or []) if x)
-                if not (levels & adopted_levels or levels & adopted_watch_levels):
-                    continue
-                if l4.get("is_reference") and level in ("morning_general", "general"):
-                    continue
-                race = race_by_id.get(str(race_id))
-                if not race:
-                    continue
-                closed_at = str(race.get("race_closed_at") or "")
-                strategy_labels = [str(x) for x in (l4.get("watch_strategy_labels") or []) if x]
-                strategy_bets = [str(x) for x in (l4.get("watch_strategy_bets") or []) if x]
-                condition = (
-                    l4.get("tag")
-                    or l4.get("trifecta_niche_tag")
-                    or l4.get("exacta_niche_tag")
-                    or (" / ".join(strategy_labels) if strategy_labels else "")
-                    or ""
-                )
-                bet = l4.get("bet") or (" / ".join(strategy_bets) if strategy_bets else "")
-                initial_pick_rows.append({
-                    "race_id": race_id,
-                    "closed_at": closed_at,
-                    "time": closed_at[-8:-3] if len(closed_at) >= 8 else closed_at,
-                    "remaining": "締切済" if int(race.get("results_count") or 0) > 0 else "",
-                    "rank": l4.get("rank_label") or l4.get("rank") or "候補",
-                    "place": f"{race.get('stadium_name') or ''} {race.get('race_number')}R",
-                    "label": l4.get("label") or "",
-                    "bet": bet,
-                    "condition": condition,
-                    "recovery": l4.get("recovery"),
-                    "n": l4.get("n"),
-                    "hit_rate": l4.get("hit_rate") or l4.get("hitRate") or l4.get("win_rate"),
-                    "closed": int(race.get("results_count") or 0) > 0,
-                })
-            initial_pick_rows.sort(key=lambda row: row.get("closed_at") or "")
-        except Exception as exc:
-            logger.exception("failed to build initial pick rows for %s: %s", target_date, exc)
-            signal_payload = {}
+        signal_payload = {}
 
         resp = make_response(render_template(
             "index.html",
@@ -3869,6 +3913,48 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         resp.headers["Pragma"] = "no-cache"
         return resp
+
+    @app.route("/member/today-races")
+    @login_required
+    @cached(ttl=30, past_ttl=3600)
+    def member_today_races():
+        target_date = request.args.get("date") or date.today().isoformat()
+        roi_picks_visible = (
+            is_member()
+            and str(os.environ.get("BOATRACE_SHOW_ROI_PICKS", "1")).strip().lower()
+            not in {"0", "false", "no", "off"}
+        )
+        with db_connect() as conn:
+            races_list = _races_for_date(target_date, conn=conn)
+        try:
+            pick_rows, signal_payload = _market_pick_rows_for_display(
+                target_date,
+                races_list,
+                visible=roi_picks_visible,
+            )
+        except Exception as exc:
+            logger.exception(
+                "failed to build dedicated pick rows for %s: %s",
+                target_date,
+                exc,
+            )
+            pick_rows, signal_payload = [], {}
+        return render_template(
+            "member_today_races.html",
+            target_date=target_date,
+            today_iso=date.today().isoformat(),
+            date_form_action=url_for("member_today_races"),
+            pick_rows=pick_rows,
+            confirmed_rows=[
+                row for row in pick_rows if row.get("status") == "confirmed"
+            ],
+            waiting_rows=[
+                row for row in pick_rows if row.get("status") == "waiting"
+            ],
+            closed_rows=[row for row in pick_rows if row.get("status") == "closed"],
+            data_status=signal_payload.get("data_status") or {},
+            roi_picks_visible=roi_picks_visible,
+        )
 
     @app.route("/race/<race_id>")
     @login_required

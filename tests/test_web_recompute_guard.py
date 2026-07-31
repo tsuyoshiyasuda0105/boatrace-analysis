@@ -131,15 +131,15 @@ def test_market_signals_keep_a_stable_last_good_snapshot():
     )
 
 
-def test_races_initial_payload_falls_back_to_last_good_snapshot():
+def test_today_races_payload_falls_back_to_last_good_snapshot():
     source = Path("src/web/app.py").read_text(encoding="utf-8")
-    route_source = source.split("def races():", 1)[1]
-    route_source = route_source.split("@app.route", 1)[0]
+    helper_source = source.split("def _market_pick_rows_for_display(", 1)[1]
+    helper_source = helper_source.split("@app.route", 1)[0]
 
-    assert "_market_signals_last_good_cache_key(target_date)" in route_source
-    assert "last_good_payload.get(\"date\") == target_date" in route_source
-    assert "not _is_pending_market_signals_payload(last_good_payload)" in route_source
-    assert "isinstance(last_good_payload.get(\"signals\"), dict)" in route_source
+    assert "_market_signals_last_good_cache_key(target_date)" in helper_source
+    assert "last_good_payload.get(\"date\") == target_date" in helper_source
+    assert "not _is_pending_market_signals_payload(last_good_payload)" in helper_source
+    assert "isinstance(last_good_payload.get(\"signals\"), dict)" in helper_source
 
 
 def test_pending_market_signals_skip_badge_hydration():
