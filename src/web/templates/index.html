@@ -328,6 +328,7 @@
       (function() {
         const targetDate = "{{ target_date }}";
         const roiPicksVisible = {{ roi_picks_visible|default(false)|tojson }};
+        const marketSignalsEnabled = {{ show_today_picks_panel|default(false)|tojson }};
         const initialMarketSignalsPayload = {{ initial_market_signals|default({})|tojson }};
         let marketSignalsLoading = false;
         let marketSignalsLoaded = Boolean(initialMarketSignalsPayload && initialMarketSignalsPayload.signals);
@@ -1750,6 +1751,10 @@ function updateClosedRaceTiles() {
           });
         }
         updateClosedRaceTiles();
+        // ROI candidates are rendered only on /member/today-races.  Stop here
+        // on the top race list so it does not fetch market signals or odds in
+        // the background after the race cards and venue tags have painted.
+        if (!marketSignalsEnabled) return;
         if (marketSignalsLoaded) {
           try { renderDataStatus(marketDataStatusCache || {}); } catch (e) {}
           const hydrateInitialPicks = () => {
