@@ -71,20 +71,16 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "type: cron" in blueprint
     assert "name: boatrace-regular-cron" in blueprint
     assert "name: boatrace-odds-cron" in blueprint
-    assert "name: boatrace-roi-prewarm-cron" in blueprint
-    assert "name: boatrace-roi-history-cron" in blueprint
-    assert "name: boatrace-roi-finalize-cron" in blueprint
+    assert "name: boatrace-roi-prewarm-cron" not in blueprint
+    assert "name: boatrace-roi-history-cron" not in blueprint
+    assert "name: boatrace-roi-finalize-cron" not in blueprint
     assert "startCommand: gunicorn" in blueprint
     assert "startCommand: python scripts/render_regular_scheduler.py" in blueprint
     assert "startCommand: python scripts/odds_scheduler.py --no-jitter" in blueprint
-    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode signals" in blueprint
-    assert 'schedule: "0 */12 * * *"' in blueprint
-    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode history" in blueprint
-    assert 'schedule: "30 14 * * *"' in blueprint
-    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode daily-reconcile" in blueprint
+    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode signals" not in blueprint
 
 
-def test_regular_scheduler_leaves_roi_refresh_to_dedicated_crons():
+def test_regular_scheduler_runs_roi_refreshes_in_the_existing_cron():
     scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     main_block = scheduler.split("def main() -> int:", 1)[1]
     hourly_block = scheduler.split("def run_hourly", 1)[1].split(
@@ -94,8 +90,9 @@ def test_regular_scheduler_leaves_roi_refresh_to_dedicated_crons():
         "def main() -> int:", 1
     )[0]
 
-    assert "run_signal_refresh_slot(now)" not in main_block
-    assert "run_roi_daily_self_heal(now)" not in main_block
+    assert "run_signal_refresh_slot(now)" in main_block
+    assert "run_roi_history_slot(now)" in main_block
+    assert "run_roi_daily_self_heal(now)" in main_block
     assert "prewarm_strategy_pages.py" not in hourly_block
     assert '"--mode", "nightly"' not in nightly_block
     assert '"--mode", "signals", "--date", tomorrow' in nightly_block

@@ -173,8 +173,13 @@ def task_success_exists(task_name: str, run_date: str) -> bool:
 
 
 def signal_refresh_task_name(now: datetime) -> str:
-    slot = now.minute // 10
+    slot = now.minute // 5
     return f"render_signal_refresh_{now.hour:02d}_{slot}"
+
+
+def roi_history_task_name(now: datetime) -> str:
+    slot_hour = 0 if now.hour < 12 else 12
+    return f"render_roi_history_{slot_hour:02d}"
 
 
 def ensure_task_runs_table() -> None:
@@ -557,14 +562,14 @@ def run_morning_catchup_if_needed(now: datetime) -> bool:
 
 
 def run_signal_refresh_slot(now: datetime) -> bool:
-    """Rebuild today's ROI candidate snapshot once per 10-minute slot.
+    """Rebuild today's ROI candidate snapshot once per five-minute slot.
 
-    Failed attempts are intentionally retried by the next five-minute cron
-    tick. A cold or missing signal cache leaves the high-ROI list blank, so a
-    failure must not block the whole 10-minute slot.
+    Failed attempts are retried by the next cron tick. A cold or missing signal
+    cache leaves the high-ROI list blank, so failures are never marked as a
+    successful slot.
     """
     today = now.date().isoformat()
-    slot = now.minute // 10
+    slot = now.minute // 5
     task = signal_refresh_task_name(now)
     if task_success_exists(task, today):
         print(f"[signal-refresh] already succeeded slot={now.hour:02d}:{slot}", flush=True)
@@ -573,6 +578,22 @@ def run_signal_refresh_slot(now: datetime) -> bool:
     ok = run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today],
         timeout=1800,
+    )
+    record_task(task, today, "success" if ok else "failure")
+    return ok
+
+
+def run_roi_history_slot(now: datetime) -> bool:
+    """Refresh historical ROI pages once in each 12-hour JST window."""
+    today = now.date().isoformat()
+    task = roi_history_task_name(now)
+    if task_success_exists(task, today):
+        print(f"[roi-history] already succeeded task={task}", flush=True)
+        return True
+
+    ok = run_py(
+        ["scripts/prewarm_strategy_pages.py", "--mode", "history", "--date", today],
+        timeout=3600,
     )
     record_task(task, today, "success" if ok else "failure")
     return ok
@@ -902,14 +923,16 @@ def main() -> int:
         yesterday = (now.date() - timedelta(days=1)).isoformat()
         run_original_exhibition_catchup(now, yesterday, label="yesterday")
 
+    # Refresh source-dependent candidates before the slower result poll. This
+    # keeps the dashboard snapshot close to the five-minute cron cadence.
+    if 6 <= now.hour <= 23:
+        run_tide_self_heal(now)
+        run_signal_refresh_slot(now)
+
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
         run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
         run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
-
-    # Self-heal tide rows on every loop so missing imports do not survive until the next hour.
-    if 6 <= now.hour <= 23:
-        run_tide_self_heal(now)
 
     # Hourly summaries/health checks near the top of the hour.
     if now.minute < 5 and 9 <= now.hour <= 23:
@@ -932,6 +955,13 @@ def main() -> int:
             record_task(task, today, "success" if ok else "failure")
         else:
             print("[nightly] already successful today", flush=True)
+        finalized_date = (now.date() - timedelta(days=1)).isoformat()
+        if not task_success_exists("render_roi_daily_reconcile", finalized_date):
+            run_roi_daily_self_heal(now)
+
+    # Historical ROI pages are deliberately last. They may be expensive, but
+    # the current candidate snapshot has already been refreshed in this run.
+    run_roi_history_slot(now)
 
     print("[render-regular] done", flush=True)
     return 0

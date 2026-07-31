@@ -86,7 +86,7 @@ def test_daily_source_complete_requires_all_races_entries_and_predictions():
     )
 
 
-def test_signal_refresh_uses_one_task_slot_per_ten_minutes(monkeypatch):
+def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
     attempted = []
     monkeypatch.setattr(
         scheduler,
@@ -96,7 +96,25 @@ def test_signal_refresh_uses_one_task_slot_per_ten_minutes(monkeypatch):
 
     now = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
     assert scheduler.run_signal_refresh_slot(now)
-    assert attempted == [("render_signal_refresh_10_3", "2026-07-21")]
+    assert attempted == [("render_signal_refresh_10_7", "2026-07-21")]
+
+
+def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):
+    attempted = []
+    monkeypatch.setattr(
+        scheduler,
+        "task_success_exists",
+        lambda task, run_date: attempted.append((task, run_date)) or True,
+    )
+
+    morning = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
+    evening = scheduler.datetime(2026, 7, 21, 18, 2, tzinfo=scheduler.JST)
+    assert scheduler.run_roi_history_slot(morning)
+    assert scheduler.run_roi_history_slot(evening)
+    assert attempted == [
+        ("render_roi_history_00", "2026-07-21"),
+        ("render_roi_history_12", "2026-07-21"),
+    ]
 
 
 def test_market_signals_keep_a_stable_last_good_snapshot():
