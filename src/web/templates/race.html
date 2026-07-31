@@ -436,10 +436,8 @@
           <tr>
             <th class="left">予測</th>
             <th class="left">枠 / 選手</th>
-            <th>級</th>
-            <th>全国2連率</th>
-            <th>当地2連率</th>
-            <th>モーター2連率</th>
+            <th class="left">級 / 選手成績</th>
+            <th class="left">モーター / チルト</th>
             <th>展示T</th>
             <th>展示ST</th>
             <th>出足</th>
@@ -471,7 +469,10 @@
                     <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
                   </button>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
-                  {% if p.has_accident_watch %}
+                  {% if p.accident_display_level is defined or p.kimarite_skill is defined %}
+                    <div class="racer-tag-list">
+                  {% endif %}
+                  {% if p.accident_display_level is defined %}
                     {% set accident_tone = 'unknown' %}
                     {% if p.class_number in [1, 2] %}
                       {% set accident_tone = 'a' %}
@@ -480,32 +481,37 @@
                     {% elif p.class_number == 4 %}
                       {% set accident_tone = 'b2' %}
                     {% endif %}
-                    <div class="racer-accident-row">
-                      <span class="racer-accident-tag accident-risk-{{ accident_tone }}"
-                            title="事故率 {{ '%.2f' | format(p.accident_rate) }} / 事故点 {{ p.accident_points }} / 出走 {{ p.accident_starts }}">
-                        事故07超
-                      </span>
-                    </div>
+                    <span class="racer-accident-tag accident-risk-{{ accident_tone }} accident-level-{{ p.accident_display_level }}"
+                          title="事故率 {{ '%.2f' | format(p.accident_rate) }} / 事故点 {{ p.accident_points }} / 出走 {{ p.accident_starts }}">
+                      {% if p.accident_display_level == 'high' %}事故0.7+{% else %}事故0.5+{% endif %}
+                    </span>
                   {% endif %}
                   {% if p.kimarite_skill is defined %}
-                    <div class="kimarite-skill-row">
-                      <span class="kimarite-skill-tag {% if p.kimarite_skill.is_strong_escape %}is-strong{% endif %}"
-                            title="同じ枠番での過去1着決まり手。現在のレース結果は含めません。">
-                        {{ p.kimarite_skill.label }}
-                      </span>
+                    <span class="kimarite-skill-tag {% if p.kimarite_skill.is_strong_escape %}is-strong{% endif %}"
+                          title="当該コースの過去成績 {{ p.kimarite_skill.wins }}勝/{{ p.kimarite_skill.starts }}走。現在のレース結果は含めません。">
+                      {{ p.kimarite_skill.label }}
+                    </span>
+                  {% endif %}
+                  {% if p.accident_display_level is defined or p.kimarite_skill is defined %}
                     </div>
                   {% endif %}
                 </span>
               </td>
-              <td>
+              <td class="racer-performance-cell">
                 {% set cls_map = {1: 'A1', 2: 'A2', 3: 'B1', 4: 'B2'} %}
-                <span class="muted">{{ cls_map.get(p.class_number, '-') }}</span>
+                {% set cls_label = cls_map.get(p.class_number, '-') %}
+                <div class="racer-performance">
+                  <span class="racer-class-badge is-{{ cls_label | lower }}">{{ cls_label }}</span>
+                  <div class="racer-rate-grid">
+                    <span><small>全国勝率</small><b>{{ '%.2f' | format(p.national_top_1_percent) if p.national_top_1_percent is defined and p.national_top_1_percent is not none else '—' }}</b></span>
+                    <span><small>全国2連率</small><b>{{ '%.2f' | format(p.national_top_2_percent) if p.national_top_2_percent is not none else '—' }}</b></span>
+                    <span><small>当地2連率</small><b>{{ '%.2f' | format(p.local_top_2_percent) if p.local_top_2_percent is not none else '—' }}</b></span>
+                  </div>
+                </div>
               </td>
-              <td>{{ '%.2f' | format(p.national_top_2_percent) if p.national_top_2_percent is not none else '—' }}</td>
-              <td>{{ '%.2f' | format(p.local_top_2_percent) if p.local_top_2_percent is not none else '—' }}</td>
-              <td>
+              <td class="motor-summary-cell">
                 {% if p.assigned_motor_top_2_percent is not none %}
-                  <div class="motor-history-cell">
+                  <div class="motor-history-cell motor-history-cell-inline">
                     <button
                       type="button"
                       class="motor-history-btn"
@@ -522,6 +528,9 @@
                         <span class="ace-motor-tag">ACE</span>
                       {% endif %}
                     </button>
+                    <span class="tilt-chip" title="直前情報のチルト角度">
+                      チルト {% if p.tilt_adjustment is defined and p.tilt_adjustment is not none %}{{ '%+.1f' | format(p.tilt_adjustment) }}{% else %}—{% endif %}
+                    </span>
                   </div>
                 {% else %}
                   -

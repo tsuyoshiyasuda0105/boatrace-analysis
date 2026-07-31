@@ -1849,7 +1849,7 @@ main h2 {
 }
 .preds-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 920px;
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
 }
@@ -1883,6 +1883,22 @@ main h2 {
 .preds-table tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
 .preds-table tbody tr.rank-1 {
   background: linear-gradient(90deg, rgba(0, 212, 255, 0.06), transparent);
+}
+.preds-table th:nth-child(1),
+.preds-table td:nth-child(1) {
+  width: 52px;
+}
+.preds-table th:nth-child(2),
+.preds-table td:nth-child(2) {
+  min-width: 190px;
+}
+.preds-table th:nth-child(3),
+.preds-table td:nth-child(3) {
+  min-width: 190px;
+}
+.preds-table th:nth-child(4),
+.preds-table td:nth-child(4) {
+  min-width: 138px;
 }
 
 .rank-pill {
@@ -1938,8 +1954,15 @@ main h2 {
   letter-spacing: 0.04em;
 }
 
-.racer-accident-row {
+.racer-accident-row,
+.racer-tag-list {
   margin-top: 5px;
+}
+.racer-tag-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .racer-accident-tag {
   display: inline-flex;
@@ -1993,6 +2016,12 @@ main h2 {
   background: rgba(30, 41, 59, 0.72);
   color: #cbd5e1;
 }
+.racer-accident-tag.accident-level-watch {
+  border-color: rgba(251, 191, 36, 0.7);
+  background: rgba(120, 53, 15, 0.34);
+  color: #fde68a;
+  box-shadow: none;
+}
 
 /* Probability bar */
 .prob-cell {
@@ -2045,9 +2074,6 @@ main h2 {
 .finish-badge.f-2 { background: rgba(79, 140, 255, 0.18); color: var(--accent-2); }
 .finish-badge.f-3 { background: rgba(255, 79, 140, 0.18); color: var(--accent-3); }
 
-.kimarite-skill-row {
-  margin-top: 4px;
-}
 .kimarite-skill-tag {
   display: inline-flex;
   align-items: center;
@@ -2234,6 +2260,70 @@ main h2 {
 .motor-history-cell {
   display: grid;
   gap: 6px;
+}
+.racer-performance-cell,
+.motor-summary-cell {
+  text-align: left !important;
+}
+.racer-performance {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+.racer-rate-grid {
+  display: grid;
+  gap: 3px;
+}
+.racer-rate-grid > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 3px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+.racer-rate-grid > span:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.racer-rate-grid small {
+  color: var(--text-mute);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.racer-rate-grid b {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.motor-history-cell-inline {
+  display: grid;
+  align-items: stretch;
+  gap: 5px;
+}
+.motor-summary-cell .motor-history-btn {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+}
+.tilt-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.07);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  justify-content: center;
 }
 .motor-rate {
   font-weight: 700;

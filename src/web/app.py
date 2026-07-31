@@ -885,9 +885,9 @@ def _race_predictions(predictor: Predictor, race_id: str) -> list[dict]:
     sub["pred_rank"] = range(1, len(sub) + 1)
     cols = [
         "boat_number", "racer_number", "racer_name",
-        "class_number", "national_top_2_percent", "local_top_2_percent",
+        "class_number", "national_top_1_percent", "national_top_2_percent", "local_top_2_percent",
         "assigned_motor_number", "assigned_motor_top_2_percent",
-        "exhibition_time", "start_timing_exhibition",
+        "exhibition_time", "start_timing_exhibition", "tilt_adjustment",
         "prob_first", "prob_top_2", "prob_top_3", "raw_score", "pred_rank",
         "finishing_position",
     ]
@@ -909,12 +909,14 @@ def _race_entry_fallback_rows(race_id: str) -> list[dict]:
                    e.racer_number,
                    e.racer_name,
                    e.class_number,
+                   e.national_top_1_percent,
                    e.national_top_2_percent,
                    e.local_top_2_percent,
                    e.assigned_motor_number,
                    e.assigned_motor_top_2_percent,
                    NULLIF(pv.exhibition_time, 0) AS exhibition_time,
                    pv.start_timing_exhibition,
+                   pv.tilt_adjustment,
                    res.finishing_position
               FROM race_entries e
               LEFT JOIN race_previews pv
@@ -936,13 +938,15 @@ def _race_entry_fallback_rows(race_id: str) -> list[dict]:
                 "racer_number": row[1],
                 "racer_name": row[2],
                 "class_number": row[3],
-                "national_top_2_percent": row[4],
-                "local_top_2_percent": row[5],
-                "assigned_motor_number": row[6],
-                "assigned_motor_top_2_percent": row[7],
-                "exhibition_time": row[8],
-                "start_timing_exhibition": row[9],
-                "finishing_position": row[10],
+                "national_top_1_percent": row[4],
+                "national_top_2_percent": row[5],
+                "local_top_2_percent": row[6],
+                "assigned_motor_number": row[7],
+                "assigned_motor_top_2_percent": row[8],
+                "exhibition_time": row[9],
+                "start_timing_exhibition": row[10],
+                "tilt_adjustment": row[11],
+                "finishing_position": row[12],
                 "prob_first": 0.0,
                 "prob_top_2": 0.0,
                 "prob_top_3": 0.0,
@@ -1158,7 +1162,7 @@ def _racer_names_from_preds(preds: list[dict]) -> dict[int, str]:
 
 
 def _kimarite_skill_tags_for_race(race_id: str) -> dict[int, dict]:
-    """Return pre-race kimarite skill tags by boat number."""
+    """Return course-specific pre-race winning-technique tags by boat number."""
     info = _race_basic_info(race_id)
     if not info:
         return {}
@@ -1169,42 +1173,55 @@ def _kimarite_skill_tags_for_race(race_id: str) -> dict[int, dict]:
                   FROM race_entries
                  WHERE race_id = ?
             )
-            SELECT c.boat_number, rr.kimarite, COUNT(*) AS wins
+            SELECT c.boat_number,
+                   COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = '逃げ' THEN 1 ELSE 0 END) AS nige_wins,
+                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = '差し' THEN 1 ELSE 0 END) AS sashi_wins,
+                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = 'まくり' THEN 1 ELSE 0 END) AS makuri_wins,
+                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = 'まくり差し' THEN 1 ELSE 0 END) AS makurizashi_wins
               FROM current_entries c
               JOIN race_entries e
                 ON e.racer_number = c.racer_number
-               AND e.boat_number = c.boat_number
               JOIN races r
                 ON r.race_id = e.race_id
                AND r.race_date < ?
               JOIN race_results rr
                 ON rr.race_id = e.race_id
                AND rr.boat_number = e.boat_number
-             WHERE rr.finishing_position = 1
-               AND rr.kimarite IS NOT NULL
-               AND rr.kimarite <> ''
-             GROUP BY c.boat_number, rr.kimarite
-             ORDER BY c.boat_number, wins DESC, rr.kimarite
+               AND rr.course_number = c.boat_number
+             WHERE c.boat_number BETWEEN 1 AND 4
+             GROUP BY c.boat_number
         """, (race_id, info["race_date"])).fetchall()
-
-    grouped: dict[int, list[tuple[str, int]]] = {}
-    for boat_number, kimarite, wins in rows:
-        grouped.setdefault(int(boat_number), []).append((str(kimarite), int(wins or 0)))
-
     tags: dict[int, dict] = {}
-    for boat_number, items in grouped.items():
-        top_kimarite, top_wins = items[0]
-        threshold = 8 if boat_number == 1 and top_kimarite == "逃げ" else 3
-        if top_wins < threshold:
+    target_by_course = {
+        1: (("逃げ", 2),),
+        2: (("差し", 3),),
+        3: (("まくり", 4), ("まくり差し", 5)),
+        4: (("まくり", 4),),
+    }
+    min_rate = {1: 35.0, 2: 8.0, 3: 6.0, 4: 6.0}
+    for row in rows:
+        boat_number = int(row[0])
+        starts = int(row[1] or 0)
+        if starts < 10:
             continue
-        label = f"{top_kimarite}{top_wins}勝"
-        if boat_number == 1 and top_kimarite == "逃げ" and top_wins >= 8:
-            label = f"逃げ{top_wins}勝+"
+        candidates = [
+            (kimarite, int(row[column] or 0))
+            for kimarite, column in target_by_course.get(boat_number, ())
+        ]
+        if not candidates:
+            continue
+        top_kimarite, top_wins = max(candidates, key=lambda item: item[1])
+        rate = top_wins / starts * 100.0
+        if top_wins < 3 or rate < min_rate[boat_number]:
+            continue
         tags[boat_number] = {
             "kimarite": top_kimarite,
             "wins": top_wins,
-            "label": label,
-            "is_strong_escape": boat_number == 1 and top_kimarite == "逃げ" and top_wins >= 8,
+            "starts": starts,
+            "rate": round(rate, 1),
+            "label": f"{top_kimarite} {rate:.1f}%",
+            "is_strong_escape": boat_number == 1 and top_kimarite == "逃げ" and rate >= 50.0,
         }
     return tags
 
@@ -1217,7 +1234,7 @@ def _kimarite_skill_tags_for_race_cached(
     if not info:
         return {}
     today_iso = date.today().isoformat()
-    cache_key = f"race_kimarite_tags:{race_id}"
+    cache_key = f"race_kimarite_tags:v2:{race_id}"
     cache_ttl = 300 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
     if isinstance(cached_payload, dict):
@@ -1232,7 +1249,7 @@ def _kimarite_skill_tags_for_race_cached(
 
 def _kimarite_skill_tags_for_race_cache_only(race_id: str) -> dict[int, dict]:
     """Return the last generated tags without historical aggregation."""
-    cache_key = f"race_kimarite_tags:{race_id}"
+    cache_key = f"race_kimarite_tags:v2:{race_id}"
     payload = _read_json_cache_stale(cache_key)
     return payload if isinstance(payload, dict) else {}
 
@@ -1255,7 +1272,7 @@ def _attach_kimarite_skill_tags(
             boat_number = int(p.get("boat_number"))
         except (TypeError, ValueError):
             continue
-        tag = tags.get(boat_number)
+        tag = tags.get(boat_number) or tags.get(str(boat_number))
         if tag:
             p["kimarite_skill"] = tag
 
@@ -2165,6 +2182,10 @@ def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
         p["accident_points"] = acc["points"]
         p["accident_starts"] = acc["starts"]
         p["has_accident_watch"] = acc["rate"] >= 0.7
+        if acc["rate"] >= 0.7:
+            p["accident_display_level"] = "high"
+        elif acc["rate"] >= 0.5:
+            p["accident_display_level"] = "watch"
 
 
 @lru_cache(maxsize=4096)
@@ -2619,6 +2640,40 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     _apply_motor_position_ranks(out, "_turn_metric", "turn_rank", "turn_mark")
     _apply_motor_position_ranks(out, "_straight_metric", "straight_rank", "straight_mark")
     return out
+
+
+def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
+    """Attach current entry/preview facts omitted by older prediction caches."""
+    if not preds:
+        return
+    with db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.boat_number,
+                   e.national_top_1_percent,
+                   e.national_top_2_percent,
+                   e.local_top_2_percent,
+                   pv.tilt_adjustment
+              FROM race_entries e
+              LEFT JOIN race_previews pv
+                ON pv.race_id = e.race_id
+               AND pv.boat_number = e.boat_number
+             WHERE e.race_id = ?
+            """,
+            (race_id,),
+        ).fetchall()
+    facts = {int(row[0]): row for row in rows}
+    for p in preds:
+        try:
+            row = facts.get(int(p.get("boat_number")))
+        except (TypeError, ValueError):
+            row = None
+        if not row:
+            continue
+        p["national_top_1_percent"] = row[1]
+        p["national_top_2_percent"] = row[2]
+        p["local_top_2_percent"] = row[3]
+        p["tilt_adjustment"] = row[4]
 
 
 def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
@@ -3982,15 +4037,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 preds = _race_entry_fallback_rows(race_id)
                 if preds:
                     fallback_notice = "予測データ未投入のため、出走表ベースの詳細を表示しています。"
-            # Historical kimarite aggregation can scan years of results for
-            # six racers. The detail page must not block on that cold query;
-            # use an existing fresh/stale cache and let background/API work
-            # populate missing tags.
+            # Generate once per race and reuse the persisted cache afterwards.
             _attach_kimarite_skill_tags(
                 race_id,
                 preds,
-                allow_recompute=False,
+                allow_recompute=True,
             )
+            _attach_race_detail_display_facts(race_id, preds)
             _attach_accident_watch_tags(race_id, preds)
             _attach_motor_fact_grades(race_id, preds, info=info)
             t_tags = time.perf_counter() - t1
@@ -4013,8 +4066,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 _attach_kimarite_skill_tags(
                     race_id,
                     preds,
-                    allow_recompute=False,
+                    allow_recompute=True,
                 )
+                _attach_race_detail_display_facts(race_id, preds)
                 _attach_accident_watch_tags(race_id, preds)
                 _attach_motor_fact_grades(race_id, preds, info=info)
                 html = render_template(
