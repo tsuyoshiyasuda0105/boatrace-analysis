@@ -4068,10 +4068,22 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             stadium_groups[sn]["races"].append(r)
 
-        # The top page no longer waits for ROI candidate cache hydration.
-        # Candidate rows live on /member/today-races and are refreshed there.
-        initial_pick_rows = []
-        signal_payload = {}
+        # Keep the main race page self-contained: race cards, venue/data tags,
+        # and the precomputed high-ROI candidates must paint from one snapshot.
+        # The dedicated member page remains available as a compact view.
+        try:
+            initial_pick_rows, signal_payload = _market_pick_rows_for_display(
+                target_date,
+                races_list,
+                visible=roi_picks_visible,
+            )
+        except Exception as exc:
+            logger.exception(
+                "failed to build main-page pick rows for %s: %s",
+                target_date,
+                exc,
+            )
+            initial_pick_rows, signal_payload = [], {}
 
         resp = make_response(render_template(
             "index.html",
@@ -4085,6 +4097,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
             market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
             roi_picks_visible=roi_picks_visible,
+            show_today_picks_panel=True,
             empty=False,
         ))
         # The current market-signal payload and ROI rows are already embedded

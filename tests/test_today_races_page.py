@@ -78,10 +78,20 @@ def test_today_races_page_reads_precomputed_market_snapshot(monkeypatch):
     assert "3連単 1-2-3 100円" in html
 
 
-def test_races_page_keeps_roi_list_out_of_initial_html(monkeypatch):
+def test_races_page_includes_roi_list_and_market_snapshot(monkeypatch):
     response = _member_client(monkeypatch).get("/races?date=2026-07-30")
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
     assert "本日のレース" in html
-    assert "本日ROIが高いレース候補" not in html
+    assert "ROIが高いレース候補" in html
+    assert "G2/G3 1-2-3" in html
+    assert "marketSignalsLoaded = Boolean" in html
+
+
+def test_today_navigation_keeps_all_daily_information_on_races_page(monkeypatch):
+    response = _member_client(monkeypatch).get("/races?date=2026-07-30")
+    html = response.get_data(as_text=True)
+
+    assert 'href="/races?date=2026-07-30"' in html
+    assert "本日のレース・会場情報・ROI候補一覧" in html
