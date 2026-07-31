@@ -3782,6 +3782,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             signal_payload = _read_json_cache(signal_cache_key, cache_ttl)
             if signal_payload is None and target_date < today_iso:
                 signal_payload = _read_json_cache_stale(signal_cache_key)
+            if signal_payload is None:
+                last_good_payload = _read_json_cache_stale(
+                    _market_signals_last_good_cache_key(target_date)
+                )
+                if (
+                    isinstance(last_good_payload, dict)
+                    and last_good_payload.get("date") == target_date
+                    and not _is_pending_market_signals_payload(last_good_payload)
+                    and isinstance(last_good_payload.get("signals"), dict)
+                ):
+                    signal_payload = last_good_payload
             signal_payload = signal_payload or {}
             signal_payload = _hydrate_market_race_badges(signal_payload, target_date)
             signals = (signal_payload or {}).get("signals") or {}
