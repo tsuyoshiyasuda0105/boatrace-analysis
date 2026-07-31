@@ -105,6 +105,11 @@ def _market_signals_cache_key(target_date: str) -> str:
     return f"market_signals:{MARKET_SIGNALS_CACHE_VERSION}:{_strategy_definition_signature()}:{target_date}"
 
 
+def _market_signals_last_good_cache_key(target_date: str) -> str:
+    """Return a stable alias for the latest completed signal snapshot."""
+    return f"market_signals:last-good:{target_date}"
+
+
 def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
     """Return recent cache generations for zero-downtime cron rollouts."""
     # Market-signal cache versions encode strategy conditions. Serving an older
@@ -116,6 +121,14 @@ def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
 def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
     """Fill lightweight race-grid badges for cache-only market signal payloads."""
     if not isinstance(payload, dict):
+        return payload
+    data_status = payload.get("data_status")
+    if isinstance(data_status, dict) and (
+        data_status.get("cache_miss") or data_status.get("cache_only")
+    ):
+        return payload
+    signals = payload.get("signals")
+    if not isinstance(signals, dict) or not signals:
         return payload
     existing = payload.get("race_badges")
     if isinstance(existing, dict) and existing:
@@ -516,6 +529,16 @@ def _is_empty_market_signals_payload(payload: Any) -> bool:
         return True
     signals = payload.get("signals")
     return not isinstance(signals, dict) or len(signals) == 0
+
+
+def _is_pending_market_signals_payload(payload: Any) -> bool:
+    """Return True for lightweight cache-miss payloads, not a computed empty list."""
+    if not isinstance(payload, dict):
+        return False
+    data_status = payload.get("data_status")
+    if not isinstance(data_status, dict):
+        return False
+    return bool(data_status.get("cache_miss") or data_status.get("cache_only"))
 
 
 def _parse_market_signal_bets_for_roi(l4: dict) -> list[tuple[str, str]]:
@@ -4989,6 +5012,36 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 ),
                 "stale",
             )
+
+        # Cache versions and strategy signatures can change during a rolling
+        # deploy. Keep serving the latest fully computed snapshot until the
+        # background prewarmer replaces it, instead of turning the list blank.
+        if not force_recompute:
+            last_good_payload = _read_json_cache_stale(
+                _market_signals_last_good_cache_key(target_date)
+            )
+            if (
+                isinstance(last_good_payload, dict)
+                and last_good_payload.get("date") == target_date
+                and not _is_pending_market_signals_payload(last_good_payload)
+                and not (
+                    target_date >= recent_cache_floor
+                    and _is_empty_market_signals_payload(last_good_payload)
+                )
+            ):
+                last_good_payload = dict(last_good_payload)
+                last_good_payload["source_cache_version"] = (
+                    last_good_payload.get("cache_version")
+                )
+                last_good_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
+                return _market_json_response(
+                    _with_current_data_status(
+                        _apply_start_prediction_filters_to_cached_payload(
+                            last_good_payload
+                        )
+                    ),
+                    "last-good",
+                )
 
         # Web and cron services can finish a rolling Render deploy at
         # different times. Reuse the last two generations instead of turning
@@ -12191,6 +12244,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # Zero candidates is also a valid computed result. Persist it so
         # browsers never trigger the expensive strategy scan themselves.
         _write_json_cache(cache_key, payload)
+        _write_json_cache(_market_signals_last_good_cache_key(target_date), payload)
         return _market_json_response(payload, "recomputed")
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}

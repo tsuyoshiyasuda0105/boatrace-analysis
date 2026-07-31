@@ -173,7 +173,7 @@ def task_success_exists(task_name: str, run_date: str) -> bool:
 
 
 def signal_refresh_task_name(now: datetime) -> str:
-    slot = now.minute // 30
+    slot = now.minute // 10
     return f"render_signal_refresh_{now.hour:02d}_{slot}"
 
 
@@ -571,10 +571,10 @@ def run_signal_refresh_slot(now: datetime) -> bool:
 
     Failed attempts are intentionally retried by the next five-minute cron
     tick. A cold or missing signal cache leaves the high-ROI list blank, so a
-    failure must not block the whole 30-minute slot.
+    failure must not block the whole 10-minute slot.
     """
     today = now.date().isoformat()
-    slot = now.minute // 30
+    slot = now.minute // 10
     task = signal_refresh_task_name(now)
     if task_success_exists(task, today):
         print(f"[signal-refresh] already succeeded slot={now.hour:02d}:{slot}", flush=True)

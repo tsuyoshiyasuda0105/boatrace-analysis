@@ -76,7 +76,7 @@ def test_daily_source_complete_requires_all_races_entries_and_predictions():
     )
 
 
-def test_signal_refresh_uses_one_task_slot_per_half_hour(monkeypatch):
+def test_signal_refresh_uses_one_task_slot_per_ten_minutes(monkeypatch):
     attempted = []
     monkeypatch.setattr(
         scheduler,
@@ -86,7 +86,32 @@ def test_signal_refresh_uses_one_task_slot_per_half_hour(monkeypatch):
 
     now = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
     assert scheduler.run_signal_refresh_slot(now)
-    assert attempted == [("render_signal_refresh_10_1", "2026-07-21")]
+    assert attempted == [("render_signal_refresh_10_3", "2026-07-21")]
+
+
+def test_market_signals_keep_a_stable_last_good_snapshot():
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    route_source = source.split("def market_signals_for_date():", 1)[1]
+    route_source = route_source.split("@app.route", 1)[0]
+
+    assert "def _market_signals_last_good_cache_key" in source
+    assert '"last-good"' in route_source
+    assert "_market_signals_last_good_cache_key(target_date)" in route_source
+    assert (
+        "_write_json_cache(_market_signals_last_good_cache_key(target_date), payload)"
+        in route_source
+    )
+
+
+def test_pending_market_signals_skip_badge_hydration():
+    payload = {
+        "date": "2026-07-21",
+        "data_status": {"cache_miss": True, "cache_only": True},
+        "race_badges": {},
+        "signals": {},
+    }
+
+    assert web_app._hydrate_market_race_badges(payload, "2026-07-21") is payload
 
 
 def test_accident_self_heal_skips_when_snapshot_is_current(monkeypatch):

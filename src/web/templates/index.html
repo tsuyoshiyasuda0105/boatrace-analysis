@@ -331,6 +331,11 @@
         const initialMarketSignalsPayload = {{ initial_market_signals|default({})|tojson }};
         let marketSignalsLoading = false;
         let marketSignalsLoaded = Boolean(initialMarketSignalsPayload && initialMarketSignalsPayload.signals);
+        let marketSignalsPending = Boolean(
+          initialMarketSignalsPayload?.data_status?.cache_miss
+          || initialMarketSignalsPayload?.data_status?.cache_only
+        );
+        let marketSignalsRetryTimer = null;
         let marketSignalsCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.signals) || {};
         let raceBadgesCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.race_badges) || {};
         let marketSignalsDigest = '';
@@ -706,10 +711,20 @@
             }
             const data = await fetchSignals();
             if (!data) return;
+            const dataStatus = data.data_status || {};
+            const isPending = Boolean(dataStatus.cache_miss || dataStatus.cache_only);
+            if (isPending) {
+              marketSignalsPending = true;
+              marketSignalsLoaded = true;
+              marketDataStatusCache = dataStatus;
+              renderDataStatus(dataStatus);
+              return;
+            }
+            marketSignalsPending = false;
             const signals = data.signals || {};
             marketSignalsLoaded = true;
-            marketDataStatusCache = data.data_status || {};
-            renderDataStatus(data.data_status || {});
+            marketDataStatusCache = dataStatus;
+            renderDataStatus(dataStatus);
             const accidentWatch = data.accident_watch || {};
             const raceBadges = data.race_badges || {};
             const nextDigest = buildSignalsDigest(signals, accidentWatch, raceBadges);
@@ -1044,6 +1059,12 @@
             console.warn('market-signals failed:', e);
           } finally {
             marketSignalsLoading = false;
+            if (marketSignalsPending && !marketSignalsRetryTimer) {
+              marketSignalsRetryTimer = window.setTimeout(() => {
+                marketSignalsRetryTimer = null;
+                loadMarketSignals();
+              }, 15000);
+            }
           }
           // market-signals 描画が終わったら、次のレースカードを再描画して
           // 取り込まれた L4 バッジをミラー表示する
@@ -1537,7 +1558,9 @@ function renderTodaysPicks() {
           if (preconfirmedPicks.length === 0 && waitingPicks.length === 0 && closedPicks.length === 0) {
             const tr = document.createElement('tr');
             tr.className = 'todays-pick-row is-empty';
-            const pendingText = hasInsufficientDayData(marketDataStatusCache)
+            const pendingText = marketSignalsPending
+              ? '\u5019\u88dc\u30c7\u30fc\u30bf\u3092\u66f4\u65b0\u4e2d\u3067\u3059\u300215\u79d2\u5f8c\u306b\u81ea\u52d5\u518d\u8aad\u307f\u8fbc\u307f\u3057\u307e\u3059'
+              : hasInsufficientDayData(marketDataStatusCache)
               ? '\u5f53\u65e5\u30c7\u30fc\u30bf\u304c\u307e\u3060\u63c3\u3063\u3066\u3044\u306a\u3044\u305f\u3081\u5224\u5b9a\u4e0d\u80fd\u3067\u3059'
               : hiddenReferenceCount > 0
                 ? `\u6b63\u5f0f\u63a1\u7528\u5019\u88dc\u306f\u3042\u308a\u307e\u305b\u3093\uff08\u53c2\u8003L4 ${hiddenReferenceCount}\u4ef6\u306f\u975e\u8868\u793a\uff09`
