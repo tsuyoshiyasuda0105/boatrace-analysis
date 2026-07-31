@@ -6,6 +6,7 @@ from jinja2 import Environment
 ROOT = Path(__file__).resolve().parents[1]
 APP_SOURCE = ROOT / "src" / "web" / "app.py"
 RACE_TEMPLATE = ROOT / "src" / "web" / "templates" / "race.html"
+RACE_DETAIL_JS = ROOT / "src" / "web" / "static" / "race_detail.js"
 
 
 def test_race_template_parses_and_contains_requested_fact_columns():
@@ -84,3 +85,16 @@ def test_motor_position_rows_finish_before_display_fact_helper():
     assert '_apply_motor_position_ranks(out, "_turn_metric"' in function_source
     assert '_apply_motor_position_ranks(out, "_straight_metric"' in function_source
     assert function_source.rstrip().endswith("return out")
+
+
+def test_motor_and_racer_detail_click_targets_are_wired_separately():
+    template = RACE_TEMPLATE.read_text(encoding="utf-8")
+    script = RACE_DETAIL_JS.read_text(encoding="utf-8")
+
+    assert 'class="racer-detail-btn"' in template
+    assert 'class="motor-history-btn"' in template
+    assert "data-motor-position-boat" in script
+    assert "openMotorHistory" in script
+    assert "openRacerDetail" in script
+    assert 'document.querySelectorAll(".motor-history-btn")' in script
+    assert 'document.querySelectorAll(".racer-detail-btn")' in script

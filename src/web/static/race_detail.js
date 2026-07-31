@@ -34,6 +34,7 @@
   };
   const historyCache = new Map();
   const racerDetailCache = new Map();
+  let activeRaceId = "";
   const scoreClass = (value) => {
     if (value == null) return "flat";
     const score = Number(value);
@@ -200,10 +201,10 @@
             const active = Number(row.boatNumber) === Number(currentBoatNumber) ? " is-active" : "";
             const ring = row.totalRank === 1 ? " is-top" : "";
             return `
-              <div class="motor-position-bubble${active}${ring}" style="position:absolute;z-index:2;transform:translate(-50%,-50%);left:${x}%;top:${y}%;width:${size}px;height:${size}px;border:3px solid ${laneColor(row.boatNumber)};border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(8,17,29,.86);box-shadow:${Number(row.boatNumber) === Number(currentBoatNumber) ? '0 0 0 4px rgba(0,212,255,.16),0 10px 30px rgba(0,0,0,.42)' : row.totalRank === 1 ? '0 0 0 4px rgba(52,232,144,.18),0 10px 30px rgba(0,0,0,.42)' : '0 10px 30px rgba(0,0,0,.32)'};">
+              <button type="button" class="motor-position-bubble${active}${ring}" data-motor-position-boat="${esc(row.boatNumber)}" aria-label="${esc(row.boatNumber)}号艇のモーター履歴を表示" title="${esc(row.boatNumber)}号艇のモーター履歴" style="appearance:none;padding:0;color:inherit;font:inherit;cursor:pointer;position:absolute;z-index:2;transform:translate(-50%,-50%);left:${x}%;top:${y}%;width:${size}px;height:${size}px;border:3px solid ${laneColor(row.boatNumber)};border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(8,17,29,.86);box-shadow:${Number(row.boatNumber) === Number(currentBoatNumber) ? '0 0 0 4px rgba(0,212,255,.16),0 10px 30px rgba(0,0,0,.42)' : row.totalRank === 1 ? '0 0 0 4px rgba(52,232,144,.18),0 10px 30px rgba(0,0,0,.42)' : '0 10px 30px rgba(0,0,0,.32)'};">
                 <span class="motor-position-bubble-core lane-${esc(row.boatNumber)}" style="width:72%;height:72%;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;">${esc(row.boatNumber)}</span>
                 <small style="position:absolute;left:50%;bottom:-24px;transform:translateX(-50%);padding:3px 8px;border-radius:999px;background:rgba(10,18,30,.92);border:1px solid rgba(0,212,255,.16);color:#d9faff;font-size:11px;font-weight:700;white-space:nowrap;">総合 ${esc(row.totalRank || "-")}位 / 6</small>
-              </div>
+              </button>
             `;
           }).join("")}
         </div>
@@ -277,9 +278,11 @@
         ${renderPositionChart(historyData, historyData.current?.boat_number)}
         ${renderHistoryTable(historyData)}
       </div>
-      <div class="racer-detail-panel motor-inspector-racer" data-racer-detail-panel>
-        <div class="motor-history-loading">選手情報を読み込み中...</div>
-      </div>
+    </div>`;
+
+  const renderRacerOnly = (data) => `
+    <div class="racer-detail-panel motor-inspector-racer">
+      ${renderRacerDetail(data)}
     </div>`;
 
   const fetchHistory = (raceId, boatNumber) => {
@@ -318,32 +321,46 @@
     return racerDetailCache.get(key);
   };
 
+  const openMotorHistory = async (raceId, boatNumber, sourceButton = null) => {
+    if (!inspectorShell || !inspectorBody || !raceId || !boatNumber) return;
+    activeRaceId = raceId;
+    document.querySelectorAll(".motor-history-btn[aria-expanded='true']").forEach((el) => el.setAttribute("aria-expanded", "false"));
+    sourceButton?.setAttribute("aria-expanded", "true");
+    inspectorShell.hidden = false;
+    inspectorBody.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
+    try {
+      inspectorBody.innerHTML = renderHistoryOnly(await fetchHistory(raceId, boatNumber));
+      inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
+    } catch (err) {
+      inspectorBody.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました: ${esc(err.message || "")}</div>`;
+    }
+  };
+
+  const openRacerDetail = async (raceId, boatNumber, sourceButton = null) => {
+    if (!inspectorShell || !inspectorBody || !raceId || !boatNumber) return;
+    document.querySelectorAll(".racer-detail-btn[aria-expanded='true']").forEach((el) => el.setAttribute("aria-expanded", "false"));
+    sourceButton?.setAttribute("aria-expanded", "true");
+    inspectorShell.hidden = false;
+    inspectorBody.innerHTML = '<div class="motor-history-loading">選手詳細を読み込み中...</div>';
+    try {
+      inspectorBody.innerHTML = renderRacerOnly(await fetchRacerDetail(raceId, boatNumber));
+      inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
+    } catch (err) {
+      inspectorBody.innerHTML = `<div class="motor-history-empty">選手情報の取得に失敗しました: ${esc(err.message || "")}</div>`;
+    }
+  };
+
   document.querySelectorAll(".motor-history-btn").forEach((button) => {
-    button.addEventListener("click", async () => {
-      if (!inspectorShell || !inspectorBody) return;
-      const boatNumber = button.dataset.boatNumber;
-      const raceId = button.dataset.raceId;
-      document.querySelectorAll(".motor-history-btn[aria-expanded='true']").forEach((el) => el.setAttribute("aria-expanded", "false"));
-      button.setAttribute("aria-expanded", "true");
-      inspectorShell.hidden = false;
-      inspectorBody.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
-      try {
-        const historyPromise = fetchHistory(raceId, boatNumber);
-        const racerPromise = fetchRacerDetail(raceId, boatNumber);
-        const historyData = await historyPromise;
-        inspectorBody.innerHTML = renderHistoryOnly(historyData);
-        inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
-        racerPromise.then((racerData) => {
-          const panel = inspectorBody.querySelector("[data-racer-detail-panel]");
-          if (panel) panel.innerHTML = renderRacerDetail(racerData);
-        }).catch((err) => {
-          const panel = inspectorBody.querySelector("[data-racer-detail-panel]");
-          if (panel) panel.innerHTML = `<div class="motor-history-empty">選手情報の取得に失敗しました: ${esc(err.message || "")}</div>`;
-        });
-      } catch (err) {
-        inspectorBody.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました: ${esc(err.message || "")}</div>`;
-      }
-    });
+    button.addEventListener("click", () => openMotorHistory(button.dataset.raceId, button.dataset.boatNumber, button));
+  });
+
+  document.querySelectorAll(".racer-detail-btn").forEach((button) => {
+    button.addEventListener("click", () => openRacerDetail(button.dataset.raceId, button.dataset.boatNumber, button));
+  });
+
+  inspectorBody?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-motor-position-boat]");
+    if (button) openMotorHistory(activeRaceId, button.dataset.motorPositionBoat);
   });
 
   const renderMarketSignal = (signal) => {
