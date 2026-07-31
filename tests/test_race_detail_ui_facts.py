@@ -28,6 +28,16 @@ def test_race_template_parses_and_contains_requested_fact_columns():
     assert "tilt-chip" in source
 
 
+def test_start_comparison_is_rendered_after_six_boat_details():
+    source = RACE_TEMPLATE.read_text(encoding="utf-8")
+
+    details_heading = source.index("🚤 6艇詳細")
+    details_close = source.index("</details>", details_heading)
+    start_comparison = source.index('class="start-prediction"')
+
+    assert details_heading < details_close < start_comparison
+
+
 def test_race_detail_facts_and_course_skill_are_pre_result_only():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
@@ -41,10 +51,33 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "4: ((\"\u307e\u304f\u308a\", 4),)" in source
 
 
+def test_race_detail_request_uses_only_precomputed_display_tags():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    start = source.index("def race_detail(race_id: str):")
+    end = source.index("@app.route", start)
+    route_source = source[start:end]
+
+    assert "_attach_kimarite_skill_tags" not in route_source
+    assert "_attach_accident_watch_tags" not in route_source
+    assert route_source.count("_attach_precomputed_race_detail_tags") == 2
+    assert route_source.count("allow_ace_recompute=False") == 2
+
+
+def test_race_detail_tag_snapshot_contains_all_three_tag_families():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    start = source.index("def _build_race_detail_tag_snapshot")
+    end = source.index("def _race_detail_tag_snapshot", start)
+    function_source = source[start:end]
+
+    assert "kimarite_skill" in function_source
+    assert "accident_display_level" in function_source
+    assert "is_ace_motor" in function_source
+
+
 def test_motor_position_rows_finish_before_display_fact_helper():
     source = APP_SOURCE.read_text(encoding="utf-8")
     start = source.index("def _current_race_position_rows")
-    end = source.index("def _attach_race_detail_display_facts", start)
+    end = source.index("RACE_DETAIL_TAG_CACHE_VERSION", start)
     function_source = source[start:end]
 
     assert '_apply_motor_position_ranks(out, "_dash_metric"' in function_source

@@ -78,8 +78,8 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v26"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v15"
+MARKET_SIGNALS_CACHE_VERSION = "v27"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v16"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -970,7 +970,13 @@ def _motor_fact_grade(score: Optional[float]) -> dict[str, Any]:
     return {"label": "×", "tone": "weak", "score": round(score, 1)}
 
 
-def _attach_motor_fact_grades(race_id: str, preds: list[dict], info: Optional[dict[str, Any]] = None) -> None:
+def _attach_motor_fact_grades(
+    race_id: str,
+    preds: list[dict],
+    info: Optional[dict[str, Any]] = None,
+    *,
+    allow_ace_recompute: bool = True,
+) -> None:
     """Attach lightweight pre-result motor labels for the race table."""
     if not preds:
         return
@@ -986,7 +992,7 @@ def _attach_motor_fact_grades(race_id: str, preds: list[dict], info: Optional[di
     avg_motor = _mean_or_none(motor_vals)
 
     ace_threshold = None
-    if info:
+    if info and allow_ace_recompute:
         try:
             ace_threshold = _ace_motor_threshold(
                 int(info["stadium_number"]),
@@ -1025,11 +1031,12 @@ def _attach_motor_fact_grades(race_id: str, preds: list[dict], info: Optional[di
         p["motor_dash_grade"] = _motor_fact_grade(dash_score)
         p["motor_turn_grade"] = _motor_fact_grade(turn_score)
         p["motor_straight_grade"] = _motor_fact_grade(straight_score)
-        p["is_ace_motor"] = bool(
-            motor_rate is not None
-            and ace_threshold is not None
-            and motor_rate >= ace_threshold
-        )
+        if ace_threshold is not None:
+            p["is_ace_motor"] = bool(
+                motor_rate is not None and motor_rate >= ace_threshold
+            )
+        else:
+            p.setdefault("is_ace_motor", False)
 
 
 @lru_cache(maxsize=2048)
@@ -2642,6 +2649,126 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
+RACE_DETAIL_TAG_CACHE_VERSION = "v1"
+
+
+def _race_detail_tag_cache_key(race_id: str) -> str:
+    return f"race_detail_tags:{RACE_DETAIL_TAG_CACHE_VERSION}:{race_id}"
+
+
+def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
+    """Build pre-race display tags using only information available by race day."""
+    info = _race_basic_info(race_id)
+    if not info:
+        return {}
+    with db_connect() as conn:
+        entries = conn.execute(
+            """
+            SELECT boat_number, racer_number, assigned_motor_top_2_percent
+              FROM race_entries
+             WHERE race_id = ?
+             ORDER BY boat_number
+            """,
+            (race_id,),
+        ).fetchall()
+
+    racer_numbers = tuple(
+        sorted({int(row[1]) for row in entries if row[1] is not None})
+    )
+    period_start = _accident_period_start_for_date(str(info.get("race_date") or ""))
+    try:
+        accident_by_racer = _accident_watch_map(period_start, racer_numbers)
+    except Exception:
+        accident_by_racer = {}
+        logger.warning("accident tag snapshot failed for %s", race_id, exc_info=True)
+
+    # Regenerate the technique cache during the scheduled job. The query is
+    # strictly bounded to races before the target date.
+    try:
+        kimarite_tags = _kimarite_skill_tags_for_race(race_id)
+        _write_json_cache(f"race_kimarite_tags:v2:{race_id}", kimarite_tags)
+    except Exception:
+        kimarite_tags = {}
+        logger.warning("kimarite tag snapshot failed for %s", race_id, exc_info=True)
+
+    try:
+        ace_threshold = _ace_motor_threshold(
+            int(info["stadium_number"]),
+            str(info["race_date"]),
+        )
+    except Exception:
+        ace_threshold = None
+        logger.warning("ace motor snapshot failed for %s", race_id, exc_info=True)
+
+    boats: dict[str, dict[str, Any]] = {}
+    for boat_number, racer_number, motor_rate_raw in entries:
+        boat: dict[str, Any] = {}
+        accident = accident_by_racer.get(int(racer_number)) if racer_number is not None else None
+        if accident:
+            rate = float(accident["rate"])
+            boat.update(
+                {
+                    "accident_rate": rate,
+                    "accident_points": int(accident["points"]),
+                    "accident_starts": int(accident["starts"]),
+                    "has_accident_watch": rate >= 0.7,
+                    "accident_display_level": (
+                        "high" if rate >= 0.7 else "watch" if rate >= 0.5 else None
+                    ),
+                }
+            )
+        motor_rate = _safe_float(motor_rate_raw)
+        boat["is_ace_motor"] = bool(
+            motor_rate is not None
+            and ace_threshold is not None
+            and motor_rate >= ace_threshold
+        )
+        kimarite = kimarite_tags.get(int(boat_number))
+        if kimarite:
+            boat["kimarite_skill"] = kimarite
+        boats[str(int(boat_number))] = boat
+
+    return {
+        "version": RACE_DETAIL_TAG_CACHE_VERSION,
+        "race_id": race_id,
+        "race_date": str(info.get("race_date") or ""),
+        "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
+        "ace_motor_threshold": ace_threshold,
+        "boats": boats,
+    }
+
+
+def _race_detail_tag_snapshot(race_id: str, *, recompute: bool = False) -> dict[str, Any]:
+    cache_key = _race_detail_tag_cache_key(race_id)
+    if not recompute:
+        payload = _read_json_cache_stale(cache_key)
+        if isinstance(payload, dict):
+            return payload
+        return {}
+    payload = _build_race_detail_tag_snapshot(race_id)
+    if payload:
+        _write_json_cache(cache_key, payload)
+    return payload
+
+
+def _attach_precomputed_race_detail_tags(race_id: str, preds: list[dict]) -> None:
+    """Attach the scheduled snapshot without running historical queries."""
+    payload = _race_detail_tag_snapshot(race_id, recompute=False)
+    boats = payload.get("boats") if isinstance(payload, dict) else None
+    if not isinstance(boats, dict):
+        return
+    for pred in preds:
+        boat_number = _safe_int(pred.get("boat_number"))
+        if boat_number is None:
+            continue
+        tag = boats.get(str(boat_number)) or boats.get(boat_number)
+        if not isinstance(tag, dict):
+            continue
+        for key, value in tag.items():
+            if value is not None:
+                pred[key] = value
+
+
 def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
     """Attach current entry/preview facts omitted by older prediction caches."""
     if not preds:
@@ -4037,15 +4164,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 preds = _race_entry_fallback_rows(race_id)
                 if preds:
                     fallback_notice = "予測データ未投入のため、出走表ベースの詳細を表示しています。"
-            # Generate once per race and reuse the persisted cache afterwards.
-            _attach_kimarite_skill_tags(
-                race_id,
-                preds,
-                allow_recompute=True,
-            )
+            # Keep the request path read-only and fast. The scheduled prewarm
+            # job generates these historical tags ahead of page access.
+            _attach_precomputed_race_detail_tags(race_id, preds)
             _attach_race_detail_display_facts(race_id, preds)
-            _attach_accident_watch_tags(race_id, preds)
-            _attach_motor_fact_grades(race_id, preds, info=info)
+            _attach_motor_fact_grades(
+                race_id, preds, info=info, allow_ace_recompute=False
+            )
             t_tags = time.perf_counter() - t1
         except Exception as e:
             logger.exception("prediction failed: %s", race_id)
@@ -4063,14 +4188,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 user_msg = f"予測エラー: {err_str[:200]}"
             preds = _race_entry_fallback_rows(race_id)
             if preds:
-                _attach_kimarite_skill_tags(
-                    race_id,
-                    preds,
-                    allow_recompute=True,
-                )
+                _attach_precomputed_race_detail_tags(race_id, preds)
                 _attach_race_detail_display_facts(race_id, preds)
-                _attach_accident_watch_tags(race_id, preds)
-                _attach_motor_fact_grades(race_id, preds, info=info)
+                _attach_motor_fact_grades(
+                    race_id, preds, info=info, allow_ace_recompute=False
+                )
                 html = render_template(
                     "race.html",
                     info=info,
@@ -12280,8 +12402,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             filtered_signals = []
             for s in signals:
                 l4 = s.get("l4") or {}
-                level = l4.get("level")
-                if level in adopted_signal_levels or level in adopted_watch_levels:
+                level_candidates = [str(l4.get("level") or "")]
+                level_candidates.extend(str(x) for x in (l4.get("matched_levels") or []) if x)
+                if any(
+                    level in adopted_signal_levels or level in adopted_watch_levels
+                    for level in level_candidates
+                ):
                     filtered_signals.append(s)
             signals = filtered_signals
 
@@ -12439,7 +12565,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73},
     )
     ACE_KIMARITE_WIN_KEYS = tuple(s["key"] for s in ACE_KIMARITE_WIN_STRATEGY_DEFS)
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v35"
+    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v36"
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -13384,6 +13510,42 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if prev is None or payload["recovery"] > prev["recovery"]:
                 adopted_signal_by_race_and_key[signal_key] = payload
 
+        @lru_cache(maxsize=20000)
+        def _daily_historical_attack_kimarite_stats(
+            racer_number: int,
+            course_number: int,
+            before_date: str,
+        ) -> tuple[int, float, int]:
+            if not racer_number or not course_number or not before_date:
+                return (0, 0.0, 0)
+            try:
+                row = conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS n,
+                        SUM(CASE
+                            WHEN rr.finishing_position = 1
+                             AND rr.kimarite IN ('まくり', 'まくり差し')
+                            THEN 1 ELSE 0 END) AS attack_wins
+                    FROM race_results rr
+                    JOIN races r ON r.race_id = rr.race_id
+                    LEFT JOIN race_entries re
+                      ON re.race_id = rr.race_id
+                     AND re.boat_number = rr.boat_number
+                    WHERE COALESCE(rr.racer_number, re.racer_number) = ?
+                      AND COALESCE(rr.course_number, re.boat_number) = ?
+                      AND r.race_date < ?
+                    """,
+                    (int(racer_number), int(course_number), str(before_date)),
+                ).fetchone()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("ace kimarite history lookup failed: %s", exc)
+                return (0, 0.0, 0)
+            n = int((row[0] if row else 0) or 0)
+            attack_wins = int((row[1] if row else 0) or 0)
+            attack_rate = (attack_wins / n * 100.0) if n else 0.0
+            return (attack_wins, attack_rate, n)
+
         def _selected_adopted_signals_for_roi() -> list[dict]:
             """Match the ROI dashboard to the live high-ROI race list.
 
@@ -13416,19 +13578,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ROI used to re-run strategy-specific backtests and could count
             strategies that were never shown to the user for that day. When a
             market-signals cache exists, replace adopted-strategy daily counts
-            with exactly the adopted rows displayed by that payload. For recent
-            days, a missing market-signals cache is not allowed to fall back to
-            raw reconstruction because it makes the ROI dashboard disagree with
-            the visible high-ROI list.
+            with exactly the adopted rows displayed by that payload. When the
+            cache is missing or stale, keep the raw reconstruction that was
+            already selected per race above. Clearing those days makes the ROI
+            dashboard show zero even though the high-ROI list can still rebuild
+            candidates from strategy logic.
             """
             adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS) & set(ROI_STRATEGY_KEYS)
             if not adopted_levels:
                 return
-
-            try:
-                recent_floor = (_date.today() - _timedelta(days=RECENT_ADOPTED_RECOMPUTE_DAYS)).isoformat()
-            except Exception:
-                recent_floor = ""
 
             def _clear_adopted_counts(day_d: dict) -> None:
                 for key in ROI_STRATEGY_KEYS:
@@ -13443,22 +13601,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 payload = _read_json_cache_stale(_market_signals_cache_key(rdate))
                 if (
                     not isinstance(payload, dict)
+                    or _is_pending_market_signals_payload(payload)
                     or payload.get("date") != rdate
                     or payload.get("cache_version") != MARKET_SIGNALS_CACHE_VERSION
                 ):
-                    if recent_floor and rdate >= recent_floor:
-                        _clear_adopted_counts(day_d)
-                        day_d["_adopted_from_market_signals_cache"] = False
-                        day_d["_adopted_market_signals_cache_missing"] = True
-                        day_d["_adopted_from_raw_fallback"] = False
+                    day_d["_adopted_from_market_signals_cache"] = False
+                    day_d["_adopted_market_signals_cache_missing"] = True
+                    day_d["_adopted_from_raw_fallback"] = True
                     continue
                 signals = payload.get("signals") or {}
                 if not isinstance(signals, dict):
-                    if recent_floor and rdate >= recent_floor:
-                        _clear_adopted_counts(day_d)
-                        day_d["_adopted_from_market_signals_cache"] = False
-                        day_d["_adopted_market_signals_cache_missing"] = True
-                        day_d["_adopted_from_raw_fallback"] = False
+                    day_d["_adopted_from_market_signals_cache"] = False
+                    day_d["_adopted_market_signals_cache_missing"] = True
+                    day_d["_adopted_from_raw_fallback"] = True
                     continue
 
                 selected: list[tuple[str, str, list[tuple[str, str]]]] = []
@@ -13468,8 +13623,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     l4 = signal.get("l4") or {}
                     if not isinstance(l4, dict):
                         continue
-                    level = str(l4.get("level") or "")
-                    if level not in adopted_levels or level.startswith("morning_watch_"):
+                    level_candidates = [str(l4.get("level") or "")]
+                    level_candidates.extend(str(x) for x in (l4.get("matched_levels") or []) if x)
+                    level = next(
+                        (
+                            candidate
+                            for candidate in level_candidates
+                            if candidate in adopted_levels and not candidate.startswith("morning_watch_")
+                        ),
+                        "",
+                    )
+                    if not level:
                         continue
                     if l4.get("is_after_exhibition_out") or l4.get("start_prediction_filter_status") == "failed":
                         continue
@@ -13533,15 +13697,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 row = row[:21] + (None,) + row[21:]
             elif len(row) == 71:
                 row = row[:58] + (None,) + row[58:]
-            elif len(row) != 72:
+            if len(row) == 72:
+                row = row[:19] + (None,) + row[19:]
+                row = row[:45] + (None, None) + row[45:]
+            elif len(row) != 75:
                 logger.warning("unexpected _l4_daily_stats row length=%s race_id=%s", len(row), row[0] if row else None)
                 continue
             (race_id, rdate, stadium, grade, race_no, cls, natl_1, local_1_rt, age1_rt, avg_st_180,
-             boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_class, boat4_local_1, boat4_natl_1, boat4_avg_st, boat4_motor_top2, boat5_motor_top2,
+             boat1_motor_top2, boat2_top2, boat2_motor_top2, boat2_racer, boat3_racer, boat3_top2, boat3_natl_1, boat3_motor_top2, boat4_class, boat4_racer, boat4_local_1, boat4_natl_1, boat4_avg_st, boat4_motor_top2, boat5_motor_top2,
              boat1_fl_sum, boat2_fl_sum, boat3_fl_sum, boat4_fl_sum, boat5_fl_sum, boat6_fl_sum,
              boat1_pred_top2, boat3_pred_top2, boat4_pred_top2,
              fav_pay, fav_odds, any_in_l4, l4_odds, mid_132_odds, prob_first,
-             w1, w2, w3, win_pay, win2_pay, ex_pay, ex13_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, pay_143, weather, wind_speed, wave_height, ex_st,
+             w1, w2, w3, win_pay, win2_pay, win3_pay, win4_pay, ex_pay, ex13_pay, ex14_pay, ex41_pay, tri_pay, pay_132, pay_124, pay_143, weather, wind_speed, wave_height, ex_st,
              boat1_exhibition_time, boat2_exhibition_time, boat2_ex_st, boat2_ex_st_rank, boat3_exhibition_time, boat3_ex_st, boat4_exhibition_time, boat4_ex_st, boat5_exhibition_time, boat6_exhibition_time, boat1_ex_rank, n_female,
              tide_delta_60m_cm, tide_range_cm, is_high_tide_zone, is_low_tide_zone) = row
             rdate = str(rdate)
@@ -13682,6 +13849,58 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 rn = int(race_no) if race_no is not None else 0
             except (TypeError, ValueError):
                 rn = 0
+            if is_done:
+                try:
+                    stadium_i = int(stadium or 0)
+                except (TypeError, ValueError):
+                    stadium_i = 0
+                for strategy in ACE_KIMARITE_WIN_STRATEGY_DEFS:
+                    if stadium_i != int(strategy["stadium"]):
+                        continue
+                    race_min = strategy.get("race_min")
+                    race_max = strategy.get("race_max")
+                    if race_min is not None and rn < int(race_min):
+                        continue
+                    if race_max is not None and rn > int(race_max):
+                        continue
+                    if strategy.get("rain_exclude") and is_rain_weather:
+                        continue
+                    if b1_motor > float(strategy["boat1_motor_max"]):
+                        continue
+                    target_boat = int(strategy["boat"])
+                    if target_boat == 3:
+                        target_motor = b3_motor
+                        target_racer = boat3_racer
+                        target_pay = int(win3_pay or 0)
+                    else:
+                        target_motor = b4_motor
+                        target_racer = boat4_racer
+                        target_pay = int(win4_pay or 0)
+                    if target_motor < float(strategy["target_motor_min"]):
+                        continue
+                    try:
+                        target_racer_i = int(target_racer or 0)
+                    except (TypeError, ValueError):
+                        target_racer_i = 0
+                    if not target_racer_i:
+                        continue
+                    attack_wins, attack_rate, _hist_n = _daily_historical_attack_kimarite_stats(
+                        target_racer_i,
+                        target_boat,
+                        rdate,
+                    )
+                    if attack_wins < int(strategy["attack_wins_min"]):
+                        continue
+                    if attack_rate < float(strategy["attack_rate_min"]):
+                        continue
+                    _record_adopted_signal(
+                        race_id,
+                        rdate,
+                        str(strategy["key"]),
+                        float(strategy["recovery"]),
+                        w1 == target_boat,
+                        target_pay if w1 == target_boat else 0,
+                    )
             if is_done and stadium == 13 and b2_motor >= 55.0:
                 d["amagasaki_motor_exa_bets"] += 1
                 if w1 == 1 and w2 == 4:
@@ -17398,6 +17617,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "g23_wall_hold_12_exa",
         "tamagawa_late_wall_hold_123_132_tri",
     )
+    MARKET_SIGNAL_ADOPTED_LEVELS = MARKET_SIGNAL_ADOPTED_LEVELS + ACE_KIMARITE_WIN_KEYS
     MARKET_SIGNAL_ADOPTED_LEVELS = MARKET_SIGNAL_ADOPTED_LEVELS + tuple(
         strategy.key for strategy in ACCIDENT_DENT_STRATEGIES
     )
@@ -17560,6 +17780,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         }
         for strategy in ACCIDENT_DENT_STRATEGIES
     )
+    ROI_STRATEGIES = ROI_STRATEGIES + tuple(
+        {
+            "key": strategy["key"],
+            "label": strategy["label"],
+            "short": f"acewin{i + 1}",
+            "color": "#facc15" if int(strategy["boat"]) == 4 else "#38bdf8",
+            "timing": "same_day" if strategy.get("rain_exclude") else "previous_day",
+        }
+        for i, strategy in enumerate(ACE_KIMARITE_WIN_STRATEGY_DEFS)
+    )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
     ROI_METRIC_EXTRA_KEYS = (
         "win", "exa", "tri", "c80", "pro", "sgg12",
@@ -17657,6 +17887,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         "biwako_dent2_makuri3_31": "biwako",
         "amagasaki_dent3_makuri4_41": "amagasaki",
         "shimonoseki_a_accident4_13_exa": "shimonoseki",
+    })
+    ROI_STRATEGY_VENUE_BY_KEY.update({
+        "kiryu_win4_ace_kimarite_late": "kiryu",
+        "amagasaki_win3_ace_kimarite_late": "amagasaki",
+        "amagasaki_win3_ace_kimarite_m40": "amagasaki",
+        "amagasaki_win3_ace_kimarite_no_rain": "amagasaki",
+        "amagasaki_win3_ace_kimarite_late_no_rain": "amagasaki",
+        "amagasaki_win3_ace_kimarite_all": "amagasaki",
+        "naruto_win4_ace_kimarite_all": "naruto",
+        "naruto_win4_ace_kimarite_no_rain": "naruto",
+        "naruto_win3_ace_kimarite_late_no_rain": "naruto",
+        "ashiya_win4_ace_kimarite_no_rain": "ashiya",
     })
 
     ROI_STRATEGY_VENUE_ORDER = {

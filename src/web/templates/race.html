@@ -166,10 +166,6 @@
     <div class="notice-box">{{ notice }}</div>
   {% endif %}
 
-  <section class="start-prediction" data-start-prediction data-race-id="{{ info.race_id }}">
-    <div class="motor-history-loading">展開予測を読み込み中...</div>
-  </section>
-
   <section class="motor-inspector-shell" id="motor-inspector-shell" hidden>
     <div class="motor-inspector-head">
       <div>
@@ -565,6 +561,10 @@
       </table>
     </div>
     </details>
+
+    <section class="start-prediction" data-start-prediction data-race-id="{{ info.race_id }}">
+      <div class="motor-history-loading">展開予測を読み込み中...</div>
+    </section>
   {% endif %}
   <script src="{{ url_for('static', filename='race_detail.js') }}?v={{ static_version }}" defer></script>
   <script src="{{ url_for('static', filename='start_prediction.js') }}?v={{ static_version }}" defer></script>

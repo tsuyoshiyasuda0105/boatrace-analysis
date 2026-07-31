@@ -370,6 +370,7 @@ def run_morning(now: datetime) -> bool:
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
+    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     return ok
 
@@ -834,6 +835,7 @@ def run_nightly(now: datetime) -> bool:
     # Preload tomorrow after its races exist as well.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
+    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", tomorrow], timeout=1800)
     try:
         tomorrow_counts = daily_source_counts(tomorrow)
     except Exception as exc:
@@ -876,7 +878,7 @@ def main() -> int:
     ensure_task_runs_table()
 
     # Morning data and predictions: run once per JST day.
-    morning_start = now.replace(hour=6, minute=25, second=0, microsecond=0)
+    morning_start = now.replace(hour=6, minute=0, second=0, microsecond=0)
     morning_end = now.replace(hour=9, minute=0, second=0, microsecond=0)
     if morning_start <= now < morning_end:
         task = "render_morning"
