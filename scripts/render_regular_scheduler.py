@@ -343,22 +343,17 @@ def run_beforeinfo(now: datetime) -> bool:
 
     if summary["races"] <= 0:
         print("[beforeinfo] no valid pages", flush=True)
-        return original_ok
+        return False
 
     print(f"[beforeinfo] written={summary}", flush=True)
     if summary.get("races", 0) > 0:
-        # Keep the high-ROI list visible even if prediction refresh is slow.
-        # A second prewarm after prediction refresh still runs below when due.
-        run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
-        ok = run_py(["scripts/render_cache_predictions.py", "--date", now.date().isoformat()], timeout=1800)
-        slot_task = signal_refresh_task_name(now)
-        if not task_success_exists(slot_task, now.date().isoformat()):
-            slot_ok = run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"], timeout=900)
-            record_task(slot_task, now.date().isoformat(), "success" if slot_ok else "failure")
-            ok &= slot_ok
-        else:
-            print(f"[beforeinfo] skip signals prewarm; slot already fresh {slot_task}", flush=True)
-        return ok
+        # The dedicated five-minute signal cron consumes these rows. Keeping
+        # candidate generation out of this collector prevents overlapping the
+        # next regular scheduler run.
+        return run_py(
+            ["scripts/render_cache_predictions.py", "--date", now.date().isoformat()],
+            timeout=1800,
+        )
     return True
 
 
@@ -369,12 +364,8 @@ def run_morning(now: datetime) -> bool:
     ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
-    # Prewarm before the heavier prediction refresh so the UI does not show an
-    # empty high-ROI list if prediction generation or syncing stalls.
-    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "morning-check"], timeout=1800)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
-    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "morning-check"], timeout=1800)
     return ok
 
 
@@ -423,7 +414,6 @@ def run_hourly(now: datetime) -> bool:
     except Exception as exc:
         print(f"[hourly] tide check failed: {type(exc).__name__}: {exc}", flush=True)
     ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "3"], timeout=1800)
-    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "realtime"], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     ok &= run_py(["scripts/agent_monitor.py", "--quiet"], timeout=600)
     return ok
@@ -848,7 +838,6 @@ def run_nightly(now: datetime) -> bool:
         ["scripts/backfill_accident_dent_daily_cache.py", "--recent-days", "400"],
         timeout=1800,
     )
-    ok &= run_py(["scripts/prewarm_strategy_pages.py", "--mode", "nightly"], timeout=3600)
     ok &= run_py(["scripts/aggregate_start_prediction_metrics.py", "--date", today], timeout=900)
     ok &= run_accident_full_refresh(today)
     ok &= run_db_maintenance()
@@ -913,11 +902,6 @@ def main() -> int:
         yesterday = (now.date() - timedelta(days=1)).isoformat()
         run_original_exhibition_catchup(now, yesterday, label="yesterday")
 
-    # A dedicated prewarm service is optional. Keep the existing five-minute
-    # scheduler self-contained and guarantee a fresh snapshot twice per hour.
-    if 6 <= now.hour <= 23:
-        run_signal_refresh_slot(now)
-
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
         run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
@@ -939,9 +923,6 @@ def main() -> int:
     # with five-minute candidate refreshes during live race hours.
     if now.minute < 5 and 6 <= now.hour <= 23:
         run_accident_self_heal(now)
-
-    if now.minute < 5 and 6 <= now.hour <= 23:
-        run_roi_daily_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
     if now.hour == 23 and now.minute >= 30:

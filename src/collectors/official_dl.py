@@ -11,6 +11,7 @@ LZH 解凍は 7-Zip (C:\\Program Files\\7-Zip\\7z.exe) を subprocess 呼び出�
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import time
 from datetime import date
@@ -73,17 +74,66 @@ def download_lzh(kind: str, target_date: date, force: bool = False) -> Optional[
 
 def extract_txt(lzh_path: Path) -> Optional[Path]:
     """7-Zip で LZH を解凍。同ディレクトリに *.TXT を出力。"""
-    if not SEVEN_ZIP.exists():
-        raise RuntimeError(f"7-Zip not found at {SEVEN_ZIP}")
     out_dir = lzh_path.parent
+    base_name = lzh_path.stem
+    expected = out_dir / f"{base_name.upper()}.TXT"
+    if expected.exists() and expected.stat().st_size > 0:
+        return expected
+
+    try:
+        import lhafile
+
+        archive = lhafile.Lhafile(str(lzh_path))
+        members = [
+            info
+            for info in archive.infolist()
+            if Path(info.filename).suffix.lower() == ".txt"
+        ]
+        if members:
+            member = next(
+                (
+                    info
+                    for info in members
+                    if Path(info.filename).stem.lower() == base_name.lower()
+                ),
+                members[0],
+            )
+            expected.write_bytes(archive.read(member.filename))
+            if expected.stat().st_size > 0:
+                return expected
+    except Exception as exc:
+        logger.warning("Python LZH extraction failed for %s: %s", lzh_path, exc)
+
+    seven_zip = next(
+        (
+            candidate
+            for candidate in (
+                shutil.which("7zz"),
+                shutil.which("7z"),
+                shutil.which("7za"),
+                str(SEVEN_ZIP) if SEVEN_ZIP.exists() else None,
+            )
+            if candidate
+        ),
+        None,
+    )
+    if not seven_zip:
+        logger.warning("No LZH extractor is available for %s", lzh_path)
+        return None
     # 7z e (extract without paths), -y (assume yes), -o (output dir)
-    cmd = [str(SEVEN_ZIP), "e", str(lzh_path), f"-o{out_dir}", "-y"]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="cp932", errors="replace")
+    cmd = [seven_zip, "e", str(lzh_path), f"-o{out_dir}", "-y"]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
     if result.returncode != 0:
         logger.warning("7z failed: %s", result.stderr or result.stdout)
         return None
     # 解凍されたファイルを探す (例: b240101.lzh → B240101.TXT)
-    base_name = lzh_path.stem  # 'b240101'
     candidates = [
         out_dir / f"{base_name.upper()}.TXT",
         out_dir / f"{base_name}.TXT",

@@ -27,5 +27,5 @@ cryptography>=42.0
 python-dotenv>=1.0
 
 # LZH 解凍 (Layer 1: 公式DLファイル用)
-# 7-Zip 経由の subprocess を使うのでパッケージは不要
-# lhafile>=0.3.0
+# Render/Linux では Python で展開し、7-Zip はローカルの予備経路に限定する
+lhafile>=0.3.1

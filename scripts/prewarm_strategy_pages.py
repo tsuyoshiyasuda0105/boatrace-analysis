@@ -24,7 +24,14 @@ from src.db.connection import connect as db_connect  # noqa: E402
 from scripts.ensure_performance_indexes import ensure_performance_indexes  # noqa: E402
 
 
-MODES = ("signals", "realtime", "morning-check", "daily-reconcile", "nightly")
+MODES = (
+    "signals",
+    "realtime",
+    "morning-check",
+    "daily-reconcile",
+    "history",
+    "nightly",
+)
 JST = ZoneInfo("Asia/Tokyo")
 ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v34"
 
@@ -188,14 +195,9 @@ def build_targets(mode: str, today: date) -> list[str]:
         # expensive signal snapshot. Browser requests only read this snapshot.
         return [f"/api/market-signals?date={today_s}&recompute=1"]
 
-    if mode == "nightly":
-        # Heavy historical refresh. This is intentionally reserved for the
-        # end-of-day Render scheduler so normal app clicks never trigger it.
-        # Rebuild yesterday first: after results/payouts arrive, the ROI cache
-        # must overlay the same high-ROI signal payload that users saw.
+    if mode == "history":
+        # Historical ROI is isolated from the five-minute signal refresh.
         return [
-            f"/api/market-signals?date={yesterday_s}&recompute=1",
-            f"/api/market-signals?date={today_s}&recompute=1",
             f"/member/strategy?from={d3y}&to={today_s}&recompute=1",
             f"/member/strategy?from={d365}&to={today_s}&recompute=1",
             f"/member/strategy?from={d30}&to={today_s}&recompute=1",
@@ -204,6 +206,17 @@ def build_targets(mode: str, today: date) -> list[str]:
             f"/member/strategy?from={d365}&to={today_s}",
             f"/member/strategy?from={d30}&to={today_s}",
             "/member/strategy/monthly",
+        ]
+
+    if mode == "nightly":
+        # Heavy historical refresh. This is intentionally reserved for the
+        # end-of-day Render scheduler so normal app clicks never trigger it.
+        # Rebuild yesterday first: after results/payouts arrive, the ROI cache
+        # must overlay the same high-ROI signal payload that users saw.
+        return [
+            f"/api/market-signals?date={yesterday_s}&recompute=1",
+            f"/api/market-signals?date={today_s}&recompute=1",
+            *build_targets("history", today),
         ]
 
     if mode == "morning-check":

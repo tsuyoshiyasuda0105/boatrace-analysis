@@ -46,6 +46,14 @@ def test_morning_and_nightly_refresh_market_signal_snapshot():
     assert nightly_targets[1] == "/api/market-signals?date=2026-07-18&recompute=1"
 
 
+def test_history_mode_contains_only_historical_roi_pages():
+    targets = build_targets("history", TODAY)
+
+    assert targets[0] == "/member/strategy?from=2023-07-19&to=2026-07-18&recompute=1"
+    assert "/member/strategy/monthly?recompute=1" in targets
+    assert all("/api/market-signals" not in target for target in targets)
+
+
 def test_dashboard_uses_one_read_only_refresh_clock():
     template = Path("src/web/templates/index.html").read_text(encoding="utf-8")
 
@@ -64,10 +72,33 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "name: boatrace-regular-cron" in blueprint
     assert "name: boatrace-odds-cron" in blueprint
     assert "name: boatrace-roi-prewarm-cron" in blueprint
+    assert "name: boatrace-roi-history-cron" in blueprint
+    assert "name: boatrace-roi-finalize-cron" in blueprint
     assert "startCommand: gunicorn" in blueprint
     assert "startCommand: python scripts/render_regular_scheduler.py" in blueprint
     assert "startCommand: python scripts/odds_scheduler.py --no-jitter" in blueprint
-    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode realtime" in blueprint
+    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode signals" in blueprint
+    assert 'schedule: "0 */12 * * *"' in blueprint
+    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode history" in blueprint
+    assert 'schedule: "30 14 * * *"' in blueprint
+    assert "startCommand: python scripts/prewarm_strategy_pages.py --mode daily-reconcile" in blueprint
+
+
+def test_regular_scheduler_leaves_roi_refresh_to_dedicated_crons():
+    scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    main_block = scheduler.split("def main() -> int:", 1)[1]
+    hourly_block = scheduler.split("def run_hourly", 1)[1].split(
+        "def run_roi_daily_self_heal", 1
+    )[0]
+    nightly_block = scheduler.split("def run_nightly", 1)[1].split(
+        "def main() -> int:", 1
+    )[0]
+
+    assert "run_signal_refresh_slot(now)" not in main_block
+    assert "run_roi_daily_self_heal(now)" not in main_block
+    assert "prewarm_strategy_pages.py" not in hourly_block
+    assert '"--mode", "nightly"' not in nightly_block
+    assert '"--mode", "signals", "--date", tomorrow' in nightly_block
 
 
 class _Response:
@@ -155,9 +186,9 @@ def test_regular_scheduler_does_not_duplicate_signal_rebuild_each_loop():
     assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' not in live_block
 
 
-def test_beforeinfo_rebuilds_snapshot_after_source_rows_change():
+def test_beforeinfo_leaves_signal_rebuild_to_dedicated_cron():
     scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     beforeinfo_block = scheduler.split("def run_beforeinfo", 1)[1].split("def run_morning", 1)[0]
 
     assert 'if summary.get("races", 0) > 0:' in beforeinfo_block
-    assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' in beforeinfo_block
+    assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' not in beforeinfo_block
