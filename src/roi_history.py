@@ -235,11 +235,12 @@ def load_roi_history_races(
                h.payout_amount,
                h.is_hit,
                h.capture_quality,
-               r.stadium_name,
+               s.name AS stadium_name,
                r.race_number,
                r.race_closed_at
           FROM roi_race_history h
           LEFT JOIN races r ON r.race_id = h.race_id
+          LEFT JOIN stadiums s ON s.stadium_number = r.stadium_number
          WHERE h.race_date BETWEEN ? AND ?
            AND h.is_settled = 1
            AND h.is_active = 1

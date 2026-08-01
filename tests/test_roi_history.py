@@ -15,10 +15,11 @@ def _conn():
         """
         CREATE TABLE race_results (race_id TEXT, finishing_position INTEGER);
         CREATE TABLE race_payouts (race_id TEXT, bet_type TEXT, combination TEXT, payout INTEGER);
+        CREATE TABLE stadiums (stadium_number INTEGER PRIMARY KEY, name TEXT);
         CREATE TABLE races (
             race_id TEXT,
             race_date TEXT,
-            stadium_name TEXT,
+            stadium_number INTEGER,
             race_number INTEGER,
             race_closed_at TEXT
         );
@@ -85,8 +86,9 @@ def test_empty_snapshot_retires_but_preserves_stale_date_rows():
 
 def test_load_roi_history_races_formats_active_settled_rows_only():
     conn = _conn()
+    conn.execute("INSERT INTO stadiums VALUES (1, 'Kiryu')")
     conn.execute(
-        "INSERT INTO races VALUES ('20260731-01-12', '2026-07-31', 'Kiryu', 12, '2026-07-31 20:45:00')"
+        "INSERT INTO races VALUES ('20260731-01-12', '2026-07-31', 1, 12, '2026-07-31 20:45:00')"
     )
     conn.execute("INSERT INTO race_results VALUES ('20260731-01-12', 1)")
     conn.execute("INSERT INTO race_payouts VALUES ('20260731-01-12', 'exacta', '1-3', 540)")
