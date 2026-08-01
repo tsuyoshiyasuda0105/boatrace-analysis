@@ -48,17 +48,18 @@
 
   <section class="summary-grid" style="margin-bottom:16px;">
     <article class="summary-card strategy-total-card">
-      <div class="summary-label">期間内の採用手法合計</div>
+      <div class="summary-label">期間内の実運用ROI合計</div>
       <div class="summary-roi {% if totals.adopted_total_profit > 0 %}pos{% elif totals.adopted_total_profit < 0 %}neg{% endif %}">
         損益 {{ totals.adopted_total_profit | signed_comma }}円
       </div>
       <div class="summary-sub">
         集計確定日 {{ totals.latest_data_date or '-' }}<br>
+        実運用スナップショット {{ totals.operational_day_count }}日 / 再構築参考 {{ totals.reconstructed_day_count }}日<br>
         投資 {{ '{:,}'.format(totals.adopted_total_cost) }}円 / 払戻 {{ '{:,}'.format(totals.adopted_total_pay) }}円 / 回収率
         {% if totals.adopted_total_recovery is not none %}{{ '%.1f' | format(totals.adopted_total_recovery) }}%{% else %}-{% endif %}<br>
         該当 {{ totals.adopted_total_bets }}件 / 的中 {{ totals.adopted_total_hits }}件 / 的中率
         {% if totals.adopted_total_hit_rate is not none %}{{ '%.1f' | format(totals.adopted_total_hit_rate) }}%{% else %}-{% endif %}<br>
-        <small>同一レースで複数の採用手法が該当した場合は、手法ごとの投資として合算します。</small>
+        <small>実際に「本日のレース」へ表示された確定スナップショットだけを集計します。再構築データは下表の参考表示に限定します。</small>
       </div>
     </article>
   </section>
@@ -126,6 +127,9 @@
           <tr class="{% if ns.has_signal %}has-l4{% endif %}">
             <td class="date-cell">
               <span class="date-text">{{ r.date }}</span>
+              <span style="display:block; margin-top:3px; font-size:10px; opacity:0.9;">
+                {% if r._adopted_from_market_signals_cache %}実運用{% else %}参考再構築{% endif %}
+              </span>
               <span style="display:block; margin-top:4px; font-size:11px; color:#facc15; opacity:0.95;">
                 HIT {{ r.adopted_total_hits }}/{{ r.adopted_total_bets }}
               </span>

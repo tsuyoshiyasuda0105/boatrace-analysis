@@ -4,7 +4,7 @@ import sqlite3
 import sys
 
 
-def test_member_strategy_uses_stale_daily_cache_metrics(tmp_path, monkeypatch):
+def test_member_strategy_keeps_stale_metrics_as_reference_only(tmp_path, monkeypatch):
     db_path = tmp_path / "boatrace.db"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -59,5 +59,5 @@ def test_member_strategy_uses_stale_daily_cache_metrics(tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     assert "1-3-4" in html
-    assert "n=1" in html
-    assert "HIT 1/1" in html
+    assert "実運用スナップショット 0日" in html
+    assert "参考再構築" in html

@@ -43,6 +43,12 @@ from flask import Flask, abort, jsonify, make_response, redirect, render_templat
 import config
 from src.collectors import openapi
 from src.db.connection import connect as db_connect
+from src.roi_contract import (
+    MARKET_SIGNALS_CACHE_VERSION,
+    ROI_DAILY_CACHE_VERSION,
+    STRATEGY_PAGE_CACHE_VERSION,
+    strategy_definition_signature,
+)
 from src.evaluation.course_fit_strategy import (
     COURSE_FIT_STRATEGIES,
     iter_backtest_matches as iter_course_fit_backtest_matches,
@@ -78,8 +84,6 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
-MARKET_SIGNALS_CACHE_VERSION = "v27"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v16"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -90,15 +94,7 @@ EXPENSIVE_RECOMPUTE_TRIGGERS = {
 
 def _strategy_definition_signature() -> str:
     """Invalidate derived page caches when adopted strategy definitions change."""
-    try:
-        strategy_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "adopted_strategies.md",
-        )
-        data = open(strategy_file, "rb").read()
-        return hashlib.sha1(data).hexdigest()[:10]
-    except Exception:
-        return "nosig"
+    return strategy_definition_signature()
 
 
 def _market_signals_cache_key(target_date: str) -> str:
@@ -12560,7 +12556,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73},
     )
     ACE_KIMARITE_WIN_KEYS = tuple(s["key"] for s in ACE_KIMARITE_WIN_STRATEGY_DEFS)
-    ADOPTED_DAILY_SELECT_VERSION = "adopted_daily_select_v36"
+    ADOPTED_DAILY_SELECT_VERSION = ROI_DAILY_CACHE_VERSION
     ADOPTED_DAILY_SELECT_COMPAT_VERSIONS = {
         ADOPTED_DAILY_SELECT_VERSION,
     }
@@ -12658,7 +12654,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 or f"{key}_pay" not in day_d
             ):
                 return False
-        return day_d.get("_adopted_daily_select_version") in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS
+        return bool(
+            day_d.get("_adopted_daily_select_version") in ADOPTED_DAILY_SELECT_COMPAT_VERSIONS
+            and day_d.get("_strategy_definition_signature") == _strategy_definition_signature()
+        )
 
     def _settled_race_ids_for_range(from_date: str, to_date: str) -> set[str]:
         """Race ids with confirmed result/payout rows.
@@ -12799,6 +12798,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         continue
                     if not isinstance(day_d, dict):
                         continue
+                    day_d.setdefault(
+                        "_adopted_snapshot_source",
+                        "market_snapshot" if day_d.get("_adopted_from_market_signals_cache") else "raw_reconstructed",
+                    )
                     if not _adopted_daily_cache_is_valid(str(rdate), day_d):
                         if not _roi_cache_day_has_saved_metrics(day_d):
                             continue
@@ -13593,22 +13596,39 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             selected_by_date: dict[str, list[tuple[str, str, list[tuple[str, str]]]]] = {}
 
             for rdate, day_d in by_date.items():
-                payload = _read_json_cache_stale(_market_signals_cache_key(rdate))
+                # The stable last-good snapshot is the operational ledger for
+                # that day.  Do not discard it when a later strategy addition
+                # bumps the current market-signals cache generation.
+                payload = _read_json_cache_stale(_market_signals_last_good_cache_key(rdate))
+                snapshot_source = "last_good"
                 if (
                     not isinstance(payload, dict)
                     or _is_pending_market_signals_payload(payload)
                     or payload.get("date") != rdate
-                    or payload.get("cache_version") != MARKET_SIGNALS_CACHE_VERSION
+                    or not isinstance(payload.get("signals"), dict)
+                ):
+                    payload = _read_json_cache_stale(_market_signals_cache_key(rdate))
+                    snapshot_source = "current"
+                if (
+                    not isinstance(payload, dict)
+                    or _is_pending_market_signals_payload(payload)
+                    or payload.get("date") != rdate
+                    or (
+                        snapshot_source == "current"
+                        and payload.get("cache_version") != MARKET_SIGNALS_CACHE_VERSION
+                    )
                 ):
                     day_d["_adopted_from_market_signals_cache"] = False
                     day_d["_adopted_market_signals_cache_missing"] = True
                     day_d["_adopted_from_raw_fallback"] = True
+                    day_d["_adopted_snapshot_source"] = "raw_reconstructed"
                     continue
                 signals = payload.get("signals") or {}
                 if not isinstance(signals, dict):
                     day_d["_adopted_from_market_signals_cache"] = False
                     day_d["_adopted_market_signals_cache_missing"] = True
                     day_d["_adopted_from_raw_fallback"] = True
+                    day_d["_adopted_snapshot_source"] = "raw_reconstructed"
                     continue
 
                 selected: list[tuple[str, str, list[tuple[str, str]]]] = []
@@ -13644,6 +13664,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 day_d["_adopted_from_market_signals_cache"] = True
                 day_d["_adopted_market_signals_cache_missing"] = False
                 day_d["_adopted_from_raw_fallback"] = False
+                day_d["_adopted_snapshot_source"] = snapshot_source
                 selected_by_date[rdate] = selected
                 for race_id, level, parsed_bets in selected:
                     rows_to_lookup.extend((rdate, race_id, level, bet_type, combo) for bet_type, combo in parsed_bets)
@@ -16914,6 +16935,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         day_d["_accident_dent_version"] = ACCIDENT_DENT_CACHE_VERSION
                         day_d["_ace_kimarite_win_version"] = ACE_KIMARITE_WIN_CACHE_VERSION
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
+                        day_d["_strategy_definition_signature"] = _strategy_definition_signature()
                         def _roi_cache_json_default(value):
                             try:
                                 from decimal import Decimal as _Decimal
@@ -17041,6 +17063,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         for version_key, expected_version in required_versions:
                             day_d[version_key] = expected_version
                         day_d["_adopted_daily_select_version"] = ADOPTED_DAILY_SELECT_VERSION
+                        day_d["_strategy_definition_signature"] = _strategy_definition_signature()
                         for key in ROI_STRATEGY_KEYS:
                             day_d.setdefault(f"{key}_bets", 0)
                             day_d.setdefault(f"{key}_hits", 0)
@@ -17679,7 +17702,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     ROI_STRATEGIES = (
         {"key": "a1_ace_motor_123_corr_tri", "label": "1号艇A1エースM 1-2-3", "short": "a1ace123", "color": "#facc15", "timing": "previous_day"},
         {"key": "g23_optb_tri", "label": "G2/G3 1-2-3", "short": "g23", "color": "#ff006e", "timing": "same_day"},
-        {"key": "gmkf_132_tri", "label": "蒲郡 潮 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
+        {"key": "gmkf_132_tri", "label": "蒲宮児福 1-3-2", "short": "gmkf132", "color": "#e11d48", "timing": "same_day"},
         {"key": "shimonoseki_123_tri", "label": "下関 1-2-3", "short": "shm123", "color": "#22c55e", "timing": "previous_day"},
         {"key": "tsu_124_tri", "label": "津 1-2-4", "short": "tsu124", "color": "#0ea5e9", "timing": "previous_day"},
         {"key": "amagasaki_143_tri", "label": "尼崎 1-4-3", "short": "ama143", "color": "#f97316", "timing": "same_day"},
@@ -17786,6 +17809,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         for i, strategy in enumerate(ACE_KIMARITE_WIN_STRATEGY_DEFS)
     )
     ROI_STRATEGY_KEYS = tuple(s["key"] for s in ROI_STRATEGIES)
+    if len(ROI_STRATEGY_KEYS) != len(set(ROI_STRATEGY_KEYS)):
+        duplicates = sorted({key for key in ROI_STRATEGY_KEYS if ROI_STRATEGY_KEYS.count(key) > 1})
+        raise RuntimeError(f"duplicate ROI strategy keys: {duplicates}")
+
+    # ROI_STRATEGIES is the single adopted-strategy registry.  The live market
+    # list, supported levels, and ROI dashboard must never maintain separate
+    # key lists; adding a strategy to the registry automatically enables it in
+    # every consumer.
+    MARKET_SIGNAL_ADOPTED_LEVELS = ROI_STRATEGY_KEYS
+    MARKET_SIGNAL_SUPPORTED_LEVELS = tuple(dict.fromkeys(
+        MARKET_SIGNAL_ADOPTED_LEVELS
+        + MARKET_SIGNAL_WATCH_LEVELS
+        + MARKET_SIGNAL_EXTRA_SUPPORTED_LEVELS
+    ))
+    MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES = tuple(
+        f"l4-{level}" for level in MARKET_SIGNAL_SUPPORTED_LEVELS
+    )
     ROI_METRIC_EXTRA_KEYS = (
         "win", "exa", "tri", "c80", "pro", "sgg12",
         "gen_tri", "gen_plus_tri", "gen_f1_tri", "gen_200_tri",
@@ -18008,22 +18048,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             r["adopted_total_recovery"] = ((adopted_pay_v / adopted_cost_v) * 100) if adopted_cost_v else None
             r["adopted_total_profit"] = adopted_pay_v - adopted_cost_v if adopted_cost_v else 0
 
+        # Only immutable market snapshots represent picks that were actually
+        # shown. Reconstructed historical matches stay in the daily table as
+        # reference data and must not be mixed into operational ROI totals.
+        operational_rows = [
+            r for r in rows if bool(r.get("_adopted_from_market_signals_cache"))
+        ]
+        reconstructed_rows = [r for r in rows if r not in operational_rows]
+
         # 通算集計 (L4 = A1 のみ + サブカテゴリ別 ROI)
         totals = {
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
-            "adopted_total_bets": sum(r.get("adopted_total_bets", 0) for r in rows),
-            "adopted_total_hits": sum(r.get("adopted_total_hits", 0) for r in rows),
+            "adopted_total_bets": sum(r.get("adopted_total_bets", 0) for r in operational_rows),
+            "adopted_total_hits": sum(r.get("adopted_total_hits", 0) for r in operational_rows),
             "adopted_total_pay": sum(
                 int(r.get(f"{key}_pay", 0) or 0)
-                for r in rows
+                for r in operational_rows
                 for key in adopted_keys
             ),
             "adopted_total_cost": sum(
                 int(r.get(f"{key}_bets", 0) or 0) * BET_UNIT_MAP.get(key, 100)
-                for r in rows
+                for r in operational_rows
                 for key in adopted_keys
             ),
+            "operational_day_count": len(operational_rows),
+            "reconstructed_day_count": len(reconstructed_rows),
         }
         totals["adopted_total_hit_rate"] = (
             (totals["adopted_total_hits"] / totals["adopted_total_bets"]) * 100
@@ -18040,15 +18090,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         totals["latest_data_date"] = max(
             (
                 str(r.get("date"))
-                for r in rows
+                for r in operational_rows
                 if int(r.get("n_total", 0) or 0) > 0
             ),
             default=None,
         )
         for k in adopted_keys:
-            totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in rows)
-            totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in rows)
-            totals[f"{k}_pay"]  = sum(r.get(f"{k}_pay", 0)  for r in rows)
+            totals[f"{k}_bets"] = sum(r.get(f"{k}_bets", 0) for r in operational_rows)
+            totals[f"{k}_hits"] = sum(r.get(f"{k}_hits", 0) for r in operational_rows)
+            totals[f"{k}_pay"]  = sum(r.get(f"{k}_pay", 0)  for r in operational_rows)
             n = totals[f"{k}_bets"]; pay = totals[f"{k}_pay"]
             unit = BET_UNIT_MAP.get(k, 100)
             totals[f"{k}_roi"] = (pay - unit*n)/(unit*n)*100 if n else None
@@ -18113,7 +18163,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         totals["mid_132_tier_a_tri_recovery"] = totals.get("cand4_tri_recovery")
         totals["mid_132_tier_a_tri_profit"] = totals.get("cand4_tri_profit", 0)
 
-        today_row = next((r for r in rows if str(r.get("date")) == to_d), None)
+        today_row = next((r for r in operational_rows if str(r.get("date")) == to_d), None)
         today_bets = sum(int((today_row or {}).get(f"{k}_bets", 0) or 0) for k in adopted_keys)
         today_hits = sum(int((today_row or {}).get(f"{k}_hits", 0) or 0) for k in adopted_keys)
         today_active_strategies = []
@@ -18216,14 +18266,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             })
             m["n_total"] += r.get("n_total", 0) or 0
             m["n_l4"]    += r.get("n_l4", 0) or 0
-            if r["date"] >= STRICT_ODDS_DAILY_START:
+            is_operational_snapshot = bool(r.get("_adopted_from_market_signals_cache"))
+            if is_operational_snapshot:
                 m["actual_days"] += 1
             else:
                 m["reference_days"] += 1
-            for k in bet_keys:
-                m[f"{k}_bets"] += r.get(f"{k}_bets", 0) or 0
-                m[f"{k}_hits"] += r.get(f"{k}_hits", 0) or 0
-                m[f"{k}_pay"]  += r.get(f"{k}_pay", 0)  or 0
+            if is_operational_snapshot:
+                for k in bet_keys:
+                    m[f"{k}_bets"] += r.get(f"{k}_bets", 0) or 0
+                    m[f"{k}_hits"] += r.get(f"{k}_hits", 0) or 0
+                    m[f"{k}_pay"]  += r.get(f"{k}_pay", 0)  or 0
 
         try:
             month_cursor = date.fromisoformat(monthly_from).replace(day=1)

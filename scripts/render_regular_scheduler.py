@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.db.connection import connect as db_connect
+from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature
 import config
 
 
@@ -26,12 +27,6 @@ ORIGINAL_EXHIBITION_RECOVERY_LIMIT = 48
 ORIGINAL_EXHIBITION_CATCHUP_PAST_MIN = 36 * 60
 ORIGINAL_EXHIBITION_CATCHUP_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_CATCHUP_LIMIT = 96
-# Keep this in sync with src.web.app.ADOPTED_DAILY_SELECT_VERSION.
-# If this lags behind, the self-heal path treats fresh ROI rows as stale and
-# can leave the dashboard looking empty after a successful cron run.
-ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v34"
-
-
 def jst_now() -> datetime:
     return datetime.now(tz=JST)
 
@@ -439,6 +434,7 @@ def roi_daily_cache_needs_repair(target_date: str) -> bool:
         return bool(
             payload.get("_adopted_market_signals_cache_missing")
             or payload.get("_adopted_daily_select_version") != ROI_DAILY_CACHE_VERSION
+            or payload.get("_strategy_definition_signature") != strategy_definition_signature(REPO)
         )
     except Exception as exc:
         print(f"[roi-cache] check failed: {type(exc).__name__}: {exc}", flush=True)

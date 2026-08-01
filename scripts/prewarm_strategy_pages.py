@@ -21,6 +21,7 @@ from src.web.app import (  # noqa: E402
     _read_json_cache_stale,
 )
 from src.db.connection import connect as db_connect  # noqa: E402
+from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature  # noqa: E402
 from scripts.ensure_performance_indexes import ensure_performance_indexes  # noqa: E402
 
 
@@ -33,7 +34,6 @@ MODES = (
     "nightly",
 )
 JST = ZoneInfo("Asia/Tokyo")
-ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v34"
 
 
 def _validate_market_signal_response(resp, path: str) -> tuple[bool, str]:
@@ -125,6 +125,8 @@ def _validate_member_strategy_cache(path: str) -> tuple[bool, str]:
         version = payload.get("_adopted_daily_select_version")
         if version != ROI_DAILY_CACHE_VERSION:
             missing.append(f"{rdate}:version={version or '-'}")
+        elif payload.get("_strategy_definition_signature") != strategy_definition_signature(REPO):
+            missing.append(f"{rdate}:strategy-signature")
 
     if missing:
         return False, "roi daily cache missing/invalid " + ",".join(missing[:8])
