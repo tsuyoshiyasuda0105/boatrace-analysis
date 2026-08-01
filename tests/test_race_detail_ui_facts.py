@@ -93,7 +93,7 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "original.dash_time" in source
     assert "original.turn_time" in source
     assert "original.straight_time" in source
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v4"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v5"' in source
 
 
 def test_cached_predictions_include_same_display_facts_as_fallback_rows():
@@ -111,7 +111,35 @@ def test_cached_predictions_include_same_display_facts_as_fallback_rows():
 def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v4"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v5"' in source
+
+
+def test_motor_marks_use_same_original_exhibition_source_in_table_and_history():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+
+    assert "def _motor_fact_grade_from_original_mark" in source
+    assert '_motor_fact_grade_from_original_mark(p.get("dash_mark"), p.get("dash_rank"))' in source
+    assert '_motor_fact_grade_from_original_mark(p.get("turn_mark"), p.get("turn_rank"))' in source
+    assert '_motor_fact_grade_from_original_mark(p.get("straight_mark"), p.get("straight_rank"))' in source
+
+    start = source.index("def _attach_race_detail_display_facts")
+    end = source.index("def _motor_history_payload", start)
+    display_facts = source[start:end]
+    assert "original_marks = _original_exhibition_quality_marks([race_id]).get(race_id, {})" in display_facts
+    assert "p.update(original_marks.get(boat_number, {}))" in display_facts
+
+
+def test_motor_history_current_row_includes_result_and_new_cache_version():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    start = source.index("def _motor_history_payload")
+    end = source.index("def _build_race_compat_analysis", start)
+    payload_source = source[start:end]
+
+    assert "LEFT JOIN race_results rr" in payload_source
+    assert "rr.finishing_position" in payload_source
+    assert '"finishing_position": current_finishing_position' in payload_source
+    assert '"course_number": current_course_number' in payload_source
+    assert 'cache_key = f"motor_history_v9:{race_id}:{boat_number}"' in source
 
 
 def test_race_detail_request_uses_only_precomputed_display_tags():

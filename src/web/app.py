@@ -1365,6 +1365,19 @@ def _motor_fact_grade(score: Optional[float]) -> dict[str, Any]:
     return {"label": "×", "tone": "weak", "score": round(score, 1)}
 
 
+def _motor_fact_grade_from_original_mark(mark: Optional[str], rank: Optional[int]) -> Optional[dict[str, Any]]:
+    if not mark:
+        return None
+    tone = {
+        "◎": "aa",
+        "〇": "good",
+        "○": "good",
+        "△": "flat",
+        "×": "weak",
+    }.get(str(mark), "unknown")
+    return {"label": str(mark), "tone": tone, "score": rank}
+
+
 def _attach_motor_fact_grades(
     race_id: str,
     preds: list[dict],
@@ -1423,9 +1436,18 @@ def _attach_motor_fact_grades(
             if motor_rate is not None and avg_motor is not None:
                 straight_score += _clamp((motor_rate - avg_motor) / 20.0 * 14.0, -14.0, 14.0)
 
-        p["motor_dash_grade"] = _motor_fact_grade(dash_score)
-        p["motor_turn_grade"] = _motor_fact_grade(turn_score)
-        p["motor_straight_grade"] = _motor_fact_grade(straight_score)
+        p["motor_dash_grade"] = (
+            _motor_fact_grade_from_original_mark(p.get("dash_mark"), p.get("dash_rank"))
+            or _motor_fact_grade(dash_score)
+        )
+        p["motor_turn_grade"] = (
+            _motor_fact_grade_from_original_mark(p.get("turn_mark"), p.get("turn_rank"))
+            or _motor_fact_grade(turn_score)
+        )
+        p["motor_straight_grade"] = (
+            _motor_fact_grade_from_original_mark(p.get("straight_mark"), p.get("straight_rank"))
+            or _motor_fact_grade(straight_score)
+        )
         if ace_threshold is not None:
             p["is_ace_motor"] = bool(
                 motor_rate is not None and motor_rate >= ace_threshold
@@ -3045,7 +3067,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v4"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v4"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v5"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -3339,6 +3361,7 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
             ).fetchall()
     facts = {int(row[0]): row for row in rows}
     course_facts = {int(row[0]): row for row in course_rows}
+    original_marks = _original_exhibition_quality_marks([race_id]).get(race_id, {})
     for p in preds:
         try:
             boat_number = int(p.get("boat_number"))
@@ -3355,6 +3378,7 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
         p["dash_time"] = row[6]
         p["turn_time"] = row[7]
         p["straight_time"] = row[8]
+        p.update(original_marks.get(boat_number, {}))
         course_row = course_facts.get(boat_number)
         if course_row:
             venue_starts = int(course_row[1] or 0)
@@ -3403,11 +3427,16 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
                pv.start_timing_exhibition,
                original.dash_time,
                original.turn_time,
-               original.straight_time
+               original.straight_time,
+               COALESCE(NULLIF(rr.course_number, 0), pv.course_number) AS course_number,
+               rr.finishing_position
           FROM race_entries
           LEFT JOIN race_previews pv
             ON pv.race_id = race_entries.race_id
            AND pv.boat_number = race_entries.boat_number
+          LEFT JOIN race_results rr
+            ON rr.race_id = race_entries.race_id
+           AND rr.boat_number = race_entries.boat_number
           LEFT JOIN original
             ON original.race_id = race_entries.race_id
            AND original.boat_number = race_entries.boat_number
@@ -3424,11 +3453,16 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
                pv.start_timing_exhibition,
                NULL AS dash_time,
                NULL AS turn_time,
-               NULL AS straight_time
+               NULL AS straight_time,
+               COALESCE(NULLIF(rr.course_number, 0), pv.course_number) AS course_number,
+               rr.finishing_position
           FROM race_entries
           LEFT JOIN race_previews pv
             ON pv.race_id = race_entries.race_id
            AND pv.boat_number = race_entries.boat_number
+          LEFT JOIN race_results rr
+            ON rr.race_id = race_entries.race_id
+           AND rr.boat_number = race_entries.boat_number
          WHERE race_entries.race_id = ? AND race_entries.boat_number = ?
     """
     try:
@@ -3465,6 +3499,8 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         current_dash_time,
         current_turn_time,
         current_straight_time,
+        current_course_number,
+        current_finishing_position,
     ) = current_row
     cycle_start = _motor_cycle_start(info["race_date"], info["stadium_number"])
     current = {
@@ -3485,6 +3521,8 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "motor_replacement_month": _MOTOR_REPLACEMENT_MONTH.get(info["stadium_number"]),
         "exhibition_time": current_ex_time,
         "start_timing_exhibition": current_ex_st,
+        "course_number": current_course_number,
+        "finishing_position": current_finishing_position,
         "dash_time": current_dash_time,
         "turn_time": current_turn_time,
         "straight_time": current_straight_time,
@@ -5065,7 +5103,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         info = _race_basic_info(race_id)
         if not info:
             return jsonify({"error": "entry not found"}), 404
-        cache_key = f"motor_history_v8:{race_id}:{boat_number}"
+        cache_key = f"motor_history_v9:{race_id}:{boat_number}"
         cached_payload = _read_json_cache_stale(cache_key)
         if cached_payload is not None:
             position_rows = cached_payload.get("position_rows") if isinstance(cached_payload, dict) else None

@@ -28,7 +28,7 @@ from src.web import app as web_app  # noqa: E402
 
 
 JST = ZoneInfo("Asia/Tokyo")
-MOTOR_CACHE_VERSION = "v8"
+MOTOR_CACHE_VERSION = "v9"
 
 
 def _race_ids(target_date: str) -> list[str]:

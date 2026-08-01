@@ -44,9 +44,12 @@ def test_web_app_keeps_legacy_clear_cache_hook_for_cron_rollouts():
 
 def test_motor_history_can_be_run_alone_with_bounded_parallelism():
     source = (ROOT / "scripts" / "prewarm_race_detail_data.py").read_text(encoding="utf-8")
+    refresh_source = (ROOT / "scripts" / "refresh_race_detail_after_exhibition.py").read_text(encoding="utf-8")
 
     assert 'choices=("all", "motor")' in source
     assert "ThreadPoolExecutor(max_workers=max(1, workers))" in source
+    assert 'MOTOR_CACHE_VERSION = "v9"' in source
+    assert 'MOTOR_CACHE_VERSION = "v9"' in refresh_source
     assert 'BOATRACE_MOTOR_PREWARM_WORKERS", "4"' in source
     assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
 

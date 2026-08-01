@@ -28,7 +28,7 @@ from src.db.connection import connect as db_connect  # noqa: E402
 from src.web import app as web_app  # noqa: E402
 
 
-MOTOR_CACHE_VERSION = "v8"
+MOTOR_CACHE_VERSION = "v9"
 JST = ZoneInfo("Asia/Tokyo")
 BEFOREINFO_WINDOW_MIN = 5
 BEFOREINFO_WINDOW_MAX = 9
