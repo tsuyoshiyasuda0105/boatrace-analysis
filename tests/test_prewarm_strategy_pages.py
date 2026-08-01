@@ -49,8 +49,12 @@ def test_morning_and_nightly_refresh_market_signal_snapshot():
 def test_history_mode_contains_only_historical_roi_pages():
     targets = build_targets("history", TODAY)
 
-    assert targets[0] == "/member/strategy?from=2023-07-19&to=2026-07-18&recompute=1"
-    assert "/member/strategy/monthly?recompute=1" in targets
+    assert targets == [
+        "/member/strategy?from=2026-06-18&to=2026-07-18&recompute=1",
+        "/member/strategy?from=2026-06-18&to=2026-07-18",
+    ]
+    assert all("2023-07-19" not in target for target in targets)
+    assert all("/member/strategy/monthly" not in target for target in targets)
     assert all("/api/market-signals" not in target for target in targets)
 
 

@@ -198,16 +198,15 @@ def build_targets(mode: str, today: date) -> list[str]:
         return [f"/api/market-signals?date={today_s}&recompute=1"]
 
     if mode == "history":
-        # Historical ROI is isolated from the five-minute signal refresh.
+        # Keep the regular Render cron below the Starter 512MiB memory cap.
+        # Recomputing 3y/1y/monthly ROI pages in one Flask process repeatedly
+        # OOMs on Render, so the scheduled history slot only refreshes the
+        # short finalized window that changes day to day. Long-range pages are
+        # served from persisted ROI history/cache and can be rebuilt manually
+        # with a larger one-off job when strategy definitions change.
         return [
-            f"/member/strategy?from={d3y}&to={today_s}&recompute=1",
-            f"/member/strategy?from={d365}&to={today_s}&recompute=1",
             f"/member/strategy?from={d30}&to={today_s}&recompute=1",
-            f"/member/strategy/monthly?recompute=1",
-            f"/member/strategy?from={d3y}&to={today_s}",
-            f"/member/strategy?from={d365}&to={today_s}",
             f"/member/strategy?from={d30}&to={today_s}",
-            "/member/strategy/monthly",
         ]
 
     if mode == "nightly":
