@@ -18,6 +18,12 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     source = (ROOT / "scripts" / "refresh_race_detail_after_exhibition.py").read_text(encoding="utf-8")
 
     assert "delay_seconds: int = 60" in source
+    assert "def collect_live_exhibition" in source
+    assert "live_beforeinfo.find_due_races" in source
+    assert "live_beforeinfo.find_recent_incomplete_races" in source
+    assert "original_exhibition_collector.collect_for_races" in source
+    assert '["scripts/render_cache_predictions.py", "--date", target_date]' in source
+    assert '["scripts/generate_start_predictions.py", "--date", target_date]' in source
     assert "page_ts < source_ts" in source
     assert "CAST(MAX(c.updated_at) AS DOUBLE PRECISION)" in source
     assert 'client.get(f"/race/{race_id}?recompute=1")' in source
@@ -52,8 +58,18 @@ def test_render_blueprint_separates_daily_and_exhibition_jobs():
     assert 'schedule: "0 0 * * *"' in source
     assert "python scripts/prewarm_race_detail_data.py" in source
     assert "name: boatrace-exhibition-detail-cron" in source
-    assert 'schedule: "* * * * *"' in source
+    assert 'schedule: "*/2 * * * *"' in source
     assert "python scripts/refresh_race_detail_after_exhibition.py" in source
+
+
+def test_regular_scheduler_no_longer_collects_exhibition_data():
+    source = (ROOT / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    main = source.split("def main() -> int:", 1)[1]
+
+    assert "run_beforeinfo(now)" not in main
+    assert "run_original_exhibition_catchup" not in main
+    assert "generate_start_predictions.py" not in main
+    assert "owned by boatrace-exhibition-detail-cron" in main
 
 
 def test_ace_kimarite_query_uses_race_entries_racer_number():

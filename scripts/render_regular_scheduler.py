@@ -890,36 +890,9 @@ def main() -> int:
     if morning_end <= now < now.replace(hour=22, minute=0, second=0, microsecond=0):
         run_morning_catchup_if_needed(now)
 
-    # Live beforeinfo/weather correction. The scrape function has its own cooldown.
-    if 8 <= now.hour <= 22:
-        try:
-            beforeinfo_ok = run_beforeinfo(now)
-            record_task(
-                "render_beforeinfo_live",
-                today,
-                "success" if beforeinfo_ok else "failure",
-                detail=f"checked_at={now.isoformat(timespec='minutes')}",
-            )
-        except Exception as exc:
-            detail = f"{type(exc).__name__}: {exc}"[:1000]
-            print(f"[beforeinfo] failed: {detail}", flush=True)
-            record_task("render_beforeinfo_live", today, "failure", detail=detail)
-        run_py(["scripts/generate_start_predictions.py", "--date", today], timeout=900)
-        # run_beforeinfo rebuilds the snapshot only when source rows changed.
-        # Recomputing it unconditionally here duplicated the heaviest query and
-        # could overlap the next five-minute cron run.
-
-    # Original exhibition pages can appear later than the official beforeinfo
-    # rows. Recover missed rows once per hour so motor-rank UI does not stay
-    # blank after a transient fetch failure or Render restart.
-    if now.minute < 5 and 8 <= now.hour <= 23:
-        run_original_exhibition_catchup(now, today, label="today")
-
-    # The previous day's late races are no longer in the live close-time window.
-    # Check them during the morning window and fill anything still missing.
-    if now.minute < 5 and 6 <= now.hour <= 10:
-        yesterday = (now.date() - timedelta(days=1)).isoformat()
-        run_original_exhibition_catchup(now, yesterday, label="yesterday")
+    # Live beforeinfo/original-exhibition collection and race-detail refresh are
+    # owned by boatrace-exhibition-detail-cron. Keeping them out of the regular
+    # five-minute scheduler prevents duplicate exhibition fetches.
 
     # Refresh source-dependent candidates before the slower result poll. This
     # keeps the dashboard snapshot close to the five-minute cron cadence.
