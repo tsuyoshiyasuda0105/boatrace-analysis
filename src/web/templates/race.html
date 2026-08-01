@@ -376,13 +376,8 @@
               <td class="left">
                 <span class="lane lane-{{ p.boat_number }}">{{ p.boat_number }}</span>
                 <span class="racer-identity">
-                  <button
-                    type="button"
-                    class="racer-detail-btn"
-                    data-race-id="{{ info.race_id }}"
-                    data-boat-number="{{ p.boat_number }}"
-                    aria-expanded="false"
-                    aria-controls="racer-detail-row-{{ p.boat_number }}"
+                  <span
+                    class="racer-name-static"
                     title="選手のコース別成績を表示"
                   >
                     <span class="racer-name-line">
@@ -391,7 +386,7 @@
                       {% set cls_label = cls_map.get(p.class_number, '-') %}
                       <span class="racer-class-badge racer-class-badge--name is-{{ cls_label | lower }}">{{ cls_label }}</span>
                     </span>
-                  </button>
+                  </span>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
                   <span class="racer-course-win-sample"
                         title="{{ p.boat_number }}コース1着率: 上段は当該会場の直近10走、下段は全国同コース累計">

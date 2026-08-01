@@ -196,9 +196,55 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                 """,
                 (accident_period_start, payload_date),
             ).fetchall()
+            escape_rows = conn.execute(
+                """
+                WITH target_boat1 AS (
+                    SELECT r.race_id,
+                           e.racer_number
+                      FROM races r
+                      JOIN race_entries e
+                        ON e.race_id = r.race_id
+                       AND e.boat_number = 1
+                     WHERE r.race_date = ?
+                       AND e.racer_number IS NOT NULL
+                )
+                SELECT t.race_id,
+                       COUNT(*) AS starts,
+                       SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                  FROM target_boat1 t
+                  JOIN race_entries e
+                    ON e.racer_number = t.racer_number
+                  JOIN races r
+                    ON r.race_id = e.race_id
+                   AND r.race_date < ?
+                  JOIN race_results rr
+                    ON rr.race_id = e.race_id
+                   AND rr.boat_number = e.boat_number
+                 WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
+                   AND rr.finishing_position IS NOT NULL
+                 GROUP BY t.race_id
+                """,
+                (payload_date, payload_date),
+            ).fetchall()
     except Exception as exc:  # noqa: BLE001
         logger.warning("market race badge hydration failed: %s", exc)
         return payload
+
+    escape_by_race: dict[str, dict[str, Any]] = {}
+    for rid, starts, wins in escape_rows:
+        starts_i = int(starts or 0)
+        wins_i = int(wins or 0)
+        if starts_i <= 0:
+            continue
+        rate = wins_i / starts_i * 100.0
+        if rate >= 70.0:
+            escape_by_race[str(rid)] = {
+                "boat": 1,
+                "label": "逃げ",
+                "rate": round(rate, 1),
+                "wins": wins_i,
+                "starts": starts_i,
+            }
 
     by_race: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -243,6 +289,15 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
     ace_threshold_cache: dict[int, Optional[float]] = {}
     for rid, info in by_race.items():
         badge_info: dict[str, Any] = {}
+        direct_escape = escape_by_race.get(rid)
+        if direct_escape:
+            badge_info["escape"] = {
+                "items": [direct_escape],
+                "boats": [1],
+                "max_rate": direct_escape["rate"],
+                "label": f"1号:逃げ {direct_escape['rate']:.1f}%",
+            }
+
         accident_items = info.get("accident_items") or []
         if accident_items:
             accident_items.sort(
@@ -2989,8 +3044,8 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v3"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v3"
+RACE_DETAIL_TAG_CACHE_VERSION = "v4"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v4"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -3026,15 +3081,6 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
     except Exception:
         accident_by_racer = {}
         logger.warning("accident tag snapshot failed for %s", race_id, exc_info=True)
-
-    # Regenerate the technique cache during the scheduled job. The query is
-    # strictly bounded to races before the target date.
-    try:
-        kimarite_tags = _kimarite_skill_tags_for_race(race_id)
-        _write_json_cache(f"race_kimarite_tags:v2:{race_id}", kimarite_tags)
-    except Exception:
-        kimarite_tags = {}
-        logger.warning("kimarite tag snapshot failed for %s", race_id, exc_info=True)
 
     try:
         ace_threshold = _ace_motor_threshold(
@@ -3074,9 +3120,6 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
             and ace_threshold is not None
             and motor_rate >= ace_threshold
         )
-        kimarite = kimarite_tags.get(int(boat_number))
-        if kimarite:
-            boat["kimarite_skill"] = kimarite
         if int(boat_number) == 1 and boat1_escape:
             escape_rate = _safe_float(boat1_escape.get("rate"))
             if escape_rate is not None and escape_rate >= 70.0:

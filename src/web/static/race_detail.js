@@ -15,7 +15,7 @@
     if (
       inspectorShell
       && startPredictionShell
-      && (inspectorShell.compareDocumentPosition(startPredictionShell) & Node.DOCUMENT_POSITION_PRECEDING)
+      && inspectorShell.nextElementSibling !== startPredictionShell
     ) {
       startPredictionShell.parentNode.insertBefore(inspectorShell, startPredictionShell);
     }
@@ -399,10 +399,6 @@
       event.stopPropagation();
       openMotorHistory(button.dataset.raceId, button.dataset.boatNumber, button);
     });
-  });
-
-  document.querySelectorAll(".racer-detail-btn").forEach((button) => {
-    button.addEventListener("click", () => openRacerDetail(button.dataset.raceId, button.dataset.boatNumber, button));
   });
 
   inspectorBody?.addEventListener("click", (event) => {

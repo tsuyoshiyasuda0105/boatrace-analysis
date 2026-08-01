@@ -93,7 +93,7 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "original.dash_time" in source
     assert "original.turn_time" in source
     assert "original.straight_time" in source
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v3"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v4"' in source
 
 
 def test_cached_predictions_include_same_display_facts_as_fallback_rows():
@@ -111,7 +111,7 @@ def test_cached_predictions_include_same_display_facts_as_fallback_rows():
 def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v3"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v4"' in source
 
 
 def test_race_detail_request_uses_only_precomputed_display_tags():
@@ -134,6 +134,7 @@ def test_race_detail_tag_snapshot_contains_all_three_tag_families():
 
     assert "escape_tag" in function_source
     assert "escape_rate >= 70.0" in function_source
+    assert "kimarite_skill" not in function_source
     assert "accident_display_level" in function_source
     assert "is_ace_motor" in function_source
 
@@ -150,19 +151,21 @@ def test_motor_position_rows_finish_before_display_fact_helper():
     assert function_source.rstrip().endswith("return out")
 
 
-def test_motor_and_racer_detail_click_targets_are_wired_separately():
+def test_only_motor_number_click_opens_detail_panel():
     template = RACE_TEMPLATE.read_text(encoding="utf-8")
     script = RACE_DETAIL_JS.read_text(encoding="utf-8")
 
-    assert 'class="racer-detail-btn"' in template
+    assert 'class="racer-detail-btn"' not in template
+    assert 'class="racer-name-static"' in template
     assert 'class="motor-history-btn"' in template
     assert "data-motor-position-boat" in script
     assert "openMotorHistory" in script
     assert "openRacerDetail" in script
     assert 'document.querySelectorAll(".motor-history-btn")' in script
-    assert 'document.querySelectorAll(".racer-detail-btn")' in script
+    assert 'document.querySelectorAll(".racer-detail-btn")' not in script
     assert 'activeMotorBoatNumber === requestedBoatNumber' in script
     assert 'keepCurrentHistoryVisible' in script
     assert 'event.preventDefault()' in script
     assert 'event.stopPropagation()' in script
-    assert 'inspectorShell.scrollIntoView' not in script[script.index("const openMotorHistory"):script.index("const openRacerDetail")]
+    assert 'document.querySelector("[data-start-prediction]")' in script
+    assert "insertBefore(inspectorShell, startPredictionShell)" in script

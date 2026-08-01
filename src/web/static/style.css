@@ -2095,7 +2095,8 @@ main h2 {
   box-shadow: 0 0 12px rgba(0, 212, 255, 0.12);
 }
 
-.racer-detail-btn {
+.racer-detail-btn,
+.racer-name-static {
   display: inline-flex;
   align-items: center;
   padding: 0;
@@ -2103,6 +2104,8 @@ main h2 {
   background: transparent;
   color: inherit;
   font: inherit;
+}
+.racer-detail-btn {
   cursor: pointer;
 }
 .racer-detail-btn:hover .racer-name,
@@ -2132,7 +2135,8 @@ main h2 {
   align-items: center;
   vertical-align: middle;
 }
-.racer-identity > .racer-detail-btn {
+.racer-identity > .racer-detail-btn,
+.racer-identity > .racer-name-static {
   grid-column: 1;
   grid-row: 1;
 }

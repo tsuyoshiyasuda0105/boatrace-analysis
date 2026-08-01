@@ -26,7 +26,7 @@ def test_tag_prewarm_covers_every_race_and_forces_snapshot_refresh():
 def test_escape_tag_uses_boat1_national_course1_win_rate():
     source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
 
-    assert "RACE_DETAIL_TAG_CACHE_VERSION = \"v3\"" in source
+    assert "RACE_DETAIL_TAG_CACHE_VERSION = \"v4\"" in source
     assert "def _boat1_national_course1_win_stats" in source
     assert "WHERE race_id = ? AND boat_number = 1" in source
     assert "COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1" in source
