@@ -18,6 +18,7 @@ def test_strategy_cleanup_keeps_lightweight_data_badges() -> None:
     )[1].split(";", 1)[0]
     assert "accident-watch-badge" not in strategy_selector
     assert "ace-motor-watch-badge" not in strategy_selector
+    assert "kimarite-watch-badge" not in strategy_selector
     assert "item.querySelectorAll(STRATEGY_BADGE_SELECTOR)" in source
 
 
@@ -31,3 +32,16 @@ def test_lightweight_badges_render_before_unchanged_digest_return() -> None:
     )
 
     assert render_position < unchanged_return_position
+
+
+def test_lightweight_badges_include_kimarite_and_render_on_top_page() -> None:
+    source = _source()
+
+    assert ".kimarite-watch-badge" in source
+    assert "const kimarite = badges?.kimarite;" in source
+    assert "primary?.kimarite" in source
+    assert "initial lightweight badges render failed" in source
+
+    render_position = source.index("initial lightweight badges render failed")
+    disabled_return_position = source.index("if (!marketSignalsEnabled) return;")
+    assert render_position < disabled_return_position

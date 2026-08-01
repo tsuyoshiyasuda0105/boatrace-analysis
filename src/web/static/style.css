@@ -3837,7 +3837,8 @@ main h2 {
 }
 
 .accident-watch-badge,
-.ace-motor-watch-badge {
+.ace-motor-watch-badge,
+.kimarite-watch-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3851,7 +3852,8 @@ main h2 {
 }
 
 .race-item a .accident-watch-badge,
-.race-item a .ace-motor-watch-badge {
+.race-item a .ace-motor-watch-badge,
+.race-item a .kimarite-watch-badge {
   position: absolute;
   bottom: 4px;
   z-index: 4;
@@ -3872,6 +3874,12 @@ main h2 {
   right: 4px;
 }
 
+.race-item a .kimarite-watch-badge {
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+}
+
 .accident-watch-badge {
   border: 1px solid rgba(248, 113, 113, 0.9);
   background: linear-gradient(135deg, rgba(127, 29, 29, 0.95), rgba(30, 41, 59, 0.9));
@@ -3887,10 +3895,19 @@ main h2 {
   box-shadow: 0 0 12px rgba(250, 204, 21, 0.42);
 }
 
+.kimarite-watch-badge {
+  border: 1px solid rgba(56, 189, 248, 0.9);
+  background: linear-gradient(135deg, rgba(12, 74, 110, 0.96), rgba(14, 165, 233, 0.82));
+  color: #e0f2fe;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.36);
+}
+
 .race-item.done .accident-watch-badge,
 .race-item.done .ace-motor-watch-badge,
+.race-item.done .kimarite-watch-badge,
 .race-item.is-closed .accident-watch-badge,
-.race-item.is-closed .ace-motor-watch-badge {
+.race-item.is-closed .ace-motor-watch-badge,
+.race-item.is-closed .kimarite-watch-badge {
   opacity: 1;
   filter: none;
 }

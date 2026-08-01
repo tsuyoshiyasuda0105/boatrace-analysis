@@ -130,7 +130,13 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
         return payload
     existing = payload.get("race_badges")
     if isinstance(existing, dict) and existing:
-        return payload
+        has_kimarite_badges = any(
+            isinstance(value, dict)
+            and value.get("kimarite")
+            for value in existing.values()
+        )
+        if has_kimarite_badges:
+            return payload
     payload = dict(payload)
     payload["race_badges"] = {}
     payload_date = str(payload.get("date") or target_date)
@@ -261,10 +267,107 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                         "label": " / ".join(f"{x['boat']}号M{x['rate']:.1f}" for x in ace_items[:3]),
                     }
 
+        detail_tags = _race_detail_tag_snapshot(rid, recompute=False)
+        boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else None
+        if isinstance(boats, dict):
+            accident_tag_items = []
+            for boat_key, tag in boats.items():
+                if not isinstance(tag, dict) or not tag.get("accident_display_level"):
+                    continue
+                boat_no = _safe_int(boat_key)
+                rate = _safe_float(tag.get("accident_rate"))
+                if boat_no is None or rate is None:
+                    continue
+                accident_tag_items.append(
+                    {
+                        "boat": boat_no,
+                        "tone": str(tag.get("accident_display_level") or "watch"),
+                        "rate": round(float(rate), 3),
+                        "points": int(tag.get("accident_points") or 0),
+                        "starts": int(tag.get("accident_starts") or 0),
+                    }
+                )
+            if accident_tag_items and not badge_info.get("accident"):
+                accident_tag_items.sort(
+                    key=lambda x: (
+                        float(x.get("rate") or 0.0),
+                        int(x.get("points") or 0),
+                    ),
+                    reverse=True,
+                )
+                display_items = accident_tag_items[:3]
+                badge_info["accident"] = {
+                    "items": display_items,
+                    "boats": [x["boat"] for x in accident_tag_items],
+                    "max_rate": accident_tag_items[0].get("rate"),
+                    "max_points": accident_tag_items[0].get("points"),
+                    "label": "事故率0.50+ " + " / ".join(
+                        f"{x['boat']}号:{float(x.get('rate') or 0):.2f}"
+                        for x in display_items
+                    ),
+                }
+
+            kimarite_items = []
+            for boat_key, tag in boats.items():
+                if not isinstance(tag, dict):
+                    continue
+                kimarite = tag.get("kimarite_skill")
+                if not isinstance(kimarite, dict):
+                    continue
+                boat_no = _safe_int(boat_key)
+                if boat_no is None:
+                    continue
+                kimarite_items.append(
+                    {
+                        "boat": boat_no,
+                        "label": str(kimarite.get("label") or ""),
+                        "kimarite": str(kimarite.get("kimarite") or ""),
+                        "rate": _safe_float(kimarite.get("rate")),
+                        "is_strong_escape": bool(kimarite.get("is_strong_escape")),
+                    }
+                )
+            if kimarite_items:
+                kimarite_items.sort(
+                    key=lambda x: (
+                        bool(x.get("is_strong_escape")),
+                        float(x.get("rate") or 0.0),
+                    ),
+                    reverse=True,
+                )
+                badge_info["kimarite"] = {
+                    "items": kimarite_items[:3],
+                    "boats": [x["boat"] for x in kimarite_items],
+                    "label": " / ".join(
+                        f"{x['boat']}号:{x['label']}" for x in kimarite_items[:3]
+                    ),
+                }
+
         if badge_info:
             race_badges[rid] = badge_info
     payload["race_badges"] = race_badges
     return payload
+
+
+def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str, Any]:
+    for cache_key in (
+        _market_signals_last_good_cache_key(target_date),
+        _market_signals_cache_key(target_date),
+    ):
+        payload = _read_json_cache_stale(cache_key)
+        if not isinstance(payload, dict) or payload.get("date") != target_date:
+            continue
+        race_badges = payload.get("race_badges")
+        if isinstance(race_badges, dict) and race_badges:
+            return {
+                "date": target_date,
+                "race_badges": race_badges,
+                "accident_watch": {},
+            }
+    return {
+        "date": target_date,
+        "race_badges": {},
+        "accident_watch": {},
+    }
 
 
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
@@ -4073,6 +4176,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
             market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
             market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
+            initial_market_signals=_race_grid_badges_payload(
+                target_date,
+                [str(r.get("race_id")) for r in races_list],
+            ),
             roi_picks_visible=False,
             empty=False,
         ))
@@ -12463,6 +12570,81 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                             "threshold": round(float(ace_threshold), 1),
                             "label": " / ".join(f"{x['boat']}号M{x['rate']:.1f}" for x in ace_items[:3]),
                         }
+
+            detail_tags = _race_detail_tag_snapshot(rid, recompute=False)
+            boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else None
+            if isinstance(boats, dict):
+                accident_tag_items = []
+                for boat_key, tag in boats.items():
+                    if not isinstance(tag, dict) or not tag.get("accident_display_level"):
+                        continue
+                    boat_no = _safe_int(boat_key)
+                    rate = _safe_float(tag.get("accident_rate"))
+                    if boat_no is None or rate is None:
+                        continue
+                    accident_tag_items.append(
+                        {
+                            "boat": boat_no,
+                            "tone": str(tag.get("accident_display_level") or "watch"),
+                            "rate": round(float(rate), 3),
+                            "points": int(tag.get("accident_points") or 0),
+                            "starts": int(tag.get("accident_starts") or 0),
+                        }
+                    )
+                if accident_tag_items and not badge_info.get("accident"):
+                    accident_tag_items.sort(
+                        key=lambda x: (
+                            float(x.get("rate") or 0.0),
+                            int(x.get("points") or 0),
+                        ),
+                        reverse=True,
+                    )
+                    display_items = accident_tag_items[:3]
+                    badge_info["accident"] = {
+                        "items": display_items,
+                        "boats": [x["boat"] for x in accident_tag_items],
+                        "max_rate": accident_tag_items[0].get("rate"),
+                        "max_points": accident_tag_items[0].get("points"),
+                        "label": "事故率0.50+ " + " / ".join(
+                            f"{x['boat']}号:{float(x.get('rate') or 0):.2f}"
+                            for x in display_items
+                        ),
+                    }
+
+                kimarite_items = []
+                for boat_key, tag in boats.items():
+                    if not isinstance(tag, dict):
+                        continue
+                    kimarite = tag.get("kimarite_skill")
+                    if not isinstance(kimarite, dict):
+                        continue
+                    boat_no = _safe_int(boat_key)
+                    if boat_no is None:
+                        continue
+                    kimarite_items.append(
+                        {
+                            "boat": boat_no,
+                            "label": str(kimarite.get("label") or ""),
+                            "kimarite": str(kimarite.get("kimarite") or ""),
+                            "rate": _safe_float(kimarite.get("rate")),
+                            "is_strong_escape": bool(kimarite.get("is_strong_escape")),
+                        }
+                    )
+                if kimarite_items:
+                    kimarite_items.sort(
+                        key=lambda x: (
+                            bool(x.get("is_strong_escape")),
+                            float(x.get("rate") or 0.0),
+                        ),
+                        reverse=True,
+                    )
+                    badge_info["kimarite"] = {
+                        "items": kimarite_items[:3],
+                        "boats": [x["boat"] for x in kimarite_items],
+                        "label": " / ".join(
+                            f"{x['boat']}号:{x['label']}" for x in kimarite_items[:3]
+                        ),
+                    }
 
             if badge_info:
                 race_badges[rid] = badge_info
