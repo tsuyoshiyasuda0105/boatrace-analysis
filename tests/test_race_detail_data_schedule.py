@@ -27,6 +27,15 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
 
 
+def test_web_app_keeps_legacy_clear_cache_hook_for_cron_rollouts():
+    source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
+
+    assert "def _clear_web_caches()" in source
+    assert "invalidate_cache()" in source.split("def _clear_web_caches()", 1)[1].split(
+        "def _ensure_page_html_cache_table", 1
+    )[0]
+
+
 def test_motor_history_can_be_run_alone_with_bounded_parallelism():
     source = (ROOT / "scripts" / "prewarm_race_detail_data.py").read_text(encoding="utf-8")
 

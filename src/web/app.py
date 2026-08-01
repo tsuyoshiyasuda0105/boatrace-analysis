@@ -531,6 +531,11 @@ def invalidate_cache():
     _race_current_conditions_cached.cache_clear()
 
 
+def _clear_web_caches():
+    """Backward-compatible cache clear hook for older cron deployments."""
+    invalidate_cache()
+
+
 def _ensure_page_html_cache_table() -> None:
     global _PAGE_HTML_CACHE_TABLE_READY
     if _PAGE_HTML_CACHE_TABLE_READY:
