@@ -92,8 +92,9 @@ services:
     branch: main
     region: singapore
     autoDeploy: true
-    # 00:00 UTC = 09:00 JST. Stable racer/motor data is generated once daily.
-    schedule: "0 0 * * *"
+    # 22:45 UTC = 07:45 JST. Finish the ~15 minute stable-data prewarm before
+    # users start opening the morning race-detail pages.
+    schedule: "45 22 * * *"
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt

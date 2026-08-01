@@ -23,6 +23,7 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-detail-daily")
 os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 
 from scripts.prewarm_race_detail_pages import prewarm as prewarm_pages  # noqa: E402
+from src.db.cron_run_log import record_cron_run  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.web import app as web_app  # noqa: E402
 
@@ -194,8 +195,39 @@ def main() -> int:
         default=int(os.getenv("BOATRACE_MOTOR_PREWARM_WORKERS", "4")),
     )
     args = parser.parse_args()
-    summary = prewarm(args.date, phase=args.phase, motor_workers=args.motor_workers)
-    return 0 if summary["races"] > 0 and summary["failed"] == 0 else 1
+    task_name = f"render_race_detail_{args.phase}"
+    record_cron_run(task_name, args.date, "running")
+    try:
+        summary = prewarm(args.date, phase=args.phase, motor_workers=args.motor_workers)
+    except Exception as exc:
+        record_cron_run(
+            task_name,
+            args.date,
+            "failure",
+            detail=f"{type(exc).__name__}: {exc}"[:1000],
+        )
+        raise
+
+    succeeded = summary["races"] > 0 and summary["failed"] == 0
+    detail = json.dumps(
+        {
+            "races": summary["races"],
+            "racer": summary["racer"],
+            "motor": summary["motor"],
+            "tags": summary["tags"],
+            "pages": int((summary.get("pages") or {}).get("succeeded", 0)),
+            "failed": summary["failed"],
+            "elapsed_seconds": summary["elapsed_seconds"],
+        },
+        ensure_ascii=False,
+    )
+    record_cron_run(
+        task_name,
+        args.date,
+        "success" if succeeded else "failure",
+        detail=detail,
+    )
+    return 0 if succeeded else 1
 
 
 if __name__ == "__main__":

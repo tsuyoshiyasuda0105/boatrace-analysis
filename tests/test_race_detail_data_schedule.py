@@ -26,6 +26,9 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert '["scripts/generate_start_predictions.py", "--date", target_date]' in source
     assert "page_ts < source_ts" in source
     assert "CAST(MAX(c.updated_at) AS DOUBLE PRECISION)" in source
+    assert 'page_cache_prefix = web_app._race_detail_page_cache_key("")' in source
+    assert "'race_detail_page:v1:' || r.race_id" not in source
+    assert 'datetime.now(timezone.utc).isoformat(timespec="seconds")' in source
     assert 'client.get(f"/race/{race_id}?recompute=1")' in source
     assert "_motor_history_payload(race_id, boat" in source
     assert "web_app.invalidate_cache()" in source
@@ -58,11 +61,23 @@ def test_render_blueprint_separates_daily_and_exhibition_jobs():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
 
     assert "name: boatrace-race-detail-cron" in source
-    assert 'schedule: "0 0 * * *"' in source
+    assert 'schedule: "45 22 * * *"' in source
     assert "python scripts/prewarm_race_detail_data.py" in source
     assert "name: boatrace-exhibition-detail-cron" in source
     assert 'schedule: "*/2 * * * *"' in source
     assert "python scripts/refresh_race_detail_after_exhibition.py" in source
+
+
+def test_dedicated_detail_crons_persist_health_records():
+    daily = (ROOT / "scripts" / "prewarm_race_detail_data.py").read_text(encoding="utf-8")
+    exhibition = (ROOT / "scripts" / "refresh_race_detail_after_exhibition.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'record_cron_run(task_name, args.date, "running")' in daily
+    assert '"success" if succeeded else "failure"' in daily
+    assert 'record_cron_run(task_name, args.date, "running")' in exhibition
+    assert '"success" if succeeded else "failure"' in exhibition
 
 
 def test_regular_scheduler_no_longer_collects_exhibition_data():

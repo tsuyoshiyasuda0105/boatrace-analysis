@@ -7,6 +7,7 @@ duplicate requests while keeping detail pages current after source rows change.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -24,6 +25,7 @@ os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 import config  # noqa: E402
 from scripts import scrape_beforeinfo_live as live_beforeinfo  # noqa: E402
 from src.collectors import original_exhibition as original_exhibition_collector  # noqa: E402
+from src.db.cron_run_log import record_cron_run  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.web import app as web_app  # noqa: E402
 
@@ -200,7 +202,7 @@ def collect_live_exhibition(target_date: str, now: datetime | None = None) -> di
             return
         batch_summary = live_beforeinfo.write_updates(
             updates,
-            datetime.now().isoformat(timespec="seconds"),
+            datetime.now(timezone.utc).isoformat(timespec="seconds"),
             also_local=False,
         )
         for key in beforeinfo_summary:
@@ -245,6 +247,7 @@ def _source_timestamp(value: object) -> float:
 
 
 def _due_races(target_date: str, delay_seconds: int, limit: int) -> list[str]:
+    page_cache_prefix = web_app._race_detail_page_cache_key("")
     with db_connect() as conn:
         rows = conn.execute(
             """
@@ -256,12 +259,12 @@ def _due_races(target_date: str, delay_seconds: int, limit: int) -> list[str]:
               LEFT JOIN race_previews p ON p.race_id = r.race_id
               LEFT JOIN race_original_exhibitions o ON o.race_id = r.race_id
               LEFT JOIN page_html_cache c
-                ON c.cache_key = 'race_detail_page:v1:' || r.race_id
+                ON c.cache_key = ? || r.race_id
              WHERE r.race_date = ?
              GROUP BY r.race_id
              ORDER BY r.race_id
             """,
-            (target_date,),
+            (page_cache_prefix, target_date),
         ).fetchall()
 
     now_ts = time.time()
@@ -336,11 +339,42 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--skip-collect", action="store_true")
     args = parser.parse_args()
-    if not args.skip_collect:
-        collect_summary = collect_live_exhibition(args.date)
-        print(f"[exhibition-collect] {collect_summary}", flush=True)
-    summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
-    return 0 if summary["failed"] == 0 else 1
+    task_name = "render_exhibition_detail_refresh"
+    record_cron_run(task_name, args.date, "running")
+    collect_summary: dict = {"skipped": True}
+    try:
+        if not args.skip_collect:
+            collect_summary = collect_live_exhibition(args.date)
+            print(f"[exhibition-collect] {collect_summary}", flush=True)
+        summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
+    except Exception as exc:
+        record_cron_run(
+            task_name,
+            args.date,
+            "failure",
+            detail=f"{type(exc).__name__}: {exc}"[:1000],
+        )
+        raise
+
+    succeeded = summary["failed"] == 0
+    detail = json.dumps(
+        {
+            "beforeinfo_due": int(collect_summary.get("beforeinfo_due", 0) or 0),
+            "beforeinfo_races": int(collect_summary.get("beforeinfo_races", 0) or 0),
+            "beforeinfo_rows": int(collect_summary.get("beforeinfo_rows", 0) or 0),
+            "refresh_due": summary["due"],
+            "refreshed": summary["refreshed"],
+            "failed": summary["failed"],
+        },
+        ensure_ascii=False,
+    )
+    record_cron_run(
+        task_name,
+        args.date,
+        "success" if succeeded else "failure",
+        detail=detail,
+    )
+    return 0 if succeeded else 1
 
 
 if __name__ == "__main__":
