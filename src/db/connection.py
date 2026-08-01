@@ -77,6 +77,7 @@ _TABLE_PRIMARY_KEYS = {
     "predictions": ["race_id", "boat_number", "model_version"],
     "value_bets": ["race_id", "bet_type", "combination", "model_version"],
     "l4_daily_stats_cache": ["race_date"],
+    "roi_race_history": ["race_id", "strategy_key"],
     "derived_start_stats": ["race_id", "boat_number"],
     "racer_accident_point_rules": ["rule_version", "event_code", "applies_from"],
     "racer_accident_events": ["race_id", "racer_number", "event_code", "rule_version"],

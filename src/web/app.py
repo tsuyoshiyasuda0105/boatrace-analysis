@@ -49,6 +49,7 @@ from src.roi_contract import (
     STRATEGY_PAGE_CACHE_VERSION,
     strategy_definition_signature,
 )
+from src.roi_history import load_roi_history_daily, replace_roi_history_snapshot
 from src.evaluation.course_fit_strategy import (
     COURSE_FIT_STRATEGIES,
     iter_backtest_matches as iter_course_fit_backtest_matches,
@@ -12483,6 +12484,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # browsers never trigger the expensive strategy scan themselves.
         _write_json_cache(cache_key, payload)
         _write_json_cache(_market_signals_last_good_cache_key(target_date), payload)
+        try:
+            with db_connect() as history_conn:
+                replace_roi_history_snapshot(
+                    history_conn,
+                    payload,
+                    source_cache_key=_market_signals_last_good_cache_key(target_date),
+                    capture_quality="live_last_good",
+                    adopted_keys=ROI_STRATEGY_KEYS,
+                    bet_unit_map=BET_UNIT_MAP,
+                    parse_bets=_parse_market_signal_bets_for_roi,
+                    strategy_signature=_strategy_definition_signature(),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ROI race history persist failed date=%s: %s", target_date, exc)
         return _market_json_response(payload, "recomputed")
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
@@ -13595,7 +13610,35 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             rows_to_lookup: list[tuple[str, str, str, str, str]] = []
             selected_by_date: dict[str, list[tuple[str, str, list[tuple[str, str]]]]] = {}
 
+            # The durable race ledger is the primary operational source. It
+            # survives cache-version changes and keeps the selected ticket and
+            # settled payout attached to the exact race.
+            history_dates: set[str] = set()
+            try:
+                with db_connect() as history_conn:
+                    history_daily = load_roi_history_daily(
+                        history_conn, from_date, to_date, ROI_STRATEGY_KEYS
+                    )
+                for rdate, strategies in history_daily.items():
+                    day_d = by_date.get(rdate)
+                    if day_d is None:
+                        continue
+                    _clear_adopted_counts(day_d)
+                    for level, metrics in strategies.items():
+                        day_d[f"{level}_bets"] = int(metrics.get("bets") or 0)
+                        day_d[f"{level}_hits"] = int(metrics.get("hits") or 0)
+                        day_d[f"{level}_pay"] = int(metrics.get("pay") or 0)
+                    day_d["_adopted_from_market_signals_cache"] = True
+                    day_d["_adopted_market_signals_cache_missing"] = False
+                    day_d["_adopted_from_raw_fallback"] = False
+                    day_d["_adopted_snapshot_source"] = "race_history"
+                    history_dates.add(rdate)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ROI race history daily lookup failed: %s", exc)
+
             for rdate, day_d in by_date.items():
+                if rdate in history_dates:
+                    continue
                 # The stable last-good snapshot is the operational ledger for
                 # that day.  Do not discard it when a later strategy addition
                 # bumps the current market-signals cache generation.
@@ -17818,6 +17861,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # key lists; adding a strategy to the registry automatically enables it in
     # every consumer.
     MARKET_SIGNAL_ADOPTED_LEVELS = ROI_STRATEGY_KEYS
+    app.config["ROI_STRATEGY_KEYS"] = ROI_STRATEGY_KEYS
+    app.config["ROI_BET_UNIT_MAP"] = dict(BET_UNIT_MAP)
     MARKET_SIGNAL_SUPPORTED_LEVELS = tuple(dict.fromkeys(
         MARKET_SIGNAL_ADOPTED_LEVELS
         + MARKET_SIGNAL_WATCH_LEVELS

@@ -50,6 +50,8 @@ def test_roi_uses_stable_snapshot_and_single_adopted_registry():
     assert "_market_signals_last_good_cache_key(rdate)" in overlay
     assert 'snapshot_source = "last_good"' in overlay
     assert 'day_d["_adopted_snapshot_source"] = "raw_reconstructed"' in overlay
+    assert "load_roi_history_daily(" in overlay
+    assert 'day_d["_adopted_snapshot_source"] = "race_history"' in overlay
     assert "MARKET_SIGNAL_ADOPTED_LEVELS = ROI_STRATEGY_KEYS" in source
     assert "operational_rows = [" in source
     assert 'bool(r.get("_adopted_from_market_signals_cache"))' in source
