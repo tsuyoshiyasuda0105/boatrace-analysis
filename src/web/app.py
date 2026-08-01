@@ -4028,10 +4028,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ):
                 signal_payload = last_good_payload
 
-        signal_payload = _hydrate_market_race_badges(
-            signal_payload or {},
-            target_date,
-        )
+        # The dedicated ROI list only needs the L4 signal rows. Hydrating race
+        # grid badges here can fan out into detail-tag lookups for every race
+        # and make the page timeout on Render.
+        signal_payload = signal_payload or {}
         signals = signal_payload.get("signals") or {}
         adopted_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)
         adopted_watch_levels = set(MARKET_SIGNAL_WATCH_LEVELS)
