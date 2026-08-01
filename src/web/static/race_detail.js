@@ -11,6 +11,14 @@
     if (marketContainer) marketContainer.remove();
     const legacySignalShell = document.getElementById("race-signal-shell");
     if (legacySignalShell && !legacySignalShell.textContent.trim()) legacySignalShell.remove();
+    const startPredictionShell = document.querySelector("[data-start-prediction]");
+    if (
+      inspectorShell
+      && startPredictionShell
+      && (inspectorShell.compareDocumentPosition(startPredictionShell) & Node.DOCUMENT_POSITION_PRECEDING)
+    ) {
+      startPredictionShell.parentNode.insertBefore(inspectorShell, startPredictionShell);
+    }
     document.querySelectorAll("details.collapsible-section").forEach((details) => {
       const summaryText = details.querySelector("summary")?.textContent || "";
       if (summaryText.includes("6艇詳細")) details.open = true;

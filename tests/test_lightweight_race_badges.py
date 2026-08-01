@@ -19,6 +19,7 @@ def test_strategy_cleanup_keeps_lightweight_data_badges() -> None:
     assert "accident-watch-badge" not in strategy_selector
     assert "ace-motor-watch-badge" not in strategy_selector
     assert "kimarite-watch-badge" not in strategy_selector
+    assert "escape-watch-badge" not in strategy_selector
     assert "item.querySelectorAll(STRATEGY_BADGE_SELECTOR)" in source
 
 
@@ -34,12 +35,15 @@ def test_lightweight_badges_render_before_unchanged_digest_return() -> None:
     assert render_position < unchanged_return_position
 
 
-def test_lightweight_badges_include_kimarite_and_render_on_top_page() -> None:
+def test_lightweight_badges_include_escape_and_render_on_top_page() -> None:
     source = _source()
 
-    assert ".kimarite-watch-badge" in source
-    assert "const kimarite = badges?.kimarite;" in source
-    assert "primary?.kimarite" in source
+    assert ".escape-watch-badge" in source
+    assert "const escape = badges?.escape;" in source
+    assert "badge.textContent = '逃げ';" in source
+    assert "badge.textContent = '事故';" in source
+    assert "badge.textContent = 'M';" in source
+    assert "race-badge-row" in source
     assert "initial lightweight badges render failed" in source
 
     render_position = source.index("initial lightweight badges render failed")

@@ -2111,6 +2111,95 @@ main h2 {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.racer-name-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.racer-class-badge--name {
+  min-width: 26px;
+  height: 18px;
+  padding: 0 7px;
+  font-size: 10px;
+  line-height: 18px;
+  transform: translateY(-1px);
+}
+.racer-identity {
+  display: inline-grid;
+  grid-template-columns: minmax(104px, max-content) minmax(82px, max-content);
+  grid-template-rows: auto auto auto;
+  column-gap: 10px;
+  align-items: center;
+  vertical-align: middle;
+}
+.racer-identity > .racer-detail-btn {
+  grid-column: 1;
+  grid-row: 1;
+}
+.racer-identity > .racer-meta {
+  grid-column: 1;
+  grid-row: 2;
+}
+.racer-identity > .racer-tag-list {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+.racer-course-win-sample {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  min-width: 82px;
+  border: 1px solid rgba(0, 212, 255, 0.22);
+  border-radius: 7px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(0, 212, 255, 0.09), rgba(255, 255, 255, 0.025));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+}
+.course-win-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 2px 6px;
+  min-height: 20px;
+}
+.course-win-line + .course-win-line {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.course-win-line small {
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+.course-win-line b {
+  color: #dff9ff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.course-win-line.is-venue b {
+  color: var(--accent);
+}
+.avg-st-cell {
+  color: #dff9ff;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.foot-grade-stack {
+  display: inline-grid;
+  justify-items: center;
+  gap: 4px;
+}
+.foot-time {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+  line-height: 1;
+}
 .foot-grade {
   display: inline-flex;
   align-items: center;
@@ -2489,6 +2578,150 @@ main h2 {
 .motor-history-table th.left,
 .motor-history-table td.left {
   text-align: left;
+}
+
+/* Dedicated daily ROI list */
+.today-races-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 28px 0 18px;
+}
+.today-races-heading h2 {
+  margin: 0 0 5px;
+  font-size: 28px;
+  letter-spacing: 0;
+}
+.today-races-heading .meta {
+  margin: 0;
+}
+.today-races-heading .nav-btn-history {
+  border-color: rgba(34, 211, 238, 0.45);
+  background: rgba(34, 211, 238, 0.10);
+  color: #a5f3fc;
+}
+.today-races-history-filter {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+.today-races-history-filter label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+.today-races-history-filter input[type="date"] {
+  min-height: 34px;
+  border: 1px solid rgba(255, 215, 0, 0.28);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  padding: 6px 10px;
+}
+.today-races-history-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.today-races-history-summary span {
+  border: 1px solid rgba(255, 215, 0, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--text-dim);
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.today-races-history-summary strong {
+  color: #fff6c6;
+}
+.todays-picks-table tbody tr.is-history-hit {
+  background: rgba(34, 197, 94, 0.11);
+}
+.today-races-panel {
+  display: grid;
+  gap: 18px;
+}
+.today-races-panel .todays-picks-group {
+  min-width: 0;
+}
+.today-races-panel .todays-picks-group + .todays-picks-group {
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 215, 0, 0.16);
+}
+.today-races-panel .todays-picks-group h3 {
+  margin-bottom: 5px;
+}
+.today-races-panel .todays-picks-group .meta {
+  margin: 0 0 10px;
+}
+.today-races-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.today-races-panel .todays-picks-table {
+  min-width: 760px;
+}
+
+@media (max-width: 600px) {
+  .today-races-heading {
+    align-items: flex-start;
+    margin-top: 20px;
+  }
+  .today-races-heading h2 {
+    font-size: 23px;
+  }
+  .today-races-heading > .nav-btn {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+  .today-races-panel .today-races-table-wrap {
+    overflow: visible;
+  }
+  .today-races-panel .todays-picks-table {
+    min-width: 0;
+  }
+  .today-races-panel .todays-picks-table tbody tr {
+    display: block;
+    padding: 10px;
+  }
+  .today-races-panel .todays-picks-table tbody td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    width: 100%;
+    padding: 5px 0;
+    text-align: right;
+  }
+  .today-races-panel .todays-picks-table tbody td::before {
+    content: attr(data-label);
+    flex: 0 0 64px;
+    color: rgba(255, 230, 160, 0.58);
+    font-size: 10px;
+    font-weight: 700;
+    text-align: left;
+  }
+  .today-races-panel .todays-picks-table .pick-place,
+  .today-races-panel .todays-picks-table .pick-time,
+  .today-races-panel .todays-picks-table .pick-rec {
+    width: 100%;
+    text-align: right;
+  }
+  .today-races-panel .todays-picks-table .pick-type {
+    min-width: 0;
+  }
+  .today-races-panel .todays-picks-table .pick-link {
+    justify-content: flex-end;
+  }
+  .today-races-panel .todays-picks-table .pick-link::before {
+    display: none;
+  }
 }
 .motor-history-racer-line {
   display: inline-flex;
@@ -3840,7 +4073,8 @@ main h2 {
 
 .accident-watch-badge,
 .ace-motor-watch-badge,
-.kimarite-watch-badge {
+.kimarite-watch-badge,
+.escape-watch-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3853,33 +4087,30 @@ main h2 {
   cursor: help;
 }
 
+.race-item a .race-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-height: 18px;
+  margin-top: 2px;
+  max-width: 100%;
+}
+
 .race-item a .accident-watch-badge,
 .race-item a .ace-motor-watch-badge,
-.race-item a .kimarite-watch-badge {
-  position: absolute;
-  bottom: 4px;
+.race-item a .kimarite-watch-badge,
+.race-item a .escape-watch-badge {
+  position: static;
   z-index: 4;
-  max-width: calc(50% - 6px);
+  max-width: 100%;
   min-height: 18px;
   padding: 2px 5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: 0;
-}
-
-.race-item a .accident-watch-badge {
-  left: 4px;
-}
-
-.race-item a .ace-motor-watch-badge {
-  right: 4px;
-}
-
-.race-item a .kimarite-watch-badge {
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 24px;
 }
 
 .accident-watch-badge {
@@ -3904,12 +4135,21 @@ main h2 {
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.36);
 }
 
+.escape-watch-badge {
+  border: 1px solid rgba(56, 189, 248, 0.9);
+  background: linear-gradient(135deg, rgba(12, 74, 110, 0.96), rgba(14, 165, 233, 0.82));
+  color: #e0f2fe;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.36);
+}
+
 .race-item.done .accident-watch-badge,
 .race-item.done .ace-motor-watch-badge,
 .race-item.done .kimarite-watch-badge,
+.race-item.done .escape-watch-badge,
 .race-item.is-closed .accident-watch-badge,
 .race-item.is-closed .ace-motor-watch-badge,
-.race-item.is-closed .kimarite-watch-badge {
+.race-item.is-closed .kimarite-watch-badge,
+.race-item.is-closed .escape-watch-badge {
   opacity: 1;
   filter: none;
 }
@@ -6550,101 +6790,4 @@ main h2 {
 .racer-name {
   display: inline-block;
   font-weight: 700;
-}
-
-/* Dedicated daily ROI list */
-.today-races-heading {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin: 28px 0 18px;
-}
-.today-races-heading h2 {
-  margin: 0 0 5px;
-  font-size: 28px;
-  letter-spacing: 0;
-}
-.today-races-heading .meta {
-  margin: 0;
-}
-.today-races-panel {
-  display: grid;
-  gap: 18px;
-}
-.today-races-panel .todays-picks-group {
-  min-width: 0;
-}
-.today-races-panel .todays-picks-group + .todays-picks-group {
-  padding-top: 18px;
-  border-top: 1px solid rgba(255, 215, 0, 0.16);
-}
-.today-races-panel .todays-picks-group h3 {
-  margin-bottom: 5px;
-}
-.today-races-panel .todays-picks-group .meta {
-  margin: 0 0 10px;
-}
-.today-races-table-wrap {
-  width: 100%;
-  overflow-x: auto;
-}
-.today-races-panel .todays-picks-table {
-  min-width: 760px;
-}
-
-@media (max-width: 600px) {
-  .today-races-heading {
-    align-items: flex-start;
-    margin-top: 20px;
-  }
-  .today-races-heading h2 {
-    font-size: 23px;
-  }
-  .today-races-heading > .nav-btn {
-    flex: 0 0 auto;
-    min-width: 0;
-  }
-  .today-races-panel .today-races-table-wrap {
-    overflow: visible;
-  }
-  .today-races-panel .todays-picks-table {
-    min-width: 0;
-  }
-  .today-races-panel .todays-picks-table tbody tr {
-    display: block;
-    padding: 10px;
-  }
-  .today-races-panel .todays-picks-table tbody td {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 14px;
-    width: 100%;
-    padding: 5px 0;
-    text-align: right;
-  }
-  .today-races-panel .todays-picks-table tbody td::before {
-    content: attr(data-label);
-    flex: 0 0 64px;
-    color: rgba(255, 230, 160, 0.58);
-    font-size: 10px;
-    font-weight: 700;
-    text-align: left;
-  }
-  .today-races-panel .todays-picks-table .pick-place,
-  .today-races-panel .todays-picks-table .pick-time,
-  .today-races-panel .todays-picks-table .pick-rec {
-    width: 100%;
-    text-align: right;
-  }
-  .today-races-panel .todays-picks-table .pick-type {
-    min-width: 0;
-  }
-  .today-races-panel .todays-picks-table .pick-link {
-    justify-content: flex-end;
-  }
-  .today-races-panel .todays-picks-table .pick-link::before {
-    display: none;
-  }
 }

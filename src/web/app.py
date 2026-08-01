@@ -134,12 +134,12 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
         return payload
     existing = payload.get("race_badges")
     if isinstance(existing, dict) and existing:
-        has_kimarite_badges = any(
+        has_escape_badges = any(
             isinstance(value, dict)
-            and value.get("kimarite")
+            and value.get("escape")
             for value in existing.values()
         )
-        if has_kimarite_badges:
+        if has_escape_badges:
             return payload
     payload = dict(payload)
     payload["race_badges"] = {}
@@ -196,7 +196,7 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
             },
         )
         rate = _safe_float(row[6])
-        if rate is not None and rate >= 0.7:
+        if rate is not None and rate >= 0.5:
             info["accident_items"].append(
                 {
                     "boat": boat_no,
@@ -274,6 +274,36 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
         detail_tags = _race_detail_tag_snapshot(rid, recompute=False)
         boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else None
         if isinstance(boats, dict):
+            escape_items = []
+            for boat_key, tag in boats.items():
+                if not isinstance(tag, dict):
+                    continue
+                escape = tag.get("escape_tag")
+                if not isinstance(escape, dict):
+                    continue
+                boat_no = _safe_int(boat_key)
+                if boat_no is None:
+                    continue
+                escape_items.append(
+                    {
+                        "boat": boat_no,
+                        "label": str(escape.get("label") or "逃げ"),
+                        "rate": _safe_float(escape.get("rate")),
+                        "wins": _safe_int(escape.get("wins")),
+                        "starts": _safe_int(escape.get("starts")),
+                    }
+                )
+            if escape_items:
+                escape_items.sort(key=lambda x: float(x.get("rate") or 0.0), reverse=True)
+                badge_info["escape"] = {
+                    "items": escape_items[:1],
+                    "boats": [x["boat"] for x in escape_items],
+                    "max_rate": escape_items[0].get("rate"),
+                    "label": " / ".join(
+                        f"{x['boat']}号:{x['label']}" for x in escape_items[:1]
+                    ),
+                }
+
             accident_tag_items = []
             for boat_key, tag in boats.items():
                 if not isinstance(tag, dict) or not tag.get("accident_display_level"):
@@ -2754,8 +2784,8 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v2"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v2"
+RACE_DETAIL_TAG_CACHE_VERSION = "v3"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v3"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -2810,6 +2840,12 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         ace_threshold = None
         logger.warning("ace motor snapshot failed for %s", race_id, exc_info=True)
 
+    try:
+        boat1_escape = _boat1_national_course1_win_stats(race_id, str(info["race_date"]))
+    except Exception:
+        boat1_escape = None
+        logger.warning("escape tag snapshot failed for %s", race_id, exc_info=True)
+
     boats: dict[str, dict[str, Any]] = {}
     for boat_number, racer_number, motor_rate_raw in entries:
         boat: dict[str, Any] = {}
@@ -2836,6 +2872,15 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         kimarite = kimarite_tags.get(int(boat_number))
         if kimarite:
             boat["kimarite_skill"] = kimarite
+        if int(boat_number) == 1 and boat1_escape:
+            escape_rate = _safe_float(boat1_escape.get("rate"))
+            if escape_rate is not None and escape_rate >= 70.0:
+                boat["escape_tag"] = {
+                    "label": "逃げ",
+                    "rate": round(float(escape_rate), 1),
+                    "wins": int(boat1_escape.get("wins") or 0),
+                    "starts": int(boat1_escape.get("starts") or 0),
+                }
         boats[str(int(boat_number))] = boat
 
     return {
@@ -2845,6 +2890,45 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
         "ace_motor_threshold": ace_threshold,
         "boats": boats,
+    }
+
+
+def _boat1_national_course1_win_stats(race_id: str, race_date: str) -> Optional[dict[str, Any]]:
+    """Return all-venue course-1 win stats for the current boat-1 racer."""
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            WITH current_boat1 AS (
+                SELECT racer_number
+                  FROM race_entries
+                 WHERE race_id = ? AND boat_number = 1
+            )
+            SELECT COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+              FROM current_boat1 c
+              JOIN race_entries e
+                ON e.racer_number = c.racer_number
+              JOIN races r
+                ON r.race_id = e.race_id
+               AND r.race_date < ?
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+             WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
+               AND rr.finishing_position IS NOT NULL
+            """,
+            (race_id, race_date),
+        ).fetchone()
+    if not row:
+        return None
+    starts = int(row[0] or 0)
+    wins = int(row[1] or 0)
+    if starts <= 0:
+        return None
+    return {
+        "starts": starts,
+        "wins": wins,
+        "rate": wins / starts * 100.0,
     }
 
 
@@ -2884,25 +2968,133 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
     if not preds:
         return
     with db_connect() as conn:
+        info_row = conn.execute(
+            """
+            SELECT race_date, race_number, stadium_number
+              FROM races
+             WHERE race_id = ?
+            """,
+            (race_id,),
+        ).fetchone()
         rows = conn.execute(
             """
+            WITH original AS (
+                SELECT race_id, boat_number,
+                       MIN(lap_time) AS dash_time,
+                       MIN(turn_time) AS turn_time,
+                       MIN(straight_time) AS straight_time
+                  FROM race_original_exhibitions
+                 WHERE race_id = ?
+                 GROUP BY race_id, boat_number
+            )
             SELECT e.boat_number,
                    e.national_top_1_percent,
                    e.national_top_2_percent,
                    e.local_top_2_percent,
-                   pv.tilt_adjustment
+                   pv.tilt_adjustment,
+                   e.avg_start_timing,
+                   original.dash_time,
+                   original.turn_time,
+                   original.straight_time
               FROM race_entries e
               LEFT JOIN race_previews pv
                 ON pv.race_id = e.race_id
                AND pv.boat_number = e.boat_number
+              LEFT JOIN original
+                ON original.race_id = e.race_id
+               AND original.boat_number = e.boat_number
              WHERE e.race_id = ?
             """,
-            (race_id,),
+            (race_id, race_id),
         ).fetchall()
+        course_rows = []
+        if info_row:
+            course_rows = conn.execute(
+                """
+                WITH current_entries AS (
+                    SELECT boat_number, racer_number
+                      FROM race_entries
+                     WHERE race_id = ?
+                ),
+                venue_history AS (
+                    SELECT c.boat_number,
+                           rr.finishing_position,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY c.boat_number
+                               ORDER BY r.race_date DESC, r.race_number DESC
+                           ) AS rn
+                      FROM current_entries c
+                      JOIN race_entries e
+                        ON e.racer_number = c.racer_number
+                      JOIN races r
+                        ON r.race_id = e.race_id
+                       AND r.stadium_number = ?
+                       AND (
+                           r.race_date < ?
+                           OR (r.race_date = ? AND r.race_number < ?)
+                       )
+                      JOIN race_results rr
+                        ON rr.race_id = e.race_id
+                       AND rr.boat_number = e.boat_number
+                     WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = c.boat_number
+                       AND rr.finishing_position IS NOT NULL
+                ),
+                venue_recent AS (
+                    SELECT boat_number,
+                           COUNT(*) AS starts,
+                           SUM(CASE WHEN finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                      FROM venue_history
+                     WHERE rn <= 10
+                     GROUP BY boat_number
+                ),
+                national_course AS (
+                    SELECT c.boat_number,
+                           COUNT(*) AS starts,
+                           SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                      FROM current_entries c
+                      JOIN race_entries e
+                        ON e.racer_number = c.racer_number
+                      JOIN races r
+                        ON r.race_id = e.race_id
+                       AND (
+                           r.race_date < ?
+                           OR (r.race_date = ? AND r.race_number < ?)
+                       )
+                      JOIN race_results rr
+                        ON rr.race_id = e.race_id
+                       AND rr.boat_number = e.boat_number
+                     WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = c.boat_number
+                       AND rr.finishing_position IS NOT NULL
+                     GROUP BY c.boat_number
+                )
+                SELECT c.boat_number,
+                       vr.starts AS venue_starts,
+                       vr.wins AS venue_wins,
+                       nc.starts AS national_starts,
+                       nc.wins AS national_wins
+                  FROM current_entries c
+                  LEFT JOIN venue_recent vr
+                    ON vr.boat_number = c.boat_number
+                  LEFT JOIN national_course nc
+                    ON nc.boat_number = c.boat_number
+                """,
+                (
+                    race_id,
+                    info_row[2],
+                    info_row[0],
+                    info_row[0],
+                    info_row[1],
+                    info_row[0],
+                    info_row[0],
+                    info_row[1],
+                ),
+            ).fetchall()
     facts = {int(row[0]): row for row in rows}
+    course_facts = {int(row[0]): row for row in course_rows}
     for p in preds:
         try:
-            row = facts.get(int(p.get("boat_number")))
+            boat_number = int(p.get("boat_number"))
+            row = facts.get(boat_number)
         except (TypeError, ValueError):
             row = None
         if not row:
@@ -2911,6 +3103,29 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
         p["national_top_2_percent"] = row[2]
         p["local_top_2_percent"] = row[3]
         p["tilt_adjustment"] = row[4]
+        p["avg_start_timing"] = row[5]
+        p["dash_time"] = row[6]
+        p["turn_time"] = row[7]
+        p["straight_time"] = row[8]
+        course_row = course_facts.get(boat_number)
+        if course_row:
+            venue_starts = int(course_row[1] or 0)
+            venue_wins = int(course_row[2] or 0)
+            national_starts = int(course_row[3] or 0)
+            national_wins = int(course_row[4] or 0)
+            p["current_course_number"] = boat_number
+            p["venue_recent10_course_win_starts"] = venue_starts
+            p["venue_recent10_course_win_rate"] = (
+                round(venue_wins / venue_starts * 100.0, 1)
+                if venue_starts
+                else None
+            )
+            p["national_course_win_starts"] = national_starts
+            p["national_course_win_rate"] = (
+                round(national_wins / national_starts * 100.0, 1)
+                if national_starts
+                else None
+            )
 
 
 def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:

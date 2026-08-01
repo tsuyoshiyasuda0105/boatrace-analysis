@@ -354,8 +354,9 @@
           <tr>
             <th class="left">予測</th>
             <th class="left">枠 / 選手</th>
-            <th class="left">級 / 選手成績</th>
+            <th class="left">選手成績</th>
             <th class="left">モーター / チルト</th>
+            <th>平均ST</th>
             <th>展示T</th>
             <th>展示ST</th>
             <th>出足</th>
@@ -367,14 +368,14 @@
           </tr>
         </thead>
         <tbody>
-          {% for p in preds %}
+          {% for p in preds | sort(attribute='boat_number') %}
             <tr class="{% if loop.index == 1 %}rank-1{% endif %}">
               <td class="left">
                 <span class="rank-pill">{{ loop.index }}</span>
               </td>
               <td class="left">
                 <span class="lane lane-{{ p.boat_number }}">{{ p.boat_number }}</span>
-                <span style="display: inline-block; vertical-align: middle;">
+                <span class="racer-identity">
                   <button
                     type="button"
                     class="racer-detail-btn"
@@ -384,10 +385,26 @@
                     aria-controls="racer-detail-row-{{ p.boat_number }}"
                     title="選手のコース別成績を表示"
                   >
-                    <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
+                    <span class="racer-name-line">
+                      <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
+                      {% set cls_map = {1: 'A1', 2: 'A2', 3: 'B1', 4: 'B2'} %}
+                      {% set cls_label = cls_map.get(p.class_number, '-') %}
+                      <span class="racer-class-badge racer-class-badge--name is-{{ cls_label | lower }}">{{ cls_label }}</span>
+                    </span>
                   </button>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
-                  {% if p.accident_display_level is defined or p.kimarite_skill is defined %}
+                  <span class="racer-course-win-sample"
+                        title="{{ p.boat_number }}コース1着率: 上段は当該会場の直近10走、下段は全国同コース累計">
+                    <span class="course-win-line is-venue">
+                      <small>当地10R</small>
+                      <b>{{ '%.1f' | format(p.venue_recent10_course_win_rate) if p.venue_recent10_course_win_rate is defined and p.venue_recent10_course_win_rate is not none else '-' }}%</b>
+                    </span>
+                    <span class="course-win-line is-national">
+                      <small>全国{{ p.current_course_number or p.boat_number }}C</small>
+                      <b>{{ '%.1f' | format(p.national_course_win_rate) if p.national_course_win_rate is defined and p.national_course_win_rate is not none else '-' }}%</b>
+                    </span>
+                  </span>
+                  {% if p.accident_display_level is defined or p.escape_tag is defined %}
                     <div class="racer-tag-list">
                   {% endif %}
                   {% if p.accident_display_level is defined %}
@@ -401,25 +418,22 @@
                     {% endif %}
                     <span class="racer-accident-tag accident-risk-{{ accident_tone }} accident-level-{{ p.accident_display_level }}"
                           title="事故率 {{ '%.2f' | format(p.accident_rate) }} / 事故点 {{ p.accident_points }} / 出走 {{ p.accident_starts }}">
-                      {% if p.accident_display_level == 'high' %}事故0.7+{% else %}事故0.5+{% endif %}
+                      事故
                     </span>
                   {% endif %}
-                  {% if p.kimarite_skill is defined %}
-                    <span class="kimarite-skill-tag {% if p.kimarite_skill.is_strong_escape %}is-strong{% endif %}"
-                          title="当該コースの過去成績 {{ p.kimarite_skill.wins }}勝/{{ p.kimarite_skill.starts }}走。現在のレース結果は含めません。">
-                      {{ p.kimarite_skill.label }}
+                  {% if p.escape_tag is defined %}
+                    <span class="kimarite-skill-tag is-strong"
+                          title="1号艇の全国1コース1着率 {{ '%.1f' | format(p.escape_tag.rate) }}% / {{ p.escape_tag.wins }}勝 {{ p.escape_tag.starts }}走">
+                      逃げ
                     </span>
                   {% endif %}
-                  {% if p.accident_display_level is defined or p.kimarite_skill is defined %}
+                  {% if p.accident_display_level is defined or p.escape_tag is defined %}
                     </div>
                   {% endif %}
                 </span>
               </td>
               <td class="racer-performance-cell">
-                {% set cls_map = {1: 'A1', 2: 'A2', 3: 'B1', 4: 'B2'} %}
-                {% set cls_label = cls_map.get(p.class_number, '-') %}
                 <div class="racer-performance">
-                  <span class="racer-class-badge is-{{ cls_label | lower }}">{{ cls_label }}</span>
                   <div class="racer-rate-grid">
                     <span><small>全国勝率</small><b>{{ '%.2f' | format(p.national_top_1_percent) if p.national_top_1_percent is defined and p.national_top_1_percent is not none else '—' }}</b></span>
                     <span><small>全国2連率</small><b>{{ '%.2f' | format(p.national_top_2_percent) if p.national_top_2_percent is not none else '—' }}</b></span>
@@ -443,7 +457,7 @@
                         <span class="motor-no">M{{ p.assigned_motor_number }}</span>
                       {% endif %}
                       {% if p.is_ace_motor %}
-                        <span class="ace-motor-tag">ACE</span>
+                        <span class="ace-motor-tag">M</span>
                       {% endif %}
                     </button>
                     <span class="tilt-chip" title="直前情報のチルト角度">
@@ -454,19 +468,29 @@
                   -
                 {% endif %}
               </td>
+              <td class="avg-st-cell">{{ '%.2f' | format(p.avg_start_timing) if p.avg_start_timing is defined and p.avg_start_timing is not none else '—' }}</td>
               <td>{{ '%.2f' | format(p.exhibition_time) if p.exhibition_time is not none else '—' }}</td>
               <td>{{ '%.2f' | format(p.start_timing_exhibition) if p.start_timing_exhibition is not none else '—' }}</td>
               <td>
                 {% set dash = p.motor_dash_grade if p.motor_dash_grade is defined else {'label': '-', 'tone': 'unknown'} %}
-                <span class="foot-grade is-{{ dash.tone }}" title="推定出足 {{ dash.score if dash.score is not none else '-' }}pt">{{ dash.label }}</span>
+                <div class="foot-grade-stack">
+                  <span class="foot-grade is-{{ dash.tone }}" title="推定出足 {{ dash.score if dash.score is not none else '-' }}pt">{{ dash.label }}</span>
+                  <small class="foot-time">{{ '%.2f' | format(p.dash_time) if p.dash_time is defined and p.dash_time is not none else '—' }}</small>
+                </div>
               </td>
               <td>
                 {% set turn = p.motor_turn_grade if p.motor_turn_grade is defined else {'label': '-', 'tone': 'unknown'} %}
-                <span class="foot-grade is-{{ turn.tone }}" title="推定回り足 {{ turn.score if turn.score is not none else '-' }}pt">{{ turn.label }}</span>
+                <div class="foot-grade-stack">
+                  <span class="foot-grade is-{{ turn.tone }}" title="推定回り足 {{ turn.score if turn.score is not none else '-' }}pt">{{ turn.label }}</span>
+                  <small class="foot-time">{{ '%.2f' | format(p.turn_time) if p.turn_time is defined and p.turn_time is not none else '—' }}</small>
+                </div>
               </td>
               <td>
                 {% set straight = p.motor_straight_grade if p.motor_straight_grade is defined else {'label': '-', 'tone': 'unknown'} %}
-                <span class="foot-grade is-{{ straight.tone }}" title="推定直線 {{ straight.score if straight.score is not none else '-' }}pt">{{ straight.label }}</span>
+                <div class="foot-grade-stack">
+                  <span class="foot-grade is-{{ straight.tone }}" title="推定直線 {{ straight.score if straight.score is not none else '-' }}pt">{{ straight.label }}</span>
+                  <small class="foot-time">{{ '%.2f' | format(p.straight_time) if p.straight_time is defined and p.straight_time is not none else '—' }}</small>
+                </div>
               </td>
               {% if has_result_col %}
                 <td>

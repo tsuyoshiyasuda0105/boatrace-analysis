@@ -353,7 +353,7 @@
           raceBadgesCache
         );
         const SHOW_STRATEGY_RACE_CHIPS = false;
-        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge';
+        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge';
         const STRATEGY_BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetails = () => {
           // Race detail pages now load heavy motor/history/affinity data lazily
@@ -488,6 +488,7 @@
           Object.entries(raceBadges || {}).forEach(([raceId, badges]) => {
             const accident = badges?.accident || {};
             const ace = badges?.ace_motor || {};
+            const escape = badges?.escape || {};
             rows.push([
               raceId,
               'badges',
@@ -495,6 +496,8 @@
               Array.isArray(accident.boats) ? accident.boats.join(',') : '',
               ace.max_rate ?? '',
               Array.isArray(ace.boats) ? ace.boats.join(',') : '',
+              escape.max_rate ?? '',
+              Array.isArray(escape.boats) ? escape.boats.join(',') : '',
             ].join(':'));
           });
           rows.sort();
@@ -620,6 +623,9 @@
         function renderLightweightRaceBadges(raceBadges, accidentWatch) {
           getRaceItems(true).forEach((item) => {
             item.querySelectorAll(LIGHT_BADGE_SELECTOR).forEach((el) => el.remove());
+            item.querySelectorAll('.race-badge-row').forEach((el) => {
+              if (!el.querySelector(LIGHT_BADGE_SELECTOR)) el.remove();
+            });
           });
           const raceItemMap = getRaceItemMap(true);
           const merged = { ...(raceBadges || {}) };
@@ -632,35 +638,42 @@
             const item = raceItemMap.get(raceId);
             if (!item) return;
             const anchor = item.querySelector('a') || item;
+            let badgeRow = anchor.querySelector('.race-badge-row');
+            const ensureBadgeRow = () => {
+              if (!badgeRow) {
+                badgeRow = document.createElement('span');
+                badgeRow.className = 'race-badge-row';
+                anchor.appendChild(badgeRow);
+              }
+              return badgeRow;
+            };
             const accident = badges?.accident;
             if (accident) {
               const maxRate = Number(accident.max_rate || 0);
               const badge = document.createElement('span');
               badge.className = `accident-watch-badge accident-risk-${accidentToneFromItems(accident.items)}`;
-              badge.textContent = maxRate ? `事故${maxRate.toFixed(2)}` : '事故0.70+';
-              badge.title = accident.label || '事故率0.70以上の選手が出走';
-              anchor.appendChild(badge);
+              badge.textContent = '事故';
+              badge.title = accident.label || (maxRate ? `事故率 ${maxRate.toFixed(2)}` : '事故率0.50以上の選手が出走');
+              ensureBadgeRow().appendChild(badge);
             }
             const ace = badges?.ace_motor;
             if (ace) {
               const badge = document.createElement('span');
               badge.className = 'ace-motor-watch-badge';
               const boats = Array.isArray(ace.boats) && ace.boats.length ? ace.boats.slice(0, 3).join(',') : '';
-              badge.textContent = boats ? `S級M ${boats}` : 'S級M';
-              badge.title = ace.label || '現行モーター期の上位モーター';
-              anchor.appendChild(badge);
+              badge.textContent = 'M';
+              badge.title = ace.label || (boats ? `エースモーター ${boats}号艇` : 'エースモーター');
+              ensureBadgeRow().appendChild(badge);
             }
-            const kimarite = badges?.kimarite;
-            if (kimarite) {
+            const escape = badges?.escape;
+            if (escape) {
               const badge = document.createElement('span');
-              badge.className = 'kimarite-watch-badge';
-              const items = Array.isArray(kimarite.items) ? kimarite.items : [];
-              const strong = items.find((item) => item && item.is_strong_escape);
-              const primary = strong || items[0] || null;
-              const label = primary?.kimarite || '逃げ';
-              badge.textContent = primary ? `${primary.boat}${label}` : '逃げ';
-              badge.title = kimarite.label || '当該コースの逃げ/決まり手タグ';
-              anchor.appendChild(badge);
+              badge.className = 'escape-watch-badge';
+              const items = Array.isArray(escape.items) ? escape.items : [];
+              const primary = items[0] || null;
+              badge.textContent = '逃げ';
+              badge.title = escape.label || (primary?.rate != null ? `全国1コース1着率 ${Number(primary.rate).toFixed(1)}%` : '1号艇の全国1コース1着率70%以上');
+              ensureBadgeRow().appendChild(badge);
             }
           });
         }
