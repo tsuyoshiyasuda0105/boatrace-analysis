@@ -19,10 +19,12 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
 
     assert "delay_seconds: int = 60" in source
     assert "page_ts < source_ts" in source
+    assert "CAST(MAX(c.updated_at) AS DOUBLE PRECISION)" in source
     assert 'client.get(f"/race/{race_id}?recompute=1")' in source
     assert "_motor_history_payload(race_id, boat" in source
     assert "web_app.invalidate_cache()" in source
     assert "_clear_web_caches" not in source
+    assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
 
 
 def test_motor_history_can_be_run_alone_with_bounded_parallelism():
@@ -31,6 +33,7 @@ def test_motor_history_can_be_run_alone_with_bounded_parallelism():
     assert 'choices=("all", "motor")' in source
     assert "ThreadPoolExecutor(max_workers=max(1, workers))" in source
     assert 'BOATRACE_MOTOR_PREWARM_WORKERS", "4"' in source
+    assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
 
 
 def test_render_blueprint_separates_daily_and_exhibition_jobs():

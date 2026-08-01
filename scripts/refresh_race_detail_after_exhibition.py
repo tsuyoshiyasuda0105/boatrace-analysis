@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-exhibition-detail-refresh")
+os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 
 import config  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
@@ -44,7 +45,7 @@ def _due_races(target_date: str, delay_seconds: int, limit: int) -> list[str]:
             SELECT r.race_id,
                    MAX(p.live_updated_at) AS preview_updated_at,
                    MAX(o.collected_at) AS original_updated_at,
-                   MAX(c.updated_at) AS page_updated_at
+                   CAST(MAX(c.updated_at) AS DOUBLE PRECISION) AS page_updated_at
               FROM races r
               LEFT JOIN race_previews p ON p.race_id = r.race_id
               LEFT JOIN race_original_exhibitions o ON o.race_id = r.race_id

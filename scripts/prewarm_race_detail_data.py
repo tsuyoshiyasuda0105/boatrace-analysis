@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-detail-daily")
+os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 
 from scripts.prewarm_race_detail_pages import prewarm as prewarm_pages  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
