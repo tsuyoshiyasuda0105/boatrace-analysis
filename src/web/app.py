@@ -49,7 +49,11 @@ from src.roi_contract import (
     STRATEGY_PAGE_CACHE_VERSION,
     strategy_definition_signature,
 )
-from src.roi_history import load_roi_history_daily, replace_roi_history_snapshot
+from src.roi_history import (
+    load_roi_history_daily,
+    load_roi_history_races,
+    replace_roi_history_snapshot,
+)
 from src.evaluation.course_fit_strategy import (
     COURSE_FIT_STRATEGIES,
     iter_backtest_matches as iter_course_fit_backtest_matches,
@@ -4230,6 +4234,69 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             closed_rows=[row for row in pick_rows if row.get("status") == "closed"],
             data_status=signal_payload.get("data_status") or {},
             roi_picks_visible=roi_picks_visible,
+        )
+
+    @app.route("/member/today-races/history")
+    @login_required
+    @cached(ttl=60, past_ttl=3600)
+    def member_today_race_history():
+        today_iso = date.today().isoformat()
+        yesterday = date.today() - timedelta(days=1)
+
+        def _safe_date_arg(name: str, fallback: date) -> date:
+            raw = str(request.args.get(name) or "").strip()
+            if not raw:
+                return fallback
+            try:
+                return date.fromisoformat(raw)
+            except ValueError:
+                return fallback
+
+        to_dt = _safe_date_arg("to", yesterday)
+        if to_dt >= date.today():
+            to_dt = yesterday
+        from_dt = _safe_date_arg("from", to_dt - timedelta(days=29))
+        if from_dt > to_dt:
+            from_dt = to_dt
+
+        history_rows: list[dict] = []
+        try:
+            with db_connect() as conn:
+                history_rows = load_roi_history_races(
+                    conn,
+                    from_dt.isoformat(),
+                    to_dt.isoformat(),
+                    ROI_STRATEGY_KEYS,
+                    limit=500,
+                )
+        except Exception as exc:
+            logger.exception("failed to load ROI race history: %s", exc)
+
+        summary = {
+            "count": len(history_rows),
+            "hits": sum(1 for row in history_rows if row.get("is_hit")),
+            "stake": sum(int(row.get("stake") or 0) for row in history_rows),
+            "payout": sum(int(row.get("payout") or 0) for row in history_rows),
+        }
+        summary["profit"] = summary["payout"] - summary["stake"]
+        summary["recovery"] = (
+            round((summary["payout"] / summary["stake"]) * 100, 1)
+            if summary["stake"] > 0
+            else None
+        )
+        summary["hit_rate"] = (
+            round((summary["hits"] / summary["count"]) * 100, 1)
+            if summary["count"] > 0
+            else None
+        )
+
+        return render_template(
+            "member_today_race_history.html",
+            today_iso=today_iso,
+            from_date=from_dt.isoformat(),
+            to_date=to_dt.isoformat(),
+            history_rows=history_rows,
+            summary=summary,
         )
 
     @app.route("/race/<race_id>")

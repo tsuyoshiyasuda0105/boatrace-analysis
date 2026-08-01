@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}ROI past history | BOATRACE WEB{% endblock %}
+{% block content %}
+  <div class="today-races-heading">
+    <div>
+      <h2>過去履歴</h2>
+      <p class="meta">{{ from_date }} - {{ to_date }} / ROI候補 {{ summary.count }}件</p>
+    </div>
+    <a href="{{ url_for('member_today_races', date=today_iso) }}" class="nav-btn">本日のレース</a>
+  </div>
+
+  <form class="today-races-history-filter" method="get" action="{{ url_for('member_today_race_history') }}">
+    <label>
+      <span>From</span>
+      <input type="date" name="from" value="{{ from_date }}" max="{{ to_date }}">
+    </label>
+    <label>
+      <span>To</span>
+      <input type="date" name="to" value="{{ to_date }}" max="{{ today_iso }}">
+    </label>
+    <button type="submit" class="nav-btn">検索</button>
+  </form>
+
+  <section class="todays-picks-panel today-races-panel">
+    <div class="today-races-history-summary">
+      <span>件数 <strong>{{ summary.count }}</strong></span>
+      <span>的中 <strong>{{ summary.hits }}</strong></span>
+      <span>的中率 <strong>{% if summary.hit_rate is not none %}{{ summary.hit_rate }}%{% else %}-{% endif %}</strong></span>
+      <span>投資 <strong>{{ "{:,}".format(summary.stake) }}円</strong></span>
+      <span>払戻 <strong>{{ "{:,}".format(summary.payout) }}円</strong></span>
+      <span>回収率 <strong>{% if summary.recovery is not none %}{{ summary.recovery }}%{% else %}-{% endif %}</strong></span>
+      <span>損益 <strong>{{ "{:,}".format(summary.profit) }}円</strong></span>
+    </div>
+
+    <div class="today-races-table-wrap">
+      <table class="todays-picks-table">
+        <thead>
+          <tr>
+            <th>日付</th>
+            <th>会場 R</th>
+            <th>手法</th>
+            <th>買い目</th>
+            <th>結果</th>
+            <th>回収</th>
+            <th>損益</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in history_rows %}
+          <tr class="todays-pick-row {% if row.is_hit %}is-history-hit{% else %}is-closed{% endif %}">
+            <td data-label="Date">{{ row.race_date }}</td>
+            <td class="pick-place" data-label="Place">
+              <strong>{{ row.stadium_name or "-" }}{% if row.race_number %} {{ row.race_number }}R{% endif %}</strong>
+            </td>
+            <td class="pick-type" data-label="Strategy">
+              <div class="pick-candidate-main">{{ row.strategy_label }}</div>
+              <div class="pick-candidate-sub">{{ row.strategy_key }}</div>
+            </td>
+            <td class="pick-bet" data-label="Bet">{{ row.bet }}</td>
+            <td class="pick-hit" data-label="Hit">{% if row.is_hit %}HIT{% else %}-{% endif %}</td>
+            <td class="pick-rec" data-label="Recovery"><strong>{% if row.recovery is not none %}{{ row.recovery }}%{% else %}-{% endif %}</strong></td>
+            <td data-label="Profit">{{ "{:,}".format(row.profit) }}円</td>
+            <td class="pick-link" data-label=""><a href="{{ url_for('race_detail', race_id=row.race_id) }}">詳細</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="empty">指定期間に過去履歴はありません</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

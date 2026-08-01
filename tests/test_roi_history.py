@@ -1,7 +1,11 @@
 import json
 import sqlite3
 
-from src.roi_history import load_roi_history_daily, replace_roi_history_snapshot
+from src.roi_history import (
+    load_roi_history_daily,
+    load_roi_history_races,
+    replace_roi_history_snapshot,
+)
 from src.web.app import _parse_market_signal_bets_for_roi
 
 
@@ -11,6 +15,13 @@ def _conn():
         """
         CREATE TABLE race_results (race_id TEXT, finishing_position INTEGER);
         CREATE TABLE race_payouts (race_id TEXT, bet_type TEXT, combination TEXT, payout INTEGER);
+        CREATE TABLE races (
+            race_id TEXT,
+            race_date TEXT,
+            stadium_name TEXT,
+            race_number INTEGER,
+            race_closed_at TEXT
+        );
         """
     )
     return conn
@@ -70,3 +81,41 @@ def test_empty_snapshot_retires_but_preserves_stale_date_rows():
     replace_roi_history_snapshot(conn, {"date": "2026-07-31", "signals": {}}, **common)
     assert conn.execute("SELECT COUNT(*) FROM roi_race_history").fetchone()[0] == 1
     assert conn.execute("SELECT is_active FROM roi_race_history").fetchone()[0] == 0
+
+
+def test_load_roi_history_races_formats_active_settled_rows_only():
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO races VALUES ('20260731-01-12', '2026-07-31', 'Kiryu', 12, '2026-07-31 20:45:00')"
+    )
+    conn.execute("INSERT INTO race_results VALUES ('20260731-01-12', 1)")
+    conn.execute("INSERT INTO race_payouts VALUES ('20260731-01-12', 'exacta', '1-3', 540)")
+    payload = {
+        "date": "2026-07-31",
+        "signals": {
+            "20260731-01-12": {
+                "race_id": "20260731-01-12",
+                "l4": {"level": "kiryu_13", "label": "Kiryu 1-3", "bet": "2騾｣蜊・1-3"},
+            }
+        },
+    }
+    replace_roi_history_snapshot(
+        conn,
+        payload,
+        source_cache_key="cache",
+        capture_quality="exact_last_good",
+        adopted_keys=("kiryu_13",),
+        bet_unit_map={},
+        parse_bets=_parse_market_signal_bets_for_roi,
+        strategy_signature="sig",
+    )
+
+    rows = load_roi_history_races(conn, "2026-07-01", "2026-07-31", ("kiryu_13",))
+
+    assert len(rows) == 1
+    assert rows[0]["race_date"] == "2026-07-31"
+    assert rows[0]["stadium_name"] == "Kiryu"
+    assert rows[0]["race_number"] == 12
+    assert rows[0]["bet"] == "exacta 1-3"
+    assert rows[0]["payout"] == 540
+    assert rows[0]["recovery"] == 540.0

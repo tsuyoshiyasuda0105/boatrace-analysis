@@ -6,6 +6,7 @@
       <h2>本日のレース</h2>
       <p class="meta">{{ target_date }} / ROIが高いレース候補 {{ pick_rows|length }}件</p>
     </div>
+    <a href="{{ url_for('member_today_race_history') }}" class="nav-btn nav-btn-history">過去履歴</a>
     <a href="{{ url_for('races', date=target_date) }}" class="nav-btn">全レースを見る</a>
   </div>
 
