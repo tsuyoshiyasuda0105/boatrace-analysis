@@ -37,6 +37,19 @@ def test_start_comparison_is_rendered_after_six_boat_details():
     start_comparison = source.index('class="start-prediction"')
 
     assert details_heading < details_close < start_comparison
+    detail_open = source.rfind('<details class="collapsible-section" open>', 0, details_heading)
+    assert detail_open != -1
+
+
+def test_race_detail_removes_top_candidate_and_top_pick_cards():
+    source = RACE_TEMPLATE.read_text(encoding="utf-8")
+    script = RACE_DETAIL_JS.read_text(encoding="utf-8")
+
+    assert "TOP PICK" not in source
+    assert 'class="top-pick"' not in source
+    assert "market-signal-container" not in source
+    assert "renderMarketSignal" not in script
+    assert "marketContainer" not in script
 
 
 def test_race_detail_facts_and_course_skill_are_pre_result_only():
@@ -50,6 +63,24 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "2: ((\"\u5dee\u3057\", 3),)" in source
     assert "3: ((\"\u307e\u304f\u308a\", 4), (\"\u307e\u304f\u308a\u5dee\u3057\", 5))" in source
     assert "4: ((\"\u307e\u304f\u308a\", 4),)" in source
+
+
+def test_cached_predictions_include_same_display_facts_as_fallback_rows():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    start = source.index("def _race_predictions_from_cache")
+    end = source.index("def _race_entry_fallback_rows", start)
+    cached_source = source[start:end]
+
+    assert "e.national_top_1_percent" in cached_source
+    assert "pv.tilt_adjustment" in cached_source
+    assert '"national_top_1_percent"' in cached_source
+    assert '"tilt_adjustment"' in cached_source
+
+
+def test_race_detail_page_cache_version_bumped_for_template_changes():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v2"' in source
 
 
 def test_race_detail_request_uses_only_precomputed_display_tags():

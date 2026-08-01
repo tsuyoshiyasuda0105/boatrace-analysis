@@ -929,10 +929,10 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
             rows = conn.execute("""
                 SELECT p.boat_number, p.prob_first, p.prob_top_2, p.prob_top_3,
                        e.racer_number, e.racer_name, e.class_number,
-                       e.national_top_2_percent, e.local_top_2_percent,
+                       e.national_top_1_percent, e.national_top_2_percent, e.local_top_2_percent,
                        e.assigned_motor_number,
                        e.assigned_motor_top_2_percent,
-                       NULLIF(pv.exhibition_time, 0), pv.start_timing_exhibition,
+                       NULLIF(pv.exhibition_time, 0), pv.start_timing_exhibition, pv.tilt_adjustment,
                        res.finishing_position
                 FROM predictions p
                 JOIN race_entries e ON p.race_id = e.race_id AND p.boat_number = e.boat_number
@@ -947,10 +947,10 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
         return None
     keys = ["boat_number", "prob_first", "prob_top_2", "prob_top_3",
             "racer_number", "racer_name", "class_number",
-            "national_top_2_percent", "local_top_2_percent",
+            "national_top_1_percent", "national_top_2_percent", "local_top_2_percent",
             "assigned_motor_number",
             "assigned_motor_top_2_percent",
-            "exhibition_time", "start_timing_exhibition",
+            "exhibition_time", "start_timing_exhibition", "tilt_adjustment",
             "finishing_position"]
     out = []
     for i, row in enumerate(rows, 1):
@@ -2755,7 +2755,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v2"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v1"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v2"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:

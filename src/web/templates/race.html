@@ -43,40 +43,6 @@
 
   <div id="race-signal-shell" data-race-id="{{ info.race_id }}" data-static-version="{{ static_version }}">
     <div class="motor-history-loading" data-race-signals-loading>シグナルを読み込み中...</div>
-    <div id="market-signal-container">
-  {% if market_signal %}
-    <div class="market-signal market-{{ market_signal.tier }}">
-      <div class="ms-head">
-        <span class="ms-title">{{ market_signal.title }}</span>
-        {% if market_signal.expected_roi > 0 %}
-          <span class="ms-roi-positive">想定 ROI {{ '%+.1f' | format(market_signal.expected_roi * 100) }}%</span>
-        {% else %}
-          <span class="ms-roi-negative">想定 ROI {{ '%+.1f' | format(market_signal.expected_roi * 100) }}%</span>
-        {% endif %}
-      </div>
-      <div class="ms-msg">{{ market_signal.msg }}</div>
-      {% if market_signal.extras %}
-        <div class="ms-extras">
-          {% for ex in market_signal.extras %}
-            <div class="ms-extra-item">
-              <span class="ms-extra-label">{{ ex.label }}</span>
-              <span class="ms-extra-msg">{{ ex.msg }}</span>
-              {% if ex.bet %}
-                <div class="ms-extra-bet">
-                  <strong>買い目:</strong> {{ ex.bet }}
-                  {% if ex.expected_roi %}
-                    <span class="ms-extra-roi">(回収率 {{ '%.1f' | format(ex.expected_roi * 100) }}%)</span>
-                  {% endif %}
-                </div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    </div>
-  {% endif %}
-    </div>
-
     <div id="niche-signals-container">
   {% if niche_signals %}
     <div class="niche-signals">
@@ -185,22 +151,6 @@
       予測データがありません。モデル未学習、または対象日が学習範囲外です。
     </div>
   {% else %}
-    {% set top = preds[0] %}
-    <div class="top-pick">
-      <div class="pick-body">
-        <div>
-          <div class="label">▶ TOP PICK</div>
-          <div style="margin-top: 6px;">
-            <span class="lane lane-{{ top.boat_number }}">{{ top.boat_number }}</span>
-            <span class="pick-name">{{ racer_names.get(top.boat_number, '—') }}</span>
-          </div>
-        </div>
-        <div class="pick-prob">
-          {{ '%.1f' | format(top.prob_first * 100) }}<small>%</small>
-        </div>
-      </div>
-    </div>
-
     {% if compat_analysis %}
     <section class="compat-analysis">
       <div class="compat-analysis-head">
@@ -421,7 +371,7 @@
     </details>
     {% endif %}
 
-    <details class="collapsible-section">
+    <details class="collapsible-section" open>
       <summary class="section-heading-collapsible">
         <span>🚤 6艇詳細</span>
       </summary>

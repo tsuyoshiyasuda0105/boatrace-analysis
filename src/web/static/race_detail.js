@@ -390,26 +390,6 @@
     openMotorHistory(activeRaceId, button.dataset.motorPositionBoat);
   });
 
-  const renderMarketSignal = (signal) => {
-    if (!signal) return "";
-    const roiClass = Number(signal.expected_roi || 0) > 0 ? "ms-roi-positive" : "ms-roi-negative";
-    const extras = Array.isArray(signal.extras) ? signal.extras : [];
-    return `
-      <div class="market-signal market-${esc(signal.tier || "neutral")}">
-        <div class="ms-head">
-          <span class="ms-title">${esc(signal.title || "")}</span>
-          <span class="${roiClass}">想定ROI ${(Number(signal.expected_roi || 0) * 100).toFixed(1)}%</span>
-        </div>
-        <div class="ms-msg">${esc(signal.msg || "")}</div>
-        ${extras.length ? `<div class="ms-extras">${extras.map((ex) => `
-          <div class="ms-extra-item">
-            <span class="ms-extra-label">${esc(ex.label || "")}</span>
-            <span class="ms-extra-msg">${esc(ex.msg || "")}</span>
-            ${ex.bet ? `<div class="ms-extra-bet"><strong>買い目:</strong> ${esc(ex.bet)}${ex.expected_roi != null ? `<span class="ms-extra-roi">(${(Number(ex.expected_roi) * 100).toFixed(1)}%)</span>` : ""}</div>` : ""}
-          </div>`).join("")}</div>` : ""}
-      </div>`;
-  };
-
   const renderNicheSignals = (signals) => {
     if (!Array.isArray(signals) || !signals.length) return "";
     return `<div class="niche-signals">${signals.map((sig) => `
@@ -427,7 +407,6 @@
     const raceId = shell.dataset.raceId;
     if (!raceId) return;
     const loading = shell.querySelector("[data-race-signals-loading]");
-    const marketContainer = document.getElementById("market-signal-container");
     const nicheContainer = document.getElementById("niche-signals-container");
     try {
       const res = await fetch(`/api/race/${encodeURIComponent(raceId)}/signals?v=${encodeURIComponent(staticVersion)}`, {
@@ -437,11 +416,9 @@
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      if (marketContainer) marketContainer.innerHTML = renderMarketSignal(data.market_signal);
       if (nicheContainer) nicheContainer.innerHTML = renderNicheSignals(data.niche_signals);
     } catch (err) {
-      if (marketContainer && nicheContainer) {
-        marketContainer.innerHTML = "";
+      if (nicheContainer) {
         nicheContainer.innerHTML = `<div class="motor-history-empty">シグナル取得に失敗しました: ${esc(err.message || "")}</div>`;
       }
     } finally {
