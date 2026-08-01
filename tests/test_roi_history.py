@@ -64,6 +64,55 @@ def test_snapshot_becomes_settled_race_history_and_daily_totals():
     assert daily["2026-07-31"]["kiryu_13"] == {"bets": 1, "hits": 1, "pay": 540, "stake": 100}
 
 
+def test_legacy_hamanako_exacta_signal_imports_as_current_roi_key():
+    conn = _conn()
+    conn.execute("INSERT INTO stadiums VALUES (6, '浜名湖')")
+    conn.execute(
+        "INSERT INTO races VALUES ('20260704-06-12', '2026-07-04', 6, 12, '2026-07-04 17:04:00')"
+    )
+    conn.execute("INSERT INTO race_results VALUES ('20260704-06-12', 1)")
+    conn.execute("INSERT INTO race_payouts VALUES ('20260704-06-12', 'exacta', '1-4', 290)")
+    payload = {
+        "date": "2026-07-04",
+        "cache_version": "legacy",
+        "signals": {
+            "20260704-06-12": {
+                "race_id": "20260704-06-12",
+                "l4": {
+                    "level": "exacta_niche_hamanako14",
+                    "label": "浜名湖 2連単1-4",
+                    "bet": "2連単 1-4",
+                },
+            }
+        },
+    }
+
+    count = replace_roi_history_snapshot(
+        conn,
+        payload,
+        source_cache_key="market_signals:2026-07-04",
+        capture_quality="same_day_final_cache",
+        adopted_keys=("hamanako_14_exa",),
+        bet_unit_map={},
+        parse_bets=_parse_market_signal_bets_for_roi,
+        strategy_signature="sig",
+    )
+
+    assert count == 1
+    row = conn.execute(
+        "SELECT strategy_key, stake_amount, payout_amount, is_hit, is_settled "
+        "FROM roi_race_history"
+    ).fetchone()
+    assert row == ("hamanako_14_exa", 100, 290, 1, 1)
+    daily = load_roi_history_daily(conn, "2026-07-01", "2026-07-31", ("hamanako_14_exa",))
+    assert daily["2026-07-04"]["hamanako_14_exa"] == {
+        "bets": 1,
+        "hits": 1,
+        "pay": 290,
+        "stake": 100,
+    }
+
+
 def test_empty_snapshot_retires_but_preserves_stale_date_rows():
     conn = _conn()
     first = {

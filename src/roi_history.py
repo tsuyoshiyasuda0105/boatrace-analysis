@@ -7,6 +7,19 @@ from datetime import datetime
 from typing import Any, Callable, Iterable
 
 
+STRATEGY_KEY_ALIASES = {
+    # Older market-signal snapshots used the scanner class name.  The ROI
+    # registry later standardized this as the venue/formulation key below.
+    # Keep historical snapshots importable so the durable ledger remains
+    # continuous across strategy renames.
+    "exacta_niche_hamanako14": "hamanako_14_exa",
+}
+
+
+def canonical_strategy_key(strategy_key: str) -> str:
+    return STRATEGY_KEY_ALIASES.get(str(strategy_key or ""), str(strategy_key or ""))
+
+
 def ensure_roi_race_history_table(conn: Any) -> None:
     """Create the durable per-race ROI ledger for SQLite and PostgreSQL."""
     conn.execute(
@@ -78,8 +91,8 @@ def replace_roi_history_snapshot(
         level_candidates.extend(str(value) for value in (l4.get("matched_levels") or []) if value)
         strategy_key = next(
             (
-                key for key in level_candidates
-                if key in adopted and not key.startswith("morning_watch_")
+                canonical_strategy_key(key) for key in level_candidates
+                if canonical_strategy_key(key) in adopted and not key.startswith("morning_watch_")
             ),
             "",
         )
