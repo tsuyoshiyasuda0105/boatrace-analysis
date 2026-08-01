@@ -4,6 +4,18 @@
   const inspectorBody = inspectorShell?.querySelector("[data-motor-inspector-body]");
   const staticVersion = shell?.dataset?.staticVersion || "v1";
 
+  const normalizeRaceDetailLayout = () => {
+    document.querySelectorAll(".top-pick, .market-signal").forEach((node) => node.remove());
+    const marketContainer = document.getElementById("market-signal-container");
+    if (marketContainer) marketContainer.remove();
+    document.querySelectorAll("details.collapsible-section").forEach((details) => {
+      const summaryText = details.querySelector("summary")?.textContent || "";
+      if (summaryText.includes("6艇詳細")) details.open = true;
+    });
+  };
+
+  normalizeRaceDetailLayout();
+
   const esc = (value) => String(value ?? "").replace(/[&<>\"']/g, (ch) => ({
     "&": "&amp;",
     "<": "&lt;",

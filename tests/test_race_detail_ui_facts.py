@@ -49,7 +49,8 @@ def test_race_detail_removes_top_candidate_and_top_pick_cards():
     assert 'class="top-pick"' not in source
     assert "market-signal-container" not in source
     assert "renderMarketSignal" not in script
-    assert "marketContainer" not in script
+    assert 'document.querySelectorAll(".top-pick, .market-signal")' in script
+    assert 'summaryText.includes("6艇詳細")' in script
 
 
 def test_race_detail_facts_and_course_skill_are_pre_result_only():
