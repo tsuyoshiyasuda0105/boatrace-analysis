@@ -47,9 +47,12 @@ def test_race_detail_removes_top_candidate_and_top_pick_cards():
 
     assert "TOP PICK" not in source
     assert 'class="top-pick"' not in source
+    assert "race-signal-shell" not in source
+    assert "data-race-signals-loading" not in source
     assert "market-signal-container" not in source
     assert "renderMarketSignal" not in script
     assert 'document.querySelectorAll(".top-pick, .market-signal")' in script
+    assert 'document.querySelectorAll("[data-race-signals-loading]")' in script
     assert 'summaryText.includes("6艇詳細")' in script
 
 
