@@ -84,3 +84,29 @@ services:
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
         value: "8192"
+
+  - type: cron
+    name: boatrace-race-detail-cron
+    runtime: python
+    plan: starter
+    branch: main
+    region: singapore
+    autoDeploy: true
+    schedule: "*/10 * * * *"
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python scripts/prewarm_race_detail_pages.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        sync: false
+      - key: BOATRACE_SUPABASE_ONLY
+        value: "1"
+      - key: BOATRACE_TASK_TRIGGER
+        value: "render-detail-prewarm"
+      - key: BOATRACE_USER_AGENT
+        value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+      - key: BOATRACE_DB_LIMIT_MB
+        value: "8192"

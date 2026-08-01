@@ -83,6 +83,7 @@ STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v16"
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
+    "render-detail-prewarm",
     "db-maintenance",
 }
 
@@ -2650,10 +2651,15 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v1"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v1"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
     return f"race_detail_tags:{RACE_DETAIL_TAG_CACHE_VERSION}:{race_id}"
+
+
+def _race_detail_page_cache_key(race_id: str) -> str:
+    return f"race_detail_page:{RACE_DETAIL_PAGE_CACHE_VERSION}:{race_id}"
 
 
 def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
@@ -4127,6 +4133,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @cached(ttl=300, past_ttl=21600)
     def race_detail(race_id: str):
         started_at = time.perf_counter()
+        force_recompute = _effective_force_recompute()
+        page_cache_key = _race_detail_page_cache_key(race_id)
+        if not force_recompute:
+            cached_html = _read_page_html_cache_stale(page_cache_key)
+            if cached_html:
+                logger.info(
+                    "race_detail page-cache hit race_id=%s elapsed=%.3fs",
+                    race_id,
+                    time.perf_counter() - started_at,
+                )
+                return cached_html
         # ????? (race_date ??????) ? 1??????????? 60?
         # cached ?????? request.args["date"] ?????/race/<id> ??
         # ???????? race_id ?????????? past_ttl ??????
@@ -4194,6 +4211,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     venue_warning=None,
                     sweet_spot=False,
                 )
+                _write_page_html_cache(page_cache_key, html)
                 return html
             html = render_template(
                 "race.html",
@@ -4296,6 +4314,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             error=None,
             notice=fallback_notice,
         )
+        _write_page_html_cache(page_cache_key, html)
         t_render = time.perf_counter() - t6
         elapsed = time.perf_counter() - started_at
         logger.info(
