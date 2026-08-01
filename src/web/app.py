@@ -2650,7 +2650,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v1"
+RACE_DETAIL_TAG_CACHE_VERSION = "v2"
 RACE_DETAIL_PAGE_CACHE_VERSION = "v1"
 
 
@@ -4438,19 +4438,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/race/<race_id>/motor-history/<int:boat_number>")
     @member_only_api
-    @cached(ttl=1800, past_ttl=86400)
+    @cached(ttl=60, past_ttl=86400)
     def race_motor_history(race_id: str, boat_number: int):
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
         info = _race_basic_info(race_id)
         if not info:
             return jsonify({"error": "entry not found"}), 404
-        today_iso = date.today().isoformat()
-        cache_key = f"motor_history_v7:{race_id}:{boat_number}"
-        cached_payload = _read_json_cache(
-            cache_key,
-            1800 if info["race_date"] >= today_iso else 86400,
-        )
+        cache_key = f"motor_history_v8:{race_id}:{boat_number}"
+        cached_payload = _read_json_cache_stale(cache_key)
         if cached_payload is not None:
             position_rows = cached_payload.get("position_rows") if isinstance(cached_payload, dict) else None
             position_boats: set[int] = set()
@@ -4480,19 +4476,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/race/<race_id>/racer-detail/<int:boat_number>")
     @member_only_api
-    @cached(ttl=1800, past_ttl=86400)
+    @cached(ttl=86400, past_ttl=86400)
     def race_racer_detail(race_id: str, boat_number: int):
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
         info = _race_basic_info(race_id)
         if not info:
             return jsonify({"error": "entry not found"}), 404
-        today_iso = date.today().isoformat()
         cache_key = f"racer_detail:{race_id}:{boat_number}"
-        cached_payload = _read_json_cache(
-            cache_key,
-            1800 if info["race_date"] >= today_iso else 86400,
-        )
+        cached_payload = _read_json_cache_stale(cache_key)
         if cached_payload is not None:
             return jsonify(cached_payload)
         payload = _racer_course_detail_payload(race_id, boat_number, info=info)
@@ -9662,10 +9654,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                 END) AS attack_wins
                           FROM race_results rr
                           JOIN races r ON r.race_id = rr.race_id
-                          LEFT JOIN race_entries re
+                          JOIN race_entries re
                             ON re.race_id = rr.race_id
-                           AND re.racer_number = rr.racer_number
-                         WHERE rr.racer_number = ?
+                           AND re.boat_number = rr.boat_number
+                         WHERE re.racer_number = ?
                            AND COALESCE(rr.course_number, re.boat_number) = ?
                            AND r.race_date < ?
                         """,
