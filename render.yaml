@@ -92,7 +92,7 @@ services:
     branch: main
     region: singapore
     autoDeploy: true
-    schedule: "*/10 * * * *"
+    schedule: "*/30 * * * *"
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
@@ -101,7 +101,10 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: DATABASE_URL
-        sync: false
+        fromService:
+          type: cron
+          name: boatrace-regular-cron
+          envVarKey: DATABASE_URL
       - key: BOATRACE_SUPABASE_ONLY
         value: "1"
       - key: BOATRACE_TASK_TRIGGER
