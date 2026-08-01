@@ -114,10 +114,30 @@ def _market_signals_last_good_cache_key(target_date: str) -> str:
 
 def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
     """Return recent cache generations for zero-downtime cron rollouts."""
-    # Market-signal cache versions encode strategy conditions. Serving an older
-    # generation can make the live ROI list disagree with the ROI dashboard after
-    # a condition fix, so cache misses must recompute instead of falling back.
-    return []
+    current_key = _market_signals_cache_key(target_date)
+    last_good_key = _market_signals_last_good_cache_key(target_date)
+    keys: list[str] = []
+    try:
+        _ensure_page_html_cache_table()
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT cache_key
+                  FROM page_html_cache
+                 WHERE cache_key LIKE ?
+                   AND cache_key NOT IN (?, ?)
+                 ORDER BY updated_at DESC
+                 LIMIT 12
+                """,
+                (f"market_signals:%:{target_date}", current_key, last_good_key),
+            ).fetchall()
+        for row in rows:
+            key = str(row[0] or "")
+            if key and key not in keys:
+                keys.append(key)
+    except Exception:
+        logger.exception("failed to list market-signals compatible caches: %s", target_date)
+    return keys
 
 
 def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
@@ -674,6 +694,186 @@ def _is_pending_market_signals_payload(payload: Any) -> bool:
     if not isinstance(data_status, dict):
         return False
     return bool(data_status.get("cache_miss") or data_status.get("cache_only"))
+
+
+def _is_usable_market_signals_payload(payload: Any, target_date: str) -> bool:
+    if not isinstance(payload, dict) or payload.get("date") != target_date:
+        return False
+    if _is_pending_market_signals_payload(payload):
+        return False
+    return isinstance(payload.get("signals"), dict)
+
+
+def _market_signals_adopted_race_ids(
+    payload: Any,
+    adopted_levels: set[str] | tuple[str, ...],
+) -> set[str]:
+    """Return race IDs carrying an adopted ROI strategy in a signal payload."""
+    if not isinstance(payload, dict):
+        return set()
+    signals = payload.get("signals")
+    if not isinstance(signals, dict):
+        return set()
+    adopted_levels = set(adopted_levels)
+    out: set[str] = set()
+    for race_id, sig in signals.items():
+        if not isinstance(sig, dict):
+            continue
+        l4 = sig.get("l4")
+        if not isinstance(l4, dict):
+            continue
+        levels = {str(l4.get("level") or "")}
+        levels.update(str(x) for x in (l4.get("matched_levels") or []) if x)
+        if levels & adopted_levels:
+            out.add(str(race_id))
+    return out
+
+
+def _merge_market_signals_adopted_payloads(
+    base_payload: Any,
+    fallback_payloads: list[Any],
+    target_date: str,
+    adopted_levels: set[str] | tuple[str, ...],
+) -> Any:
+    """Preserve adopted same-day signals when a new cache generation shrinks.
+
+    Strategy-signature bumps create new market-signals cache keys. If the new
+    generation was produced while prerequisite live data was partial, it can be
+    non-empty but still miss adopted races that already existed in the same-day
+    stable/compatible snapshots. Merge only adopted strategy rows so reference
+    or experimental watch rows do not leak back onto the live ROI list.
+    """
+    usable_payloads = [
+        p for p in [base_payload, *fallback_payloads]
+        if _is_usable_market_signals_payload(p, target_date)
+    ]
+    if not usable_payloads:
+        return base_payload
+
+    if _is_usable_market_signals_payload(base_payload, target_date):
+        merged = dict(base_payload)
+    else:
+        merged = dict(
+            max(
+                usable_payloads,
+                key=lambda p: (
+                    len(_market_signals_adopted_race_ids(p, adopted_levels)),
+                    len((p.get("signals") or {}) if isinstance(p, dict) else {}),
+                ),
+            )
+        )
+
+    merged_signals = dict(merged.get("signals") or {})
+    merged_badges = dict(merged.get("race_badges") or {})
+    before_adopted = _market_signals_adopted_race_ids(merged, adopted_levels)
+    added_from: list[str] = []
+
+    for payload in sorted(
+        usable_payloads,
+        key=lambda p: len(_market_signals_adopted_race_ids(p, adopted_levels)),
+        reverse=True,
+    ):
+        source_key = str(payload.get("source_cache_key") or payload.get("cache_key") or "")
+        signals = payload.get("signals") or {}
+        for race_id in _market_signals_adopted_race_ids(payload, adopted_levels):
+            if race_id in merged_signals:
+                continue
+            sig = signals.get(race_id)
+            if isinstance(sig, dict):
+                merged_signals[race_id] = sig
+                if source_key:
+                    added_from.append(source_key)
+        race_badges = payload.get("race_badges")
+        if isinstance(race_badges, dict):
+            for race_id, badge in race_badges.items():
+                merged_badges.setdefault(str(race_id), badge)
+
+    merged["signals"] = merged_signals
+    if merged_badges:
+        merged["race_badges"] = merged_badges
+    after_adopted = _market_signals_adopted_race_ids(merged, adopted_levels)
+    if after_adopted != before_adopted:
+        merged["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
+        merged["source_cache_version"] = base_payload.get("cache_version") if isinstance(base_payload, dict) else None
+        merged["cache_recovered_adopted_races"] = sorted(after_adopted - before_adopted)
+        if added_from:
+            merged["cache_recovered_from"] = sorted(set(added_from))
+    merged["n_races"] = len(merged_signals)
+    merged["n_positive_ev"] = sum(
+        1 for sig in merged_signals.values()
+        if isinstance(sig, dict) and sig.get("is_positive_ev")
+    )
+    merged["n_l4"] = sum(
+        1 for sig in merged_signals.values()
+        if isinstance(sig, dict) and sig.get("l4")
+    )
+    merged["n_morning_l4"] = sum(
+        1 for sig in merged_signals.values()
+        if isinstance(sig, dict)
+        and isinstance(sig.get("l4"), dict)
+        and sig["l4"].get("is_morning")
+    )
+    return merged
+
+
+def _read_best_market_signals_snapshot(
+    target_date: str,
+    *,
+    adopted_levels: set[str] | tuple[str, ...],
+    cache_ttl: Optional[int] = None,
+) -> tuple[Any, str]:
+    """Read current/last-good/compatible market snapshots without losing adopted rows."""
+    current_key = _market_signals_cache_key(target_date)
+    current_payload = (
+        _read_json_cache(current_key, cache_ttl)
+        if cache_ttl is not None
+        else _read_json_cache_stale(current_key)
+    )
+    if _is_pending_market_signals_payload(current_payload):
+        current_payload = None
+    if current_payload is None:
+        current_payload = _read_json_cache_stale(current_key)
+        if _is_pending_market_signals_payload(current_payload):
+            current_payload = None
+    if isinstance(current_payload, dict):
+        current_payload = dict(current_payload)
+        current_payload["source_cache_key"] = current_key
+
+    fallback_payloads: list[Any] = []
+    for key in [_market_signals_last_good_cache_key(target_date), *_market_signals_compat_cache_keys(target_date)]:
+        payload = _read_json_cache_stale(key)
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["source_cache_key"] = key
+        fallback_payloads.append(payload)
+
+    best_payload = _merge_market_signals_adopted_payloads(
+        current_payload,
+        fallback_payloads,
+        target_date,
+        adopted_levels,
+    )
+    if (
+        _is_usable_market_signals_payload(current_payload, target_date)
+        and isinstance(best_payload, dict)
+        and not best_payload.get("cache_recovered_adopted_races")
+    ):
+        return best_payload, "snapshot"
+    if isinstance(best_payload, dict) and best_payload.get("cache_recovered_adopted_races"):
+        return best_payload, "merged-compat"
+    if _is_usable_market_signals_payload(best_payload, target_date):
+        source_key = str(best_payload.get("source_cache_key") or "")
+        if source_key == _market_signals_last_good_cache_key(target_date):
+            best_payload = dict(best_payload)
+            best_payload["source_cache_version"] = best_payload.get("cache_version")
+            best_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
+            return best_payload, "last-good"
+        if source_key:
+            best_payload = dict(best_payload)
+            best_payload["source_cache_version"] = best_payload.get("cache_version")
+            best_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
+            return best_payload, "compat-stale"
+    return best_payload, "missing"
 
 
 def _parse_market_signal_bets_for_roi(l4: dict) -> list[tuple[str, str]]:
@@ -4223,25 +4423,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         race_by_id = {str(r.get("race_id")): r for r in races_list}
         today_iso = date.today().isoformat()
         cache_ttl = 15 if target_date >= today_iso else 3600
-        signal_cache_key = _market_signals_cache_key(target_date)
-        signal_payload = _read_json_cache(signal_cache_key, cache_ttl)
-        if _is_pending_market_signals_payload(signal_payload):
-            signal_payload = None
-        if signal_payload is None and target_date < today_iso:
-            signal_payload = _read_json_cache_stale(signal_cache_key)
-            if _is_pending_market_signals_payload(signal_payload):
-                signal_payload = None
-        if signal_payload is None:
-            last_good_payload = _read_json_cache_stale(
-                _market_signals_last_good_cache_key(target_date)
-            )
-            if (
-                isinstance(last_good_payload, dict)
-                and last_good_payload.get("date") == target_date
-                and not _is_pending_market_signals_payload(last_good_payload)
-                and isinstance(last_good_payload.get("signals"), dict)
-            ):
-                signal_payload = last_good_payload
+        signal_payload, _signal_cache_state = _read_best_market_signals_snapshot(
+            target_date,
+            adopted_levels=set(MARKET_SIGNAL_ADOPTED_LEVELS),
+            cache_ttl=cache_ttl,
+        )
 
         # The dedicated ROI list only needs the L4 signal rows. Hydrating race
         # grid badges here can fan out into detail-tag lookups for every race
@@ -5641,12 +5827,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # Render cron owns signal generation. Browser requests read the durable
         # snapshot once and do not run live DB overlays or a second response cache.
-        cached_payload = None if force_recompute else _read_json_cache_stale(cache_key)
-        if cached_payload is not None and not (
-            target_date >= recent_cache_floor
-            and _is_empty_market_signals_payload(cached_payload)
-        ):
-            return _market_json_response(cached_payload, "snapshot")
+        if not force_recompute:
+            cached_payload, cache_state = _read_best_market_signals_snapshot(
+                target_date,
+                adopted_levels=set(MARKET_SIGNAL_ADOPTED_LEVELS),
+            )
+            if cached_payload is not None and not (
+                target_date >= recent_cache_floor
+                and _is_empty_market_signals_payload(cached_payload)
+            ):
+                return _market_json_response(cached_payload, cache_state)
         # Web worker を守るため、通常リクエストは live date でも stale を返す。
         # 展示・潮・直前オッズで採否が動く候補の再計算は Render Cron の
         # recompute=1 に限定する。

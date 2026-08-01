@@ -55,10 +55,11 @@ def test_cached_market_signals_are_returned_without_live_db_overlays():
     route_source = route_source.split("@app.route", 1)[0]
 
     cache_return_source = route_source.split(
-        "cached_payload = None if force_recompute", 1
-    )[1].split("# Cache versions", 1)[0]
-    assert "_read_json_cache_stale(cache_key)" in cache_return_source
-    assert '_market_json_response(cached_payload, "snapshot")' in cache_return_source
+        "if not force_recompute:", 1
+    )[1].split("# Web worker", 1)[0]
+    assert "_read_best_market_signals_snapshot(" in cache_return_source
+    assert "target_date," in cache_return_source
+    assert "_market_json_response(cached_payload, cache_state)" in cache_return_source
     assert "_with_current_data_status(" not in cache_return_source
     assert "_apply_start_prediction_filters_to_cached_payload(" not in cache_return_source
 
@@ -131,15 +132,100 @@ def test_market_signals_keep_a_stable_last_good_snapshot():
     )
 
 
+def test_market_signals_snapshot_merges_adopted_rows_from_compatible_cache(monkeypatch):
+    current_key = web_app._market_signals_cache_key("2026-08-01")
+    compat_key = "market_signals:v27:old-signature:2026-08-01"
+    current_payload = {
+        "date": "2026-08-01",
+        "cache_version": "v27",
+        "signals": {
+            "20260801-08-09": {
+                "race_id": "20260801-08-09",
+                "is_positive_ev": True,
+                "l4": {
+                    "level": "tokoname_coursefit_boat3_general_win",
+                    "label": "常滑 コース適合 3号艇単勝",
+                },
+            }
+        },
+    }
+    compat_payload = {
+        "date": "2026-08-01",
+        "cache_version": "v27",
+        "signals": {
+            "20260801-05-10": {
+                "race_id": "20260801-05-10",
+                "is_positive_ev": True,
+                "l4": {
+                    "level": "tamagawa_13_weak_sashi2_exa",
+                    "label": "多摩川13 差し弱2型",
+                    "bet": "2連単 1-3",
+                },
+            }
+        },
+        "race_badges": {"20260801-05-10": {"market": {"label": "多摩川13"}}},
+    }
+
+    monkeypatch.setattr(
+        web_app,
+        "_read_json_cache",
+        lambda key, _ttl: current_payload if key == current_key else None,
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_read_json_cache_stale",
+        lambda key: compat_payload if key == compat_key else None,
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_market_signals_compat_cache_keys",
+        lambda target_date: [compat_key] if target_date == "2026-08-01" else [],
+    )
+
+    payload, cache_state = web_app._read_best_market_signals_snapshot(
+        "2026-08-01",
+        adopted_levels={
+            "tokoname_coursefit_boat3_general_win",
+            "tamagawa_13_weak_sashi2_exa",
+        },
+        cache_ttl=15,
+    )
+
+    assert cache_state == "merged-compat"
+    assert set(payload["signals"]) == {"20260801-08-09", "20260801-05-10"}
+    assert payload["signals"]["20260801-05-10"]["l4"]["bet"] == "2連単 1-3"
+    assert payload["cache_recovered_adopted_races"] == ["20260801-05-10"]
+
+
+def test_tamagawa_13_signal_is_an_adopted_roi_strategy():
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    assert '"tamagawa_13_weak_sashi2_exa"' in source
+    payload = {
+        "date": "2026-08-01",
+        "signals": {
+            "20260801-05-10": {
+                "l4": {"level": "tamagawa_13_weak_sashi2_exa"}
+            }
+        },
+    }
+
+    assert web_app._market_signals_adopted_race_ids(
+        payload,
+        {"tamagawa_13_weak_sashi2_exa"},
+    ) == {"20260801-05-10"}
+
+
 def test_today_races_payload_falls_back_to_last_good_snapshot():
     source = Path("src/web/app.py").read_text(encoding="utf-8")
     helper_source = source.split("def _market_pick_rows_for_display(", 1)[1]
     helper_source = helper_source.split("@app.route", 1)[0]
 
-    assert "_market_signals_last_good_cache_key(target_date)" in helper_source
-    assert "last_good_payload.get(\"date\") == target_date" in helper_source
-    assert "not _is_pending_market_signals_payload(last_good_payload)" in helper_source
-    assert "isinstance(last_good_payload.get(\"signals\"), dict)" in helper_source
+    assert "_read_best_market_signals_snapshot(" in helper_source
+    assert "adopted_levels=set(MARKET_SIGNAL_ADOPTED_LEVELS)" in helper_source
+    shared_source = source.split("def _read_best_market_signals_snapshot(", 1)[1]
+    shared_source = shared_source.split("def _parse_market_signal_bets_for_roi", 1)[0]
+    assert "_market_signals_last_good_cache_key(target_date)" in shared_source
+    assert "_market_signals_compat_cache_keys(target_date)" in shared_source
 
 
 def test_pending_market_signals_skip_badge_hydration():
