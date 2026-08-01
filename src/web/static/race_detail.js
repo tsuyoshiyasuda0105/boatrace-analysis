@@ -35,6 +35,8 @@
   const historyCache = new Map();
   const racerDetailCache = new Map();
   let activeRaceId = "";
+  let activeMotorBoatNumber = "";
+  let motorHistoryRequestId = 0;
   const scoreClass = (value) => {
     if (value == null) return "flat";
     const score = Number(value);
@@ -323,16 +325,34 @@
 
   const openMotorHistory = async (raceId, boatNumber, sourceButton = null) => {
     if (!inspectorShell || !inspectorBody || !raceId || !boatNumber) return;
+    const requestedBoatNumber = String(boatNumber);
+    if (
+      activeRaceId === raceId
+      && activeMotorBoatNumber === requestedBoatNumber
+      && inspectorBody.querySelector(".motor-history-panel")
+    ) return;
+
+    const keepCurrentHistoryVisible = !inspectorShell.hidden
+      && Boolean(inspectorBody.querySelector(".motor-history-panel"));
+    const requestId = ++motorHistoryRequestId;
     activeRaceId = raceId;
+    activeMotorBoatNumber = requestedBoatNumber;
     document.querySelectorAll(".motor-history-btn[aria-expanded='true']").forEach((el) => el.setAttribute("aria-expanded", "false"));
     sourceButton?.setAttribute("aria-expanded", "true");
     inspectorShell.hidden = false;
-    inspectorBody.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
+    inspectorBody.setAttribute("aria-busy", "true");
+    if (!keepCurrentHistoryVisible) {
+      inspectorBody.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
+    }
     try {
-      inspectorBody.innerHTML = renderHistoryOnly(await fetchHistory(raceId, boatNumber));
-      inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
+      const history = await fetchHistory(raceId, requestedBoatNumber);
+      if (requestId !== motorHistoryRequestId) return;
+      inspectorBody.innerHTML = renderHistoryOnly(history);
     } catch (err) {
+      if (requestId !== motorHistoryRequestId) return;
       inspectorBody.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました: ${esc(err.message || "")}</div>`;
+    } finally {
+      if (requestId === motorHistoryRequestId) inspectorBody.removeAttribute("aria-busy");
     }
   };
 
@@ -351,7 +371,11 @@
   };
 
   document.querySelectorAll(".motor-history-btn").forEach((button) => {
-    button.addEventListener("click", () => openMotorHistory(button.dataset.raceId, button.dataset.boatNumber, button));
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMotorHistory(button.dataset.raceId, button.dataset.boatNumber, button);
+    });
   });
 
   document.querySelectorAll(".racer-detail-btn").forEach((button) => {
@@ -360,7 +384,10 @@
 
   inspectorBody?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-motor-position-boat]");
-    if (button) openMotorHistory(activeRaceId, button.dataset.motorPositionBoat);
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openMotorHistory(activeRaceId, button.dataset.motorPositionBoat);
   });
 
   const renderMarketSignal = (signal) => {

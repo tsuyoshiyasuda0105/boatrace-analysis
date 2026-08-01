@@ -98,3 +98,8 @@ def test_motor_and_racer_detail_click_targets_are_wired_separately():
     assert "openRacerDetail" in script
     assert 'document.querySelectorAll(".motor-history-btn")' in script
     assert 'document.querySelectorAll(".racer-detail-btn")' in script
+    assert 'activeMotorBoatNumber === requestedBoatNumber' in script
+    assert 'keepCurrentHistoryVisible' in script
+    assert 'event.preventDefault()' in script
+    assert 'event.stopPropagation()' in script
+    assert 'inspectorShell.scrollIntoView' not in script[script.index("const openMotorHistory"):script.index("const openRacerDetail")]
