@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROI_DAILY_CACHE_VERSION = "adopted_daily_select_v36"
 MARKET_SIGNALS_CACHE_VERSION = "v27"
-STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v17"
+STRATEGY_PAGE_CACHE_VERSION = "strategy-roi-v18"
 
 
 def strategy_definition_signature(repo_root: Path | None = None) -> str:

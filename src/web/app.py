@@ -12825,6 +12825,37 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as exc:  # noqa: BLE001
             logger.warning("daily ROI cache-only lookup failed: %s", exc)
 
+        # Normal page loads must overlay the durable per-race ledger too. If
+        # this is done only by the heavy recompute path, the HTML page cache can
+        # continue serving old daily JSON after a successful ledger backfill.
+        try:
+            with db_connect() as history_conn:
+                history_daily = load_roi_history_daily(
+                    history_conn, from_date, to_date, ROI_STRATEGY_KEYS
+                )
+            for rdate, strategies in history_daily.items():
+                day_d = by_date.setdefault(
+                    rdate, {"date": rdate, "n_total": 0, "n_l4": 0}
+                )
+                for key in ROI_STRATEGY_KEYS:
+                    day_d[f"{key}_bets"] = 0
+                    day_d[f"{key}_hits"] = 0
+                    day_d[f"{key}_pay"] = 0
+                    day_d[f"{key}_roi"] = None
+                    day_d[f"{key}_recovery"] = None
+                    day_d[f"{key}_profit"] = 0
+                for level, metrics in strategies.items():
+                    day_d[f"{level}_bets"] = int(metrics.get("bets") or 0)
+                    day_d[f"{level}_hits"] = int(metrics.get("hits") or 0)
+                    day_d[f"{level}_pay"] = int(metrics.get("pay") or 0)
+                day_d["_adopted_from_market_signals_cache"] = True
+                day_d["_adopted_market_signals_cache_missing"] = False
+                day_d["_adopted_from_raw_fallback"] = False
+                day_d["_adopted_snapshot_source"] = "race_history"
+                by_date[rdate] = _normalize_roi_cache_day(day_d)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ROI race history cache-only overlay failed: %s", exc)
+
         settled_dates = _dates_with_settled_results(from_date, to_date)
         rows: list[dict] = []
         cur = d_from
