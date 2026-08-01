@@ -98,7 +98,7 @@ def refresh(target_date: str, *, delay_seconds: int = 60, limit: int = 12) -> di
                     web_app._write_json_cache(
                         f"motor_history_{MOTOR_CACHE_VERSION}:{race_id}:{boat}", payload
                     )
-            web_app._clear_web_caches()
+            web_app.invalidate_cache()
             response = client.get(f"/race/{race_id}?recompute=1")
             if response.status_code != 200:
                 raise RuntimeError(f"page status={response.status_code}")
