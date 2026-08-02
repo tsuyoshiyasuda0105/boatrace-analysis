@@ -402,7 +402,6 @@ def run_morning(now: datetime) -> bool:
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
-    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     return ok
 
@@ -887,7 +886,6 @@ def run_nightly(now: datetime) -> bool:
     # Preload tomorrow after its races exist as well.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
-    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", tomorrow], timeout=1800)
     try:
         tomorrow_counts = daily_source_counts(tomorrow)
     except Exception as exc:
