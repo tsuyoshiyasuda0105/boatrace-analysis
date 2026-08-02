@@ -141,9 +141,20 @@ def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
 
 
 def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
-    """Fill lightweight race-grid badges for cache-only market signal payloads."""
+    """Return only precomputed race-grid badges.
+
+    The top page must not run expensive fallback SQL during a web request.
+    If the daily/cron prewarm did not create badges yet, render without badges
+    instead of hydrating them synchronously.
+    """
     if not isinstance(payload, dict):
         return payload
+    existing = payload.get("race_badges")
+    if isinstance(existing, dict):
+        return payload
+    payload = dict(payload)
+    payload["race_badges"] = {}
+    return payload
     data_status = payload.get("data_status")
     if isinstance(data_status, dict) and (
         data_status.get("cache_miss") or data_status.get("cache_only")
