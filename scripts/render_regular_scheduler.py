@@ -966,11 +966,10 @@ def main() -> int:
             ok = run_hourly(now)
             record_task(task, today, "success" if ok else "failure")
 
-    # Accident rankings feed race tags and several adopted ROI strategies. Check
-    # staleness every live cron tick, but record an hourly running slot before a
-    # rebuild so overlapping five-minute runs cannot duplicate the heavy work.
-    if 6 <= now.hour <= 23:
-        run_accident_self_heal(now)
+    # Accident rankings feed race tags and several adopted ROI strategies.
+    # Keep them on the stable once-daily nightly snapshot. Rebuilding during
+    # live race hours can change today's strategy inputs mid-day and violates
+    # the agreed daily aggregation cadence.
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
     if now.hour == 23 and now.minute >= 30:

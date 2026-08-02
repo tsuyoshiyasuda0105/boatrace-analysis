@@ -421,14 +421,14 @@ def test_scheduler_never_rebuilds_accident_stats_from_one_day_only():
     assert "run_accident_rebuild(today, today)" not in source
 
 
-def test_scheduler_checks_accident_staleness_every_live_tick_with_lock():
+def test_scheduler_keeps_accident_refresh_out_of_live_loop():
     source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     main_source = source.split("def main() -> int:", 1)[1]
-    accident_block = main_source.split("run_accident_self_heal(now)", 1)[0].rsplit("if ", 1)[1]
+    live_loop = main_source.split("# End-of-day refresh", 1)[0]
+    nightly_source = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
 
-    assert "now.minute < 5" not in accident_block
-    refresh_source = source.split("def run_accident_self_heal", 1)[1].split("def run_nightly", 1)[0]
-    assert 'record_task(slot_task, run_date, "running"' in refresh_source
+    assert "run_accident_self_heal(now)" not in live_loop
+    assert "run_accident_full_refresh(today)" in nightly_source
 
 
 def test_accident_watch_map_uses_latest_period_end_before_target(monkeypatch):
