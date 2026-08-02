@@ -42,6 +42,15 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert 'task_name = \'render_exhibition_detail_refresh\'' in source
 
 
+def test_exhibition_refresh_imports_web_app_after_collection_path():
+    source = (ROOT / "scripts" / "refresh_race_detail_after_exhibition.py").read_text(encoding="utf-8")
+
+    imports = source.split("def collect_live_exhibition", 1)[0]
+    refresh = source.split("def refresh", 1)[1].split("def main", 1)[0]
+    assert "from src.web import app as web_app" not in imports
+    assert "from src.web import app as web_app" in refresh
+
+
 def test_web_app_keeps_legacy_clear_cache_hook_for_cron_rollouts():
     source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
 

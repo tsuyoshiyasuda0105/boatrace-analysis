@@ -27,7 +27,6 @@ from scripts import scrape_beforeinfo_live as live_beforeinfo  # noqa: E402
 from src.collectors import original_exhibition as original_exhibition_collector  # noqa: E402
 from src.db.cron_run_log import record_cron_run  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
-from src.web import app as web_app  # noqa: E402
 
 
 MOTOR_CACHE_VERSION = "v9"
@@ -442,6 +441,12 @@ def refresh(target_date: str, *, delay_seconds: int = 60, limit: int = 12) -> di
         summary = {"target_date": target_date, "due": 0, "refreshed": 0, "failed": 0}
         print(f"[exhibition-detail-refresh] {summary}", flush=True)
         return summary
+
+    # Import the web application only after live exhibition rows have already
+    # been collected.  The app import/page render path is the heavy part of this
+    # cron; if Render cancels the process during page refresh, the source rows
+    # should still have been written so the detail page can render facts from DB.
+    from src.web import app as web_app
 
     app = web_app.create_app(version=config.DEFAULT_MODEL_VERSION)
     app.testing = True
