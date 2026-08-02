@@ -3315,6 +3315,7 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
                     "wins": int(boat1_escape.get("wins") or 0),
                     "starts": int(boat1_escape.get("starts") or 0),
                 }
+                boat["escape_tag"]["label"] = "逃げ"
         boats[str(int(boat_number))] = boat
 
     return {
