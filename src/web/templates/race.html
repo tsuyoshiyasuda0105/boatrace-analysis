@@ -260,6 +260,7 @@
                   <div class="compat-index-value {% if row[key ~ '_delta'] > 0 %}is-up{% elif row[key ~ '_delta'] < 0 %}is-down{% endif %}">
                     {{ '%+.2f' | format(row[key ~ '_delta']) }}
                   </div>
+                  </div>
                 </div>
               </td>
               {% endfor %}
@@ -385,6 +386,26 @@
                       {% set cls_map = {1: 'A1', 2: 'A2', 3: 'B1', 4: 'B2'} %}
                       {% set cls_label = cls_map.get(p.class_number, '-') %}
                       <span class="racer-class-badge racer-class-badge--name is-{{ cls_label | lower }}">{{ cls_label }}</span>
+                      <span class="racer-age-chip">{{ p.age | int if p.age is defined and p.age is not none else '-' }}歳</span>
+                      <span class="racer-branch-weight">
+                        <span>{{ p.branch_label if p.branch_label is defined and p.branch_label else '-' }}</span>
+                        <span>{{ '%.1f' | format(p.weight) if p.weight is defined and p.weight is not none else '-' }}kg</span>
+                      </span>
+                      <span class="racer-course-win-sample"
+                            title="{{ p.boat_number }}コース成績。当地は直近10走、全国は同コース累計です。">
+                        <span class="course-win-line is-venue">
+                          <small>当地10R</small>
+                          <b>{{ '%.1f' | format(p.venue_recent10_course_win_rate) if p.venue_recent10_course_win_rate is defined and p.venue_recent10_course_win_rate is not none else '-' }}%</b>
+                        </span>
+                        <span class="course-win-line is-national">
+                          <small>全国{{ p.current_course_number or p.boat_number }}C</small>
+                          <b>{{ '%.1f' | format(p.national_course_win_rate) if p.national_course_win_rate is defined and p.national_course_win_rate is not none else '-' }}%</b>
+                        </span>
+                        <span class="course-win-line is-top3">
+                          <small>{{ p.current_course_number or p.boat_number }}C3着内</small>
+                          <b>{{ '%.1f' | format(p.national_course_top3_rate) if p.national_course_top3_rate is defined and p.national_course_top3_rate is not none else '-' }}%</b>
+                        </span>
+                      </span>
                     </span>
                   </span>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
@@ -433,6 +454,10 @@
                     <span><small>全国勝率</small><b>{{ '%.2f' | format(p.national_top_1_percent) if p.national_top_1_percent is defined and p.national_top_1_percent is not none else '—' }}</b></span>
                     <span><small>全国2連率</small><b>{{ '%.2f' | format(p.national_top_2_percent) if p.national_top_2_percent is not none else '—' }}</b></span>
                     <span><small>当地2連率</small><b>{{ '%.2f' | format(p.local_top_2_percent) if p.local_top_2_percent is not none else '—' }}</b></span>
+                  </div>
+                  <div class="racer-risk-grid">
+                    <span><small>F/L</small><b>F{{ p.flying_count | int if p.flying_count is defined and p.flying_count is not none else 0 }} / L{{ p.late_count | int if p.late_count is defined and p.late_count is not none else 0 }}</b></span>
+                    <span><small>事故率</small><b>{% if p.accident_display_level is defined and p.accident_rate is defined and p.accident_rate is not none %}{{ '%.2f' | format(p.accident_rate) }}{% else %}-{% endif %}</b></span>
                   </div>
                 </div>
               </td>

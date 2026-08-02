@@ -1219,6 +1219,7 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
             rows = conn.execute("""
                 SELECT p.boat_number, p.prob_first, p.prob_top_2, p.prob_top_3,
                        e.racer_number, e.racer_name, e.class_number,
+                       e.branch_number, e.age, e.weight, e.flying_count, e.late_count,
                        e.national_top_1_percent, e.national_top_2_percent, e.local_top_2_percent,
                        e.assigned_motor_number,
                        e.assigned_motor_top_2_percent,
@@ -1237,6 +1238,7 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
         return None
     keys = ["boat_number", "prob_first", "prob_top_2", "prob_top_3",
             "racer_number", "racer_name", "class_number",
+            "branch_number", "age", "weight", "flying_count", "late_count",
             "national_top_1_percent", "national_top_2_percent", "local_top_2_percent",
             "assigned_motor_number",
             "assigned_motor_top_2_percent",
@@ -1245,6 +1247,7 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
     out = []
     for i, row in enumerate(rows, 1):
         d = dict(zip(keys, row))
+        d["branch_label"] = _branch_label(d.get("branch_number"))
         d["pred_rank"] = i
         out.append(d)
     return out
@@ -1280,7 +1283,8 @@ def _race_predictions(predictor: Predictor, race_id: str) -> list[dict]:
     sub["pred_rank"] = range(1, len(sub) + 1)
     cols = [
         "boat_number", "racer_number", "racer_name",
-        "class_number", "national_top_1_percent", "national_top_2_percent", "local_top_2_percent",
+        "class_number", "branch_number", "age", "weight", "flying_count", "late_count",
+        "national_top_1_percent", "national_top_2_percent", "local_top_2_percent",
         "assigned_motor_number", "assigned_motor_top_2_percent",
         "exhibition_time", "start_timing_exhibition", "tilt_adjustment",
         "prob_first", "prob_top_2", "prob_top_3", "raw_score", "pred_rank",
@@ -1304,6 +1308,11 @@ def _race_entry_fallback_rows(race_id: str) -> list[dict]:
                    e.racer_number,
                    e.racer_name,
                    e.class_number,
+                   e.branch_number,
+                   e.age,
+                   e.weight,
+                   e.flying_count,
+                   e.late_count,
                    e.national_top_1_percent,
                    e.national_top_2_percent,
                    e.local_top_2_percent,
@@ -1333,15 +1342,21 @@ def _race_entry_fallback_rows(race_id: str) -> list[dict]:
                 "racer_number": row[1],
                 "racer_name": row[2],
                 "class_number": row[3],
-                "national_top_1_percent": row[4],
-                "national_top_2_percent": row[5],
-                "local_top_2_percent": row[6],
-                "assigned_motor_number": row[7],
-                "assigned_motor_top_2_percent": row[8],
-                "exhibition_time": row[9],
-                "start_timing_exhibition": row[10],
-                "tilt_adjustment": row[11],
-                "finishing_position": row[12],
+                "branch_number": row[4],
+                "branch_label": _branch_label(row[4]),
+                "age": row[5],
+                "weight": row[6],
+                "flying_count": row[7],
+                "late_count": row[8],
+                "national_top_1_percent": row[9],
+                "national_top_2_percent": row[10],
+                "local_top_2_percent": row[11],
+                "assigned_motor_number": row[12],
+                "assigned_motor_top_2_percent": row[13],
+                "exhibition_time": row[14],
+                "start_timing_exhibition": row[15],
+                "tilt_adjustment": row[16],
+                "finishing_position": row[17],
                 "prob_first": 0.0,
                 "prob_top_2": 0.0,
                 "prob_top_3": 0.0,
@@ -3067,7 +3082,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v4"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v5"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v6"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -3258,6 +3273,11 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
                  GROUP BY race_id, boat_number
             )
             SELECT e.boat_number,
+                   e.branch_number,
+                   e.age,
+                   e.weight,
+                   e.flying_count,
+                   e.late_count,
                    e.national_top_1_percent,
                    e.national_top_2_percent,
                    e.local_top_2_percent,
@@ -3320,7 +3340,8 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
                 national_course AS (
                     SELECT c.boat_number,
                            COUNT(*) AS starts,
-                           SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                           SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins,
+                           SUM(CASE WHEN rr.finishing_position <= 3 THEN 1 ELSE 0 END) AS top3
                       FROM current_entries c
                       JOIN race_entries e
                         ON e.racer_number = c.racer_number
@@ -3341,7 +3362,8 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
                        vr.starts AS venue_starts,
                        vr.wins AS venue_wins,
                        nc.starts AS national_starts,
-                       nc.wins AS national_wins
+                       nc.wins AS national_wins,
+                       nc.top3 AS national_top3
                   FROM current_entries c
                   LEFT JOIN venue_recent vr
                     ON vr.boat_number = c.boat_number
@@ -3370,14 +3392,20 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
             row = None
         if not row:
             continue
-        p["national_top_1_percent"] = row[1]
-        p["national_top_2_percent"] = row[2]
-        p["local_top_2_percent"] = row[3]
-        p["tilt_adjustment"] = row[4]
-        p["avg_start_timing"] = row[5]
-        p["dash_time"] = row[6]
-        p["turn_time"] = row[7]
-        p["straight_time"] = row[8]
+        p["branch_number"] = row[1]
+        p["branch_label"] = _branch_label(row[1])
+        p["age"] = row[2]
+        p["weight"] = row[3]
+        p["flying_count"] = int(row[4] or 0)
+        p["late_count"] = int(row[5] or 0)
+        p["national_top_1_percent"] = row[6]
+        p["national_top_2_percent"] = row[7]
+        p["local_top_2_percent"] = row[8]
+        p["tilt_adjustment"] = row[9]
+        p["avg_start_timing"] = row[10]
+        p["dash_time"] = row[11]
+        p["turn_time"] = row[12]
+        p["straight_time"] = row[13]
         p.update(original_marks.get(boat_number, {}))
         course_row = course_facts.get(boat_number)
         if course_row:
@@ -3385,6 +3413,7 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
             venue_wins = int(course_row[2] or 0)
             national_starts = int(course_row[3] or 0)
             national_wins = int(course_row[4] or 0)
+            national_top3 = int(course_row[5] or 0)
             p["current_course_number"] = boat_number
             p["venue_recent10_course_win_starts"] = venue_starts
             p["venue_recent10_course_win_rate"] = (
@@ -3395,6 +3424,11 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
             p["national_course_win_starts"] = national_starts
             p["national_course_win_rate"] = (
                 round(national_wins / national_starts * 100.0, 1)
+                if national_starts
+                else None
+            )
+            p["national_course_top3_rate"] = (
+                round(national_top3 / national_starts * 100.0, 1)
                 if national_starts
                 else None
             )

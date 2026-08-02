@@ -30,9 +30,17 @@ def test_race_template_parses_and_contains_requested_fact_columns():
     assert "p.kimarite_skill.label" not in source
     assert "p.tilt_adjustment" in source
     assert "tilt-chip" in source
+    assert "racer-age-chip" in source
+    assert "racer-branch-weight" in source
+    assert "racer-risk-grid" in source
     assert "racer-course-win-sample" in source
+    assert "p.branch_label" in source
+    assert "p.weight" in source
+    assert "p.flying_count" in source
+    assert "p.late_count" in source
     assert "p.venue_recent10_course_win_rate" in source
     assert "p.national_course_win_rate" in source
+    assert "p.national_course_top3_rate" in source
     assert "当地10R" in source
     assert "preds | sort(attribute='boat_number')" in source
     assert "p.avg_start_timing" in source
@@ -88,12 +96,18 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "4: ((\"\u307e\u304f\u308a\", 4),)" in source
     assert "venue_recent10_course_win_rate" in source
     assert "national_course_win_rate" in source
+    assert "national_course_top3_rate" in source
+    assert "e.branch_number" in source
+    assert "e.age" in source
+    assert "e.weight" in source
+    assert "e.flying_count" in source
+    assert "e.late_count" in source
     assert "WHERE rn <= 10" in source
     assert "e.avg_start_timing" in source
     assert "original.dash_time" in source
     assert "original.turn_time" in source
     assert "original.straight_time" in source
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v5"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v6"' in source
 
 
 def test_cached_predictions_include_same_display_facts_as_fallback_rows():
@@ -103,15 +117,25 @@ def test_cached_predictions_include_same_display_facts_as_fallback_rows():
     cached_source = source[start:end]
 
     assert "e.national_top_1_percent" in cached_source
+    assert "e.branch_number" in cached_source
+    assert "e.age" in cached_source
+    assert "e.weight" in cached_source
+    assert "e.flying_count" in cached_source
+    assert "e.late_count" in cached_source
     assert "pv.tilt_adjustment" in cached_source
     assert '"national_top_1_percent"' in cached_source
+    assert '"branch_number"' in cached_source
+    assert '"age"' in cached_source
+    assert '"weight"' in cached_source
+    assert '"flying_count"' in cached_source
+    assert '"late_count"' in cached_source
     assert '"tilt_adjustment"' in cached_source
 
 
 def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v5"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v6"' in source
 
 
 def test_motor_marks_use_same_original_exhibition_source_in_table_and_history():
