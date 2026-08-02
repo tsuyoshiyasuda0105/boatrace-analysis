@@ -150,16 +150,22 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
     ):
         return payload
     signals = payload.get("signals")
-    if not isinstance(signals, dict) or not signals:
-        return payload
+    if not isinstance(signals, dict):
+        payload = dict(payload)
+        payload["signals"] = {}
     existing = payload.get("race_badges")
     if isinstance(existing, dict) and existing:
+        has_accident_badges = any(
+            isinstance(value, dict)
+            and value.get("accident")
+            for value in existing.values()
+        )
         has_escape_badges = any(
             isinstance(value, dict)
             and value.get("escape")
             for value in existing.values()
         )
-        if has_escape_badges:
+        if has_accident_badges and has_escape_badges:
             return payload
     payload = dict(payload)
     payload["race_badges"] = {}
@@ -453,11 +459,88 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
 
         if badge_info:
             race_badges[rid] = badge_info
-    payload["race_badges"] = race_badges
+    payload["race_badges"] = _normalize_race_badge_labels(race_badges)
     return payload
 
 
+def _normalize_race_badge_labels(race_badges: Any) -> dict[str, dict[str, Any]]:
+    """Rebuild race-grid badge labels from structured values.
+
+    Some old cached payloads were produced while this file contained mojibake
+    literals.  The browser badge text is fixed, but titles and digest strings
+    should remain readable and stable.
+    """
+    if not isinstance(race_badges, dict):
+        return {}
+    normalized: dict[str, dict[str, Any]] = {}
+    for race_id, badges in race_badges.items():
+        if not isinstance(badges, dict):
+            continue
+        next_badges = dict(badges)
+        accident = next_badges.get("accident")
+        if isinstance(accident, dict):
+            items = [item for item in (accident.get("items") or []) if isinstance(item, dict)]
+            label_parts: list[str] = []
+            for item in items[:3]:
+                boat = item.get("boat")
+                rate = _safe_float(item.get("rate"))
+                if boat is None or rate is None:
+                    continue
+                cls = str(item.get("class_label") or "").strip()
+                cls_part = f"{cls} " if cls and cls != "-" else ""
+                label_parts.append(f"{boat}号:{cls_part}{rate:.2f}")
+            accident = dict(accident)
+            accident["label"] = "事故率0.50+" + ((" " + ", ".join(label_parts)) if label_parts else "")
+            next_badges["accident"] = accident
+
+        escape = next_badges.get("escape")
+        if isinstance(escape, dict):
+            items = [item for item in (escape.get("items") or []) if isinstance(item, dict)]
+            primary = items[0] if items else {}
+            boat = primary.get("boat") or 1
+            rate = _safe_float(primary.get("rate") or escape.get("max_rate"))
+            escape = dict(escape)
+            escape["label"] = (
+                f"{boat}号:逃げ {rate:.1f}%"
+                if rate is not None
+                else f"{boat}号:逃げ"
+            )
+            next_badges["escape"] = escape
+
+        ace = next_badges.get("ace_motor")
+        if isinstance(ace, dict):
+            items = [item for item in (ace.get("items") or []) if isinstance(item, dict)]
+            labels = []
+            for item in items[:3]:
+                boat = item.get("boat")
+                rate = _safe_float(item.get("rate"))
+                if boat is not None and rate is not None:
+                    labels.append(f"{boat}号M{rate:.1f}")
+            if labels:
+                ace = dict(ace)
+                ace["label"] = " / ".join(labels)
+                next_badges["ace_motor"] = ace
+
+        kimarite = next_badges.get("kimarite")
+        if isinstance(kimarite, dict):
+            items = [item for item in (kimarite.get("items") or []) if isinstance(item, dict)]
+            labels = []
+            for item in items[:3]:
+                boat = item.get("boat")
+                label = str(item.get("label") or "").strip()
+                if boat is not None and label:
+                    labels.append(f"{boat}号:{label}")
+            if labels:
+                kimarite = dict(kimarite)
+                kimarite["label"] = " / ".join(labels)
+                next_badges["kimarite"] = kimarite
+
+        normalized[str(race_id)] = next_badges
+    return normalized
+
+
 def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str, Any]:
+    wanted = {str(rid) for rid in race_ids if rid}
     for cache_key in (
         _market_signals_last_good_cache_key(target_date),
         _market_signals_cache_key(target_date),
@@ -465,13 +548,37 @@ def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str
         payload = _read_json_cache_stale(cache_key)
         if not isinstance(payload, dict) or payload.get("date") != target_date:
             continue
+        payload = _hydrate_market_race_badges(payload, target_date)
         race_badges = payload.get("race_badges")
         if isinstance(race_badges, dict) and race_badges:
+            race_badges = _normalize_race_badge_labels(race_badges)
+            filtered = {
+                str(rid): badge
+                for rid, badge in race_badges.items()
+                if not wanted or str(rid) in wanted
+            }
             return {
                 "date": target_date,
-                "race_badges": race_badges,
+                "race_badges": filtered,
                 "accident_watch": {},
             }
+    fallback_payload = _hydrate_market_race_badges(
+        {"date": target_date, "signals": {}, "race_badges": {}},
+        target_date,
+    )
+    race_badges = fallback_payload.get("race_badges") if isinstance(fallback_payload, dict) else {}
+    if isinstance(race_badges, dict) and race_badges:
+        race_badges = _normalize_race_badge_labels(race_badges)
+        filtered = {
+            str(rid): badge
+            for rid, badge in race_badges.items()
+            if not wanted or str(rid) in wanted
+        }
+        return {
+            "date": target_date,
+            "race_badges": filtered,
+            "accident_watch": {},
+        }
     return {
         "date": target_date,
         "race_badges": {},

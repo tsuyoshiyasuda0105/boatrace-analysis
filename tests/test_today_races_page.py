@@ -97,6 +97,46 @@ def test_races_page_excludes_roi_list_and_does_not_read_snapshot(monkeypatch):
     assert "const marketSignalsEnabled = false" in html
 
 
+def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
+
+    def fake_hydrate(payload, target_date):
+        assert target_date == "2026-07-30"
+        return {
+            **payload,
+            "race_badges": {
+                "202607300101": {
+                    "accident": {
+                        "items": [{"boat": 2, "rate": 0.61, "class_label": "A1"}],
+                        "max_rate": 0.61,
+                    },
+                    "escape": {
+                        "items": [{"boat": 1, "rate": 72.5}],
+                        "max_rate": 72.5,
+                    },
+                },
+                "202607300102": {
+                    "escape": {
+                        "items": [{"boat": 1, "rate": 80.0}],
+                        "max_rate": 80.0,
+                    },
+                },
+            },
+        }
+
+    monkeypatch.setattr(web_app, "_hydrate_market_race_badges", fake_hydrate)
+
+    payload = web_app._race_grid_badges_payload(
+        "2026-07-30",
+        ["202607300101"],
+    )
+
+    assert set(payload["race_badges"]) == {"202607300101"}
+    badge = payload["race_badges"]["202607300101"]
+    assert badge["accident"]["label"] == "事故率0.50+ 2号:A1 0.61"
+    assert badge["escape"]["label"] == "1号:逃げ 72.5%"
+
+
 def test_today_navigation_opens_dedicated_candidate_page(monkeypatch):
     response = _member_client(monkeypatch).get("/races?date=2026-07-30")
     html = response.get_data(as_text=True)
