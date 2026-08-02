@@ -584,6 +584,9 @@ def run_roi_history_slot(now: datetime) -> bool:
     """Refresh historical ROI pages once in each 12-hour JST window."""
     today = now.date().isoformat()
     task = roi_history_task_name(now)
+    if task_attempt_exists(task, today):
+        print(f"[roi-history] already attempted task={task}", flush=True)
+        return True
     if task_success_exists(task, today):
         print(f"[roi-history] already succeeded task={task}", flush=True)
         return True
@@ -594,6 +597,17 @@ def run_roi_history_slot(now: datetime) -> bool:
     )
     record_task(task, today, "success" if ok else "failure")
     return ok
+
+
+def should_run_roi_history_slot(now: datetime) -> bool:
+    """Keep heavy ROI history refresh out of the five-minute live loop.
+
+    The history page recompute can exceed the Render Starter 512MiB memory cap
+    when Supabase is slow. Run it only in two narrow windows; current-day race
+    collection, result polling, and high-ROI candidate snapshots must remain
+    the priority for boatrace-regular-cron.
+    """
+    return now.minute < 5 and now.hour in (0, 12)
 
 
 def run_original_exhibition_catchup(now: datetime, target_date: str, *, label: str) -> bool:
@@ -930,9 +944,11 @@ def main() -> int:
         if not task_success_exists("render_roi_daily_reconcile", finalized_date):
             run_roi_daily_self_heal(now)
 
-    # Historical ROI pages are deliberately last. They may be expensive, but
-    # the current candidate snapshot has already been refreshed in this run.
-    run_roi_history_slot(now)
+    # Historical ROI pages are deliberately isolated from the live five-minute
+    # loop. They may be expensive, and a failed 12-hour attempt must not keep
+    # retrying every five minutes while today's races are running.
+    if should_run_roi_history_slot(now):
+        run_roi_history_slot(now)
 
     print("[render-regular] done", flush=True)
     return 0

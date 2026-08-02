@@ -104,6 +104,11 @@ def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):
     attempted = []
     monkeypatch.setattr(
         scheduler,
+        "task_attempt_exists",
+        lambda _task, _run_date: False,
+    )
+    monkeypatch.setattr(
+        scheduler,
         "task_success_exists",
         lambda task, run_date: attempted.append((task, run_date)) or True,
     )
@@ -116,6 +121,44 @@ def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):
         ("render_roi_history_00", "2026-07-21"),
         ("render_roi_history_12", "2026-07-21"),
     ]
+
+
+def test_roi_history_does_not_retry_failed_slot_every_five_minutes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "task_attempt_exists",
+        lambda task, run_date: calls.append(("attempt", task, run_date)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "task_success_exists",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("attempt check should win")),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not rerun history")),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 14, 43, tzinfo=scheduler.JST)
+    assert scheduler.run_roi_history_slot(now)
+    assert calls == [("attempt", "render_roi_history_12", "2026-07-21")]
+
+
+def test_roi_history_only_runs_in_two_narrow_windows():
+    assert scheduler.should_run_roi_history_slot(
+        scheduler.datetime(2026, 7, 21, 0, 0, tzinfo=scheduler.JST)
+    )
+    assert scheduler.should_run_roi_history_slot(
+        scheduler.datetime(2026, 7, 21, 12, 4, tzinfo=scheduler.JST)
+    )
+    assert not scheduler.should_run_roi_history_slot(
+        scheduler.datetime(2026, 7, 21, 14, 43, tzinfo=scheduler.JST)
+    )
+    assert not scheduler.should_run_roi_history_slot(
+        scheduler.datetime(2026, 7, 21, 12, 5, tzinfo=scheduler.JST)
+    )
 
 
 def test_market_signals_keep_a_stable_last_good_snapshot():

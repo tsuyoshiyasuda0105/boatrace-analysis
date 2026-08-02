@@ -95,6 +95,7 @@ def test_regular_scheduler_runs_roi_refreshes_in_the_existing_cron():
     )[0]
 
     assert "run_signal_refresh_slot(now)" in main_block
+    assert "should_run_roi_history_slot(now)" in main_block
     assert "run_roi_history_slot(now)" in main_block
     assert "run_roi_daily_self_heal(now)" in main_block
     assert "prewarm_strategy_pages.py" not in hourly_block
@@ -183,8 +184,18 @@ def test_regular_scheduler_does_not_duplicate_signal_rebuild_each_loop():
     main_block = scheduler.split("def main() -> int:", 1)[1]
     live_block = main_block.split("# Lightweight result polling", 1)[0]
 
-    assert "run_beforeinfo(now)" in live_block
+    assert "run_beforeinfo(now)" not in live_block
     assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' not in live_block
+
+
+def test_regular_scheduler_keeps_history_out_of_every_five_minute_loop():
+    scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    main_block = scheduler.split("def main() -> int:", 1)[1]
+    history_block = main_block.split("# Historical ROI pages", 1)[1]
+
+    assert "if should_run_roi_history_slot(now):" in history_block
+    assert "run_roi_history_slot(now)" in history_block
+    assert "return now.minute < 5 and now.hour in (0, 12)" in scheduler
 
 
 def test_beforeinfo_leaves_signal_rebuild_to_dedicated_cron():
