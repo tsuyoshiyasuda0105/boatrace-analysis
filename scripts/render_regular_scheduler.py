@@ -224,6 +224,43 @@ def record_task(task_name: str, run_date: str, status: str, detail: str | None =
         print(f"[task_runs] write failed: {type(exc).__name__}: {exc}", flush=True)
 
 
+def signal_refresh_recently_running(now: datetime, max_age_minutes: int = 20) -> bool:
+    """Return True when a previous signal refresh is still considered active.
+
+    Render cron jobs can overlap when a five-minute run takes longer than the
+    interval.  The market-signal recompute is the expensive part of the live
+    loop, so use the shared task_runs table as a coarse cross-process lock.
+    """
+    today = now.date().isoformat()
+    since = (now - timedelta(minutes=max_age_minutes)).replace(
+        tzinfo=None,
+    ).isoformat(timespec="seconds")
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT task_name, started_at
+                  FROM task_runs
+                 WHERE run_date = ?
+                   AND task_name LIKE 'render_signal_refresh_%'
+                   AND status = 'running'
+                   AND started_at >= ?
+                 ORDER BY started_at DESC
+                 LIMIT 1
+                """,
+                (today, since),
+            ).fetchone()
+        if row:
+            print(
+                f"[signal-refresh] previous run still active task={row[0]} started_at={row[1]}",
+                flush=True,
+            )
+            return True
+    except Exception as exc:
+        print(f"[signal-refresh] lock check failed: {type(exc).__name__}: {exc}", flush=True)
+    return False
+
+
 def run_beforeinfo(now: datetime) -> bool:
     from scripts.scrape_beforeinfo_live import (
         find_due_races,
@@ -568,10 +605,14 @@ def run_signal_refresh_slot(now: datetime) -> bool:
     today = now.date().isoformat()
     slot = now.minute // 5
     task = signal_refresh_task_name(now)
-    if task_success_exists(task, today):
-        print(f"[signal-refresh] already succeeded slot={now.hour:02d}:{slot}", flush=True)
+    if task_attempt_exists(task, today):
+        print(f"[signal-refresh] already attempted slot={now.hour:02d}:{slot}", flush=True)
+        return True
+    if signal_refresh_recently_running(now):
+        print(f"[signal-refresh] skip overlapping slot={now.hour:02d}:{slot}", flush=True)
         return True
 
+    record_task(task, today, "running")
     ok = run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today],
         timeout=1800,

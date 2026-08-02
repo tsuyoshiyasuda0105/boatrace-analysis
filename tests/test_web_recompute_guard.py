@@ -89,15 +89,78 @@ def test_daily_source_complete_requires_all_races_entries_and_predictions():
 
 def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
     attempted = []
+    recorded = []
+    run_calls = []
     monkeypatch.setattr(
         scheduler,
-        "task_success_exists",
-        lambda task, run_date: attempted.append((task, run_date)) or True,
+        "task_attempt_exists",
+        lambda task, run_date: attempted.append((task, run_date)) or False,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "signal_refresh_recently_running",
+        lambda _now: False,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: run_calls.append((args, timeout)) or True,
     )
 
     now = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
     assert scheduler.run_signal_refresh_slot(now)
     assert attempted == [("render_signal_refresh_10_7", "2026-07-21")]
+    assert recorded[0][0][:3] == ("render_signal_refresh_10_7", "2026-07-21", "running")
+    assert recorded[-1][0][:3] == ("render_signal_refresh_10_7", "2026-07-21", "success")
+    assert run_calls == [
+        (
+            ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", "2026-07-21"],
+            1800,
+        )
+    ]
+
+
+def test_signal_refresh_skips_when_previous_slot_is_still_running(monkeypatch):
+    monkeypatch.setattr(scheduler, "task_attempt_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "signal_refresh_recently_running", lambda _now: True)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not overlap")),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not mark a skipped slot")),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 10, 40, tzinfo=scheduler.JST)
+    assert scheduler.run_signal_refresh_slot(now)
+
+
+def test_signal_refresh_lock_reads_recent_running_task(monkeypatch):
+    class _Cursor:
+        def fetchone(self):
+            return ("render_signal_refresh_10_7", "2026-07-21T10:37:00")
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args):
+            return _Cursor()
+
+    monkeypatch.setattr(scheduler, "db_connect", lambda: _Connection())
+    now = scheduler.datetime(2026, 7, 21, 10, 40, tzinfo=scheduler.JST)
+    assert scheduler.signal_refresh_recently_running(now)
 
 
 def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):
