@@ -362,21 +362,10 @@
         };
         const raceDetailWarmups = new Map();
         const warmRaceDetailOnIntent = (anchor) => {
-          const href = anchor?.getAttribute?.('href') || '';
-          if (!/^\/race\/\d{8}-\d{2}-\d{2}(?:[?#].*)?$/.test(href)) return;
-          if (raceDetailWarmups.has(href)) return;
-          const controller = new AbortController();
-          const timer = window.setTimeout(() => {
-            raceDetailWarmups.set(href, { controller, started: true });
-            fetch(href, {
-              credentials: 'same-origin',
-              cache: 'default',
-              signal: controller.signal,
-              priority: 'low',
-              headers: { 'X-Race-Detail-Warmup': '1' },
-            }).catch(() => {});
-          }, 180);
-          raceDetailWarmups.set(href, { controller, timer, started: false });
+          // Do not prefetch race-detail pages from hover/focus.
+          // Even cached HTML requests can pile up while the user moves across
+          // the race list and compete with the actual click target.
+          return;
         };
         const cancelRaceDetailWarmup = (anchor) => {
           const href = anchor?.getAttribute?.('href') || '';
