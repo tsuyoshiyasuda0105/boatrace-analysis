@@ -37,6 +37,9 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert '["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date]' in source
     assert "task_name LIKE 'render_signal_refresh_%'" in source
     assert "SIGNAL_REFRESH_MIN_GAP_MIN = 2" in source
+    assert "EXHIBITION_REFRESH_MAX_ACTIVE_MIN = 15" in source
+    assert "_exhibition_refresh_recently_running(args.date, now)" in source
+    assert 'task_name = \'render_exhibition_detail_refresh\'' in source
 
 
 def test_web_app_keeps_legacy_clear_cache_hook_for_cron_rollouts():
@@ -83,6 +86,7 @@ def test_dedicated_detail_crons_persist_health_records():
     assert '"success" if succeeded else "failure"' in exhibition
     assert '"signal_refresh_triggered"' in exhibition
     assert '"signal_refresh_ok"' in exhibition
+    assert '_record_task(task_name, args.date, "running")' in exhibition
 
 
 def test_regular_scheduler_no_longer_collects_exhibition_data():

@@ -43,6 +43,7 @@ ORIGINAL_EXHIBITION_PAST_MIN = 36 * 60
 ORIGINAL_EXHIBITION_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_LIMIT = 96
 SIGNAL_REFRESH_MIN_GAP_MIN = 2
+EXHIBITION_REFRESH_MAX_ACTIVE_MIN = 15
 
 
 def _run_py(args: list[str], timeout: int = 900) -> bool:
@@ -131,6 +132,35 @@ def _signal_refresh_recent_activity(target_date: str, now: datetime) -> tuple[bo
             return True, f"recent-{row[1]}:{row[0]}@{row[2]}"
     except Exception as exc:
         print(f"[signal-refresh] recent-activity check failed: {type(exc).__name__}: {exc}", flush=True)
+    return False, ""
+
+
+def _exhibition_refresh_recently_running(target_date: str, now: datetime) -> tuple[bool, str]:
+    since = (now - timedelta(minutes=EXHIBITION_REFRESH_MAX_ACTIVE_MIN)).replace(
+        tzinfo=None,
+    ).isoformat(timespec="seconds")
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT task_name, started_at
+                  FROM task_runs
+                 WHERE run_date = ?
+                   AND task_name = 'render_exhibition_detail_refresh'
+                   AND status = 'running'
+                   AND started_at >= ?
+                 ORDER BY started_at DESC
+                 LIMIT 1
+                """,
+                (target_date, since),
+            ).fetchone()
+        if row:
+            return True, f"recent-running:{row[0]}@{row[1]}"
+    except Exception as exc:
+        print(
+            f"[exhibition-detail-refresh] overlap check failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
     return False, ""
 
 
@@ -464,7 +494,23 @@ def main() -> int:
     parser.add_argument("--skip-collect", action="store_true")
     args = parser.parse_args()
     task_name = "render_exhibition_detail_refresh"
+    _ensure_task_runs_table()
+    now = datetime.now(JST)
+    is_running, running_reason = _exhibition_refresh_recently_running(args.date, now)
+    if is_running:
+        detail = json.dumps(
+            {"skipped": True, "reason": running_reason},
+            ensure_ascii=False,
+        )
+        print(
+            f"[exhibition-detail-refresh] skip overlapping run reason={running_reason}",
+            flush=True,
+        )
+        record_cron_run(task_name, args.date, "success", detail=detail)
+        return 0
+
     record_cron_run(task_name, args.date, "running")
+    _record_task(task_name, args.date, "running")
     collect_summary: dict = {"skipped": True}
     signal_summary: dict = {"triggered": False, "ok": True, "reason": "not-run"}
     try:
@@ -474,6 +520,7 @@ def main() -> int:
         summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
         signal_summary = refresh_market_signals_if_needed(args.date, collect_summary, summary)
     except Exception as exc:
+        _record_task(task_name, args.date, "failure", detail=f"{type(exc).__name__}: {exc}"[:1000])
         record_cron_run(
             task_name,
             args.date,
@@ -505,6 +552,7 @@ def main() -> int:
         "success" if succeeded else "failure",
         detail=detail,
     )
+    _record_task(task_name, args.date, "success" if succeeded else "failure", detail=detail)
     return 0 if succeeded else 1
 
 
