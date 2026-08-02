@@ -145,9 +145,9 @@ def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
 def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
     """Return only precomputed race-grid badges.
 
-    The top page must not run expensive fallback SQL during a web request.
-    If the daily/cron prewarm did not create badges yet, render without badges
-    instead of hydrating them synchronously.
+    The top page must never issue expensive fallback SQL at request time.
+    If prewarmed `race_badges` are absent, return an empty badge map and let the
+    page render without dynamic hydration.
     """
     if not isinstance(payload, dict):
         return payload
@@ -156,330 +156,6 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
         return payload
     payload = dict(payload)
     payload["race_badges"] = {}
-    return payload
-    data_status = payload.get("data_status")
-    if isinstance(data_status, dict) and (
-        data_status.get("cache_miss") or data_status.get("cache_only")
-    ):
-        return payload
-    signals = payload.get("signals")
-    if not isinstance(signals, dict):
-        payload = dict(payload)
-        payload["signals"] = {}
-    existing = payload.get("race_badges")
-    if isinstance(existing, dict) and existing:
-        has_accident_badges = any(
-            isinstance(value, dict)
-            and value.get("accident")
-            for value in existing.values()
-        )
-        has_escape_badges = any(
-            isinstance(value, dict)
-            and value.get("escape")
-            for value in existing.values()
-        )
-        if has_accident_badges and has_escape_badges:
-            return payload
-    payload = dict(payload)
-    payload["race_badges"] = {}
-    payload_date = str(payload.get("date") or target_date)
-    try:
-        accident_period_start = _accident_period_start_for_date(payload_date)
-        with db_connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT r.race_id,
-                       r.stadium_number,
-                       e.boat_number,
-                       e.racer_number,
-                       e.class_number,
-                       e.assigned_motor_top_2_percent,
-                       ras.accident_rate,
-                       ras.accident_points,
-                       ras.starts_count
-                  FROM races r
-                  JOIN race_entries e ON e.race_id = r.race_id
-                  LEFT JOIN (
-                        SELECT racer_number,
-                               accident_rate,
-                               accident_points,
-                               starts_count
-                          FROM racer_accident_period_stats
-                         WHERE period_start = ?
-                           AND period_end = (
-                                SELECT MAX(period_end)
-                                  FROM racer_accident_period_stats
-                                 WHERE period_start = ?
-                                   AND source_kind = 'reconstructed'
-                                   AND rule_version = 'official_table_2025_05_reconstructed_v2'
-                                   AND period_end < ?
-                           )
-                           AND source_kind = 'reconstructed'
-                           AND rule_version = 'official_table_2025_05_reconstructed_v2'
-                  ) ras ON ras.racer_number = e.racer_number
-                 WHERE r.race_date = ?
-                 ORDER BY r.race_id, e.boat_number
-                """,
-                (accident_period_start, accident_period_start, payload_date, payload_date),
-            ).fetchall()
-            escape_rows = conn.execute(
-                """
-                WITH target_boat1 AS (
-                    SELECT r.race_id,
-                           e.racer_number
-                      FROM races r
-                      JOIN race_entries e
-                        ON e.race_id = r.race_id
-                       AND e.boat_number = 1
-                     WHERE r.race_date = ?
-                       AND e.racer_number IS NOT NULL
-                )
-                SELECT t.race_id,
-                       COUNT(*) AS starts,
-                       SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
-                  FROM target_boat1 t
-                  JOIN race_entries e
-                    ON e.racer_number = t.racer_number
-                  JOIN races r
-                    ON r.race_id = e.race_id
-                   AND r.race_date < ?
-                  JOIN race_results rr
-                    ON rr.race_id = e.race_id
-                   AND rr.boat_number = e.boat_number
-                 WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
-                   AND rr.finishing_position IS NOT NULL
-                 GROUP BY t.race_id
-                """,
-                (payload_date, payload_date),
-            ).fetchall()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("market race badge hydration failed: %s", exc)
-        return payload
-
-    escape_by_race: dict[str, dict[str, Any]] = {}
-    for rid, starts, wins in escape_rows:
-        starts_i = int(starts or 0)
-        wins_i = int(wins or 0)
-        if starts_i <= 0:
-            continue
-        rate = wins_i / starts_i * 100.0
-        if rate >= 70.0:
-            escape_by_race[str(rid)] = {
-                "boat": 1,
-                "label": "逃げ",
-                "rate": round(rate, 1),
-                "wins": wins_i,
-                "starts": starts_i,
-            }
-
-    by_race: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        rid = str(row[0])
-        try:
-            boat_no = int(row[2])
-        except Exception:
-            continue
-        info = by_race.setdefault(
-            rid,
-            {
-                "stadium": _safe_int(row[1]),
-                "accident_items": [],
-                "ace_items": [],
-            },
-        )
-        rate = _safe_float(row[6])
-        if rate is not None and rate >= 0.5:
-            info["accident_items"].append(
-                {
-                    "boat": boat_no,
-                    "racer": _safe_int(row[3]),
-                    "class_number": _safe_int(row[4]),
-                    "class_label": _class_label(row[4]),
-                    "tone": _accident_rank_tone(row[4], rate),
-                    "rate": round(float(rate), 3),
-                    "points": int(row[7] or 0),
-                    "starts": int(row[8] or 0),
-                }
-            )
-
-        motor_rate = _safe_float(row[5])
-        if motor_rate is not None:
-            info["ace_items"].append(
-                {
-                    "boat": boat_no,
-                    "rate": round(float(motor_rate), 1),
-                }
-            )
-
-    race_badges: dict[str, dict[str, Any]] = {}
-    ace_threshold_cache: dict[int, Optional[float]] = {}
-    for rid, info in by_race.items():
-        badge_info: dict[str, Any] = {}
-        direct_escape = escape_by_race.get(rid)
-        if direct_escape:
-            badge_info["escape"] = {
-                "items": [direct_escape],
-                "boats": [1],
-                "max_rate": direct_escape["rate"],
-                "label": f"1号:逃げ {direct_escape['rate']:.1f}%",
-            }
-
-        accident_items = info.get("accident_items") or []
-        if accident_items:
-            accident_items.sort(
-                key=lambda x: (
-                    float(x.get("rate") or 0.0),
-                    int(x.get("points") or 0),
-                ),
-                reverse=True,
-            )
-            display_items = accident_items[:3]
-            label_parts = []
-            for item in display_items:
-                cls = item.get("class_label")
-                cls_part = f"{cls} " if cls and cls != "-" else ""
-                label_parts.append(f"{item.get('boat')}号:{cls_part}{float(item.get('rate') or 0):.2f}")
-            badge_info["accident"] = {
-                "items": display_items,
-                "boats": [x.get("boat") for x in accident_items if x.get("boat") is not None],
-                "max_rate": accident_items[0].get("rate"),
-                "max_points": accident_items[0].get("points"),
-                "label": "事故率0.70+ " + ", ".join(label_parts),
-            }
-
-        stadium_no = _safe_int(info.get("stadium"))
-        if stadium_no is not None:
-            if stadium_no not in ace_threshold_cache:
-                ace_threshold_cache[stadium_no] = _ace_motor_threshold(stadium_no, payload_date)
-            threshold = ace_threshold_cache.get(stadium_no)
-            if threshold is not None:
-                ace_items = [
-                    {
-                        **item,
-                        "threshold": round(float(threshold), 1),
-                    }
-                    for item in (info.get("ace_items") or [])
-                    if _safe_float(item.get("rate")) is not None
-                    and float(item.get("rate")) >= float(threshold)
-                ]
-                if ace_items:
-                    ace_items.sort(key=lambda x: float(x.get("rate") or 0.0), reverse=True)
-                    badge_info["ace_motor"] = {
-                        "items": ace_items[:3],
-                        "boats": [x["boat"] for x in ace_items],
-                        "max_rate": max(float(x["rate"]) for x in ace_items),
-                        "threshold": round(float(threshold), 1),
-                        "label": " / ".join(f"{x['boat']}号M{x['rate']:.1f}" for x in ace_items[:3]),
-                    }
-
-        detail_tags = _race_detail_tag_snapshot(rid, recompute=False)
-        boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else None
-        if isinstance(boats, dict):
-            escape_items = []
-            for boat_key, tag in boats.items():
-                if not isinstance(tag, dict):
-                    continue
-                escape = tag.get("escape_tag")
-                if not isinstance(escape, dict):
-                    continue
-                boat_no = _safe_int(boat_key)
-                if boat_no is None:
-                    continue
-                escape_items.append(
-                    {
-                        "boat": boat_no,
-                        "label": str(escape.get("label") or "逃げ"),
-                        "rate": _safe_float(escape.get("rate")),
-                        "wins": _safe_int(escape.get("wins")),
-                        "starts": _safe_int(escape.get("starts")),
-                    }
-                )
-            if escape_items:
-                escape_items.sort(key=lambda x: float(x.get("rate") or 0.0), reverse=True)
-                badge_info["escape"] = {
-                    "items": escape_items[:1],
-                    "boats": [x["boat"] for x in escape_items],
-                    "max_rate": escape_items[0].get("rate"),
-                    "label": " / ".join(
-                        f"{x['boat']}号:{x['label']}" for x in escape_items[:1]
-                    ),
-                }
-
-            accident_tag_items = []
-            for boat_key, tag in boats.items():
-                if not isinstance(tag, dict) or not tag.get("accident_display_level"):
-                    continue
-                boat_no = _safe_int(boat_key)
-                rate = _safe_float(tag.get("accident_rate"))
-                if boat_no is None or rate is None:
-                    continue
-                accident_tag_items.append(
-                    {
-                        "boat": boat_no,
-                        "tone": str(tag.get("accident_display_level") or "watch"),
-                        "rate": round(float(rate), 3),
-                        "points": int(tag.get("accident_points") or 0),
-                        "starts": int(tag.get("accident_starts") or 0),
-                    }
-                )
-            if accident_tag_items and not badge_info.get("accident"):
-                accident_tag_items.sort(
-                    key=lambda x: (
-                        float(x.get("rate") or 0.0),
-                        int(x.get("points") or 0),
-                    ),
-                    reverse=True,
-                )
-                display_items = accident_tag_items[:3]
-                badge_info["accident"] = {
-                    "items": display_items,
-                    "boats": [x["boat"] for x in accident_tag_items],
-                    "max_rate": accident_tag_items[0].get("rate"),
-                    "max_points": accident_tag_items[0].get("points"),
-                    "label": "事故率0.50+ " + " / ".join(
-                        f"{x['boat']}号:{float(x.get('rate') or 0):.2f}"
-                        for x in display_items
-                    ),
-                }
-
-            kimarite_items = []
-            for boat_key, tag in boats.items():
-                if not isinstance(tag, dict):
-                    continue
-                kimarite = tag.get("kimarite_skill")
-                if not isinstance(kimarite, dict):
-                    continue
-                boat_no = _safe_int(boat_key)
-                if boat_no is None:
-                    continue
-                kimarite_items.append(
-                    {
-                        "boat": boat_no,
-                        "label": str(kimarite.get("label") or ""),
-                        "kimarite": str(kimarite.get("kimarite") or ""),
-                        "rate": _safe_float(kimarite.get("rate")),
-                        "is_strong_escape": bool(kimarite.get("is_strong_escape")),
-                    }
-                )
-            if kimarite_items:
-                kimarite_items.sort(
-                    key=lambda x: (
-                        bool(x.get("is_strong_escape")),
-                        float(x.get("rate") or 0.0),
-                    ),
-                    reverse=True,
-                )
-                badge_info["kimarite"] = {
-                    "items": kimarite_items[:3],
-                    "boats": [x["boat"] for x in kimarite_items],
-                    "label": " / ".join(
-                        f"{x['boat']}号:{x['label']}" for x in kimarite_items[:3]
-                    ),
-                }
-
-        if badge_info:
-            race_badges[rid] = badge_info
-    payload["race_badges"] = _normalize_race_badge_labels(race_badges)
     return payload
 
 
@@ -3646,6 +3322,117 @@ def _race_detail_page_cache_key(race_id: str) -> str:
     return f"race_detail_page:{RACE_DETAIL_PAGE_CACHE_VERSION}:{race_id}"
 
 
+def _monthly_snapshot_window(race_date: str, *, lookback_days: int = 730) -> tuple[str, str, str]:
+    """Freeze running-style tags to a monthly snapshot based on the prior month."""
+    target = date.fromisoformat(str(race_date))
+    month_start = target.replace(day=1)
+    window_end = month_start
+    window_start = window_end - timedelta(days=lookback_days)
+    return month_start.isoformat(), window_start.isoformat(), window_end.isoformat()
+
+
+def _boat1_monthly_escape_profile(race_id: str, race_date: str) -> Optional[dict[str, Any]]:
+    """Return a month-frozen 2y profile for the current boat-1 racer."""
+    snapshot_month, window_start, window_end = _monthly_snapshot_window(race_date)
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            WITH current_boat1 AS (
+                SELECT racer_number
+                  FROM race_entries
+                 WHERE race_id = ? AND boat_number = 1
+            )
+            SELECT COUNT(*) AS course1_starts,
+                   SUM(CASE WHEN rr1.finishing_position = 1 THEN 1 ELSE 0 END) AS course1_wins,
+                   SUM(
+                       CASE
+                           WHEN rr1.finishing_position = 1
+                            AND COALESCE(NULLIF(rr2.course_number, 0), e2.boat_number) = 2
+                           THEN 1 ELSE 0
+                       END
+                   ) AS course2_seconds_after_win,
+                   SUM(
+                       CASE
+                           WHEN rr1.finishing_position = 1
+                            AND COALESCE(NULLIF(rr2.course_number, 0), e2.boat_number) = 3
+                           THEN 1 ELSE 0
+                       END
+                   ) AS course3_seconds_after_win
+              FROM current_boat1 c
+              JOIN race_entries e1
+                ON e1.racer_number = c.racer_number
+              JOIN races r
+                ON r.race_id = e1.race_id
+               AND r.race_date >= ?
+               AND r.race_date < ?
+              JOIN race_results rr1
+                ON rr1.race_id = e1.race_id
+               AND rr1.boat_number = e1.boat_number
+              LEFT JOIN race_results rr2
+                ON rr2.race_id = e1.race_id
+               AND rr2.finishing_position = 2
+              LEFT JOIN race_entries e2
+                ON e2.race_id = rr2.race_id
+               AND e2.boat_number = rr2.boat_number
+             WHERE COALESCE(NULLIF(rr1.course_number, 0), e1.boat_number) = 1
+               AND rr1.finishing_position IS NOT NULL
+            """,
+            (race_id, window_start, window_end),
+        ).fetchone()
+    if not row:
+        return None
+    starts = int(row[0] or 0)
+    wins = int(row[1] or 0)
+    if starts <= 0 or wins <= 0:
+        return None
+    course2_seconds = int(row[2] or 0)
+    course3_seconds = int(row[3] or 0)
+    return {
+        "snapshot_month": snapshot_month,
+        "window_start": window_start,
+        "window_end": window_end,
+        "starts": starts,
+        "wins": wins,
+        "rate": wins / starts * 100.0,
+        "second_samples": wins,
+        "course2_seconds": course2_seconds,
+        "course3_seconds": course3_seconds,
+        "course2_second_rate": course2_seconds / wins * 100.0,
+        "course3_second_rate": course3_seconds / wins * 100.0,
+    }
+
+
+def _escape_context_display_tag(profile: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Return a strong 2着 tendency tag for the current boat-1 racer."""
+    if not isinstance(profile, dict):
+        return None
+    try:
+        escape_rate = float(profile.get("rate") or 0.0)
+        second_samples = int(profile.get("second_samples") or 0)
+        course2_rate = float(profile.get("course2_second_rate") or 0.0)
+        course3_rate = float(profile.get("course3_second_rate") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if escape_rate < 70.0 or second_samples < 12:
+        return None
+    preferred_course = 2 if course2_rate >= course3_rate else 3
+    preferred_rate = course2_rate if preferred_course == 2 else course3_rate
+    other_rate = course3_rate if preferred_course == 2 else course2_rate
+    if preferred_rate < 40.0:
+        return None
+    if preferred_rate - other_rate < 8.0:
+        return None
+    return {
+        "label": f"{preferred_course}コース2着率 {preferred_rate:.1f}%",
+        "preferred_course": preferred_course,
+        "rate": round(preferred_rate, 1),
+        "other_rate": round(other_rate, 1),
+        "wins": int(profile.get("wins") or 0),
+        "samples": second_samples,
+        "snapshot_month": str(profile.get("snapshot_month") or ""),
+    }
+
+
 def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
     """Build pre-race display tags using only information available by race day."""
     info = _race_basic_info(race_id)
@@ -3683,10 +3470,11 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         logger.warning("ace motor snapshot failed for %s", race_id, exc_info=True)
 
     try:
-        boat1_escape = _boat1_national_course1_win_stats(race_id, str(info["race_date"]))
+        boat1_escape = _boat1_monthly_escape_profile(race_id, str(info["race_date"]))
     except Exception:
         boat1_escape = None
         logger.warning("escape tag snapshot failed for %s", race_id, exc_info=True)
+    escape_context_tag = _escape_context_display_tag(boat1_escape)
 
     boats: dict[str, dict[str, Any]] = {}
     for boat_number, racer_number, motor_rate_raw in entries:
@@ -3719,6 +3507,7 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
                     "rate": round(float(escape_rate), 1),
                     "wins": int(boat1_escape.get("wins") or 0),
                     "starts": int(boat1_escape.get("starts") or 0),
+                    "snapshot_month": str(boat1_escape.get("snapshot_month") or ""),
                 }
                 boat["escape_tag"]["label"] = "逃げ"
         boats[str(int(boat_number))] = boat
@@ -3836,6 +3625,8 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
                    e.national_top_1_percent,
                    e.national_top_2_percent,
                    e.local_top_2_percent,
+                   e.branch_number,
+                   e.age,
                    pv.tilt_adjustment,
                    e.avg_start_timing,
                    original.dash_time,
