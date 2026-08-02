@@ -5,7 +5,7 @@ services:
   - type: web
     name: boatrace-web
     runtime: python
-    plan: free
+    plan: standard
     branch: main
     region: singapore
     autoDeploy: true
