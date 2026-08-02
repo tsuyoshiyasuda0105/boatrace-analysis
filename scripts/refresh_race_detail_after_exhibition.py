@@ -42,6 +42,7 @@ INCOMPLETE_LIMIT = 24
 ORIGINAL_EXHIBITION_PAST_MIN = 36 * 60
 ORIGINAL_EXHIBITION_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_LIMIT = 96
+SIGNAL_REFRESH_MIN_GAP_MIN = 2
 
 
 def _run_py(args: list[str], timeout: int = 900) -> bool:
@@ -52,6 +53,129 @@ def _run_py(args: list[str], timeout: int = 900) -> bool:
     elapsed = time.monotonic() - started
     print(f"exit={proc.returncode} elapsed={elapsed:.1f}s", flush=True)
     return proc.returncode == 0
+
+
+def _ensure_task_runs_table() -> None:
+    with db_connect() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS task_runs (
+              task_name TEXT NOT NULL,
+              run_date TEXT NOT NULL,
+              status TEXT NOT NULL,
+              run_count INTEGER NOT NULL DEFAULT 0,
+              started_at TEXT,
+              finished_at TEXT,
+              success_at TEXT,
+              trigger TEXT,
+              detail TEXT,
+              PRIMARY KEY (task_name, run_date)
+            );
+            ALTER TABLE task_runs ENABLE ROW LEVEL SECURITY;
+            """
+        )
+        conn.commit()
+
+
+def _record_task(task_name: str, run_date: str, status: str, detail: str | None = None) -> None:
+    now_iso = datetime.now(JST).replace(tzinfo=None).isoformat(timespec="seconds")
+    success_at = now_iso if status == "success" else None
+    try:
+        with db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO task_runs
+                    (task_name, run_date, status, run_count, started_at, finished_at,
+                     success_at, trigger, detail)
+                VALUES (?, ?, ?, 1, ?, ?, ?, 'render-exhibition-detail-refresh', ?)
+                ON CONFLICT (task_name, run_date) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    run_count = task_runs.run_count + 1,
+                    started_at = EXCLUDED.started_at,
+                    finished_at = EXCLUDED.finished_at,
+                    success_at = COALESCE(EXCLUDED.success_at, task_runs.success_at),
+                    trigger = EXCLUDED.trigger,
+                    detail = EXCLUDED.detail
+                """,
+                (task_name, run_date, status, now_iso, now_iso, success_at, detail),
+            )
+            conn.commit()
+    except Exception as exc:
+        print(f"[task_runs] write failed: {type(exc).__name__}: {exc}", flush=True)
+
+
+def _signal_refresh_recent_activity(target_date: str, now: datetime) -> tuple[bool, str]:
+    since = (now - timedelta(minutes=SIGNAL_REFRESH_MIN_GAP_MIN)).replace(
+        tzinfo=None,
+    ).isoformat(timespec="seconds")
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT task_name,
+                       status,
+                       COALESCE(success_at, started_at, finished_at, '') AS activity_at
+                  FROM task_runs
+                 WHERE run_date = ?
+                   AND task_name LIKE 'render_signal_refresh_%'
+                   AND (
+                        (status = 'running' AND started_at >= ?)
+                        OR success_at >= ?
+                   )
+                 ORDER BY activity_at DESC
+                 LIMIT 1
+                """,
+                (target_date, since, since),
+            ).fetchone()
+        if row:
+            return True, f"recent-{row[1]}:{row[0]}@{row[2]}"
+    except Exception as exc:
+        print(f"[signal-refresh] recent-activity check failed: {type(exc).__name__}: {exc}", flush=True)
+    return False, ""
+
+
+def _should_refresh_market_signals(target_date: str, collect_summary: dict, refresh_summary: dict) -> tuple[bool, str]:
+    if target_date != datetime.now(JST).date().isoformat():
+        return False, "non-today"
+    beforeinfo_rows = int(collect_summary.get("beforeinfo_rows", 0) or 0)
+    original_rows = int(((collect_summary.get("original") or {}).get("rows_inserted", 0)) or 0)
+    refreshed = int(refresh_summary.get("refreshed", 0) or 0)
+    if beforeinfo_rows <= 0 and original_rows <= 0 and refreshed <= 0:
+        return False, "no-source-change"
+    return True, f"beforeinfo_rows={beforeinfo_rows} original_rows={original_rows} refreshed={refreshed}"
+
+
+def refresh_market_signals_if_needed(target_date: str, collect_summary: dict, refresh_summary: dict) -> dict:
+    should_refresh, reason = _should_refresh_market_signals(target_date, collect_summary, refresh_summary)
+    if not should_refresh:
+        summary = {"target_date": target_date, "triggered": False, "reason": reason}
+        print(f"[signal-refresh] {summary}", flush=True)
+        return summary
+
+    _ensure_task_runs_table()
+    now = datetime.now(JST)
+    is_recent, recent_reason = _signal_refresh_recent_activity(target_date, now)
+    if is_recent:
+        summary = {"target_date": target_date, "triggered": False, "reason": recent_reason}
+        print(f"[signal-refresh] {summary}", flush=True)
+        return summary
+
+    task_name = f"render_signal_refresh_{now.hour:02d}_{now.minute // 5}_exhibition"
+    _record_task(task_name, target_date, "running", detail=reason)
+    ok = _run_py(
+        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date],
+        timeout=1800,
+    )
+    _record_task(task_name, target_date, "success" if ok else "failure", detail=reason)
+    summary = {
+        "target_date": target_date,
+        "triggered": True,
+        "ok": ok,
+        "task_name": task_name,
+        "reason": reason,
+    }
+    print(f"[signal-refresh] {summary}", flush=True)
+    return summary
 
 
 def _parse_race_close_jst(closed_at: object, race_date: str) -> datetime | None:
@@ -342,11 +466,13 @@ def main() -> int:
     task_name = "render_exhibition_detail_refresh"
     record_cron_run(task_name, args.date, "running")
     collect_summary: dict = {"skipped": True}
+    signal_summary: dict = {"triggered": False, "ok": True, "reason": "not-run"}
     try:
         if not args.skip_collect:
             collect_summary = collect_live_exhibition(args.date)
             print(f"[exhibition-collect] {collect_summary}", flush=True)
         summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
+        signal_summary = refresh_market_signals_if_needed(args.date, collect_summary, summary)
     except Exception as exc:
         record_cron_run(
             task_name,
@@ -356,7 +482,9 @@ def main() -> int:
         )
         raise
 
-    succeeded = summary["failed"] == 0
+    succeeded = summary["failed"] == 0 and (
+        not signal_summary.get("triggered") or bool(signal_summary.get("ok"))
+    )
     detail = json.dumps(
         {
             "beforeinfo_due": int(collect_summary.get("beforeinfo_due", 0) or 0),
@@ -365,6 +493,9 @@ def main() -> int:
             "refresh_due": summary["due"],
             "refreshed": summary["refreshed"],
             "failed": summary["failed"],
+            "signal_refresh_triggered": bool(signal_summary.get("triggered")),
+            "signal_refresh_ok": bool(signal_summary.get("ok")),
+            "signal_refresh_reason": signal_summary.get("reason"),
         },
         ensure_ascii=False,
     )
