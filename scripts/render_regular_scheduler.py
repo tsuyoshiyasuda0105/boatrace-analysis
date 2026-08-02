@@ -967,9 +967,10 @@ def main() -> int:
             record_task(task, today, "success" if ok else "failure")
 
     # Accident rankings feed race tags and several adopted ROI strategies.
-    # Keep them on the stable once-daily nightly snapshot. Rebuilding during
-    # live race hours can change today's strategy inputs mid-day and violates
-    # the agreed daily aggregation cadence.
+    # Refresh once daily at 07:30 JST, after the 07:00 race-detail prewarm starts,
+    # so accident tags are available before most users open morning race details.
+    if now.hour == 7 and 30 <= now.minute < 35:
+        run_accident_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
     if now.hour == 23 and now.minute >= 30:

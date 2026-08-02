@@ -421,13 +421,14 @@ def test_scheduler_never_rebuilds_accident_stats_from_one_day_only():
     assert "run_accident_rebuild(today, today)" not in source
 
 
-def test_scheduler_keeps_accident_refresh_out_of_live_loop():
+def test_scheduler_runs_accident_refresh_only_in_0730_window():
     source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     main_source = source.split("def main() -> int:", 1)[1]
     live_loop = main_source.split("# End-of-day refresh", 1)[0]
     nightly_source = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
 
-    assert "run_accident_self_heal(now)" not in live_loop
+    assert "now.hour == 7 and 30 <= now.minute < 35" in live_loop
+    assert live_loop.count("run_accident_self_heal(now)") == 1
     assert "run_accident_full_refresh(today)" in nightly_source
 
 
