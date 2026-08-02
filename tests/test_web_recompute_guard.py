@@ -382,9 +382,14 @@ def test_accident_self_heal_rebuilds_full_period_and_verifies_snapshot(monkeypat
     assert recorded[0][0][:3] == (
         "render_accident_refresh_slot_09",
         "2026-07-21",
-        "success",
+        "running",
     )
     assert recorded[1][0][:3] == (
+        "render_accident_refresh_slot_09",
+        "2026-07-21",
+        "success",
+    )
+    assert recorded[2][0][:3] == (
         "render_accident_refresh",
         "2026-07-20",
         "success",
@@ -414,6 +419,53 @@ def test_accident_full_refresh_rebuilds_from_period_start(monkeypatch):
 def test_scheduler_never_rebuilds_accident_stats_from_one_day_only():
     source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     assert "run_accident_rebuild(today, today)" not in source
+
+
+def test_scheduler_checks_accident_staleness_every_live_tick_with_lock():
+    source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    main_source = source.split("def main() -> int:", 1)[1]
+    accident_block = main_source.split("run_accident_self_heal(now)", 1)[0].rsplit("if ", 1)[1]
+
+    assert "now.minute < 5" not in accident_block
+    refresh_source = source.split("def run_accident_self_heal", 1)[1].split("def run_nightly", 1)[0]
+    assert 'record_task(slot_task, run_date, "running"' in refresh_source
+
+
+def test_accident_watch_map_uses_latest_period_end_before_target(monkeypatch):
+    web_app._accident_watch_map.cache_clear()
+    calls = []
+
+    class _Cursor:
+        def fetchall(self):
+            return [(1234, 0.62, 14, 22)]
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, params=()):
+            calls.append((sql, params))
+            return _Cursor()
+
+    monkeypatch.setattr(web_app, "db_connect", lambda: _Connection())
+    got = web_app._accident_watch_map("2026-05-01", "2026-08-02", (1234,))
+
+    assert got[1234] == {"rate": 0.62, "points": 14, "starts": 22}
+    sql, params = calls[0]
+    assert "period_end < ?" in sql
+    assert "MAX(accident_rate)" not in sql
+    assert params == ("2026-05-01", "2026-05-01", "2026-08-02", 1234)
+
+
+def test_accident_rate_queries_do_not_mix_period_rows_with_max_rate():
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    assert "MAX(accident_rate)" not in source
+    assert "MAX(accident_points)" not in source
+    assert "period_end < ?" in source
+    assert "period_end < r.race_date" in source
 
 
 def test_roi_cache_self_heal_skips_current_cache(monkeypatch):

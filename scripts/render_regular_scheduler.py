@@ -851,6 +851,7 @@ def run_accident_self_heal(now: datetime) -> bool:
         f"target={target_date}",
         flush=True,
     )
+    record_task(slot_task, run_date, "running", detail=f"target={target_date}")
     ok = run_accident_full_refresh(target_date)
     record_task(slot_task, run_date, "success" if ok else "failure", detail=f"target={target_date}")
     verified_snapshot, verified_period_end = latest_accident_snapshot_state() if ok else (None, None)
@@ -967,10 +968,10 @@ def main() -> int:
             ok = run_hourly(now)
             record_task(task, today, "success" if ok else "failure")
 
-    # Accident rankings change slowly and the rebuild can be expensive. Keep the
-    # self-heal, but run it only near the top of the hour so it does not compete
-    # with five-minute candidate refreshes during live race hours.
-    if now.minute < 5 and 6 <= now.hour <= 23:
+    # Accident rankings feed race tags and several adopted ROI strategies. Check
+    # staleness every live cron tick, but record an hourly running slot before a
+    # rebuild so overlapping five-minute runs cannot duplicate the heavy work.
+    if 6 <= now.hour <= 23:
         run_accident_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.

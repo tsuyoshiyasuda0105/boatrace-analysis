@@ -188,19 +188,26 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                   JOIN race_entries e ON e.race_id = r.race_id
                   LEFT JOIN (
                         SELECT racer_number,
-                               MAX(accident_rate) AS accident_rate,
-                               MAX(accident_points) AS accident_points,
-                               MAX(starts_count) AS starts_count
+                               accident_rate,
+                               accident_points,
+                               starts_count
                           FROM racer_accident_period_stats
                          WHERE period_start = ?
+                           AND period_end = (
+                                SELECT MAX(period_end)
+                                  FROM racer_accident_period_stats
+                                 WHERE period_start = ?
+                                   AND source_kind = 'reconstructed'
+                                   AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                                   AND period_end < ?
+                           )
                            AND source_kind = 'reconstructed'
                            AND rule_version = 'official_table_2025_05_reconstructed_v2'
-                         GROUP BY racer_number
                   ) ras ON ras.racer_number = e.racer_number
                  WHERE r.race_date = ?
                  ORDER BY r.race_id, e.boat_number
                 """,
-                (accident_period_start, payload_date),
+                (accident_period_start, accident_period_start, payload_date, payload_date),
             ).fetchall()
             escape_rows = conn.execute(
                 """
@@ -2690,6 +2697,24 @@ def _accident_period_start_for_date(date_iso: str) -> str:
     return f"{y - 1:04d}-11-01"
 
 
+def _accident_effective_period_end_subquery() -> str:
+    """Return SQL selecting the latest race-safe accident stats end date.
+
+    Race-facing accident rates must be based on rows whose period_end is before
+    the target race date.  The stats table can hold multiple rebuild snapshots
+    for the same period, so callers should not aggregate rates across all rows
+    for the period.
+    """
+    return """
+        SELECT MAX(period_end)
+          FROM racer_accident_period_stats
+         WHERE period_start = ?
+           AND source_kind = 'reconstructed'
+           AND rule_version = 'official_table_2025_05_reconstructed_v2'
+           AND period_end < ?
+    """
+
+
 def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
     """Attach V2 accident-rate tags to race-detail rows.
 
@@ -2701,7 +2726,8 @@ def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
     info = _race_basic_info(race_id)
     if not info:
         return
-    period_start = _accident_period_start_for_date(str(info.get("race_date") or ""))
+    race_date = str(info.get("race_date") or "")
+    period_start = _accident_period_start_for_date(race_date)
     racer_numbers_set = set()
     for p in preds:
         try:
@@ -2712,7 +2738,7 @@ def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
     if not racer_numbers:
         return
     try:
-        by_racer = _accident_watch_map(period_start, tuple(racer_numbers))
+        by_racer = _accident_watch_map(period_start, race_date, tuple(racer_numbers))
     except Exception as exc:
         logger.warning("race detail accident tag query failed for %s: %s", race_id, exc)
         return
@@ -2735,7 +2761,11 @@ def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
 
 
 @lru_cache(maxsize=4096)
-def _accident_watch_map(period_start: str, racer_numbers: tuple[int, ...]) -> dict[int, dict[str, int | float]]:
+def _accident_watch_map(
+    period_start: str,
+    target_date: str,
+    racer_numbers: tuple[int, ...],
+) -> dict[int, dict[str, int | float]]:
     if not racer_numbers:
         return {}
     placeholders = ",".join("?" for _ in racer_numbers)
@@ -2743,17 +2773,17 @@ def _accident_watch_map(period_start: str, racer_numbers: tuple[int, ...]) -> di
         rows = conn.execute(
             f"""
             SELECT racer_number,
-                   MAX(accident_rate) AS accident_rate,
-                   MAX(accident_points) AS accident_points,
-                   MAX(starts_count) AS starts_count
+                   accident_rate,
+                   accident_points,
+                   starts_count
               FROM racer_accident_period_stats
              WHERE period_start = ?
+               AND period_end = ({_accident_effective_period_end_subquery()})
                AND racer_number IN ({placeholders})
                AND source_kind = 'reconstructed'
                AND rule_version = 'official_table_2025_05_reconstructed_v2'
-             GROUP BY racer_number
             """,
-            (period_start, *racer_numbers),
+            (period_start, period_start, target_date, *racer_numbers),
         ).fetchall()
     out: dict[int, dict[str, int | float]] = {}
     for racer_number, rate, points, starts in rows:
@@ -3219,9 +3249,10 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
     racer_numbers = tuple(
         sorted({int(row[1]) for row in entries if row[1] is not None})
     )
-    period_start = _accident_period_start_for_date(str(info.get("race_date") or ""))
+    race_date = str(info.get("race_date") or "")
+    period_start = _accident_period_start_for_date(race_date)
     try:
-        accident_by_racer = _accident_watch_map(period_start, racer_numbers)
+        accident_by_racer = _accident_watch_map(period_start, race_date, racer_numbers)
     except Exception:
         accident_by_racer = {}
         logger.warning("accident tag snapshot failed for %s", race_id, exc_info=True)
@@ -6604,19 +6635,26 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                                   FROM race_entries e
                                   JOIN (
                                         SELECT racer_number,
-                                               MAX(accident_rate) AS accident_rate,
-                                               MAX(accident_points) AS accident_points,
-                                               MAX(starts_count) AS starts_count
+                                               accident_rate,
+                                               accident_points,
+                                               starts_count
                                           FROM racer_accident_period_stats
                                          WHERE period_start = ?
+                                           AND period_end = (
+                                                SELECT MAX(period_end)
+                                                  FROM racer_accident_period_stats
+                                                 WHERE period_start = ?
+                                                   AND source_kind = 'reconstructed'
+                                                   AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                                                   AND period_end < ?
+                                           )
                                            AND source_kind = 'reconstructed'
                                            AND rule_version = 'official_table_2025_05_reconstructed_v2'
-                                         GROUP BY racer_number
                                   ) ras
                                     ON ras.racer_number = e.racer_number
                                  WHERE e.race_id IN ({placeholders})
                                 """,
-                                (accident_period_start, *race_ids),
+                                (accident_period_start, accident_period_start, target_date, *race_ids),
                             ).fetchall()
                             by_race_acc: dict[str, list[dict[str, Any]]] = {}
                             for ar in acc_rows:
@@ -15970,13 +16008,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 accident_rows = conn.execute(
                     """
                     WITH acc AS (
-                        SELECT racer_number, period_start,
-                               MAX(accident_rate) AS accident_rate,
-                               MAX(accident_points) AS accident_points
+                        SELECT racer_number, period_start, period_end,
+                               accident_rate,
+                               accident_points
                           FROM racer_accident_period_stats
                          WHERE source_kind = 'reconstructed'
                            AND rule_version = 'official_table_2025_05_reconstructed_v2'
-                         GROUP BY racer_number, period_start
                     )
                     SELECT r.race_id, r.race_date, r.stadium_number,
                            e1.class_number,
@@ -16009,6 +16046,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                              THEN substr(r.race_date, 1, 4) || '-11-01'
                            ELSE CAST(CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1 AS TEXT) || '-11-01'
                        END
+                       AND a2.period_end = (
+                           SELECT MAX(period_end)
+                             FROM racer_accident_period_stats
+                            WHERE period_start = a2.period_start
+                              AND source_kind = 'reconstructed'
+                              AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                              AND period_end < r.race_date
+                       )
                       LEFT JOIN acc a3
                         ON a3.racer_number = e3.racer_number
                        AND a3.period_start = CASE
@@ -16018,6 +16063,14 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                              THEN substr(r.race_date, 1, 4) || '-11-01'
                            ELSE CAST(CAST(substr(r.race_date, 1, 4) AS INTEGER) - 1 AS TEXT) || '-11-01'
                        END
+                       AND a3.period_end = (
+                           SELECT MAX(period_end)
+                             FROM racer_accident_period_stats
+                            WHERE period_start = a3.period_start
+                              AND source_kind = 'reconstructed'
+                              AND rule_version = 'official_table_2025_05_reconstructed_v2'
+                              AND period_end < r.race_date
+                       )
                       LEFT JOIN race_results res1 ON res1.race_id = r.race_id AND res1.finishing_position = 1
                       LEFT JOIN race_payouts p123 ON p123.race_id = r.race_id AND p123.bet_type = 'trifecta' AND p123.combination = '1-2-3'
                       LEFT JOIN race_payouts e12 ON e12.race_id = r.race_id AND e12.bet_type = 'exacta' AND e12.combination = '1-2'
