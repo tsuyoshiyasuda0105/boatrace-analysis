@@ -435,6 +435,10 @@
                       <small>全国{{ p.current_course_number or p.boat_number }}C</small>
                       <b>{{ '%.1f' | format(p.national_course_win_rate) if p.national_course_win_rate is defined and p.national_course_win_rate is not none else '-' }}%</b>
                     </span>
+                    <span class="course-win-line is-top3">
+                      <small>{{ p.current_course_number or p.boat_number }}C3着内</small>
+                      <b>{{ '%.1f' | format(p.national_course_top3_rate) if p.national_course_top3_rate is defined and p.national_course_top3_rate is not none else '-' }}%</b>
+                    </span>
                   </span>
                   {% if p.accident_display_level is defined or p.escape_tag is defined %}
                     <div class="racer-tag-list">

@@ -2236,8 +2236,13 @@ main h2 {
   line-height: 1.1;
   white-space: nowrap;
 }
-.racer-identity > .racer-course-win-sample {
+.racer-name-line > .racer-course-win-sample {
   display: none;
+}
+.racer-identity > .racer-course-win-sample {
+  display: grid;
+  grid-column: 1;
+  grid-row: 3;
 }
 .racer-course-win-sample {
   display: grid;
@@ -2281,6 +2286,48 @@ main h2 {
 }
 .course-win-line.is-top3 b {
   color: #7cf4c8;
+}
+
+@media (max-width: 760px) {
+  .preds-table tbody td:nth-child(2) {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 10px;
+    min-width: 184px;
+  }
+  .preds-table tbody td:nth-child(2) > .lane {
+    margin-right: 0;
+    justify-self: center;
+  }
+  .preds-table tbody td:nth-child(2) > .racer-identity {
+    min-width: 0;
+  }
+  .racer-name-line {
+    align-items: center;
+    gap: 5px;
+  }
+  .racer-name {
+    font-size: 14px;
+    line-height: 1.25;
+  }
+  .racer-branch-weight {
+    justify-items: start;
+  }
+  .racer-course-win-sample {
+    min-width: 0;
+    width: 100%;
+    max-width: 150px;
+    padding-left: 0;
+    border-left: 0;
+    margin-top: 3px;
+  }
+  .course-win-line {
+    gap: 6px;
+  }
+  .course-win-line b {
+    font-size: 12px;
+  }
 }
 .avg-st-cell {
   color: #dff9ff;

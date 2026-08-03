@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_SOURCE = ROOT / "src" / "web" / "app.py"
 RACE_TEMPLATE = ROOT / "src" / "web" / "templates" / "race.html"
 RACE_DETAIL_JS = ROOT / "src" / "web" / "static" / "race_detail.js"
+STYLE_CSS = ROOT / "src" / "web" / "static" / "style.css"
 
 
 def test_race_template_parses_and_contains_requested_fact_columns():
@@ -136,6 +137,17 @@ def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
     assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v7"' in source
+
+
+def test_mobile_racer_course_stats_do_not_overlap_identity_line():
+    css = STYLE_CSS.read_text(encoding="utf-8")
+    template = RACE_TEMPLATE.read_text(encoding="utf-8")
+
+    assert ".racer-name-line > .racer-course-win-sample" in css
+    assert "display: none;" in css[css.index(".racer-name-line > .racer-course-win-sample"):css.index(".racer-identity > .racer-course-win-sample")]
+    assert ".racer-identity > .racer-course-win-sample" in css
+    assert 'grid-template-columns: 44px minmax(0, 1fr);' in css
+    assert "C3着内" in template or "C3逹蜀" in template
 
 
 def test_motor_marks_use_same_original_exhibition_source_in_table_and_history():
