@@ -22,6 +22,8 @@ from functools import wraps
 from flask import session, redirect, url_for, request, jsonify, render_template_string, abort
 
 import config
+from src.web import supabase_auth_client
+from src.web.membership import ensure_profile, get_effective_role, role_allows
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +137,28 @@ def is_member() -> bool:
     return bool(session.get("is_member"))
 
 
+def current_role() -> str:
+    return session.get("role") or ("paid_member" if is_member() else "guest")
+
+
+def is_admin() -> bool:
+    return role_allows(current_role(), "admin")
+
+
+def is_paid_member() -> bool:
+    return role_allows(current_role(), "paid_member")
+
+
+def _set_supabase_session(user_id: str, email: str | None, role: str) -> None:
+    session.clear()
+    session["is_member"] = role in {"free_member", "paid_member", "admin"}
+    session["user_id"] = user_id
+    session["email"] = email
+    session["role"] = role
+    session["auth_provider"] = "supabase"
+    session.permanent = True
+
+
 def login_required(view):
     """会員限定の画面ビュー (HTML) → 未ログインなら /login へリダイレクト"""
     @wraps(view)
@@ -155,6 +179,17 @@ def member_only_api(view):
     return wrapper
 
 
+def admin_required(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if not is_member():
+            return redirect(url_for("login", next=request.path))
+        if not is_admin():
+            abort(403)
+        return view(*args, **kwargs)
+    return wrapper
+
+
 LOGIN_TEMPLATE = """
 {% extends "base.html" %}
 {% block title %}会員ログイン{% endblock %}
@@ -171,6 +206,59 @@ LOGIN_TEMPLATE = """
       <input type="password" name="password" required autofocus>
     </label>
     <button type="submit">ログイン</button>
+  </form>
+</div>
+{% endblock %}
+"""
+
+
+SUPABASE_LOGIN_TEMPLATE = """
+{% extends "base.html" %}
+{% block title %}Supabaseログイン{% endblock %}
+{% block content %}
+<div class="login-wrap">
+  <h2>Supabaseログイン</h2>
+  <p class="login-hint">新しい会員ログインです。既存ログインは <a href="{{ url_for('login') }}">こちら</a> から利用できます。</p>
+  {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ url_for('login_supabase') }}" class="login-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ safe_next(request.args.get('next', '/'), '/') }}">
+    <label>
+      <span>メールアドレス</span>
+      <input type="email" name="email" autocomplete="email" required autofocus>
+    </label>
+    <label>
+      <span>パスワード</span>
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">ログイン</button>
+  </form>
+  <p class="login-hint"><a href="{{ url_for('signup_supabase') }}">新規登録はこちら</a></p>
+</div>
+{% endblock %}
+"""
+
+
+SUPABASE_SIGNUP_TEMPLATE = """
+{% extends "base.html" %}
+{% block title %}新規登録{% endblock %}
+{% block content %}
+<div class="login-wrap">
+  <h2>新規登録</h2>
+  <p class="login-hint">登録直後は無料会員です。有料権限はStripe決済または管理者付与で反映します。</p>
+  {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+  {% if message %}<div class="login-hint">{{ message }}</div>{% endif %}
+  <form method="post" action="{{ url_for('signup_supabase') }}" class="login-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>
+      <span>メールアドレス</span>
+      <input type="email" name="email" autocomplete="email" required autofocus>
+    </label>
+    <label>
+      <span>パスワード</span>
+      <input type="password" name="password" autocomplete="new-password" minlength="8" required>
+    </label>
+    <button type="submit">登録</button>
   </form>
 </div>
 {% endblock %}
@@ -207,6 +295,8 @@ def register_auth_routes(app):
                 _record_attempt(ip, True)
                 session.clear()  # セッション固定攻撃対策
                 session["is_member"] = True
+                session["role"] = "paid_member"
+                session["auth_provider"] = "legacy_password"
                 session.permanent = True
                 # オープンリダイレクト対策: next が外部 URL なら index へ
                 next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))
@@ -217,7 +307,79 @@ def register_auth_routes(app):
             return render_template_string(LOGIN_TEMPLATE, error="パスワードが違います"), 401
         return render_template_string(LOGIN_TEMPLATE, error=None)
 
+    @app.route("/login-supabase", methods=["GET", "POST"])
+    def login_supabase():
+        if not supabase_auth_client.is_configured():
+            abort(404)
+        ip = _client_ip()
+        if request.method == "POST":
+            if not _verify_csrf_token():
+                logger.warning("CSRF token mismatch on /login-supabase from %s", ip)
+                return _render_supabase_login("セッションが無効です。ページを再読み込みしてください。"), 400
+            allowed, retry_after = _check_rate_limit(ip)
+            if not allowed:
+                return _render_supabase_login(
+                    f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
+                ), 429
+            email = request.form.get("email", "").strip().lower()
+            pw = request.form.get("password", "")
+            try:
+                auth_session = supabase_auth_client.sign_in_with_password(email, pw)
+                ensure_profile(auth_session.user_id, auth_session.email)
+                role = get_effective_role(auth_session.user_id)
+                _record_attempt(ip, True)
+                _set_supabase_session(auth_session.user_id, auth_session.email, role)
+                next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))
+                return redirect(next_url)
+            except Exception as e:
+                logger.warning("supabase login failed for %s from %s: %s", email, ip, e)
+                _record_attempt(ip, False)
+                time.sleep(0.3)
+                return _render_supabase_login(str(e)), 401
+        return _render_supabase_login(None)
+
+    @app.route("/signup-supabase", methods=["GET", "POST"])
+    def signup_supabase():
+        if not supabase_auth_client.is_configured():
+            abort(404)
+        ip = _client_ip()
+        if request.method == "POST":
+            if not _verify_csrf_token():
+                return _render_supabase_signup(error="セッションが無効です。ページを再読み込みしてください。"), 400
+            allowed, retry_after = _check_rate_limit(ip)
+            if not allowed:
+                return _render_supabase_signup(
+                    error=f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
+                ), 429
+            email = request.form.get("email", "").strip().lower()
+            pw = request.form.get("password", "")
+            if len(pw) < 8:
+                return _render_supabase_signup(error="パスワードは8文字以上にしてください。"), 400
+            try:
+                auth_session = supabase_auth_client.sign_up_with_password(email, pw)
+                _record_attempt(ip, True)
+                if auth_session and auth_session.user_id:
+                    ensure_profile(auth_session.user_id, auth_session.email)
+                    if auth_session.access_token:
+                        _set_supabase_session(auth_session.user_id, auth_session.email, "free_member")
+                        return redirect(url_for("member_today_races"))
+                return _render_supabase_signup(
+                    message="確認メールを送信しました。メール内のリンクから登録を完了してください。"
+                )
+            except Exception as e:
+                _record_attempt(ip, False)
+                return _render_supabase_signup(error=str(e)), 400
+        return _render_supabase_signup()
+
     @app.route("/logout")
     def logout():
         session.clear()
         return redirect(url_for("index"))
+
+
+def _render_supabase_login(error: str | None):
+    return render_template_string(SUPABASE_LOGIN_TEMPLATE, error=error)
+
+
+def _render_supabase_signup(error: str | None = None, message: str | None = None):
+    return render_template_string(SUPABASE_SIGNUP_TEMPLATE, error=error, message=message)

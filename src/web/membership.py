@@ -1,0 +1,176 @@
+"""Membership and billing persistence helpers."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from src.db.connection import connect as db_connect
+
+ROLE_RANK = {"guest": 0, "free_member": 10, "paid_member": 20, "admin": 100}
+ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def role_allows(role: str | None, required: str) -> bool:
+    return ROLE_RANK.get(role or "guest", 0) >= ROLE_RANK[required]
+
+
+def normalize_role(role: str | None) -> str:
+    role = (role or "").strip()
+    return role if role in ROLE_RANK and role != "guest" else "free_member"
+
+
+def ensure_profile(user_id: str, email: str | None = None) -> None:
+    ts = now_iso()
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO profiles (id, email, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                email = COALESCE(EXCLUDED.email, profiles.email),
+                updated_at = EXCLUDED.updated_at
+            """,
+            (user_id, email, ts, ts),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_roles (user_id, role, granted_at)
+            VALUES (?, 'free_member', ?)
+            ON CONFLICT (user_id, role) DO NOTHING
+            """,
+            (user_id, ts),
+        )
+
+
+def get_effective_role(user_id: str | None) -> str:
+    if not user_id:
+        return "guest"
+    with db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT role
+              FROM user_roles
+             WHERE user_id = ?
+               AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (user_id, now_iso()),
+        ).fetchall()
+    best = "free_member"
+    for (role,) in rows:
+        if ROLE_RANK.get(role or "", 0) > ROLE_RANK.get(best, 0):
+            best = role
+    return best
+
+
+def replace_paid_role_from_subscription(user_id: str, status: str,
+                                        current_period_end: str | None = None) -> str:
+    ts = now_iso()
+    role = "paid_member" if status in ACTIVE_SUBSCRIPTION_STATUSES else "free_member"
+    with db_connect() as conn:
+        if role == "paid_member":
+            conn.execute(
+                """
+                INSERT INTO user_roles (user_id, role, granted_at, expires_at)
+                VALUES (?, 'paid_member', ?, NULL)
+                ON CONFLICT (user_id, role) DO UPDATE SET
+                    granted_at = EXCLUDED.granted_at,
+                    expires_at = NULL
+                """,
+                (user_id, ts),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE user_roles
+                   SET expires_at = COALESCE(?, ?)
+                 WHERE user_id = ? AND role = 'paid_member'
+                """,
+                (current_period_end, ts, user_id),
+            )
+    return role
+
+
+def get_billing_profile(user_id: str) -> dict[str, Any]:
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT id, email, stripe_customer_id FROM profiles WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return {"id": user_id, "email": None, "stripe_customer_id": None}
+    return {"id": row[0], "email": row[1], "stripe_customer_id": row[2]}
+
+
+def set_stripe_customer(user_id: str, stripe_customer_id: str) -> None:
+    with db_connect() as conn:
+        conn.execute(
+            "UPDATE profiles SET stripe_customer_id = ?, updated_at = ? WHERE id = ?",
+            (stripe_customer_id, now_iso(), user_id),
+        )
+
+
+def get_user_id_by_stripe_customer(stripe_customer_id: str) -> str | None:
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM profiles WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
+def upsert_subscription(user_id: str, stripe_customer_id: str | None,
+                        subscription: dict[str, Any]) -> None:
+    sub_id = str(subscription.get("id") or "")
+    if not sub_id:
+        return
+    status = str(subscription.get("status") or "")
+    price_id = None
+    try:
+        items = subscription.get("items", {}).get("data", [])
+        if items:
+            price_id = items[0].get("price", {}).get("id")
+    except AttributeError:
+        price_id = None
+    current_period_end = _stripe_ts_to_iso(subscription.get("current_period_end"))
+    cancel_at_period_end = bool(subscription.get("cancel_at_period_end") or False)
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO subscriptions (
+                user_id, stripe_customer_id, stripe_subscription_id, stripe_price_id,
+                status, current_period_end, cancel_at_period_end, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                stripe_customer_id = EXCLUDED.stripe_customer_id,
+                stripe_price_id = EXCLUDED.stripe_price_id,
+                status = EXCLUDED.status,
+                current_period_end = EXCLUDED.current_period_end,
+                cancel_at_period_end = EXCLUDED.cancel_at_period_end,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                user_id,
+                stripe_customer_id,
+                sub_id,
+                price_id,
+                status,
+                current_period_end,
+                int(cancel_at_period_end),
+                now_iso(),
+            ),
+        )
+    replace_paid_role_from_subscription(user_id, status, current_period_end)
+
+
+def _stripe_ts_to_iso(value: Any) -> str | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc).replace(microsecond=0).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None

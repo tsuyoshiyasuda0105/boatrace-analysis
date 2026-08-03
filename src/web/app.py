@@ -67,9 +67,10 @@ from src.evaluation.accident_dent_strategy import (
     live_matches as load_accident_dent_live_matches,
 )
 from src.web.auth import (
-    is_member, login_required, member_only_api,
+    current_role, is_admin, is_member, login_required, member_only_api,
     register_auth_routes,
 )
+from src.web.billing import register_billing_routes
 from src.web.predictor import Predictor
 try:
     from src.web.start_prediction_api import bp as start_prediction_bp
@@ -4431,6 +4432,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
+    register_billing_routes(app)
     if start_prediction_bp is not None:
         app.register_blueprint(start_prediction_bp)
     # メール購読 UI
@@ -4474,6 +4476,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     # テンプレートから is_member() を呼べるように
     app.jinja_env.globals["is_member"] = is_member
+    app.jinja_env.globals["is_admin"] = is_admin
+    app.jinja_env.globals["current_role"] = current_role
 
     # 静的ファイル cache busting 用バージョン
     # CSS/JS が変更されたら自動的に新規取得されるよう、

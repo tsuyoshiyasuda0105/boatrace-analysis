@@ -94,6 +94,29 @@ SQLITE_CONNECT_TIMEOUT_SECONDS = 30  # connect() 自身のタイムアウト
 WEB_SESSION_SECRET = os.getenv("BOATRACE_WEB_SECRET", "dev-only-do-not-use-in-prod")
 # 会員パスワード (環境変数 BOATRACE_MEMBER_PASSWORD で設定。本番では .env で必ず変更)
 WEB_MEMBER_PASSWORD = os.getenv("BOATRACE_MEMBER_PASSWORD", "dev-member")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = (
+    os.getenv("SUPABASE_PUBLISHABLE_KEY")
+    or os.getenv("SUPABASE_ANON_KEY")
+    or ""
+)
+SUPABASE_SECRET_KEY = (
+    os.getenv("SUPABASE_SECRET_KEY")
+    or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    or ""
+)
+SUPABASE_AUTH_ENABLED = os.getenv("BOATRACE_SUPABASE_AUTH_ENABLED", "1").strip().lower() not in {
+    "0", "false", "no", "off"
+}
+LEGACY_PASSWORD_LOGIN_ENABLED = os.getenv("BOATRACE_LEGACY_PASSWORD_LOGIN_ENABLED", "1").strip().lower() not in {
+    "0", "false", "no", "off"
+}
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
+STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "")
+STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "")
+STRIPE_PORTAL_RETURN_URL = os.getenv("STRIPE_PORTAL_RETURN_URL", "")
 # Pro プランパスワード (T-15min 期待値表示)。本番では .env で必ず変更
 WEB_PRO_PASSWORD = os.getenv("BOATRACE_PRO_PASSWORD", "dev-pro")
 
