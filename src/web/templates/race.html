@@ -19,8 +19,8 @@
       {% endif %}
       <nav class="race-video-links" aria-label="レース映像リンク">
         <a href="https://boatcast.jp/?nav=navRaceLive" target="_blank" rel="noopener noreferrer">ライブ</a>
-        <a href="https://race.boatcast.jp/replay?jo={{ boatcast_jo }}&amp;md=T" target="_blank" rel="noopener noreferrer">展示リプレイ</a>
-        <a href="https://race.boatcast.jp/replay?jo={{ boatcast_jo }}" target="_blank" rel="noopener noreferrer">結果リプレイ</a>
+        <a href="{{ info.boatcast_replay_url }}&amp;md=T" target="_blank" rel="noopener noreferrer">{{ info.race_number }}R 展示</a>
+        <a href="{{ info.boatcast_replay_url }}" target="_blank" rel="noopener noreferrer">{{ info.race_number }}R 結果</a>
       </nav>
     </div>
     {% if venue_environment %}
@@ -431,7 +431,7 @@
                   </span>
                   <div class="racer-meta">No. {{ p.racer_number }}</div>
                   <span class="racer-course-win-sample"
-                        title="{{ p.boat_number }}コース1着率: 上段は当該会場の直近10走、下段は全国同コース累計">
+                        title="{{ p.boat_number }}コース成績。当地は直近10走、全国は同コース累計です。">
                     <span class="course-win-line is-venue">
                       <small>当地10R</small>
                       <b>{{ '%.1f' | format(p.venue_recent10_course_win_rate) if p.venue_recent10_course_win_rate is defined and p.venue_recent10_course_win_rate is not none else '-' }}%</b>

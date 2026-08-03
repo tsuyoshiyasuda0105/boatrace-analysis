@@ -53,8 +53,10 @@ def test_race_template_parses_and_contains_requested_fact_columns():
     assert "boatcast_jo" in source
     assert "race-video-links" in source
     assert "https://boatcast.jp/?nav=navRaceLive" in source
-    assert "https://race.boatcast.jp/replay?jo={{ boatcast_jo }}&amp;md=T" in source
-    assert "https://race.boatcast.jp/replay?jo={{ boatcast_jo }}" in source
+    assert "info.boatcast_replay_url" in source
+    assert "{{ info.race_number }}R 展示" in source
+    assert "{{ info.race_number }}R 結果" in source
+    assert "&amp;md=T" in source
     assert 'target="_blank"' in source
     assert 'rel="noopener noreferrer"' in source
 

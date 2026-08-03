@@ -1125,7 +1125,35 @@ def _race_basic_info(race_id: str) -> Optional[dict]:
             "race_closed_at"]
     info = dict(zip(keys, row))
     info["stadium_name"] = stadium_names.get(info["stadium_number"], "")
+    info["boatcast_replay_url"] = _boatcast_replay_url(info)
     return info
+
+
+def _boatcast_replay_url(info: dict[str, Any]) -> str:
+    """Build a BOATCAST replay link for the venue/date/race.
+
+    BOATCAST's public replay page is keyed by venue (``jo``).  We also pass
+    date/race params using the same public names used by BOATRACE links so the
+    page can open the intended race when BOATCAST supports deep-linking, while
+    still falling back to the venue replay page if extra params are ignored.
+    """
+    try:
+        jo = int(info.get("stadium_number") or 0)
+        rno = int(info.get("race_number") or 0)
+    except Exception:
+        return ""
+    race_date = str(info.get("race_date") or "").replace("-", "")
+    if jo <= 0:
+        return ""
+    url = f"https://race.boatcast.jp/replay?jo={jo:02d}"
+    params = []
+    if race_date and len(race_date) == 8:
+        params.append(f"hd={race_date}")
+    if rno > 0:
+        params.append(f"rno={rno}")
+    if params:
+        url = f"{url}&{'&'.join(params)}"
+    return url
 
 
 def _races_for_date(target_date: str, conn: Any = None) -> list[dict]:
