@@ -20,6 +20,11 @@ def canonical_strategy_key(strategy_key: str) -> str:
     return STRATEGY_KEY_ALIASES.get(str(strategy_key or ""), str(strategy_key or ""))
 
 
+def _is_excluded_history_label(label: Any) -> bool:
+    text = str(label or "")
+    return "女性" in text and ("除外" in text or "混在" in text)
+
+
 def ensure_roi_race_history_table(conn: Any) -> None:
     """Create the durable per-race ROI ledger for SQLite and PostgreSQL."""
     conn.execute(
@@ -86,6 +91,14 @@ def replace_roi_history_snapshot(
             continue
         l4 = signal.get("l4") or {}
         if not isinstance(l4, dict):
+            continue
+        if l4.get("is_reference"):
+            continue
+        if int((signal or {}).get("n_female") or 0) > 0 and not l4.get(
+            "allow_female_market_signal"
+        ):
+            continue
+        if l4.get("is_female_present") and not l4.get("allow_female_market_signal"):
             continue
         level_candidates = [str(l4.get("level") or "")]
         level_candidates.extend(str(value) for value in (l4.get("matched_levels") or []) if value)
@@ -207,14 +220,16 @@ def load_roi_history_daily(
     )
     rows = conn.execute(
         """
-        SELECT race_date, strategy_key, stake_amount, payout_amount, is_hit
+        SELECT race_date, strategy_key, strategy_label, stake_amount, payout_amount, is_hit
           FROM roi_race_history
          WHERE race_date BETWEEN ? AND ? AND is_settled = 1 AND is_active = 1
          ORDER BY race_date, race_id
         """,
         (from_date, to_date),
     ).fetchall()
-    for race_date, strategy_key, stake, payout, is_hit in rows:
+    for race_date, strategy_key, strategy_label, stake, payout, is_hit in rows:
+        if _is_excluded_history_label(strategy_label):
+            continue
         key = str(strategy_key)
         if key not in adopted:
             continue
@@ -265,6 +280,8 @@ def load_roi_history_races(
 
     result: list[dict[str, Any]] = []
     for row in rows:
+        if _is_excluded_history_label(row[3]):
+            continue
         key = str(row[2])
         if key not in adopted:
             continue

@@ -64,6 +64,78 @@ def test_snapshot_becomes_settled_race_history_and_daily_totals():
     assert daily["2026-07-31"]["kiryu_13"] == {"bets": 1, "hits": 1, "pay": 540, "stake": 100}
 
 
+def test_reference_and_female_excluded_signals_do_not_enter_roi_history():
+    conn = _conn()
+    conn.execute("INSERT INTO race_results VALUES ('20260803-05-12', 1)")
+    conn.execute("INSERT INTO race_payouts VALUES ('20260803-05-12', 'exacta', '1-3', 190)")
+    payload = {
+        "date": "2026-08-03",
+        "cache_version": "v27",
+        "signals": {
+            "20260803-05-12": {
+                "race_id": "20260803-05-12",
+                "n_female": 1,
+                "l4": {
+                    "level": "tamagawa_13_weak_sashi2_exa",
+                    "matched_levels": ["general", "tamagawa_13_weak_sashi2_exa"],
+                    "is_reference": True,
+                    "is_female_present": True,
+                    "bet": "exacta 1-3",
+                },
+            }
+        },
+    }
+
+    count = replace_roi_history_snapshot(
+        conn,
+        payload,
+        source_cache_key="market_signals:last-good:2026-08-03",
+        capture_quality="exact_last_good",
+        adopted_keys=("tamagawa_13_weak_sashi2_exa",),
+        bet_unit_map={},
+        parse_bets=_parse_market_signal_bets_for_roi,
+        strategy_signature="sig",
+    )
+
+    assert count == 0
+    assert conn.execute("SELECT COUNT(*) FROM roi_race_history").fetchone()[0] == 0
+
+    conn.execute("INSERT INTO stadiums VALUES (5, 'Tamagawa')")
+    conn.execute(
+        "INSERT INTO races VALUES ('20260803-05-12', '2026-08-03', 5, 12, '2026-08-03 17:35:00')"
+    )
+    conn.execute(
+        """
+        INSERT INTO roi_race_history (
+            race_date, race_id, strategy_key, strategy_label, bet_json,
+            stake_amount, payout_amount, is_hit, is_settled, is_active,
+            source_cache_key, source_cache_version, strategy_signature,
+            snapshot_computed_at, capture_quality, payload_hash, updated_at
+        ) VALUES (
+            '2026-08-03', '20260803-05-12', 'tamagawa_13_weak_sashi2_exa',
+            '♀多摩川 1-3 (女性1名除外)', '[{"bet_type":"exacta","combination":"1-3"}]',
+            100, 190, 1, 1, 1, 'cache', 'v27', 'sig', 'now', 'exact_last_good', 'hash', 'now'
+        )
+        """
+    )
+
+    daily = load_roi_history_daily(
+        conn,
+        "2026-08-03",
+        "2026-08-03",
+        ("tamagawa_13_weak_sashi2_exa",),
+    )
+    races = load_roi_history_races(
+        conn,
+        "2026-08-03",
+        "2026-08-03",
+        ("tamagawa_13_weak_sashi2_exa",),
+    )
+
+    assert daily == {}
+    assert races == []
+
+
 def test_legacy_hamanako_exacta_signal_imports_as_current_roi_key():
     conn = _conn()
     conn.execute("INSERT INTO stadiums VALUES (6, '浜名湖')")
