@@ -265,6 +265,109 @@ SUPABASE_SIGNUP_TEMPLATE = """
 """
 
 
+SUPABASE_RESET_PASSWORD_TEMPLATE = """
+{% extends "base.html" %}
+{% block title %}パスワード再設定{% endblock %}
+{% block content %}
+<div class="login-wrap">
+  <h2>パスワード再設定</h2>
+  <p class="login-hint">
+    メールのリセットリンクから開いた場合だけ、新しいパスワードを設定できます。
+  </p>
+  <div id="reset-message" class="login-hint"></div>
+  <form id="reset-form" class="login-form" style="display:none">
+    <label>
+      <span>新しいパスワード</span>
+      <input id="new-password" type="password" autocomplete="new-password" minlength="8" required autofocus>
+    </label>
+    <label>
+      <span>確認</span>
+      <input id="confirm-password" type="password" autocomplete="new-password" minlength="8" required>
+    </label>
+    <button type="submit">パスワードを更新</button>
+  </form>
+  <p class="login-hint"><a href="{{ url_for('login_supabase') }}">ログイン画面へ戻る</a></p>
+</div>
+<script>
+(function () {
+  const supabaseUrl = {{ supabase_url|tojson }};
+  const publishableKey = {{ publishable_key|tojson }};
+  const msg = document.getElementById("reset-message");
+  const form = document.getElementById("reset-form");
+  const password = document.getElementById("new-password");
+  const confirmPassword = document.getElementById("confirm-password");
+
+  function show(text, isError) {
+    msg.textContent = text;
+    msg.className = isError ? "login-error" : "login-hint";
+  }
+
+  function paramsFromHash() {
+    const raw = window.location.hash && window.location.hash.startsWith("#")
+      ? window.location.hash.slice(1)
+      : "";
+    return new URLSearchParams(raw);
+  }
+
+  const params = paramsFromHash();
+  const accessToken = params.get("access_token");
+  const tokenType = params.get("token_type") || "bearer";
+  const flowType = params.get("type");
+
+  if (!supabaseUrl || !publishableKey) {
+    show("Supabase Authの設定がまだ完了していません。", true);
+    return;
+  }
+  if (!accessToken || (flowType && flowType !== "recovery")) {
+    show("有効なリセットリンクではありません。Supabaseから最新のReset Passwordメールを再送してください。", true);
+    return;
+  }
+
+  form.style.display = "";
+  show("新しいパスワードを入力してください。", false);
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const newPassword = password.value;
+    if (newPassword.length < 8) {
+      show("パスワードは8文字以上にしてください。", true);
+      return;
+    }
+    if (newPassword !== confirmPassword.value) {
+      show("確認用パスワードが一致していません。", true);
+      return;
+    }
+
+    form.querySelector("button").disabled = true;
+    show("更新しています...", false);
+    try {
+      const response = await fetch(supabaseUrl.replace(/\\/$/, "") + "/auth/v1/user", {
+        method: "PUT",
+        headers: {
+          "apikey": publishableKey,
+          "Authorization": tokenType.charAt(0).toUpperCase() + tokenType.slice(1) + " " + accessToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ password: newPassword })
+      });
+      const payload = await response.json().catch(function () { return {}; });
+      if (!response.ok) {
+        throw new Error(payload.msg || payload.message || payload.error_description || "パスワード更新に失敗しました。");
+      }
+      history.replaceState(null, document.title, window.location.pathname);
+      form.style.display = "none";
+      show("パスワードを更新しました。ログイン画面から新しいパスワードでログインしてください。", false);
+    } catch (error) {
+      show(error.message || "パスワード更新に失敗しました。", true);
+      form.querySelector("button").disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}
+"""
+
+
 def register_auth_routes(app):
     # テンプレートから _safe_redirect_url を使えるように (next の事前検証用)
     app.jinja_env.globals["safe_next"] = _safe_redirect_url
@@ -370,6 +473,16 @@ def register_auth_routes(app):
                 _record_attempt(ip, False)
                 return _render_supabase_signup(error=str(e)), 400
         return _render_supabase_signup()
+
+    @app.route("/reset-password", methods=["GET"])
+    def reset_password():
+        if not supabase_auth_client.is_configured():
+            abort(404)
+        return render_template_string(
+            SUPABASE_RESET_PASSWORD_TEMPLATE,
+            supabase_url=config.SUPABASE_URL,
+            publishable_key=config.SUPABASE_PUBLISHABLE_KEY,
+        )
 
     @app.route("/logout")
     def logout():

@@ -9,12 +9,22 @@ def test_supabase_auth_is_added_as_parallel_login():
     assert '@app.route("/login", methods=["GET", "POST"])' in source
     assert '@app.route("/login-supabase", methods=["GET", "POST"])' in source
     assert '@app.route("/signup-supabase", methods=["GET", "POST"])' in source
+    assert '@app.route("/reset-password", methods=["GET"])' in source
 
 
 def test_supabase_refresh_token_is_not_saved_in_flask_session():
     source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
     assert 'session["supabase_refresh_token"]' not in source
     assert "refresh_token" not in source
+
+
+def test_reset_password_page_uses_only_public_supabase_key():
+    source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
+    assert "SUPABASE_RESET_PASSWORD_TEMPLATE" in source
+    assert "publishable_key=config.SUPABASE_PUBLISHABLE_KEY" in source
+    assert 'fetch(supabaseUrl.replace(/\\\\/$/, "") + "/auth/v1/user"' in source
+    assert "SUPABASE_SECRET_KEY" not in source
+    assert "SERVICE_ROLE" not in source
 
 
 def test_legacy_password_login_is_not_admin():
