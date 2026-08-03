@@ -3294,7 +3294,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v4"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v9"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v10"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -3555,6 +3555,7 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
                     SELECT c.boat_number,
                            COUNT(*) AS starts,
                            SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins,
+                           SUM(CASE WHEN rr.finishing_position = 2 THEN 1 ELSE 0 END) AS seconds,
                            SUM(CASE WHEN rr.finishing_position <= 3 THEN 1 ELSE 0 END) AS top3
                       FROM current_entries c
                       JOIN race_entries e
@@ -3577,6 +3578,7 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
                        vr.wins AS venue_wins,
                        nc.starts AS national_starts,
                        nc.wins AS national_wins,
+                       nc.seconds AS national_seconds,
                        nc.top3 AS national_top3
                   FROM current_entries c
                   LEFT JOIN venue_recent vr
@@ -3627,7 +3629,8 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
             venue_wins = int(course_row[2] or 0)
             national_starts = int(course_row[3] or 0)
             national_wins = int(course_row[4] or 0)
-            national_top3 = int(course_row[5] or 0)
+            national_seconds = int(course_row[5] or 0)
+            national_top3 = int(course_row[6] or 0)
             p["current_course_number"] = boat_number
             p["venue_recent10_course_win_starts"] = venue_starts
             p["venue_recent10_course_win_rate"] = (
@@ -3638,6 +3641,11 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
             p["national_course_win_starts"] = national_starts
             p["national_course_win_rate"] = (
                 round(national_wins / national_starts * 100.0, 1)
+                if national_starts
+                else None
+            )
+            p["national_course_second_rate"] = (
+                round(national_seconds / national_starts * 100.0, 1)
                 if national_starts
                 else None
             )

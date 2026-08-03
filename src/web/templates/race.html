@@ -371,6 +371,7 @@
       </summary>
     <div class="preds">
       {% set has_result_col = preds[0].finishing_position is not none %}
+      {% set has_escape70 = (preds | selectattr('escape_tag', 'defined') | list | length) > 0 %}
       <table class="preds-table">
         <thead>
           <tr>
@@ -378,9 +379,8 @@
             <th class="left">枠 / 選手</th>
             <th class="left">選手成績</th>
             <th class="left">モーター / チルト</th>
-            <th>平均ST</th>
+            <th>ST</th>
             <th>展示T</th>
-            <th>展示ST</th>
             <th>出足</th>
             <th>回り足</th>
             <th>直線</th>
@@ -440,6 +440,12 @@
                       <small>全国{{ p.current_course_number or p.boat_number }}C</small>
                       <b>{{ '%.1f' | format(p.national_course_win_rate) if p.national_course_win_rate is defined and p.national_course_win_rate is not none else '-' }}%</b>
                     </span>
+                    {% if has_escape70 and p.boat_number in [2, 3] %}
+                      <span class="course-win-line is-second">
+                        <small>{{ p.boat_number }}C2着</small>
+                        <b>{{ '%.1f' | format(p.national_course_second_rate) if p.national_course_second_rate is defined and p.national_course_second_rate is not none else '-' }}%</b>
+                      </span>
+                    {% endif %}
                     <span class="course-win-line is-top3">
                       <small>{{ p.current_course_number or p.boat_number }}C3着内</small>
                       <b>{{ '%.1f' | format(p.national_course_top3_rate) if p.national_course_top3_rate is defined and p.national_course_top3_rate is not none else '-' }}%</b>
@@ -513,9 +519,17 @@
                   -
                 {% endif %}
               </td>
-              <td class="avg-st-cell">{{ '%.2f' | format(p.avg_start_timing) if p.avg_start_timing is defined and p.avg_start_timing is not none else '—' }}</td>
+              <td class="st-stack-cell">
+                <span class="st-stack-line is-avg">
+                  <small>平均</small>
+                  <b>{{ '%.2f' | format(p.avg_start_timing) if p.avg_start_timing is defined and p.avg_start_timing is not none else '—' }}</b>
+                </span>
+                <span class="st-stack-line is-ex">
+                  <small>展示</small>
+                  <b>{{ '%.2f' | format(p.start_timing_exhibition) if p.start_timing_exhibition is not none else '—' }}</b>
+                </span>
+              </td>
               <td>{{ '%.2f' | format(p.exhibition_time) if p.exhibition_time is not none else '—' }}</td>
-              <td>{{ '%.2f' | format(p.start_timing_exhibition) if p.start_timing_exhibition is not none else '—' }}</td>
               <td>
                 {% set dash = p.motor_dash_grade if p.motor_dash_grade is defined else {'label': '-', 'tone': 'unknown'} %}
                 <div class="foot-grade-stack">

@@ -2311,6 +2311,9 @@ main h2 {
 .course-win-line.is-venue b {
   color: var(--accent);
 }
+.course-win-line.is-second b {
+  color: #facc15;
+}
 .course-win-line.is-top3 b {
   color: #7cf4c8;
 }
@@ -2356,10 +2359,37 @@ main h2 {
     font-size: 12px;
   }
 }
-.avg-st-cell {
+.avg-st-cell,
+.st-stack-cell {
   color: #dff9ff;
   font-weight: 900;
   font-variant-numeric: tabular-nums;
+}
+.st-stack-cell {
+  display: inline-grid;
+  gap: 3px;
+  justify-items: center;
+  line-height: 1.05;
+}
+.st-stack-line {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+.st-stack-line small {
+  color: var(--text-mute);
+  font-size: 10px;
+  font-weight: 800;
+}
+.st-stack-line b {
+  color: #dff9ff;
+  font-size: 13px;
+  font-weight: 900;
+}
+.st-stack-line.is-ex b {
+  color: var(--text);
 }
 .foot-grade-stack {
   display: inline-grid;

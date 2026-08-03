@@ -15,7 +15,10 @@ def test_race_template_parses_and_contains_requested_fact_columns():
     Environment().parse(source)
 
     assert "\u9078\u624b\u6210\u7e3e" in source
-    assert "\u5e73\u5747ST" in source
+    assert "<th>ST</th>" in source
+    assert "st-stack-cell" in source
+    assert "st-stack-line is-avg" in source
+    assert "st-stack-line is-ex" in source
     assert "racer-class-badge--name" in source
     assert "racer-rate-grid" in source
     national_win = source.index("<small>\u5168\u56fd\u52dd\u7387</small>")
@@ -41,6 +44,7 @@ def test_race_template_parses_and_contains_requested_fact_columns():
     assert "p.late_count" in source
     assert "p.venue_recent10_course_win_rate" in source
     assert "p.national_course_win_rate" in source
+    assert "p.national_course_second_rate" in source
     assert "p.national_course_top3_rate" in source
     assert "当地10R" in source
     assert "preds | sort(attribute='boat_number')" in source
@@ -119,7 +123,7 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "original.dash_time" in source
     assert "original.turn_time" in source
     assert "original.straight_time" in source
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v9"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v10"' in source
 
 
 def test_cached_predictions_include_same_display_facts_as_fallback_rows():
@@ -147,7 +151,7 @@ def test_cached_predictions_include_same_display_facts_as_fallback_rows():
 def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v9"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v10"' in source
 
 
 def test_race_detail_video_links_are_styled():
