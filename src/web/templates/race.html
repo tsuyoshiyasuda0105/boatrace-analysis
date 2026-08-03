@@ -17,6 +17,22 @@
         <div class="subtitle">{{ info.race_title }}{% if info.race_subtitle %} — {{ info.race_subtitle }}{% endif %}</div>
       {% endif %}
     </div>
+    {% if venue_environment %}
+      <div class="race-env-card race-env-{{ venue_environment.trend_tone or 'neutral' }}">
+        <div class="race-env-top">
+          <span class="race-env-title">水面情報</span>
+          <span class="race-env-ref">{{ venue_environment.reference_label }}</span>
+        </div>
+        <div class="race-env-chips">
+          <span>{{ venue_environment.tide_label }}</span>
+          <span>{{ venue_environment.weather_label }}</span>
+          <span>{{ venue_environment.wind_label }}</span>
+          <span>{{ venue_environment.wave_label }}</span>
+        </div>
+        <div class="race-env-note">{{ venue_environment.trend_note }}</div>
+        <div class="race-env-fetched">取得日時 {{ venue_environment.fetched_at_label or '-' }}</div>
+      </div>
+    {% endif %}
     {% if info.race_closed_at %}
       <div class="closed">
         <span class="label">締切時刻</span>

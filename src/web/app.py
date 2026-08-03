@@ -1169,6 +1169,40 @@ def _parse_local_datetime(value: Any) -> Optional[datetime]:
         return None
 
 
+def _format_jst_minute(value: Any) -> str:
+    dt = _parse_local_datetime(value)
+    if not dt:
+        return "-"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=JST)
+    else:
+        dt = dt.astimezone(JST)
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _jp_tide_phase_label(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "潮データなし"
+    key = raw.lower()
+    mapping = {
+        "rising": "上げ潮",
+        "flood": "上げ潮",
+        "incoming": "上げ潮",
+        "falling": "下げ潮",
+        "ebb": "下げ潮",
+        "outgoing": "下げ潮",
+        "high": "満潮付近",
+        "high_tide": "満潮付近",
+        "low": "干潮付近",
+        "low_tide": "干潮付近",
+        "slack": "潮止まり",
+        "neutral": "中立",
+        "mid": "中立",
+    }
+    return mapping.get(key, raw)
+
+
 def _venue_trend_summary(
     stadium_water: Optional[str],
     tide_phase: Optional[str],
@@ -1243,7 +1277,8 @@ def _venue_environment_summaries_for_date(
                        rt.tide_delta_60m_cm,
                        rt.tide_range_cm,
                        COALESCE(rt.is_high_tide_zone, 0) AS is_high_tide_zone,
-                       COALESCE(rt.is_low_tide_zone, 0) AS is_low_tide_zone
+                       COALESCE(rt.is_low_tide_zone, 0) AS is_low_tide_zone,
+                       rt.fetched_at AS tide_fetched_at
                   FROM races r
                   JOIN stadiums s ON s.stadium_number = r.stadium_number
                   LEFT JOIN race_previews pv ON pv.race_id = r.race_id AND pv.boat_number = 1
@@ -1265,7 +1300,7 @@ def _venue_environment_summaries_for_date(
         "race_id", "stadium_number", "race_number", "race_closed_at", "water",
         "weather_number", "wind_speed", "wave_height", "tide_phase",
         "tide_height_cm", "tide_delta_60m_cm", "tide_range_cm",
-        "is_high_tide_zone", "is_low_tide_zone",
+        "is_high_tide_zone", "is_low_tide_zone", "tide_fetched_at",
     ]
     for row in rows:
         d = dict(zip(keys, row))
@@ -1317,8 +1352,7 @@ def _venue_environment_summaries_for_date(
             chosen.get("weather_number"),
         )
         delta_v = _safe_float(chosen.get("tide_delta_60m_cm"))
-        tide_v = str(chosen.get("tide_phase") or "").strip()
-        tide_label = tide_v or "潮データなし"
+        tide_label = _jp_tide_phase_label(chosen.get("tide_phase"))
         if delta_v is not None:
             tide_label = f"{tide_label} ({delta_v:+.0f}cm/h)"
 
@@ -1331,6 +1365,7 @@ def _venue_environment_summaries_for_date(
             "tide_label": tide_label,
             "trend_tone": tone,
             "trend_note": trend_note,
+            "fetched_at_label": _format_jst_minute(chosen.get("tide_fetched_at")),
         }
     return out
 
@@ -3231,7 +3266,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v4"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v6"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v7"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -4466,6 +4501,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 error="サーバー容量制限のためご利用いただけません (Supabase Free 制約)。少し時間をおいてから再度お試しください。",
                 preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
                 conditions={},
+                venue_environment={},
             ), 500
         if "connection" in err_str.lower() or "timeout" in err_str.lower():
             return render_template(
@@ -4475,6 +4511,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 error="DB 接続エラー。30秒後に再度アクセスしてください。",
                 preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
                 conditions={},
+                venue_environment={},
             ), 500
         return render_template(
             "race.html",
@@ -4483,6 +4520,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             error=f"サーバーエラー: {err_str[:200]}",
             preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
             conditions={},
+            venue_environment={},
         ), 500
 
     # テンプレートから is_member() を呼べるように
@@ -5010,6 +5048,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         info = _race_basic_info(race_id)
         if not info:
             abort(404)
+        venue_environment = _venue_environment_summaries_for_date(
+            str(info.get("race_date") or "")
+        ).get(int(info.get("stadium_number") or 0), {})
 
         fallback_notice = None
         try:
@@ -5068,6 +5109,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     compat_analysis=None,
                     actual_result=None,
                     venue_warning=None,
+                    venue_environment=venue_environment,
                     sweet_spot=False,
                 )
                 _write_page_html_cache(page_cache_key, html)
@@ -5081,6 +5123,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 trifecta_pw=[],
                 trifecta_unified=[],
                 conditions={},
+                venue_environment=venue_environment,
             )
             return html
 
@@ -5165,6 +5208,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             trifecta_unified=tri_uni,
             conditions=conditions,
             venue_warning=venue_warning,
+            venue_environment=venue_environment,
             sweet_spot=sweet_spot,
             actual_result=actual_result,
             niche_signals=niche_signals,
