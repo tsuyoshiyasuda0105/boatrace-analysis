@@ -400,6 +400,8 @@ def _source_timestamp(value: object) -> float:
 
 
 def _due_races(target_date: str, delay_seconds: int, limit: int) -> list[str]:
+    from src.web import app as web_app
+
     page_cache_prefix = web_app._race_detail_page_cache_key("")
     with db_connect() as conn:
         rows = conn.execute(

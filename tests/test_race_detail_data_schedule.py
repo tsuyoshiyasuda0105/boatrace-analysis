@@ -26,6 +26,11 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert '["scripts/generate_start_predictions.py", "--date", target_date]' in source
     assert "page_ts < source_ts" in source
     assert "CAST(MAX(c.updated_at) AS DOUBLE PRECISION)" in source
+    due_races = source.split("def _due_races", 1)[1].split("def refresh", 1)[0]
+    assert "from src.web import app as web_app" in due_races
+    assert due_races.index("from src.web import app as web_app") < due_races.index(
+        'page_cache_prefix = web_app._race_detail_page_cache_key("")'
+    )
     assert 'page_cache_prefix = web_app._race_detail_page_cache_key("")' in source
     assert "'race_detail_page:v1:' || r.race_id" not in source
     assert 'datetime.now(timezone.utc).isoformat(timespec="seconds")' in source
