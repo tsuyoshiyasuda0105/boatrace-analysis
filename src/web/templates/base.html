@@ -79,6 +79,16 @@
   </footer>
   <script>
     (() => {
+      const hash = window.location.hash || "";
+      if (!hash || window.location.pathname === "/reset-password") return;
+      const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+      if (params.get("type") === "recovery" && params.get("access_token")) {
+        window.location.replace("/reset-password" + hash);
+      }
+    })();
+  </script>
+  <script>
+    (() => {
       const prefetched = new Set();
       const inflight = new Set();
       const sameOrigin = (url) => {

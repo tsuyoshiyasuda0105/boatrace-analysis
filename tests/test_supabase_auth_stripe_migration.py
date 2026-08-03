@@ -27,6 +27,13 @@ def test_reset_password_page_uses_only_public_supabase_key():
     assert "SERVICE_ROLE" not in source
 
 
+def test_recovery_link_landing_on_top_redirects_to_reset_password():
+    base = (ROOT / "src" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
+    assert 'params.get("type") === "recovery"' in base
+    assert 'params.get("access_token")' in base
+    assert 'window.location.replace("/reset-password" + hash)' in base
+
+
 def test_legacy_password_login_is_not_admin():
     source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
     assert 'session["auth_provider"] = "legacy_password"' in source
