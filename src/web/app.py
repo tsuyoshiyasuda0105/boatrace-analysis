@@ -4364,12 +4364,23 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if is_production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         # 簡易 CSP (テンプレ内 inline script を許可)
+        supabase_connect_src = ""
+        if getattr(config, "SUPABASE_URL", ""):
+            try:
+                from urllib.parse import urlparse
+
+                parsed_supabase_url = urlparse(config.SUPABASE_URL)
+                if parsed_supabase_url.scheme and parsed_supabase_url.netloc:
+                    supabase_connect_src = f" {parsed_supabase_url.scheme}://{parsed_supabase_url.netloc}"
+            except Exception:
+                supabase_connect_src = ""
+
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
-            "connect-src 'self'; "
+            f"connect-src 'self'{supabase_connect_src}; "
             "frame-ancestors 'none'; "
             "form-action 'self'; "
             "base-uri 'self';"

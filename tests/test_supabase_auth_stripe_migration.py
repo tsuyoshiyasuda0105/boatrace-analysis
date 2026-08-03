@@ -34,6 +34,13 @@ def test_recovery_link_landing_on_top_redirects_to_reset_password():
     assert 'window.location.replace("/reset-password" + hash)' in base
 
 
+def test_security_policy_allows_supabase_auth_fetch():
+    app_source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
+    assert 'getattr(config, "SUPABASE_URL", "")' in app_source
+    assert "urlparse(config.SUPABASE_URL)" in app_source
+    assert """f"connect-src 'self'{supabase_connect_src}; """ in app_source
+
+
 def test_legacy_password_login_is_not_admin():
     source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
     assert 'session["auth_provider"] = "legacy_password"' in source
