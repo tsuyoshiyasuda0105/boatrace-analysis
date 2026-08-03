@@ -23,6 +23,7 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-detail-daily")
 os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 
 from scripts.prewarm_race_detail_pages import prewarm as prewarm_pages  # noqa: E402
+from scripts.check_post_run_integrity import run_checks as run_post_run_checks  # noqa: E402
 from src.db.cron_run_log import record_cron_run  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.web import app as web_app  # noqa: E402
@@ -170,6 +171,11 @@ def prewarm(target_date: str, *, phase: str = "all", motor_workers: int = 4) -> 
                 _record_failure(failures, "tags", race_id, None, exc)
 
     page_summary = prewarm_pages(target_date) if phase == "all" else {"generated": 0, "failed": 0}
+    validation_scopes = ["detail_rows", "motor_cache"]
+    if phase == "all":
+        validation_scopes.append("detail_cache")
+    validation = run_post_run_checks(target_date, validation_scopes, race_ids, persist=True)
+    print("[race-detail-daily] validation=" + json.dumps(validation, ensure_ascii=False), flush=True)
     summary = {
         "target_date": target_date,
         "phase": phase,
@@ -177,6 +183,7 @@ def prewarm(target_date: str, *, phase: str = "all", motor_workers: int = 4) -> 
         "races": len(race_ids),
         **counts,
         "pages": page_summary,
+        "validation": validation,
         "failed": len(failures) + int(page_summary.get("failed", 0)),
         "failures": failures,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
@@ -208,7 +215,8 @@ def main() -> int:
         )
         raise
 
-    succeeded = summary["races"] > 0 and summary["failed"] == 0
+    validation_status = str((summary.get("validation") or {}).get("status") or "error")
+    succeeded = summary["races"] > 0 and summary["failed"] == 0 and validation_status != "error"
     detail = json.dumps(
         {
             "races": summary["races"],
@@ -217,6 +225,7 @@ def main() -> int:
             "tags": summary["tags"],
             "pages": int((summary.get("pages") or {}).get("succeeded", 0)),
             "failed": summary["failed"],
+            "validation_status": validation_status,
             "elapsed_seconds": summary["elapsed_seconds"],
         },
         ensure_ascii=False,

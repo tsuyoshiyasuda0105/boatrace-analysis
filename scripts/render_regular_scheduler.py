@@ -819,6 +819,15 @@ def run_accident_full_refresh(target_date: str) -> bool:
     ok = run_accident_rebuild(accident_period_start(target_dt), target_date)
     if ok:
         ok = run_accident_rank_snapshot(target_date)
+    if ok:
+        ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", target_date], timeout=900)
+    if ok:
+        ok = run_py(["scripts/prewarm_race_detail_pages.py", "--date", target_date], timeout=1800)
+    if ok:
+        ok = run_py(
+            ["scripts/check_post_run_integrity.py", "--date", target_date, "--scope", "accident"],
+            timeout=300,
+        )
     return ok
 
 

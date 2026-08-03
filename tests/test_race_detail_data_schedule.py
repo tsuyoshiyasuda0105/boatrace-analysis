@@ -11,7 +11,11 @@ def test_daily_detail_data_is_built_in_requested_order():
     motor = source.index("# Motor history follows player data, as requested.")
     tags = source.index("# Tags must exist before complete HTML is rendered.")
     pages = source.index("page_summary = prewarm_pages(target_date)")
+    validation = source.index('validation_scopes = ["detail_rows", "motor_cache"]')
     assert racer < motor < tags < pages
+    assert pages < validation
+    assert 'validation_scopes.append("detail_cache")' in source
+    assert "validation_status != \"error\"" in source
 
 
 def test_exhibition_refresh_waits_one_minute_and_is_targeted():
@@ -36,6 +40,8 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert 'datetime.now(timezone.utc).isoformat(timespec="seconds")' in source
     assert 'client.get(f"/race/{race_id}?recompute=1")' in source
     assert "_motor_history_payload(race_id, boat" in source
+    assert '["detail_rows", "motor_cache", "detail_cache"]' in source
+    assert 'validation_summary.get("status") != "error"' in source
     assert "web_app.invalidate_cache()" in source
     assert "_clear_web_caches" not in source
     assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
@@ -75,6 +81,37 @@ def test_motor_history_can_be_run_alone_with_bounded_parallelism():
     assert 'MOTOR_CACHE_VERSION = "v9"' in refresh_source
     assert 'BOATRACE_MOTOR_PREWARM_WORKERS", "4"' in source
     assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
+
+
+def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
+    source = (ROOT / "scripts" / "check_post_run_integrity.py").read_text(encoding="utf-8")
+
+    assert "def check_race_detail_rows" in source
+    assert "def check_race_detail_caches" in source
+    assert "def check_motor_history_caches" in source
+    assert "def check_accident_integrity" in source
+    assert "assigned_motor_number IS NOT NULL" in source
+    assert "motor_history_" in source
+    assert "_race_detail_page_cache_key" in source
+    assert "_race_detail_tag_cache_key" in source
+    assert "racer_accident_period_stats" in source
+    assert "racer_accident_rank_snapshots" in source
+    assert "system_status" in source
+
+
+def test_accident_refresh_rebuilds_tags_pages_and_validates_after_stats():
+    source = (ROOT / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    start = source.index("def run_accident_full_refresh")
+    end = source.index("def run_accident_self_heal", start)
+    function_source = source[start:end]
+
+    rebuild = function_source.index("run_accident_rebuild")
+    snapshot = function_source.index("run_accident_rank_snapshot")
+    tags = function_source.index("scripts/prewarm_race_detail_tags.py")
+    pages = function_source.index("scripts/prewarm_race_detail_pages.py")
+    validate = function_source.index("scripts/check_post_run_integrity.py")
+    assert rebuild < snapshot < tags < pages < validate
+    assert '"--scope", "accident"' in function_source
 
 
 def test_render_blueprint_separates_daily_and_exhibition_jobs():

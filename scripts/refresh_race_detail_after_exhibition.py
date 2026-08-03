@@ -485,6 +485,7 @@ def refresh(target_date: str, *, delay_seconds: int = 60, limit: int = 12) -> di
     summary = {
         "target_date": target_date,
         "due": len(race_ids),
+        "race_ids": race_ids,
         "refreshed": refreshed,
         "failed": len(failures),
         "failures": failures,
@@ -520,11 +521,26 @@ def main() -> int:
     _record_task(task_name, args.date, "running")
     collect_summary: dict = {"skipped": True}
     signal_summary: dict = {"triggered": False, "ok": True, "reason": "not-run"}
+    validation_summary: dict = {"status": "ok", "skipped": True, "reason": "no-refreshed-races"}
     try:
         if not args.skip_collect:
             collect_summary = collect_live_exhibition(args.date)
             print(f"[exhibition-collect] {collect_summary}", flush=True)
         summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
+        if summary.get("race_ids"):
+            from scripts.check_post_run_integrity import run_checks as run_post_run_checks
+
+            validation_summary = run_post_run_checks(
+                args.date,
+                ["detail_rows", "motor_cache", "detail_cache"],
+                list(summary["race_ids"]),
+                persist=True,
+            )
+            print(
+                "[exhibition-detail-refresh] validation="
+                + json.dumps(validation_summary, ensure_ascii=False),
+                flush=True,
+            )
         signal_summary = refresh_market_signals_if_needed(args.date, collect_summary, summary)
     except Exception as exc:
         _record_task(task_name, args.date, "failure", detail=f"{type(exc).__name__}: {exc}"[:1000])
@@ -538,7 +554,7 @@ def main() -> int:
 
     succeeded = summary["failed"] == 0 and (
         not signal_summary.get("triggered") or bool(signal_summary.get("ok"))
-    )
+    ) and validation_summary.get("status") != "error"
     detail = json.dumps(
         {
             "beforeinfo_due": int(collect_summary.get("beforeinfo_due", 0) or 0),
@@ -547,6 +563,7 @@ def main() -> int:
             "refresh_due": summary["due"],
             "refreshed": summary["refreshed"],
             "failed": summary["failed"],
+            "validation_status": validation_summary.get("status"),
             "signal_refresh_triggered": bool(signal_summary.get("triggered")),
             "signal_refresh_ok": bool(signal_summary.get("ok")),
             "signal_refresh_reason": signal_summary.get("reason"),
