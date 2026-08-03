@@ -155,11 +155,12 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
               LEFT JOIN latest_entry le
                 ON le.racer_number = s.racer_number AND le.rn = 1
              WHERE s.period_start = ?
+               AND s.period_end = ?
                AND s.source_kind = 'reconstructed'
                AND s.rule_version = ?
              ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
             """,
-            (class_as_of, period_start, RULE_VERSION),
+            (class_as_of, period_start, period_end, RULE_VERSION),
         ).fetchall()
 
         conn.execute(

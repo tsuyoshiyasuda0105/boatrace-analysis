@@ -469,6 +469,20 @@ def test_accident_rate_queries_do_not_mix_period_rows_with_max_rate():
     assert "period_end < r.race_date" in source
 
 
+def test_accident_rebuild_updates_period_even_without_new_accident_events():
+    source = Path("scripts/rebuild_racer_accident_stats.py").read_text(encoding="utf-8")
+    assert "periods = {class_period(date_from), class_period(date_to)}" in source
+    assert "periods.update(class_period(ev.race_date) for ev in events)" in source
+
+
+def test_accident_rank_snapshot_uses_only_latest_period_end_rows():
+    source = Path("scripts/cache_racer_accident_rank_snapshot.py").read_text(encoding="utf-8")
+    build_source = source.split("def build_snapshot", 1)[1].split("def main", 1)[0]
+    assert "period_end = str(period_row[1])" in build_source
+    assert "AND s.period_end = ?" in build_source
+    assert "(class_as_of, period_start, period_end, RULE_VERSION)" in build_source
+
+
 def test_roi_cache_self_heal_skips_current_cache(monkeypatch):
     monkeypatch.setattr(scheduler, "roi_daily_cache_needs_repair", lambda _date: False)
     monkeypatch.setattr(

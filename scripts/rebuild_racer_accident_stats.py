@@ -729,7 +729,11 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
             ],
         )
 
-        periods = sorted({class_period(ev.race_date) for ev in events})
+        # Period stats must be refreshed even on days with no accident events:
+        # starts_count still changes, and accident_rate is points / starts.
+        periods = {class_period(date_from), class_period(date_to)}
+        periods.update(class_period(ev.race_date) for ev in events)
+        periods = sorted(periods)
         for period_year, period_half, period_start, period_end in periods:
             effective_period_start = max(period_start, date_from)
             effective_period_end = min(period_end, date_to)
