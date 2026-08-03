@@ -2,6 +2,7 @@
 {% block title %}{{ info.stadium_name }} {{ info.race_number }}R 予測{% endblock %}
 {% block content %}
   {% set target_date = info.race_date %}
+  {% set boatcast_jo = '%02d' | format(info.stadium_number|int) %}
   <div class="race-header">
     <div class="title">
       <span class="breadcrumb">
@@ -16,6 +17,11 @@
       {% if info.race_title %}
         <div class="subtitle">{{ info.race_title }}{% if info.race_subtitle %} — {{ info.race_subtitle }}{% endif %}</div>
       {% endif %}
+      <nav class="race-video-links" aria-label="レース映像リンク">
+        <a href="https://boatcast.jp/?nav=navRaceLive" target="_blank" rel="noopener noreferrer">ライブ</a>
+        <a href="https://race.boatcast.jp/replay?jo={{ boatcast_jo }}&amp;md=T" target="_blank" rel="noopener noreferrer">展示リプレイ</a>
+        <a href="https://race.boatcast.jp/replay?jo={{ boatcast_jo }}" target="_blank" rel="noopener noreferrer">結果リプレイ</a>
+      </nav>
     </div>
     {% if venue_environment %}
       <div class="race-env-card race-env-{{ venue_environment.trend_tone or 'neutral' }}">
