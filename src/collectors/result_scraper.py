@@ -10,6 +10,7 @@ Open API (boatraceopenapi.github.io) はバッチ更新で数時間遅延する�
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 from typing import Optional
@@ -23,6 +24,36 @@ logger = logging.getLogger(__name__)
 
 # boatrace.jp 結果ページ URL
 RESULT_URL = "https://www.boatrace.jp/owpc/pc/race/raceresult?rno={rno}&jcd={jcd:02d}&hd={date}"
+
+
+def _market_signal_candidate_ids(conn, target_date: date) -> set[str]:
+    """Return race ids from the precomputed ROI/high-signal cache.
+
+    The old Layer3 filter only covered legacy L4 probability candidates. Newer
+    adopted/watch strategies are precomputed into market_signals, so result
+    polling must include those race ids or ended ROI rows stay pending until
+    the delayed Open API batch arrives.
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT html
+              FROM page_html_cache
+             WHERE cache_key = ?
+             LIMIT 1
+            """,
+            (f"market_signals:last-good:{target_date.isoformat()}",),
+        ).fetchone()
+        if not row or not row[0]:
+            return set()
+        payload = json.loads(row[0])
+        signals = payload.get("signals") if isinstance(payload, dict) else None
+        if not isinstance(signals, dict):
+            return set()
+        return {str(race_id) for race_id in signals.keys() if race_id}
+    except Exception as exc:
+        logger.warning("market signal result target lookup failed: %s", exc)
+        return set()
 
 
 def scrape_race_result(race_id: str) -> Optional[dict]:
@@ -156,6 +187,7 @@ def scrape_results_for_pending_races(target_date: date, conn,
                 (target_date.isoformat(), *EXCLUDE_B, 0.65, 0.85),
             )
             l4_candidate_ids = {row[0] for row in cur.fetchall()}
+            l4_candidate_ids.update(_market_signal_candidate_ids(conn, target_date))
             logger.info("L4 候補 (採用+観察) for %s: %d races", target_date, len(l4_candidate_ids))
         except Exception as e:
             logger.warning("L4 candidate lookup failed (%s) → falling back to all races", e)

@@ -75,6 +75,7 @@ def test_today_races_page_reads_precomputed_market_snapshot(monkeypatch):
     assert "本日のレース" in html
     assert "採用確定" in html
     assert "G2/G3 1-2-3" in html
+    assert "todays-pick-row is-closed" in html
     assert "3連単 1-2-3 100円" in html
 
 

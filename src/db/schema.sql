@@ -630,7 +630,7 @@ CREATE TABLE IF NOT EXISTS racer_accident_period_stats (
   rule_version        TEXT NOT NULL,
   source_kind         TEXT NOT NULL DEFAULT 'reconstructed',
   updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (racer_number, period_year, period_half, rule_version, source_kind)
+  PRIMARY KEY (racer_number, period_year, period_half, period_end, rule_version, source_kind)
 );
 
 CREATE TABLE IF NOT EXISTS racer_accident_period_adjustments (

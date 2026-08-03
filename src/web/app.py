@@ -4733,7 +4733,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             if not race:
                 continue
             closed_at = str(race.get("race_closed_at") or "")
-            is_closed = int(race.get("results_count") or 0) > 0
+            closed_dt = _parse_local_datetime(closed_at)
+            is_time_closed = bool(closed_dt and closed_dt <= datetime.now(closed_dt.tzinfo))
+            is_closed = int(race.get("results_count") or 0) > 0 or is_time_closed
             status = "closed" if is_closed else ("confirmed" if has_adopted else "waiting")
             strategy_labels = [
                 str(x) for x in (l4.get("watch_strategy_labels") or []) if x

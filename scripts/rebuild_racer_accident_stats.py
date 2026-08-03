@@ -179,10 +179,30 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
           rule_version        TEXT NOT NULL,
           source_kind         TEXT NOT NULL DEFAULT 'reconstructed',
           updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (racer_number, period_year, period_half, rule_version, source_kind)
+          PRIMARY KEY (racer_number, period_year, period_half, period_end, rule_version, source_kind)
         )
         """
     )
+    if getattr(conn, "_kind", "") == "postgres":
+        conn.execute(
+            """
+            ALTER TABLE racer_accident_period_stats
+              DROP CONSTRAINT IF EXISTS racer_accident_period_stats_pkey
+            """
+        )
+        conn.execute(
+            """
+            ALTER TABLE racer_accident_period_stats
+              ADD PRIMARY KEY (
+                racer_number,
+                period_year,
+                period_half,
+                period_end,
+                rule_version,
+                source_kind
+              )
+            """
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS racer_accident_period_adjustments (
@@ -718,10 +738,11 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
                 DELETE FROM racer_accident_period_stats
                  WHERE period_year = ?
                    AND period_half = ?
+                   AND period_end = ?
                    AND rule_version = ?
                    AND source_kind = 'reconstructed'
                 """,
-                (period_year, period_half, RULE_VERSION),
+                (period_year, period_half, effective_period_end, RULE_VERSION),
             )
             conn.execute(
                 """

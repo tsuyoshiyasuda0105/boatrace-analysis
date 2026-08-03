@@ -82,7 +82,7 @@ _TABLE_PRIMARY_KEYS = {
     "racer_accident_point_rules": ["rule_version", "event_code", "applies_from"],
     "racer_accident_events": ["race_id", "racer_number", "event_code", "rule_version"],
     "racer_accident_kraw_unmatched": ["file_name", "line_number", "rule_version"],
-    "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "rule_version", "source_kind"],
+    "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "period_end", "rule_version", "source_kind"],
     "racer_accident_period_adjustments": ["racer_number", "period_start", "period_end", "rule_version", "source_kind"],
     "racer_accident_external_snapshots": ["snapshot_date", "racer_number", "source_kind"],
     "racer_accident_rank_snapshots": ["period_start", "racer_number"],
