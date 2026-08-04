@@ -6360,6 +6360,12 @@ main h2 {
   gap: 16px;
   margin: 20px 0;
 }
+.admin-data-cards {
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+}
+.admin-data-overview .card-value {
+  min-width: 2ch;
+}
 .health-strategy-card {
   padding: 16px;
   border-radius: 10px;

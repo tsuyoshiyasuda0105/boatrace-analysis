@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}データ取得状況{% endblock %}
+
+{% block content %}
+<section class="health-dashboard">
+  <div class="start-prediction">
+    <div class="start-prediction-head">
+      <div>
+        <div class="start-eyebrow">ADMIN</div>
+        <h3>cron / データ取得状況</h3>
+        <p>
+          レース詳細、モーター履歴、選手情報、事故情報、展示後更新の取得状況です。
+          task_runs と system_status、実キャッシュ件数から「使える状態か」を見える化しています。
+        </p>
+      </div>
+    </div>
+
+    <form method="get" class="date-range-form" style="margin-top:16px;">
+      <label>確認日:
+        <input type="date" name="date" value="{{ target_date }}">
+      </label>
+      <button type="submit">表示</button>
+    </form>
+
+    <section class="health-overview admin-data-overview">
+      <div class="health-card-overview">
+        <span class="big-emoji">🟢</span>
+        <span class="card-value">{{ summary.healthy }}</span>
+        <span class="card-label">正常</span>
+      </div>
+      <div class="health-card-overview">
+        <span class="big-emoji">🟡</span>
+        <span class="card-value">{{ summary.warning }}</span>
+        <span class="card-label">注意</span>
+      </div>
+      <div class="health-card-overview">
+        <span class="big-emoji">🔴</span>
+        <span class="card-value">{{ summary.error }}</span>
+        <span class="card-label">異常</span>
+      </div>
+      <div class="health-card-overview">
+        <span class="big-emoji">🏁</span>
+        <span class="card-value">{{ snapshot.race_count }}</span>
+        <span class="card-label">対象レース</span>
+      </div>
+    </section>
+
+    <p class="dashboard-hint">
+      生成時刻: {{ snapshot.generated_at }} / 対象日: {{ snapshot.target_date }}
+    </p>
+
+    <section class="health-cards admin-data-cards">
+      {% for item in items %}
+      <article class="health-strategy-card status-{{ item.status }}">
+        <header class="health-card-header">
+          <h3>{{ item.name }}</h3>
+          <span class="health-status-pill status-{{ item.status }}">
+            {{ item.status_label }}
+          </span>
+        </header>
+
+        <p class="health-description">{{ item.note }}</p>
+
+        <div class="health-metrics-grid">
+          <div class="metric">
+            <span class="metric-label">cron</span>
+            <span class="metric-value">{{ item.cron_name }}</span>
+            <span class="metric-sub">{{ item.schedule }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">cron結果</span>
+            <span class="metric-value">{{ item.runtime_status }}</span>
+            <span class="metric-sub">run_count={{ item.run_count }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">期待件数</span>
+            <span class="metric-value">{% if item.expected_count is not none %}{{ item.expected_count }}{% else %}-{% endif %}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">取得件数</span>
+            <span class="metric-value">{% if item.present_count is not none %}{{ item.present_count }}{% else %}-{% endif %}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">欠損件数</span>
+            <span class="metric-value {% if item.missing_count %}neg{% endif %}">
+              {% if item.missing_count is not none %}{{ item.missing_count }}{% else %}-{% endif %}
+            </span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">最終成功</span>
+            <span class="metric-value">{% if item.last_success_at %}{{ item.last_success_at[-8:-3] }}{% else %}-{% endif %}</span>
+            <span class="metric-sub">{% if item.last_success_at %}{{ item.last_success_at[:10] }}{% else %}未確認{% endif %}</span>
+          </div>
+        </div>
+
+        {% if item.check_message %}
+        <div class="health-recommendation status-{{ item.status }}">
+          <strong>{{ item.check_name }}</strong>: {{ item.check_message }}
+        </div>
+        {% endif %}
+
+        {% if item.task_detail %}
+        <div class="health-reasons">
+          <span class="reasons-label">task detail:</span>
+          <ul>
+            {% for key, value in item.task_detail.items() %}
+            <li>{{ key }} = {{ value }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+
+        {% if item.examples %}
+        <div class="health-reasons">
+          <span class="reasons-label">サンプルキー:</span>
+          <ul>
+            {% for key in item.examples %}
+            <li>{{ key }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </section>
+
+    <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
+      <a href="{{ url_for('admin_memberships') }}" class="account-btn account-btn-public-roi">会員管理へ</a>
+      <a href="{{ url_for('admin_cache_clear') }}" class="account-btn account-btn-login">キャッシュ管理へ</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

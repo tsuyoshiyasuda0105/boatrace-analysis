@@ -874,6 +874,322 @@ def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
         return None
 
 
+def _db_placeholders(values: list[object]) -> str:
+    return ",".join("?" for _ in values) or "?"
+
+
+def _safe_json_loads(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _task_run_to_dict(row: Any) -> Optional[dict[str, Any]]:
+    if not row:
+        return None
+    return {
+        "task_name": str(row[0] or ""),
+        "run_date": str(row[1] or ""),
+        "status": str(row[2] or ""),
+        "run_count": int(row[3] or 0),
+        "started_at": str(row[4] or "") if row[4] else None,
+        "finished_at": str(row[5] or "") if row[5] else None,
+        "success_at": str(row[6] or "") if row[6] else None,
+        "trigger": str(row[7] or "") if row[7] else None,
+        "detail": str(row[8] or "") if row[8] else None,
+        "detail_json": _safe_json_loads(row[8]),
+    }
+
+
+def _system_status_to_dict(row: Any) -> Optional[dict[str, Any]]:
+    if not row:
+        return None
+    return {
+        "check_name": str(row[0] or ""),
+        "check_date": str(row[1] or ""),
+        "status": str(row[2] or ""),
+        "message": str(row[3] or "") if row[3] else None,
+        "detail_json": _safe_json_loads(row[4]),
+        "checked_at": str(row[5] or "") if row[5] else None,
+    }
+
+
+def _load_task_run_exact(conn: Any, task_name: str, target_date: str) -> Optional[dict[str, Any]]:
+    row = conn.execute(
+        """
+        SELECT task_name, run_date, status, run_count, started_at, finished_at,
+               success_at, trigger, detail
+          FROM task_runs
+         WHERE task_name = ?
+           AND run_date = ?
+        """,
+        (task_name, target_date),
+    ).fetchone()
+    return _task_run_to_dict(row)
+
+
+def _load_task_run_latest_like(conn: Any, task_name_like: str, target_date: str) -> Optional[dict[str, Any]]:
+    row = conn.execute(
+        """
+        SELECT task_name, run_date, status, run_count, started_at, finished_at,
+               success_at, trigger, detail
+          FROM task_runs
+         WHERE task_name LIKE ?
+           AND run_date = ?
+         ORDER BY COALESCE(finished_at, started_at, success_at) DESC, task_name DESC
+         LIMIT 1
+        """,
+        (task_name_like, target_date),
+    ).fetchone()
+    return _task_run_to_dict(row)
+
+
+def _load_system_status_exact(conn: Any, check_name: str, target_date: str) -> Optional[dict[str, Any]]:
+    row = conn.execute(
+        """
+        SELECT check_name, check_date, status, message, detail_json, checked_at
+          FROM system_status
+         WHERE check_name = ?
+           AND check_date = ?
+        """,
+        (check_name, target_date),
+    ).fetchone()
+    return _system_status_to_dict(row)
+
+
+def _race_ids_for_admin_status(conn: Any, target_date: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT race_id
+          FROM races
+         WHERE race_date = ?
+         ORDER BY stadium_number, race_number
+        """,
+        (target_date,),
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def _count_existing_cache_keys(conn: Any, keys: list[str]) -> int:
+    if not keys:
+        return 0
+    found = 0
+    for start in range(0, len(keys), 900):
+        chunk = keys[start : start + 900]
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM page_html_cache WHERE cache_key IN ({_db_placeholders(chunk)})",
+            tuple(chunk),
+        ).fetchone()
+        found += int((row[0] if row else 0) or 0)
+    return found
+
+
+def _format_status_label(status: str) -> str:
+    return {
+        "healthy": "正常",
+        "warning": "注意",
+        "error": "異常",
+        "unknown": "未確認",
+    }.get(status, status)
+
+
+def _format_runtime_status(status: str | None) -> str:
+    return {
+        "success": "success",
+        "failure": "failure",
+        "running": "running",
+        None: "-",
+    }.get(status, str(status or "-"))
+
+
+def _compose_admin_status(
+    *,
+    task_run: Optional[dict[str, Any]] = None,
+    check_row: Optional[dict[str, Any]] = None,
+    expected_count: Optional[int] = None,
+    present_count: Optional[int] = None,
+    treat_missing_task_as_warning: bool = True,
+) -> str:
+    if task_run and task_run.get("status") == "failure":
+        return "error"
+    if check_row:
+        check_status = str(check_row.get("status") or "")
+        if check_status == "error":
+            return "error"
+        if check_status == "warning":
+            return "warning"
+    if expected_count is not None and present_count is not None:
+        if expected_count <= 0:
+            return "warning"
+        if present_count < expected_count:
+            return "error"
+    if task_run:
+        if task_run.get("status") == "running":
+            return "warning"
+        if task_run.get("status") == "success":
+            return "healthy"
+    return "warning" if treat_missing_task_as_warning else "unknown"
+
+
+def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
+    today_iso = _today_jst_iso()
+    with db_connect() as conn:
+        race_ids = _race_ids_for_admin_status(conn, target_date)
+        race_count = len(race_ids)
+
+        page_keys = [_race_detail_page_cache_key(race_id) for race_id in race_ids]
+        motor_keys = [
+            f"motor_history_v9:{race_id}:{boat}"
+            for race_id in race_ids
+            for boat in range(1, 7)
+        ]
+        racer_keys = [
+            f"racer_detail:{race_id}:{boat}"
+            for race_id in race_ids
+            for boat in range(1, 7)
+        ]
+
+        page_present = _count_existing_cache_keys(conn, page_keys)
+        motor_present = _count_existing_cache_keys(conn, motor_keys)
+        racer_present = _count_existing_cache_keys(conn, racer_keys)
+
+        race_detail_run = _load_task_run_exact(conn, "render_race_detail_all", target_date)
+        exhibition_run = _load_task_run_exact(conn, "render_exhibition_detail_refresh", target_date)
+        accident_run = _load_task_run_latest_like(conn, "render_accident_refresh%", target_date)
+
+        detail_cache_check = _load_system_status_exact(conn, "post_run_detail_cache", target_date)
+        detail_rows_check = _load_system_status_exact(conn, "post_run_detail_rows", target_date)
+        motor_cache_check = _load_system_status_exact(conn, "post_run_motor_cache", target_date)
+        accident_check = _load_system_status_exact(conn, "post_run_accident", target_date)
+
+    items: list[dict[str, Any]] = []
+
+    def append_item(
+        slug: str,
+        name: str,
+        cron_name: str,
+        schedule: str,
+        task_run: Optional[dict[str, Any]],
+        check_row: Optional[dict[str, Any]],
+        expected_count: Optional[int],
+        present_count: Optional[int],
+        note: str,
+        examples: list[str] | None = None,
+    ) -> None:
+        status = _compose_admin_status(
+            task_run=task_run,
+            check_row=check_row,
+            expected_count=expected_count,
+            present_count=present_count,
+        )
+        missing_count = None
+        if expected_count is not None and present_count is not None:
+            missing_count = max(expected_count - present_count, 0)
+        items.append(
+            {
+                "slug": slug,
+                "name": name,
+                "cron_name": cron_name,
+                "schedule": schedule,
+                "status": status,
+                "status_label": _format_status_label(status),
+                "runtime_status": _format_runtime_status(task_run.get("status") if task_run else None),
+                "run_count": int(task_run.get("run_count") or 0) if task_run else 0,
+                "last_success_at": task_run.get("success_at") if task_run else None,
+                "last_finished_at": task_run.get("finished_at") if task_run else None,
+                "trigger": task_run.get("trigger") if task_run else None,
+                "expected_count": expected_count,
+                "present_count": present_count,
+                "missing_count": missing_count,
+                "note": note,
+                "check_name": check_row.get("check_name") if check_row else None,
+                "check_status": check_row.get("status") if check_row else None,
+                "check_message": check_row.get("message") if check_row else None,
+                "check_detail": (check_row or {}).get("detail_json") or {},
+                "task_detail": (task_run or {}).get("detail_json") or {},
+                "examples": examples or [],
+            }
+        )
+
+    append_item(
+        "race_detail",
+        "レース詳細HTML",
+        "boatrace-race-detail-cron",
+        "毎日 07:00 JST",
+        race_detail_run,
+        detail_cache_check or detail_rows_check,
+        race_count,
+        page_present,
+        "race detail 完成ページの事前生成結果。ここが揃えば初回表示が速くなります。",
+        [race_id for race_id in race_ids[:3]],
+    )
+    append_item(
+        "motor_history",
+        "モーター履歴",
+        "boatrace-race-detail-cron",
+        "毎日 07:00 JST",
+        race_detail_run,
+        motor_cache_check,
+        race_count * 6,
+        motor_present,
+        "各レース6艇分の motor history キャッシュ。",
+        [f"{race_id}:1" for race_id in race_ids[:3]],
+    )
+    append_item(
+        "racer_detail",
+        "選手情報",
+        "boatrace-race-detail-cron",
+        "毎日 07:00 JST",
+        race_detail_run,
+        None,
+        race_count * 6,
+        racer_present,
+        "各レース6艇分の racer_detail キャッシュ。専用 system_status は未実装のため件数で判定。",
+        [f"{race_id}:1" for race_id in race_ids[:3]],
+    )
+    append_item(
+        "accident",
+        "事故情報",
+        "boatrace-regular-cron",
+        "毎日 07:30 JST 付近",
+        accident_run,
+        accident_check,
+        None,
+        None,
+        "事故率集計と rank snapshot の整合性。ROI候補や事故タグに影響します。",
+    )
+    append_item(
+        "exhibition_refresh",
+        "展示後詳細更新",
+        "boatrace-exhibition-detail-cron",
+        "2分ごと",
+        exhibition_run,
+        None,
+        None,
+        None,
+        "展示取得後の詳細再生成とシグナル更新の実行状況。",
+    )
+
+    summary = {
+        "healthy": sum(1 for item in items if item["status"] == "healthy"),
+        "warning": sum(1 for item in items if item["status"] == "warning"),
+        "error": sum(1 for item in items if item["status"] == "error"),
+        "unknown": sum(1 for item in items if item["status"] == "unknown"),
+    }
+    return {
+        "target_date": target_date,
+        "today_iso": today_iso,
+        "race_count": race_count,
+        "items": items,
+        "summary": summary,
+        "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
+    }
+
+
 def _is_empty_market_signals_payload(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return True
@@ -19790,6 +20106,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             n_warning=n_warning,
             n_watch=n_watch,
             n_healthy=n_healthy,
+        )
+
+    @app.route("/admin/data-status")
+    @admin_required
+    def admin_data_status():
+        target_date = request.args.get("date") or _today_jst_iso()
+        snapshot = _admin_data_status_snapshot(target_date)
+        return render_template(
+            "admin_data_status.html",
+            target_date=target_date,
+            today_iso=snapshot["today_iso"],
+            snapshot=snapshot,
+            items=snapshot["items"],
+            summary=snapshot["summary"],
         )
 
     @app.route("/member/accidents")
