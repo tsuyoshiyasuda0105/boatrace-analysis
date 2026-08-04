@@ -321,3 +321,86 @@ def load_roi_history_races(
             }
         )
     return result
+
+
+def load_roi_history_races_by_race_ids(
+    conn: Any,
+    race_ids: Iterable[str],
+    adopted_keys: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Return settled active ROI ledger rows limited to specific race_ids."""
+    ensure_roi_race_history_table(conn)
+    normalized_race_ids = [str(race_id) for race_id in race_ids if str(race_id or "").strip()]
+    if not normalized_race_ids:
+        return []
+
+    adopted = set(adopted_keys)
+    placeholders = ",".join("?" for _ in normalized_race_ids)
+    rows = conn.execute(
+        f"""
+        SELECT h.race_date,
+               h.race_id,
+               h.strategy_key,
+               h.strategy_label,
+               h.bet_json,
+               h.stake_amount,
+               h.payout_amount,
+               h.is_hit,
+               h.capture_quality,
+               s.name AS stadium_name,
+               r.race_number,
+               r.race_closed_at
+          FROM roi_race_history h
+          LEFT JOIN races r ON r.race_id = h.race_id
+          LEFT JOIN stadiums s ON s.stadium_number = r.stadium_number
+         WHERE h.race_id IN ({placeholders})
+           AND h.is_settled = 1
+           AND h.is_active = 1
+         ORDER BY h.race_date DESC, h.race_id, h.strategy_key
+        """,
+        tuple(normalized_race_ids),
+    ).fetchall()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if _is_excluded_history_label(row[3]):
+            continue
+        key = str(row[2])
+        if key not in adopted:
+            continue
+        stake = int(row[5] or 0)
+        payout = int(row[6] or 0)
+        try:
+            bets_raw = json.loads(row[4] or "[]")
+        except Exception:
+            bets_raw = []
+        bets = []
+        if isinstance(bets_raw, list):
+            for bet in bets_raw:
+                if isinstance(bet, dict):
+                    bet_type = str(bet.get("bet_type") or "")
+                    combination = str(bet.get("combination") or "")
+                    bets.append(
+                        f"{bet_type} {combination}".strip()
+                        if bet_type
+                        else combination
+                    )
+        result.append(
+            {
+                "race_date": str(row[0]),
+                "race_id": str(row[1]),
+                "strategy_key": key,
+                "strategy_label": str(row[3] or key),
+                "bet": " / ".join(x for x in bets if x) or "-",
+                "stake": stake,
+                "payout": payout,
+                "profit": payout - stake,
+                "recovery": round((payout / stake) * 100, 1) if stake > 0 else None,
+                "is_hit": bool(row[7]),
+                "capture_quality": str(row[8] or ""),
+                "stadium_name": str(row[9] or ""),
+                "race_number": int(row[10] or 0) if row[10] is not None else None,
+                "closed_at": str(row[11] or ""),
+            }
+        )
+    return result

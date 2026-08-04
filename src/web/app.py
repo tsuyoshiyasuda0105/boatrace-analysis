@@ -52,6 +52,7 @@ from src.roi_contract import (
 from src.roi_history import (
     load_roi_history_daily,
     load_roi_history_races,
+    load_roi_history_races_by_race_ids,
     replace_roi_history_snapshot,
 )
 from src.evaluation.course_fit_strategy import (
@@ -1290,7 +1291,7 @@ def _venue_trend_summary(
     return tone, " / ".join(parts[:3])
 
 
-def _venue_environment_summaries_for_date(
+def _venue_environment_summaries_for_date_impl(
     target_date: str,
     conn: Any = None,
 ) -> dict[int, dict[str, Any]]:
@@ -1404,6 +1405,22 @@ def _venue_environment_summaries_for_date(
             "fetched_at_label": _format_jst_minute(chosen.get("tide_fetched_at")),
         }
     return out
+
+
+@lru_cache(maxsize=64)
+def _venue_environment_summaries_for_date_cached(
+    target_date: str,
+) -> dict[int, dict[str, Any]]:
+    return _venue_environment_summaries_for_date_impl(target_date)
+
+
+def _venue_environment_summaries_for_date(
+    target_date: str,
+    conn: Any = None,
+) -> dict[int, dict[str, Any]]:
+    if conn is not None:
+        return _venue_environment_summaries_for_date_impl(target_date, conn=conn)
+    return _venue_environment_summaries_for_date_cached(target_date)
 
 
 @lru_cache(maxsize=20000)
@@ -5152,24 +5169,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             and str(os.environ.get("BOATRACE_SHOW_ROI_PICKS", "1")).strip().lower()
             not in {"0", "false", "no", "off"}
         )
-        history_rows: list[dict[str, Any]] = []
         with db_connect() as conn:
             races_list = _races_for_date(target_date, conn=conn)
-            if roi_picks_visible:
-                try:
-                    history_rows = load_roi_history_races(
-                        conn,
-                        target_date,
-                        target_date,
-                        ROI_STRATEGY_KEYS,
-                        limit=500,
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "failed to load today ROI history rows for %s: %s",
-                        target_date,
-                        exc,
-                    )
         try:
             pick_rows, signal_payload = _market_pick_rows_for_display(
                 target_date,
@@ -5177,7 +5178,28 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 visible=roi_picks_visible,
             )
             if roi_picks_visible and pick_rows:
-                pick_rows = _attach_today_pick_history(pick_rows, history_rows)
+                closed_race_ids = sorted(
+                    {
+                        str(row.get("race_id") or "")
+                        for row in pick_rows
+                        if row.get("status") == "closed" and str(row.get("race_id") or "")
+                    }
+                )
+                if closed_race_ids:
+                    try:
+                        with db_connect() as conn:
+                            history_rows = load_roi_history_races_by_race_ids(
+                                conn,
+                                closed_race_ids,
+                                ROI_STRATEGY_KEYS,
+                            )
+                        pick_rows = _attach_today_pick_history(pick_rows, history_rows)
+                    except Exception as exc:
+                        logger.exception(
+                            "failed to load targeted ROI history rows for %s: %s",
+                            target_date,
+                            exc,
+                        )
         except Exception as exc:
             logger.exception(
                 "failed to build dedicated pick rows for %s: %s",

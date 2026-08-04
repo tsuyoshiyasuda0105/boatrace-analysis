@@ -57,7 +57,7 @@ def _member_client(monkeypatch):
     )
     monkeypatch.setattr(
         web_app,
-        "load_roi_history_races",
+        "load_roi_history_races_by_race_ids",
         lambda *_args, **_kwargs: [],
     )
     web_app.invalidate_cache()
@@ -131,7 +131,7 @@ def test_today_races_page_marks_adopted_closed_rows_with_profit(monkeypatch):
     )
     monkeypatch.setattr(
         web_app,
-        "load_roi_history_races",
+        "load_roi_history_races_by_race_ids",
         lambda *_args, **_kwargs: [
             {
                 "race_id": race["race_id"],
