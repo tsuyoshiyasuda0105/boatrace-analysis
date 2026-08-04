@@ -242,7 +242,7 @@ def signal_refresh_recently_running(now: datetime, max_age_minutes: int = 20) ->
                 SELECT task_name, started_at
                   FROM task_runs
                  WHERE run_date = ?
-                   AND task_name LIKE 'render_signal_refresh_%'
+                   AND substr(task_name, 1, 22) = 'render_signal_refresh_'
                    AND status = 'running'
                    AND started_at >= ?
                  ORDER BY started_at DESC
