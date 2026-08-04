@@ -4864,12 +4864,60 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         or l4.get("hitRate")
                         or l4.get("win_rate")
                     ),
+                    "adopted": is_display_confirmed,
                     "closed": is_closed,
                     "status": status,
                 }
             )
         rows.sort(key=lambda row: row.get("closed_at") or "")
         return rows, signal_payload
+
+    def _attach_today_pick_history(
+        rows: list[dict[str, Any]],
+        history_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        exact_map: dict[tuple[str, str, str], dict[str, Any]] = {}
+        by_race: dict[str, list[dict[str, Any]]] = {}
+        for hist in history_rows or []:
+            race_id = str(hist.get("race_id") or "")
+            strategy_label = str(hist.get("strategy_label") or "")
+            bet = str(hist.get("bet") or "")
+            exact_map[(race_id, strategy_label, bet)] = hist
+            by_race.setdefault(race_id, []).append(hist)
+
+        for row in rows:
+            row["settled"] = False
+            row["is_hit"] = None
+            row["stake"] = None
+            row["payout"] = None
+            row["profit"] = None
+            row["actual_recovery"] = None
+
+            race_id = str(row.get("race_id") or "")
+            label = str(row.get("label") or "")
+            bet = str(row.get("bet") or "")
+            hist = exact_map.get((race_id, label, bet))
+            if hist is None:
+                same_label = [
+                    item
+                    for item in by_race.get(race_id, [])
+                    if str(item.get("strategy_label") or "") == label
+                ]
+                if len(same_label) == 1:
+                    hist = same_label[0]
+
+            if hist is None:
+                continue
+
+            row["adopted"] = True
+            row["settled"] = True
+            row["is_hit"] = bool(hist.get("is_hit"))
+            row["stake"] = int(hist.get("stake") or 0)
+            row["payout"] = int(hist.get("payout") or 0)
+            row["profit"] = int(hist.get("profit") or 0)
+            row["actual_recovery"] = hist.get("recovery")
+
+        return rows
 
     def _public_roi_category(row: dict) -> str:
         label = str(row.get("label") or "")
@@ -5093,14 +5141,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             and str(os.environ.get("BOATRACE_SHOW_ROI_PICKS", "1")).strip().lower()
             not in {"0", "false", "no", "off"}
         )
+        history_rows: list[dict[str, Any]] = []
         with db_connect() as conn:
             races_list = _races_for_date(target_date, conn=conn)
+            if roi_picks_visible:
+                try:
+                    history_rows = load_roi_history_races(
+                        conn,
+                        target_date,
+                        target_date,
+                        ROI_STRATEGY_KEYS,
+                        limit=500,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "failed to load today ROI history rows for %s: %s",
+                        target_date,
+                        exc,
+                    )
         try:
             pick_rows, signal_payload = _market_pick_rows_for_display(
                 target_date,
                 races_list,
                 visible=roi_picks_visible,
             )
+            if roi_picks_visible and pick_rows:
+                pick_rows = _attach_today_pick_history(pick_rows, history_rows)
         except Exception as exc:
             logger.exception(
                 "failed to build dedicated pick rows for %s: %s",

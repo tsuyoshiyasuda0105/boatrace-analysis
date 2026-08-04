@@ -3109,6 +3109,53 @@ main h2 {
 .todays-picks-table tbody tr.is-history-hit {
   background: rgba(34, 197, 94, 0.11);
 }
+.todays-picks-table tbody tr.is-history-miss {
+  background: rgba(239, 68, 68, 0.08);
+}
+.todays-picks-table tbody tr.is-pick-confirmed {
+  background: linear-gradient(90deg, rgba(34, 197, 94, 0.12), rgba(34, 197, 94, 0.03));
+  box-shadow: inset 3px 0 0 rgba(82, 255, 170, 0.72);
+}
+.pick-result-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.pick-result-badge.is-hit {
+  background: rgba(34, 197, 94, 0.18);
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  color: #b6ffd0;
+}
+.pick-result-badge.is-miss {
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #ffc5c5;
+}
+.pick-result-badge.is-confirmed {
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(96, 165, 250, 0.38);
+  color: #b8e1ff;
+}
+.pick-result-badge.is-waiting {
+  background: rgba(250, 204, 21, 0.12);
+  border: 1px solid rgba(250, 204, 21, 0.3);
+  color: #ffe48d;
+}
+.pick-profit strong.pos {
+  color: #7dffb2;
+}
+.pick-profit strong.neg {
+  color: #ff9f9f;
+}
+.pick-profit strong.flat {
+  color: #fff2b8;
+}
 .today-races-panel {
   display: grid;
   gap: 18px;
