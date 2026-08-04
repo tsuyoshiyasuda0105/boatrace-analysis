@@ -23,7 +23,10 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-detail-daily")
 os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 
 from scripts.prewarm_race_detail_pages import prewarm as prewarm_pages  # noqa: E402
-from scripts.check_post_run_integrity import run_checks as run_post_run_checks  # noqa: E402
+from scripts.check_post_run_integrity import (  # noqa: E402
+    run_checks as run_post_run_checks,
+    scopes_for_stage,
+)
 from src.db.cron_run_log import record_cron_run  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.web import app as web_app  # noqa: E402
@@ -171,9 +174,7 @@ def prewarm(target_date: str, *, phase: str = "all", motor_workers: int = 4) -> 
                 _record_failure(failures, "tags", race_id, None, exc)
 
     page_summary = prewarm_pages(target_date) if phase == "all" else {"generated": 0, "failed": 0}
-    validation_scopes = ["detail_rows", "motor_cache"]
-    if phase == "all":
-        validation_scopes.append("detail_cache")
+    validation_scopes = scopes_for_stage("morning") if phase == "all" else ["detail_rows", "motor_cache"]
     validation = run_post_run_checks(target_date, validation_scopes, race_ids, persist=True)
     print("[race-detail-daily] validation=" + json.dumps(validation, ensure_ascii=False), flush=True)
     summary = {

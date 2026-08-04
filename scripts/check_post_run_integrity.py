@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -269,6 +269,84 @@ CHECKS = {
 }
 
 
+def check_result_after_close(conn, target_date: str, race_ids: list[str] | None = None) -> tuple[str, str, dict]:
+    target_races = _select_race_ids(conn, target_date, race_ids)
+    if not target_races:
+        return "ok", "no target races for result check", {"race_count": 0}
+    cutoff = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    placeholders = _placeholders(target_races)
+    closed_rows = conn.execute(
+        f"""
+        SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at
+          FROM races r
+         WHERE r.race_id IN ({placeholders})
+           AND r.race_date = ?
+           AND r.race_closed_at IS NOT NULL
+           AND r.race_closed_at < ?
+         ORDER BY r.stadium_number, r.race_number
+        """,
+        (*target_races, target_date, cutoff),
+    ).fetchall()
+    if not closed_rows:
+        return "ok", "no races closed more than 15 minutes ago", {"race_count": len(target_races), "cutoff": cutoff}
+    closed_ids = [str(row[0]) for row in closed_rows]
+    result_rows = conn.execute(
+        f"""
+        SELECT rr.race_id, COUNT(*) AS result_rows
+          FROM race_results rr
+         WHERE rr.race_id IN ({_placeholders(closed_ids)})
+           AND rr.finishing_position IS NOT NULL
+         GROUP BY rr.race_id
+        """,
+        tuple(closed_ids),
+    ).fetchall()
+    result_counts = {str(row[0]): int(row[1] or 0) for row in result_rows}
+    missing = [
+        {
+            "race_id": str(row[0]),
+            "stadium": int(row[1]),
+            "race_no": int(row[2]),
+            "closed_at": str(row[3]),
+            "result_rows": result_counts.get(str(row[0]), 0),
+        }
+        for row in closed_rows
+        if result_counts.get(str(row[0]), 0) < 6
+    ]
+    detail = {
+        "target_races": len(target_races),
+        "closed_races": len(closed_rows),
+        "missing_result_races": missing[:20],
+        "missing_result_count": len(missing),
+        "cutoff": cutoff,
+    }
+    if missing:
+        coverage = (len(closed_rows) - len(missing)) / len(closed_rows) * 100.0
+        status = "error" if coverage < 80.0 else "warning"
+        return status, f"result rows incomplete {len(missing)}/{len(closed_rows)} closed races", detail
+    return "ok", f"result rows OK {len(closed_rows)} closed races", detail
+
+
+CHECKS["result"] = check_result_after_close
+
+STAGE_SCOPES = {
+    # Morning prewarm: source rows and caches should exist, but exhibition/result
+    # data is not expected yet.
+    "morning": ["detail_rows", "motor_cache", "detail_cache"],
+    # Exhibition cron: validate only the races it touched. Missing exhibition
+    # values themselves are not fatal because unsupported venues/sources exist.
+    "exhibition": ["detail_rows", "motor_cache", "detail_cache"],
+    # Result polling: only races closed at least 15 minutes ago are expected to
+    # have complete result rows.
+    "post-result": ["result"],
+    # Nightly: accident stats are only strict after the full result day has run.
+    "nightly": ["accident"],
+}
+
+
+def scopes_for_stage(stage: str) -> list[str]:
+    return list(STAGE_SCOPES[stage])
+
+
 def run_checks(target_date: str, scopes: list[str], race_ids: list[str] | None = None, *, persist: bool = True) -> dict:
     selected = list(CHECKS) if "all" in scopes else scopes
     results = []
@@ -293,6 +371,7 @@ def run_checks(target_date: str, scopes: list[str], race_ids: list[str] | None =
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--stage", choices=sorted(STAGE_SCOPES), help="Use the safe check set for a cron timing.")
     parser.add_argument(
         "--scope",
         action="append",
@@ -303,12 +382,15 @@ def main() -> int:
     parser.add_argument("--race-id", action="append", default=[])
     parser.add_argument("--no-persist", action="store_true")
     args = parser.parse_args()
+    scopes = scopes_for_stage(args.stage) if args.stage else args.scope or ["all"]
     summary = run_checks(
         args.date,
-        args.scope or ["all"],
+        scopes,
         args.race_id or None,
         persist=not args.no_persist,
     )
+    if args.stage:
+        summary["stage"] = args.stage
     print("[post-run-integrity] " + json.dumps(summary, ensure_ascii=False), flush=True)
     return 2 if summary["status"] == "error" else 1 if summary["status"] == "warning" else 0
 

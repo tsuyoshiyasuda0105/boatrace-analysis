@@ -825,7 +825,7 @@ def run_accident_full_refresh(target_date: str) -> bool:
         ok = run_py(["scripts/prewarm_race_detail_pages.py", "--date", target_date], timeout=1800)
     if ok:
         ok = run_py(
-            ["scripts/check_post_run_integrity.py", "--date", target_date, "--scope", "accident"],
+            ["scripts/check_post_run_integrity.py", "--date", target_date, "--stage", "nightly"],
             timeout=300,
         )
     return ok
@@ -966,6 +966,10 @@ def main() -> int:
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
         run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
+        run_py(
+            ["scripts/check_post_run_integrity.py", "--date", today, "--stage", "post-result"],
+            timeout=300,
+        )
         run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
 
     # Hourly summaries/health checks near the top of the hour.

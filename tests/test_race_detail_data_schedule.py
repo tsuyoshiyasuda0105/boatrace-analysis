@@ -11,10 +11,10 @@ def test_daily_detail_data_is_built_in_requested_order():
     motor = source.index("# Motor history follows player data, as requested.")
     tags = source.index("# Tags must exist before complete HTML is rendered.")
     pages = source.index("page_summary = prewarm_pages(target_date)")
-    validation = source.index('validation_scopes = ["detail_rows", "motor_cache"]')
+    validation = source.index('scopes_for_stage("morning")')
     assert racer < motor < tags < pages
     assert pages < validation
-    assert 'validation_scopes.append("detail_cache")' in source
+    assert '["detail_rows", "motor_cache"]' in source
     assert "validation_status != \"error\"" in source
 
 
@@ -46,7 +46,7 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert 'datetime.now(timezone.utc).isoformat(timespec="seconds")' in source
     assert 'client.get(f"/race/{race_id}?recompute=1")' in source
     assert "_motor_history_payload(race_id, boat" in source
-    assert '["detail_rows", "motor_cache", "detail_cache"]' in source
+    assert 'scopes_for_stage("exhibition")' in source
     assert 'validation_summary.get("status") != "error"' in source
     assert "web_app.invalidate_cache()" in source
     assert "_clear_web_caches" not in source
@@ -95,6 +95,7 @@ def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
     assert "def check_race_detail_rows" in source
     assert "def check_race_detail_caches" in source
     assert "def check_motor_history_caches" in source
+    assert "def check_result_after_close" in source
     assert "def check_accident_integrity" in source
     assert "assigned_motor_number IS NOT NULL" in source
     assert "motor_history_" in source
@@ -102,6 +103,11 @@ def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
     assert "_race_detail_tag_cache_key" in source
     assert "racer_accident_period_stats" in source
     assert "racer_accident_rank_snapshots" in source
+    assert '"morning": ["detail_rows", "motor_cache", "detail_cache"]' in source
+    assert '"exhibition": ["detail_rows", "motor_cache", "detail_cache"]' in source
+    assert '"post-result": ["result"]' in source
+    assert '"nightly": ["accident"]' in source
+    assert "--stage" in source
     assert "system_status" in source
 
 
@@ -117,7 +123,18 @@ def test_accident_refresh_rebuilds_tags_pages_and_validates_after_stats():
     pages = function_source.index("scripts/prewarm_race_detail_pages.py")
     validate = function_source.index("scripts/check_post_run_integrity.py")
     assert rebuild < snapshot < tags < pages < validate
-    assert '"--scope", "accident"' in function_source
+    assert '"--stage", "nightly"' in function_source
+
+
+def test_result_polling_uses_post_result_stage_after_polling():
+    source = (ROOT / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    main = source.split("if 8 <= now.hour <= 23:", 1)[1].split("# Hourly summaries", 1)[0]
+
+    poll = main.index("scripts/poll_results.py")
+    validate = main.index("scripts/check_post_run_integrity.py")
+    evaluate = main.index("scripts/evaluate_start_predictions.py")
+    assert poll < validate < evaluate
+    assert '"--stage", "post-result"' in main
 
 
 def test_render_blueprint_separates_daily_and_exhibition_jobs():

@@ -564,11 +564,14 @@ def main() -> int:
             print(f"[exhibition-collect] {collect_summary}", flush=True)
         summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
         if summary.get("race_ids"):
-            from scripts.check_post_run_integrity import run_checks as run_post_run_checks
+            from scripts.check_post_run_integrity import (
+                run_checks as run_post_run_checks,
+                scopes_for_stage,
+            )
 
             validation_summary = run_post_run_checks(
                 args.date,
-                ["detail_rows", "motor_cache", "detail_cache"],
+                scopes_for_stage("exhibition"),
                 list(summary["race_ids"]),
                 persist=True,
             )
