@@ -4901,10 +4901,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     ) -> tuple[list[dict], dict]:
         """Build leak-safe public rows from the precomputed market snapshot.
 
-        The public page intentionally hides exact conditions and buy tickets.
-        It exposes only race, timing state, strategy category, verification ROI
-        and sample size, so it can be posted publicly without leaking the
-        implementation thresholds.
+        The public page intentionally hides exact strategy conditions while
+        exposing buy tickets, race, timing state, strategy category,
+        verification ROI, and sample size.
         """
         raw_rows, signal_payload = _market_pick_rows_for_display(
             target_date,
@@ -4937,6 +4936,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "status": status,
                     "status_label": status_label,
                     "status_tone": status_tone,
+                    "bet": row.get("bet") or "",
                     "category": _public_roi_category(row),
                     "rank": row.get("rank") or "候補",
                     "recovery": round(recovery, 1),

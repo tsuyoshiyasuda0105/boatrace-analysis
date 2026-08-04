@@ -54,6 +54,7 @@
       <div class="public-roi-body">
         <div class="public-roi-category">{{ row.category }}</div>
         <div class="public-roi-sub">
+          {% if row.bet %}<span>買い目 {{ row.bet }}</span>{% endif %}
           {{ row.rank }}
           {% if row.n is not none %}<span>n={{ row.n }}</span>{% endif %}
           {% if row.hit_rate is not none %}<span>的中率 {{ row.hit_rate }}%</span>{% endif %}

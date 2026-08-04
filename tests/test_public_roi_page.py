@@ -14,10 +14,11 @@ def test_public_roi_page_is_public_and_uses_leak_safe_rows():
     assert "def public_roi()" in route_block
     assert "@login_required" not in route_block
     assert "def _public_roi_rows_for_display" in source
-    assert "The public page intentionally hides exact conditions and buy tickets." in source
+    assert "The public page intentionally hides exact strategy conditions while" in source
+    assert "exposing buy tickets, race, timing state, strategy category," in source
     assert '"category": _public_roi_category(row)' in source
     assert '"condition"' not in route_block
-    assert '"bet"' not in route_block
+    assert '"bet": row.get("bet") or ""' in source
 
 
 def test_public_roi_button_and_template_exist():
@@ -28,8 +29,8 @@ def test_public_roi_button_and_template_exist():
     css = (ROOT / "src" / "web" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "url_for('public_roi')" in base
-    assert "公開用データ" in base
-    assert "公開用データ" in template
-    assert "条件詳細と具体的な閾値" in template
+    assert "account-btn-public-roi" in base
+    assert "PUBLIC ROI SIGNAL" in template
+    assert "row.bet" in template
     assert "public-roi-page" in css
     assert "account-btn-public-roi" in css
