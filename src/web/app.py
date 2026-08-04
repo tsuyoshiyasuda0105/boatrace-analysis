@@ -644,9 +644,16 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
         def wrapper(*args, **kwargs):
             force_recompute = False
             filtered_qs = ""
+            viewer_cache_scope = "guest:none"
             try:
                 if request:
                     force_recompute = _effective_force_recompute()
+                    try:
+                        viewer_role = str(session.get("role") or ("paid_member" if session.get("is_member") else "guest"))
+                        viewer_provider = str(session.get("auth_provider") or "none")
+                        viewer_cache_scope = f"{viewer_role}:{viewer_provider}"
+                    except Exception:
+                        viewer_cache_scope = "guest:none"
                     filtered_items = []
                     for key in sorted(request.args.keys()):
                         if key == "recompute":
@@ -657,7 +664,8 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
             except Exception:
                 filtered_qs = ""
                 force_recompute = False
-            key = f"{fn.__name__}:{args}:{kwargs}:{filtered_qs}"
+                viewer_cache_scope = "guest:none"
+            key = f"{fn.__name__}:{args}:{kwargs}:{filtered_qs}:{viewer_cache_scope}"
             now = time.time()
             # 過去日リクエストは長期キャッシュ
             effective_ttl = ttl

@@ -37,6 +37,14 @@ def test_app_exposes_auth_context_to_templates():
     assert 'app.jinja_env.globals["is_supabase_auth_enabled"] = is_supabase_auth_enabled' in app_source
 
 
+def test_cached_page_key_is_partitioned_by_viewer_role():
+    app_source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
+    assert 'viewer_cache_scope = "guest:none"' in app_source
+    assert 'viewer_role = str(session.get("role")' in app_source
+    assert 'viewer_provider = str(session.get("auth_provider") or "none")' in app_source
+    assert 'key = f"{fn.__name__}:{args}:{kwargs}:{filtered_qs}:{viewer_cache_scope}"' in app_source
+
+
 def test_admin_only_routes_are_protected():
     app_source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
     assert '@app.route("/public/roi")' in app_source
