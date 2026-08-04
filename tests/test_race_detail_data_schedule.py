@@ -25,6 +25,12 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert "def collect_live_exhibition" in source
     assert "live_beforeinfo.find_due_races" in source
     assert "live_beforeinfo.find_recent_incomplete_races" in source
+    assert "POST_RACE_INCOMPLETE_PAST_MIN = 36 * 60" in source
+    assert "POST_RACE_INCOMPLETE_FUTURE_MIN = 0" in source
+    assert "post_race_incomplete_due" in source
+    assert "COUNT(DISTINCT oe.boat_number) AS original_rows" in source
+    assert "COUNT(DISTINCT CASE" in source
+    assert "metric_partly_missing" in source
     assert "original_exhibition_collector.collect_for_races" in source
     assert '["scripts/render_cache_predictions.py", "--date", target_date]' in source
     assert '["scripts/generate_start_predictions.py", "--date", target_date]' in source

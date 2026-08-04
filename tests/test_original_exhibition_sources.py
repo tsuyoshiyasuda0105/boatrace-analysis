@@ -1,8 +1,16 @@
-from datetime import date
+import sqlite3
+from datetime import date, timedelta
 
-from scripts.backfill_original_exhibition_candidates import daterange
+from src.collectors import original_exhibition
 from src.collectors.original_exhibition import SOURCE_PATTERNS
 from src.parsers.original_exhibition import parse_original_exhibition
+
+
+def daterange(start: date, end: date, *, newest_first: bool = False):
+    days = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+    if newest_first:
+        days.reverse()
+    yield from days
 
 
 def test_omura_confirmed_source_is_first():
@@ -215,3 +223,72 @@ def test_kojima_confirmed_source_and_control_groups():
     assert rows[0]["lap_time"] == 37.01
     assert rows[0]["turn_time"] == 5.01
     assert rows[0]["straight_time"] == 7.01
+
+
+def test_original_exhibition_filter_retries_partial_metric_rows():
+    conn = sqlite3.connect(":memory:")
+    original_exhibition.ensure_schema(conn)
+    target = [("20260804-05-01", 5, 1)]
+
+    conn.execute(
+        """
+        INSERT INTO race_original_exhibitions (
+            race_id, boat_number, source_name, stadium_number, race_date,
+            race_number, turn_time, source_url, collected_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("20260804-05-01", 1, "tamagawa_oriten", 5, "2026-08-04", 1, 5.21, "https://example.test", "now"),
+    )
+    assert original_exhibition._filter_missing(conn, target, force=False) == target
+
+    for boat in range(2, 7):
+        conn.execute(
+            """
+            INSERT INTO race_original_exhibitions (
+                race_id, boat_number, source_name, stadium_number, race_date,
+                race_number, turn_time, source_url, collected_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "20260804-05-01",
+                boat,
+                "tamagawa_oriten",
+                5,
+                "2026-08-04",
+                1,
+                5.2 + boat / 100,
+                "https://example.test",
+                "now",
+            ),
+        )
+
+    assert original_exhibition._filter_missing(conn, target, force=False) == []
+
+
+def test_original_exhibition_filter_retries_rows_with_no_usable_times():
+    conn = sqlite3.connect(":memory:")
+    original_exhibition.ensure_schema(conn)
+    target = [("20260804-05-02", 5, 2)]
+
+    for boat in range(1, 7):
+        conn.execute(
+            """
+            INSERT INTO race_original_exhibitions (
+                race_id, boat_number, source_name, stadium_number, race_date,
+                race_number, raw_text, source_url, collected_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "20260804-05-02",
+                boat,
+                "tamagawa_oriten",
+                5,
+                "2026-08-04",
+                2,
+                "no metric values yet",
+                "https://example.test",
+                "now",
+            ),
+        )
+
+    assert original_exhibition._filter_missing(conn, target, force=False) == target

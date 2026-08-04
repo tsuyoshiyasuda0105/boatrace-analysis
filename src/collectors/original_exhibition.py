@@ -322,13 +322,51 @@ def _filter_missing(conn, targets: list[tuple[str, int, int]], force: bool) -> l
         return targets
     out = []
     for race_id, stadium, race_no in targets:
-        exists = conn.execute(
-            "SELECT 1 FROM race_original_exhibitions WHERE race_id = ? LIMIT 1",
-            (race_id,),
-        ).fetchone()
-        if not exists:
+        if _original_exhibition_needs_backfill(conn, race_id):
             out.append((race_id, stadium, race_no))
     return out
+
+
+def _original_exhibition_needs_backfill(conn, race_id: str) -> bool:
+    """Return True when original exhibition rows are missing or partially empty.
+
+    Venues expose different metric subsets. A metric is treated as incomplete
+    only when at least one boat has it but fewer than all six boats have it.
+    Rows with no lap/turn/straight values are also retried because they cannot
+    support the race-detail motor comparison.
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT boat_number) AS original_rows,
+               COUNT(DISTINCT CASE
+                   WHEN lap_time IS NOT NULL AND lap_time != 0
+                   THEN boat_number
+               END) AS lap_rows,
+               COUNT(DISTINCT CASE
+                   WHEN turn_time IS NOT NULL AND turn_time != 0
+                   THEN boat_number
+               END) AS turn_rows,
+               COUNT(DISTINCT CASE
+                   WHEN straight_time IS NOT NULL AND straight_time != 0
+                   THEN boat_number
+               END) AS straight_rows
+          FROM race_original_exhibitions
+         WHERE race_id = ?
+        """,
+        (race_id,),
+    ).fetchone()
+    if not row:
+        return True
+
+    original_rows, lap_rows, turn_rows, straight_rows = (int(value or 0) for value in row)
+    metric_counts = [lap_rows, turn_rows, straight_rows]
+    if original_rows < 6:
+        return True
+    if any(0 < count < 6 for count in metric_counts):
+        return True
+    if original_rows > 0 and all(count == 0 for count in metric_counts):
+        return True
+    return False
 
 
 def _collect_targets(

@@ -38,6 +38,9 @@ BEFOREINFO_WRITE_BATCH_SIZE = 6
 INCOMPLETE_PAST_MIN = 900
 INCOMPLETE_FUTURE_MIN = 20
 INCOMPLETE_LIMIT = 24
+POST_RACE_INCOMPLETE_PAST_MIN = 36 * 60
+POST_RACE_INCOMPLETE_FUTURE_MIN = 0
+POST_RACE_INCOMPLETE_LIMIT = 72
 ORIGINAL_EXHIBITION_PAST_MIN = 36 * 60
 ORIGINAL_EXHIBITION_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_LIMIT = 96
@@ -244,7 +247,19 @@ def _find_missing_original_exhibition_races(
         rows = conn.execute(
             f"""
             SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
-                   COUNT(oe.race_id) AS original_rows
+                   COUNT(DISTINCT oe.boat_number) AS original_rows,
+                   COUNT(DISTINCT CASE
+                       WHEN oe.lap_time IS NOT NULL AND oe.lap_time != 0
+                       THEN oe.boat_number
+                   END) AS lap_rows,
+                   COUNT(DISTINCT CASE
+                       WHEN oe.turn_time IS NOT NULL AND oe.turn_time != 0
+                       THEN oe.boat_number
+                   END) AS turn_rows,
+                   COUNT(DISTINCT CASE
+                       WHEN oe.straight_time IS NOT NULL AND oe.straight_time != 0
+                       THEN oe.boat_number
+                   END) AS straight_rows
               FROM races r
               LEFT JOIN race_original_exhibitions oe ON oe.race_id = r.race_id
              WHERE r.race_date = ?
@@ -257,8 +272,12 @@ def _find_missing_original_exhibition_races(
         ).fetchall()
 
     due: list[tuple[str, int, int, datetime]] = []
-    for race_id, stadium, race_no, closed_at, original_rows in rows:
-        if int(original_rows or 0) > 0:
+    for race_id, stadium, race_no, closed_at, original_rows, lap_rows, turn_rows, straight_rows in rows:
+        original_count = int(original_rows or 0)
+        metric_counts = [int(lap_rows or 0), int(turn_rows or 0), int(straight_rows or 0)]
+        metric_partly_missing = any(0 < count < 6 for count in metric_counts)
+        no_useful_metric_rows = original_count > 0 and all(count == 0 for count in metric_counts)
+        if original_count >= 6 and not metric_partly_missing and not no_useful_metric_rows:
             continue
         close = _parse_race_close_jst(closed_at, target_date)
         if close is None:
@@ -313,6 +332,7 @@ def collect_live_exhibition(target_date: str, now: datetime | None = None) -> di
         return {
             "target_date": target_date,
             "beforeinfo_due": 0,
+            "post_race_incomplete_due": 0,
             "beforeinfo_races": 0,
             "beforeinfo_rows": 0,
             "original_due": len(original_due),
@@ -333,7 +353,22 @@ def collect_live_exhibition(target_date: str, now: datetime | None = None) -> di
     )
     if incomplete_due:
         print(f"[exhibition-beforeinfo] incomplete_due={len(incomplete_due)}", flush=True)
-    beforeinfo_due = live_beforeinfo._merge_due_races(beforeinfo_due, incomplete_due)
+    post_race_incomplete_due = live_beforeinfo.find_recent_incomplete_races(
+        now,
+        past_min=POST_RACE_INCOMPLETE_PAST_MIN,
+        future_min=POST_RACE_INCOMPLETE_FUTURE_MIN,
+        limit=POST_RACE_INCOMPLETE_LIMIT,
+    )
+    if post_race_incomplete_due:
+        print(
+            f"[exhibition-beforeinfo] post_race_incomplete_due={len(post_race_incomplete_due)}",
+            flush=True,
+        )
+    beforeinfo_due = live_beforeinfo._merge_due_races(
+        beforeinfo_due,
+        incomplete_due,
+        post_race_incomplete_due,
+    )
 
     original_due = live_beforeinfo._merge_due_races(
         beforeinfo_due,
@@ -378,6 +413,7 @@ def collect_live_exhibition(target_date: str, now: datetime | None = None) -> di
     return {
         "target_date": target_date,
         "beforeinfo_due": len(beforeinfo_due),
+        "post_race_incomplete_due": len(post_race_incomplete_due),
         "beforeinfo_races": beforeinfo_summary["races"],
         "beforeinfo_rows": beforeinfo_summary["supabase_rows"],
         "original_due": len(original_due),
