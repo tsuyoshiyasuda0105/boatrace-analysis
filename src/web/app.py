@@ -4825,7 +4825,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             closed_dt = _parse_local_datetime(closed_at)
             is_time_closed = bool(closed_dt and closed_dt <= datetime.now(closed_dt.tzinfo))
             is_closed = int(race.get("results_count") or 0) > 0 or is_time_closed
-            status = "closed" if is_closed else ("confirmed" if has_adopted else "waiting")
+            is_display_confirmed = bool(l4.get("is_display_confirmed"))
+            status = "closed" if is_closed else ("confirmed" if is_display_confirmed else "waiting")
             strategy_labels = [
                 str(x) for x in (l4.get("watch_strategy_labels") or []) if x
             ]
@@ -7298,8 +7299,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ashiya_targets = {
                         rid: info for rid, info in all_race_info.items()
                         if info.get("stadium") == 21
+                           and info.get("boat4_class") == 1
                            and info.get("boat4_racer")
                            and info.get("boat4_motor_number") is not None
+                           and (info.get("boat4_motor_top2") or 0) >= 40
                     }
                     if ashiya_targets:
                         try:
@@ -7485,8 +7488,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     ashiya_targets = {
                         rid: info for rid, info in all_race_info.items()
                         if info.get("stadium") == 21
+                           and info.get("boat4_class") == 1
                            and info.get("boat4_racer")
                            and info.get("boat4_motor_number") is not None
+                           and (info.get("boat4_motor_top2") or 0) >= 40
                     }
                     if ashiya_targets:
                         try:
@@ -11245,6 +11250,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     return None
 
             stadium = _to_int(ctx.get("stadium"))
+            boat4_class = _to_int(ctx.get("boat4_class"))
+            boat4_motor_top2 = _to_float(ctx.get("boat4_motor_top2")) or 0.0
             ex_course = _to_int(ctx.get("boat4_ex_course"))
             r4_n = _to_int(ctx.get("boat4_course4_n")) or 0
             racer_ex_n = _to_int(ctx.get("boat4_racer_ex_n")) or 0
@@ -11268,6 +11275,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
             if not (
                 stadium == 21
+                and boat4_class == 1
+                and boat4_motor_top2 >= 40.0
                 and ex_course == 4
                 and r4_n >= 8
                 and r4_avg_st <= 0.16
@@ -11332,7 +11341,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     return None
 
             stadium = _to_int(ctx.get("stadium"))
-            if stadium != 21:
+            boat4_class = _to_int(ctx.get("boat4_class"))
+            boat4_motor_top2 = _to_float(ctx.get("boat4_motor_top2")) or 0.0
+            if stadium != 21 or boat4_class != 1 or boat4_motor_top2 < 40.0:
                 return None
 
             r4_n = _to_int(ctx.get("boat4_course4_n")) or 0
@@ -14754,6 +14765,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         continue
                     if l4.get("is_after_exhibition_out") or l4.get("start_prediction_filter_status") == "failed":
                         continue
+                    if not l4.get("is_display_confirmed"):
+                        continue
                     race_id = str(signal.get("race_id") or rid or "")
                     parsed_bets = _parse_market_signal_bets(l4)
                     if not race_id or not parsed_bets:
@@ -16709,6 +16722,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                        r.race_date,
                        e4.racer_number,
                        e4.assigned_motor_number,
+                       e4.class_number,
+                       e4.assigned_motor_top_2_percent,
                        COALESCE(pv4.course_number, 4) AS boat4_ex_course,
                        pv4.exhibition_time AS boat4_ex_time,
                        pv4.start_timing_exhibition AS boat4_ex_st,
@@ -16734,6 +16749,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                    AND r.stadium_number = 21
                    AND e4.racer_number IS NOT NULL
                    AND e4.assigned_motor_number IS NOT NULL
+                   AND e4.class_number = 1
+                   AND e4.assigned_motor_top_2_percent >= 40.0
                  ORDER BY r.race_date, r.race_id
                 """,
                 (from_date, to_date),
@@ -16828,7 +16845,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     racer_ex_idx = 0
                     motor_ex_idx = 0
 
-                    for race_id, rdate, racer_no, motor_no, ex_course, boat4_ex_time, boat4_ex_st, is_done_row, ex41_pay in candidate_rows:
+                    for race_id, rdate, racer_no, motor_no, boat4_class_no, boat4_motor_top2, ex_course, boat4_ex_time, boat4_ex_st, is_done_row, ex41_pay in candidate_rows:
+                        if int(boat4_class_no or 0) != 1 or float(boat4_motor_top2 or 0.0) < 40.0:
+                            continue
                         while racer_hist_idx < len(racer_hist_rows) and racer_hist_rows[racer_hist_idx][0] < rdate:
                             _d, hracer, hst, hpos = racer_hist_rows[racer_hist_idx]
                             stat = racer_stats[hracer]
