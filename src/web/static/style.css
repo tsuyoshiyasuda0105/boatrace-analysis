@@ -338,6 +338,263 @@ html.is-navigating::before {
   box-shadow: 0 4px 14px rgba(168, 85, 247, 0.3);
 }
 
+.account-btn-public-roi {
+  border-color: rgba(250, 204, 21, 0.62);
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.16), rgba(34, 211, 238, 0.07));
+  color: var(--text);
+}
+.account-btn-public-roi:hover {
+  border-color: rgba(250, 204, 21, 0.95);
+  box-shadow: 0 4px 14px rgba(250, 204, 21, 0.24);
+}
+
+/* ===== Public ROI teaser page ===== */
+.public-roi-page {
+  padding: 30px 0 54px;
+}
+.public-roi-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: start;
+  padding: 28px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(34, 211, 238, 0.34);
+  border-radius: 24px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 6% 10%, rgba(34, 211, 238, 0.24), transparent 30%),
+    radial-gradient(circle at 92% 18%, rgba(250, 204, 21, 0.18), transparent 25%),
+    linear-gradient(135deg, rgba(3, 13, 23, 0.96), rgba(9, 19, 34, 0.9));
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.28);
+}
+.public-roi-hero::after {
+  content: "";
+  position: absolute;
+  inset: -80px;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.07) 1px, transparent 1px);
+  background-size: 42px 42px;
+  transform: rotate(-3deg);
+  pointer-events: none;
+}
+.public-roi-hero > * {
+  position: relative;
+  z-index: 1;
+}
+.public-roi-kicker {
+  margin: 0 0 8px;
+  color: var(--cyan);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+.public-roi-hero h2 {
+  margin: 0 0 10px;
+  font-size: clamp(32px, 4vw, 54px);
+  line-height: 1.02;
+  letter-spacing: -0.04em;
+}
+.public-roi-lead {
+  max-width: 760px;
+  margin: 0;
+  color: rgba(224, 242, 254, 0.76);
+  font-size: 15px;
+  line-height: 1.8;
+}
+.public-roi-stamp {
+  min-width: 190px;
+  padding: 18px 20px;
+  border: 1px solid rgba(250, 204, 21, 0.55);
+  border-radius: 20px;
+  background: rgba(250, 204, 21, 0.11);
+  text-align: right;
+}
+.public-roi-stamp span,
+.public-roi-stamp small {
+  display: block;
+  color: rgba(224, 242, 254, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.public-roi-stamp strong {
+  display: block;
+  margin: 4px 0;
+  color: #fde047;
+  font-size: 42px;
+  line-height: 1;
+}
+.public-roi-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.public-roi-metric {
+  padding: 16px 18px;
+  border: 1px solid rgba(34, 211, 238, 0.24);
+  border-radius: 18px;
+  background: rgba(8, 20, 34, 0.82);
+}
+.public-roi-metric span {
+  display: block;
+  color: rgba(224, 242, 254, 0.62);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+.public-roi-metric b {
+  display: block;
+  margin-top: 5px;
+  color: #f8fafc;
+  font-size: 28px;
+  line-height: 1;
+}
+.public-roi-metric-hot {
+  border-color: rgba(250, 204, 21, 0.45);
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.13), rgba(8, 20, 34, 0.82));
+}
+.public-roi-metric-hot b {
+  color: #fde047;
+}
+.public-roi-note,
+.public-roi-footer-note {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(250, 204, 21, 0.28);
+  border-radius: 16px;
+  background: rgba(250, 204, 21, 0.07);
+  color: rgba(224, 242, 254, 0.78);
+  font-size: 13px;
+}
+.public-roi-note strong {
+  color: #fde047;
+  white-space: nowrap;
+}
+.public-roi-list {
+  display: grid;
+  gap: 10px;
+}
+.public-roi-card {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 120px 96px;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(90deg, rgba(8, 24, 39, 0.94), rgba(7, 13, 24, 0.84));
+}
+.public-roi-card-waiting {
+  border-color: rgba(250, 204, 21, 0.38);
+  background: linear-gradient(90deg, rgba(42, 35, 9, 0.72), rgba(7, 13, 24, 0.84));
+}
+.public-roi-card-closed {
+  opacity: 0.58;
+  filter: grayscale(0.25);
+}
+.public-roi-race strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 20px;
+  line-height: 1.15;
+}
+.public-roi-race span {
+  display: block;
+  margin-top: 4px;
+  color: rgba(224, 242, 254, 0.58);
+  font-size: 12px;
+}
+.public-roi-category {
+  color: #f8fafc;
+  font-size: 18px;
+  font-weight: 900;
+}
+.public-roi-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  color: rgba(224, 242, 254, 0.58);
+  font-size: 12px;
+}
+.public-roi-score {
+  text-align: right;
+}
+.public-roi-score strong {
+  display: block;
+  color: #fde047;
+  font-size: 24px;
+  line-height: 1;
+}
+.public-roi-score span {
+  display: block;
+  margin-top: 4px;
+  color: rgba(224, 242, 254, 0.55);
+  font-size: 11px;
+  font-weight: 800;
+}
+.public-roi-status {
+  justify-self: end;
+  padding: 8px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.public-roi-status-confirmed {
+  color: #052e1b;
+  background: linear-gradient(135deg, #6ee7b7, #bbf7d0);
+}
+.public-roi-status-waiting {
+  color: #302300;
+  background: linear-gradient(135deg, #fde047, #fef3c7);
+}
+.public-roi-status-closed {
+  color: rgba(224, 242, 254, 0.72);
+  background: rgba(148, 163, 184, 0.18);
+}
+.public-roi-empty {
+  padding: 42px 24px;
+  border: 1px dashed rgba(34, 211, 238, 0.32);
+  border-radius: 22px;
+  text-align: center;
+  background: rgba(8, 20, 34, 0.62);
+}
+.public-roi-empty h3 {
+  margin: 0 0 8px;
+}
+.public-roi-empty p {
+  margin: 0;
+  color: rgba(224, 242, 254, 0.66);
+}
+.public-roi-footer-note {
+  margin-top: 16px;
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+@media (max-width: 760px) {
+  .public-roi-hero,
+  .public-roi-summary,
+  .public-roi-card {
+    grid-template-columns: 1fr;
+  }
+  .public-roi-stamp,
+  .public-roi-score {
+    text-align: left;
+  }
+  .public-roi-status {
+    justify-self: start;
+  }
+}
+
 /* ===== Accident-rate member page ===== */
 .accident-dashboard {
   padding: 28px 0 44px;

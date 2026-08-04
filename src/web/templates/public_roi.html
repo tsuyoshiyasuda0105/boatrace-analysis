@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}公開用データ | BOATRACE WEB{% endblock %}
+
+{% block content %}
+<section class="public-roi-page">
+  <div class="public-roi-hero">
+    <div>
+      <p class="public-roi-kicker">PUBLIC ROI SIGNAL</p>
+      <h2>{{ target_date }} 公開用データ</h2>
+      <p class="public-roi-lead">
+        ROIが高い候補だけを絞って表示します。条件詳細と具体的な閾値は公開前に固定し、
+        レース後に検証結果として開示する想定です。
+      </p>
+    </div>
+    <div class="public-roi-stamp">
+      <span>候補</span>
+      <strong>{{ summary.count }}</strong>
+      <small>{% if computed_at %}算出 {{ computed_at[11:16] }}{% else %}cache only{% endif %}</small>
+    </div>
+  </div>
+
+  <div class="public-roi-summary">
+    <div class="public-roi-metric">
+      <span>採用確定</span>
+      <b>{{ summary.confirmed }}</b>
+    </div>
+    <div class="public-roi-metric">
+      <span>条件待ち</span>
+      <b>{{ summary.waiting }}</b>
+    </div>
+    <div class="public-roi-metric">
+      <span>終了</span>
+      <b>{{ summary.closed }}</b>
+    </div>
+    <div class="public-roi-metric public-roi-metric-hot">
+      <span>最高検証ROI</span>
+      <b>{% if summary.max_recovery is not none %}{{ "%.1f"|format(summary.max_recovery) }}%{% else %}-{% endif %}</b>
+    </div>
+  </div>
+
+  <div class="public-roi-note">
+    <strong>公開ルール</strong>
+    <span>レース・カテゴリ・検証ROI・件数・状態だけを公開。買い目、複合条件、閾値は公開ページでは伏せます。</span>
+  </div>
+
+  {% if rows %}
+  <div class="public-roi-list">
+    {% for row in rows %}
+    <article class="public-roi-card public-roi-card-{{ row.status_tone }}">
+      <div class="public-roi-race">
+        <strong>{{ row.place }}</strong>
+        <span>{{ row.time or "時刻未定" }}</span>
+      </div>
+      <div class="public-roi-body">
+        <div class="public-roi-category">{{ row.category }}</div>
+        <div class="public-roi-sub">
+          {{ row.rank }}
+          {% if row.n is not none %}<span>n={{ row.n }}</span>{% endif %}
+          {% if row.hit_rate is not none %}<span>的中率 {{ row.hit_rate }}%</span>{% endif %}
+        </div>
+      </div>
+      <div class="public-roi-score">
+        <strong>{{ "%.1f"|format(row.recovery) }}%</strong>
+        <span>検証ROI</span>
+      </div>
+      <div class="public-roi-status public-roi-status-{{ row.status_tone }}">
+        {{ row.status_label }}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="public-roi-empty">
+    <h3>公開対象の高ROI候補はありません</h3>
+    <p>本日は条件を満たす候補がないか、まだ事前生成データが反映されていません。</p>
+  </div>
+  {% endif %}
+
+  <div class="public-roi-footer-note">
+    統計情報の公開サンプルです。投票の推奨、的中、利益を保証するものではありません。
+  </div>
+</section>
+{% endblock %}

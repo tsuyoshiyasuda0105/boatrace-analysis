@@ -4871,6 +4871,132 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         rows.sort(key=lambda row: row.get("closed_at") or "")
         return rows, signal_payload
 
+    def _public_roi_category(row: dict) -> str:
+        label = str(row.get("label") or "")
+        bet = str(row.get("bet") or "")
+        rank = str(row.get("rank") or "")
+        text = f"{label} {bet} {rank}"
+        if "潮" in text:
+            return "潮・水面条件型"
+        if "展示" in text or "ST" in text or "スタート" in text:
+            return "展示後判定型"
+        if "エース" in text or "M" in text or "モーター" in text:
+            return "エースモーター型"
+        if "雨" in text or "天候" in text:
+            return "天候フィルタ型"
+        if "3連単" in text:
+            return "3連単ニッチ型"
+        if "2連単" in text:
+            return "2連単ニッチ型"
+        if "単勝" in text:
+            return "単勝ニッチ型"
+        return "高ROI候補"
+
+    def _public_roi_rows_for_display(
+        target_date: str,
+        races_list: list[dict],
+        *,
+        min_recovery: float = 150.0,
+        limit: int = 30,
+    ) -> tuple[list[dict], dict]:
+        """Build leak-safe public rows from the precomputed market snapshot.
+
+        The public page intentionally hides exact conditions and buy tickets.
+        It exposes only race, timing state, strategy category, verification ROI
+        and sample size, so it can be posted publicly without leaking the
+        implementation thresholds.
+        """
+        raw_rows, signal_payload = _market_pick_rows_for_display(
+            target_date,
+            races_list,
+            visible=True,
+        )
+        public_rows: list[dict] = []
+        for row in raw_rows:
+            try:
+                recovery = float(row.get("recovery") or 0)
+            except (TypeError, ValueError):
+                recovery = 0.0
+            if recovery < min_recovery:
+                continue
+            status = str(row.get("status") or "")
+            if status == "confirmed":
+                status_label = "採用確定"
+                status_tone = "confirmed"
+            elif status == "waiting":
+                status_label = "条件待ち"
+                status_tone = "waiting"
+            else:
+                status_label = "終了"
+                status_tone = "closed"
+            public_rows.append(
+                {
+                    "race_id": row.get("race_id"),
+                    "place": row.get("place") or "",
+                    "time": row.get("time") or "",
+                    "status": status,
+                    "status_label": status_label,
+                    "status_tone": status_tone,
+                    "category": _public_roi_category(row),
+                    "rank": row.get("rank") or "候補",
+                    "recovery": round(recovery, 1),
+                    "n": row.get("n"),
+                    "hit_rate": row.get("hit_rate"),
+                }
+            )
+        public_rows.sort(
+            key=lambda row: (
+                0 if row.get("status") != "closed" else 1,
+                -float(row.get("recovery") or 0),
+                str(row.get("time") or ""),
+            )
+        )
+        if limit > 0:
+            public_rows = public_rows[:limit]
+        return public_rows, signal_payload
+
+    @app.route("/public/roi")
+    @cached(ttl=60, past_ttl=3600)
+    def public_roi():
+        target_date = request.args.get("date") or date.today().isoformat()
+        try:
+            with db_connect() as conn:
+                races_list = _races_for_date(target_date, conn=conn)
+        except Exception as exc:
+            logger.exception("failed to load races for public ROI page: %s", exc)
+            races_list = []
+
+        try:
+            public_rows, signal_payload = _public_roi_rows_for_display(
+                target_date,
+                races_list,
+            )
+        except Exception as exc:
+            logger.exception("failed to build public ROI rows for %s: %s", target_date, exc)
+            public_rows, signal_payload = [], {}
+
+        summary = {
+            "count": len(public_rows),
+            "confirmed": sum(1 for row in public_rows if row.get("status") == "confirmed"),
+            "waiting": sum(1 for row in public_rows if row.get("status") == "waiting"),
+            "closed": sum(1 for row in public_rows if row.get("status") == "closed"),
+            "max_recovery": max(
+                [float(row.get("recovery") or 0) for row in public_rows],
+                default=None,
+            ),
+        }
+        return render_template(
+            "public_roi.html",
+            target_date=target_date,
+            today_iso=date.today().isoformat(),
+            date_form_action=url_for("public_roi"),
+            rows=public_rows,
+            summary=summary,
+            data_status=(signal_payload or {}).get("data_status") or {},
+            computed_at=(signal_payload or {}).get("computed_at") or "",
+            source_cache_key=(signal_payload or {}).get("source_cache_key") or "",
+        )
+
     @app.route("/")
     @login_required
     def index():
