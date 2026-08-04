@@ -67,7 +67,8 @@ from src.evaluation.accident_dent_strategy import (
     live_matches as load_accident_dent_live_matches,
 )
 from src.web.auth import (
-    current_role, is_admin, is_member, login_required, member_only_api,
+    current_auth_provider, current_role, is_admin, is_member,
+    is_supabase_auth_enabled, login_required, member_only_api,
     register_auth_routes,
 )
 from src.web.billing import register_billing_routes
@@ -4562,7 +4563,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # テンプレートから is_member() を呼べるように
     app.jinja_env.globals["is_member"] = is_member
     app.jinja_env.globals["is_admin"] = is_admin
+    app.jinja_env.globals["is_supabase_auth_enabled"] = is_supabase_auth_enabled
     app.jinja_env.globals["current_role"] = current_role
+    app.jinja_env.globals["current_auth_provider"] = current_auth_provider
 
     # 静的ファイル cache busting 用バージョン
     # CSS/JS が変更されたら自動的に新規取得されるよう、

@@ -105,6 +105,99 @@ def get_billing_profile(user_id: str) -> dict[str, Any]:
     return {"id": row[0], "email": row[1], "stripe_customer_id": row[2]}
 
 
+def list_membership_overview(limit: int = 200) -> list[dict[str, Any]]:
+    with db_connect() as conn:
+        profile_rows = conn.execute(
+            """
+            SELECT id, email, stripe_customer_id, created_at, updated_at
+              FROM profiles
+             ORDER BY updated_at DESC, created_at DESC
+             LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    if not profile_rows:
+        return []
+
+    user_ids = [str(row[0]) for row in profile_rows if row and row[0]]
+    if not user_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in user_ids)
+    with db_connect() as conn:
+        role_rows = conn.execute(
+            f"""
+            SELECT user_id, role, expires_at, granted_at
+              FROM user_roles
+             WHERE user_id IN ({placeholders})
+             ORDER BY granted_at DESC
+            """,
+            tuple(user_ids),
+        ).fetchall()
+        subscription_rows = conn.execute(
+            f"""
+            SELECT user_id, stripe_subscription_id, stripe_price_id, status,
+                   current_period_end, cancel_at_period_end, updated_at
+              FROM subscriptions
+             WHERE user_id IN ({placeholders})
+             ORDER BY updated_at DESC
+            """,
+            tuple(user_ids),
+        ).fetchall()
+
+    role_map: dict[str, list[dict[str, Any]]] = {}
+    for user_id, role, expires_at, granted_at in role_rows:
+        role_map.setdefault(str(user_id), []).append(
+            {
+                "role": str(role),
+                "expires_at": expires_at,
+                "granted_at": granted_at,
+            }
+        )
+
+    subscription_map: dict[str, dict[str, Any]] = {}
+    for user_id, sub_id, price_id, status, period_end, cancel_at_period_end, updated_at in subscription_rows:
+        key = str(user_id)
+        if key in subscription_map:
+            continue
+        subscription_map[key] = {
+            "stripe_subscription_id": sub_id,
+            "stripe_price_id": price_id,
+            "status": status,
+            "current_period_end": period_end,
+            "cancel_at_period_end": bool(cancel_at_period_end),
+            "updated_at": updated_at,
+        }
+
+    overview: list[dict[str, Any]] = []
+    now = now_iso()
+    for user_id, email, stripe_customer_id, created_at, updated_at in profile_rows:
+        key = str(user_id)
+        raw_roles = role_map.get(key, [])
+        active_roles = [
+            item["role"]
+            for item in raw_roles
+            if not item.get("expires_at") or str(item["expires_at"]) > now
+        ]
+        effective_role = "free_member"
+        for role in active_roles:
+            if ROLE_RANK.get(role, 0) > ROLE_RANK.get(effective_role, 0):
+                effective_role = role
+        overview.append(
+            {
+                "user_id": key,
+                "email": email,
+                "stripe_customer_id": stripe_customer_id,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "effective_role": effective_role,
+                "roles": raw_roles,
+                "subscription": subscription_map.get(key),
+            }
+        )
+    return overview
+
+
 def set_stripe_customer(user_id: str, stripe_customer_id: str) -> None:
     with db_connect() as conn:
         conn.execute(

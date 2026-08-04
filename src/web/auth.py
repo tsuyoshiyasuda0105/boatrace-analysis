@@ -19,11 +19,11 @@ import secrets
 import time
 from functools import wraps
 
-from flask import session, redirect, url_for, request, jsonify, render_template_string, abort
+from flask import session, redirect, url_for, request, jsonify, render_template, render_template_string, abort
 
 import config
 from src.web import supabase_auth_client
-from src.web.membership import ensure_profile, get_effective_role, role_allows
+from src.web.membership import ensure_profile, get_effective_role, list_membership_overview, role_allows
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +141,14 @@ def current_role() -> str:
     return session.get("role") or ("paid_member" if is_member() else "guest")
 
 
+def current_auth_provider() -> str:
+    return session.get("auth_provider") or "none"
+
+
+def is_supabase_auth_enabled() -> bool:
+    return supabase_auth_client.is_configured()
+
+
 def is_admin() -> bool:
     return role_allows(current_role(), "admin")
 
@@ -157,6 +165,19 @@ def _set_supabase_session(user_id: str, email: str | None, role: str) -> None:
     session["role"] = role
     session["auth_provider"] = "supabase"
     session.permanent = True
+
+
+def _refresh_supabase_membership_session() -> None:
+    if session.get("auth_provider") != "supabase":
+        return
+    user_id = session.get("user_id")
+    if not user_id:
+        session.clear()
+        return
+    ensure_profile(str(user_id), session.get("email"))
+    role = get_effective_role(str(user_id))
+    session["role"] = role
+    session["is_member"] = role in {"free_member", "paid_member", "admin"}
 
 
 def login_required(view):
@@ -374,6 +395,10 @@ def register_auth_routes(app):
     # テンプレートから {{ csrf_token() }} を使えるように
     app.jinja_env.globals["csrf_token"] = _get_csrf_token
 
+    @app.before_request
+    def _sync_supabase_auth_role():
+        _refresh_supabase_membership_session()
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         ip = _client_ip()
@@ -488,6 +513,14 @@ def register_auth_routes(app):
     def logout():
         session.clear()
         return redirect(url_for("index"))
+
+    @app.route("/admin/memberships", methods=["GET"])
+    @admin_required
+    def admin_memberships():
+        return render_template(
+            "admin_memberships.html",
+            rows=list_membership_overview(),
+        )
 
 
 def _render_supabase_login(error: str | None):

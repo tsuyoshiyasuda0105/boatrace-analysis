@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}会員管理{% endblock %}
+{% block content %}
+<section class="start-metrics-page">
+  <div class="start-prediction">
+    <div class="start-prediction-head">
+      <div>
+        <div class="start-eyebrow">ADMIN</div>
+        <h3>会員権限と課金状態</h3>
+        <p>既存ログイン併用期間の確認用です。Supabase Auth ユーザーとアプリ内権限の接続状況を一覧します。</p>
+      </div>
+    </div>
+
+    <div class="start-admin-table-wrap">
+      <table class="start-admin-table">
+        <thead>
+          <tr>
+            <th>メール</th>
+            <th>有効権限</th>
+            <th>ロール一覧</th>
+            <th>Stripe Customer</th>
+            <th>Subscription</th>
+            <th>状態</th>
+            <th>期限</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          {% set subscription = row.subscription %}
+          <tr>
+            <td>{{ row.email or row.user_id }}</td>
+            <td>{{ row.effective_role }}</td>
+            <td>
+              {% for role in row.roles %}
+              <div>
+                {{ role.role }}{% if role.expires_at %} ({{ role.expires_at[:10] }}){% endif %}
+              </div>
+              {% else %}
+              <div>free_member</div>
+              {% endfor %}
+            </td>
+            <td>{{ row.stripe_customer_id or "-" }}</td>
+            <td>{{ subscription.stripe_subscription_id if subscription else "-" }}</td>
+            <td>{{ subscription.status if subscription else "-" }}</td>
+            <td>{{ subscription.current_period_end[:10] if subscription and subscription.current_period_end else "-" }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7">まだ会員データがありません。</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
+      <a href="{{ url_for('admin_cache_clear') }}" class="account-btn account-btn-public-roi">キャッシュ管理</a>
+      <a href="{{ url_for('member_today_races', date=today_iso_global) }}" class="account-btn account-btn-login">本日のレースへ戻る</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
