@@ -135,7 +135,7 @@ def register_subscriber_routes(app):
     """Flask アプリにルートを登録"""
 
     # auth.py の _verify_csrf_token を import (循環参照を避ける)
-    from src.web.auth import _verify_csrf_token, is_member
+    from src.web.auth import _verify_csrf_token, is_admin, is_member
 
     @app.route("/alerts/subscribe", methods=["GET", "POST"])
     def alerts_subscribe():
@@ -143,6 +143,8 @@ def register_subscriber_routes(app):
         if not is_member():
             from flask import redirect, url_for
             return redirect(url_for("login", next=request.path))
+        if not is_admin():
+            abort(403)
 
         ip = _client_ip()
 

@@ -6,7 +6,7 @@ import logging
 from flask import Blueprint, jsonify, render_template, request
 
 from src.start_prediction import StartPredictionService
-from src.web.auth import login_required, member_only_api
+from src.web.auth import admin_only_api, admin_required
 
 bp = Blueprint("start_prediction", __name__)
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ def _service() -> StartPredictionService:
 
 
 @bp.post("/api/predictions/races/<race_id>")
-@member_only_api
+@admin_only_api
 def create_race_prediction(race_id: str):
     payload = request.get_json(silent=True) or {}
     stage = str(payload.get("stage") or request.args.get("stage") or "post_exhibition")
@@ -31,7 +31,7 @@ def create_race_prediction(race_id: str):
 
 
 @bp.get("/api/predictions/races/<race_id>")
-@member_only_api
+@admin_only_api
 def get_race_prediction(race_id: str):
     result = _service().get(race_id, request.args.get("stage"))
     if not result:
@@ -40,13 +40,13 @@ def get_race_prediction(race_id: str):
 
 
 @bp.get("/api/predictions/races/<race_id>/timeline")
-@member_only_api
+@admin_only_api
 def get_race_prediction_timeline(race_id: str):
     return jsonify(_service().timeline(race_id))
 
 
 @bp.post("/api/predictions/races/<race_id>/evaluate")
-@member_only_api
+@admin_only_api
 def evaluate_race_prediction(race_id: str):
     try:
         return jsonify(_service().evaluate(race_id, request.args.get("stage")))
@@ -58,13 +58,13 @@ def evaluate_race_prediction(race_id: str):
 
 
 @bp.get("/api/predictions/metrics")
-@member_only_api
+@admin_only_api
 def prediction_metrics_api():
     return jsonify(_service().metrics(dict(request.args)))
 
 
 @bp.get("/member/start-predictions")
-@login_required
+@admin_required
 def prediction_metrics_page():
     filters = dict(request.args)
     return render_template("start_prediction_metrics.html", metrics=_service().metrics(filters), filters=filters)

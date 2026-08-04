@@ -67,9 +67,8 @@ from src.evaluation.accident_dent_strategy import (
     live_matches as load_accident_dent_live_matches,
 )
 from src.web.auth import (
-    current_auth_provider, current_role, is_admin, is_member,
-    is_supabase_auth_enabled, login_required, member_only_api,
-    register_auth_routes,
+    admin_required, current_auth_provider, current_role, is_admin, is_member,
+    is_supabase_auth_enabled, login_required, member_only_api, register_auth_routes,
 )
 from src.web.billing import register_billing_routes
 from src.web.predictor import Predictor
@@ -5007,6 +5006,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return public_rows, signal_payload
 
     @app.route("/public/roi")
+    @admin_required
     @cached(ttl=60, past_ttl=3600)
     def public_roi():
         target_date = request.args.get("date") or date.today().isoformat()
@@ -5135,7 +5135,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return resp
 
     @app.route("/member/today-races")
-    @login_required
+    @admin_required
     @cached(ttl=30, past_ttl=3600)
     def member_today_races():
         target_date = request.args.get("date") or date.today().isoformat()
@@ -5195,7 +5195,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
 
     @app.route("/member/today-races/history")
-    @login_required
+    @admin_required
     @cached(ttl=60, past_ttl=3600)
     def member_today_race_history():
         today_iso = date.today().isoformat()
@@ -18609,7 +18609,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return out
 
     @app.route("/member/strategy/races")
-    @login_required
+    @admin_required
     @cached(ttl=180, past_ttl=3600)  # 当日3分/過去日1時間
     def member_strategy_races():
         """指定日の L4 該当レース一覧 (会員限定)
@@ -19314,7 +19314,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return tuple(sorted(strategies, key=sort_key))
 
     @app.route("/member/strategy")
-    @login_required
+    @admin_required
     @cached(ttl=600, past_ttl=7200)  # 通常はキャッシュ表示、更新時だけ再集計
     def member_strategy():
         """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
@@ -19545,7 +19545,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return html
 
     @app.route("/member/strategy/monthly")
-    @login_required
+    @admin_required
     @cached(ttl=600, past_ttl=7200)
     def member_strategy_monthly():
         """月別 ROI (長期推移) 専用ページ — テーブル + 推移グラフ。
@@ -19722,7 +19722,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return html
 
     @app.route("/member/health")
-    @login_required
+    @admin_required
     @cached(ttl=300, past_ttl=3600)  # 健全度は重いので 5 分キャッシュ
     def member_health():
         """戦略の健全度監視ダッシュボード (会員限定)

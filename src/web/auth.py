@@ -200,6 +200,17 @@ def member_only_api(view):
     return wrapper
 
 
+def admin_only_api(view):
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if not is_member():
+            return jsonify({"error": "unauthorized", "message": "会員ログインが必要です"}), 401
+        if not is_admin():
+            return jsonify({"error": "forbidden", "message": "管理者のみ利用できます"}), 403
+        return view(*args, **kwargs)
+    return wrapper
+
+
 def admin_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
