@@ -149,6 +149,19 @@ def original_exhibition_daily_counts(target_date: str) -> dict[str, int]:
     }
 
 
+def race_count_for_date(target_date: str) -> int:
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM races WHERE race_date = ?",
+                (target_date,),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception as exc:
+        print(f"[race-count] lookup failed date={target_date} error={type(exc).__name__}: {exc}", flush=True)
+        return 0
+
+
 def task_success_exists(task_name: str, run_date: str) -> bool:
     try:
         with db_connect() as conn:
@@ -402,6 +415,7 @@ def run_morning(now: datetime) -> bool:
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
+    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     return ok
 
@@ -819,6 +833,10 @@ def run_accident_full_refresh(target_date: str) -> bool:
     ok = run_accident_rebuild(accident_period_start(target_dt), target_date)
     if ok:
         ok = run_accident_rank_snapshot(target_date)
+    race_count = race_count_for_date(target_date) if ok else 0
+    if ok and race_count == 0:
+        print(f"[accident-refresh] skip detail prewarm date={target_date} reason=no-races", flush=True)
+        return True
     if ok:
         ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", target_date], timeout=900)
     if ok:
@@ -912,6 +930,7 @@ def run_nightly(now: datetime) -> bool:
     # Build tomorrow's high-ROI snapshot after tomorrow's races and predictions
     # exist. Without this, nightly prewarming only refreshes today's signals and
     # previous-day confirmed candidates do not appear until the morning run.
+    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", tomorrow], timeout=900)
     ok &= run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow],
         timeout=1800,
