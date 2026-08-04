@@ -10,31 +10,31 @@
 <body>
   <header class="site-header">
     <div class="container">
-      <h1><a href="{{ url_for('races', date=today_iso_global) }}" title="TOP・亥・繝ｬ繝ｼ繧ｹ荳隕ｧ・峨∈">BOATRACE WEB</a></h1>
+      <h1><a href="{{ url_for('races', date=today_iso_global) }}" title="TOP・本日のレース一覧へ">BOATRACE WEB</a></h1>
       <form method="get" action="{{ date_form_action|default(url_for('races')) }}" class="date-form">
-        <label for="date">譌･莉・</label>
+        <label for="date">日付</label>
         <input type="date" id="date" name="date" value="{{ target_date | default('') }}">
-        <button type="submit">陦ｨ遉ｺ</button>
+        <button type="submit">表示</button>
       </form>
       {% if is_member() %}
-      <nav class="nav-actions" aria-label="謌ｦ逡･繝繝・す繝･繝懊・繝・>
-        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="譛ｬ譌･縺ｮROI蛟呵｣應ｸ隕ｧ">
-          <span class="nav-label">譛ｬ譌･縺ｮ繝ｬ繝ｼ繧ｹ</span>
+      <nav class="nav-actions" aria-label="会員ダッシュボード">
+        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="本日のROI候補レース">
+          <span class="nav-label">本日のレース</span>
         </a>
-        <a href="{{ url_for('member_strategy') }}" class="nav-btn nav-btn-roi" title="L4 謌ｦ逡･ ROI 繝繝・す繝･繝懊・繝・>
-          <span class="nav-icon">投</span><span class="nav-label">ROI</span>
+        <a href="{{ url_for('member_strategy') }}" class="nav-btn nav-btn-roi" title="ROIダッシュボード">
+          <span class="nav-icon">📊</span><span class="nav-label">ROI</span>
         </a>
-        <a href="{{ url_for('member_strategy_monthly') }}" class="nav-btn nav-btn-monthly" title="譛亥挨 ROI 謗ｨ遘ｻ (謗｡逕ｨ 4 謌ｦ逡･ + 隕ｳ蟇・6 謌ｦ逡･縲√げ繝ｩ繝穂ｻ倥″)">
-          <span class="nav-icon">嶋</span><span class="nav-label">譛亥挨謗ｨ遘ｻ</span>
+        <a href="{{ url_for('member_strategy_monthly') }}" class="nav-btn nav-btn-monthly" title="月別ROI推移">
+          <span class="nav-icon">📈</span><span class="nav-label">月別推移</span>
         </a>
-        <a href="{{ url_for('member_health') }}" class="nav-btn nav-btn-health" title="謌ｦ逡･蛛･蜈ｨ蠎ｦ逶｣隕・>
-          <span class="nav-icon">ｩｺ</span><span class="nav-label">蛛･蜈ｨ蠎ｦ</span>
+        <a href="{{ url_for('member_health') }}" class="nav-btn nav-btn-health" title="手法の健全度確認">
+          <span class="nav-icon">🩺</span><span class="nav-label">健全度</span>
         </a>
-        <a href="{{ url_for('member_accidents') }}" class="nav-btn nav-btn-accidents" title="莠区腐邇・驕ｸ謇倶ｸ隕ｧ">
-          <span class="nav-icon">笞</span><span class="nav-label">莠区腐邇・</span>
+        <a href="{{ url_for('member_accidents') }}" class="nav-btn nav-btn-accidents" title="事故率一覧">
+          <span class="nav-icon">⚠</span><span class="nav-label">事故率</span>
         </a>
-        <a href="{{ url_for('start_prediction.prediction_metrics_page') }}" class="nav-btn" title="繧ｹ繧ｿ繝ｼ繝亥ｱ暮幕莠域ｸｬ縺ｮ邊ｾ蠎ｦ邂｡逅・>
-          <span class="nav-icon">ST</span><span class="nav-label">螻暮幕邊ｾ蠎ｦ</span>
+        <a href="{{ url_for('start_prediction.prediction_metrics_page') }}" class="nav-btn" title="スタート展開精度">
+          <span class="nav-icon">ST</span><span class="nav-label">展開精度</span>
         </a>
         {% if is_admin() %}
         <a href="{{ url_for('admin_memberships') }}" class="nav-btn nav-btn-health" title="会員権限とStripe連携状況">
@@ -44,25 +44,25 @@
       </nav>
       {% endif %}
       <div class="auth-status">
-        <a href="{{ url_for('public_roi') }}" class="account-btn account-btn-public-roi" title="蜈ｬ髢狗畑縺ｮ鬮漏OI蛟呵｣懊ョ繝ｼ繧ｿ">
-          <span class="nav-icon">投</span><span class="nav-label">蜈ｬ髢狗畑繝・・繧ｿ</span>
+        <a href="{{ url_for('public_roi') }}" class="account-btn account-btn-public-roi" title="公開ROIデータ">
+          <span class="nav-icon">📊</span><span class="nav-label">公開ROI</span>
         </a>
         {% if is_member() %}
           <span class="auth-badge {% if is_admin() %}pro{% endif %}">
             {{ current_role() }} / {{ current_auth_provider() }}
           </span>
-          <a href="/alerts/subscribe" class="account-btn account-btn-notify" title="L4 繧ｷ繧ｰ繝翫Ν繧偵Γ繝ｼ繝ｫ騾夂衍">
-            <span class="nav-icon">闘</span><span class="nav-label">騾夂衍逋ｻ骭ｲ</span>
+          <a href="/alerts/subscribe" class="account-btn account-btn-notify" title="通知登録">
+            <span class="nav-icon">📬</span><span class="nav-label">通知登録</span>
           </a>
-          <a href="{{ url_for('logout') }}" class="account-btn account-btn-logout" title="繝ｭ繧ｰ繧｢繧ｦ繝・>
-            <span class="nav-icon">坎</span><span class="nav-label">繝ｭ繧ｰ繧｢繧ｦ繝・</span>
+          <a href="{{ url_for('logout') }}" class="account-btn account-btn-logout" title="ログアウト">
+            <span class="nav-icon">🚪</span><span class="nav-label">ログアウト</span>
           </a>
         {% else %}
           {% if is_supabase_auth_enabled|default(false) %}
           <a href="{{ url_for('login_supabase') }}" class="account-btn account-btn-login">メールログイン</a>
           <a href="{{ url_for('login') }}" class="account-btn account-btn-public-roi">既存ログイン</a>
           {% else %}
-          <a href="{{ url_for('login') }}" class="account-btn account-btn-login">繝ｭ繧ｰ繧､繝ｳ</a>
+          <a href="{{ url_for('login') }}" class="account-btn account-btn-login">ログイン</a>
           {% endif %}
         {% endif %}
       </div>
@@ -71,9 +71,9 @@
   <main class="container">
     {% if system_warnings %}
     <div class="system-banner {% if system_warnings|selectattr('status','equalto','error')|list %}system-banner-error{% else %}system-banner-warning{% endif %}">
-      <span class="system-banner-icon">{% if system_warnings|selectattr('status','equalto','error')|list %}圷{% else %}笞・旬{% endif %}</span>
+      <span class="system-banner-icon">{% if system_warnings|selectattr('status','equalto','error')|list %}🚨{% else %}⚠{% endif %}</span>
       <div class="system-banner-body">
-        <strong>繧ｷ繧ｹ繝・Β隴ｦ蜻・</strong> ({{ system_warnings|length }} 莉ｶ)
+        <strong>システム警告</strong> ({{ system_warnings|length }} 件)
         <ul>
           {% for w in system_warnings %}
             <li><span class="sysbanner-tag sysbanner-{{ w.status }}">{{ w.status|upper }}</span>
@@ -90,7 +90,7 @@
   </main>
   <footer class="site-footer">
     <div class="container">
-      <small>LightGBM Ranker v0.8 (recency 180d + 驕ｸ謇凝嶺ｼ壼ｴ/繧ｳ繝ｼ繧ｹ 100襍ｰ髟ｷ譛・ / Isotonic 霈・ｭ｣ / PerWinner Cascade / 蟄ｦ鄙・ 2022-04-01縲・026-03-31</small>
+      <small>LightGBM Ranker v0.8 (recency 180d + 選手/会場/コース 100特徴量 / Isotonic 補正 / PerWinner Cascade / 学習: 2022-04-01〜2026-03-31)</small>
     </div>
   </footer>
   <script>
