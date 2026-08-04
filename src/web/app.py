@@ -10561,7 +10561,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             {"key": "naruto_win4_ace_kimarite_all", "label": "鳴門 4単 エース決まり手", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 484.9, "hit_rate": 32.5, "n": 77, "odds_min": 6.0},
             {"key": "naruto_win4_ace_kimarite_no_rain", "label": "鳴門 4単 雨除外", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 1, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 434.2, "hit_rate": 35.4, "n": 48, "odds_min": 6.0},
             {"key": "naruto_win3_ace_kimarite_late_no_rain", "label": "鳴門 3単 後半雨除外", "stadium": 14, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 285.6, "hit_rate": 30.5, "n": 59, "odds_min": 5.0},
-            {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73, "odds_min": 6.0},
+            {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_class": 1, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73, "odds_min": 6.0},
         )
 
         def _ace_ctx_value(ctx: dict | None, *keys):
@@ -10649,6 +10649,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if boat1_motor > strategy["boat1_motor_max"]:
                     continue
                 target_boat = int(strategy["boat"])
+                target_class_required = strategy.get("target_class")
+                target_class = _ace_int(_ace_ctx_value(ctx, f"boat{target_boat}_class"))
+                if target_class_required is not None and target_class != int(target_class_required):
+                    continue
                 target_motor = _ace_float(_ace_ctx_value(ctx, f"boat{target_boat}_motor_top2"))
                 racer_number = _ace_int(_ace_ctx_value(ctx, f"boat{target_boat}_racer", f"boat{target_boat}_racer_number"))
                 if target_motor is None or target_motor < strategy["target_motor_min"] or racer_number is None:
@@ -13607,7 +13611,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         {"key": "naruto_win4_ace_kimarite_all", "label": "鳴門 4単 エース決まり手", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": False, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 484.9, "hit_rate": 32.5, "n": 77},
         {"key": "naruto_win4_ace_kimarite_no_rain", "label": "鳴門 4単 雨除外", "stadium": 14, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 1, "attack_rate_min": 5.0, "boat1_motor_max": 40.0, "recovery": 434.2, "hit_rate": 35.4, "n": 48},
         {"key": "naruto_win3_ace_kimarite_late_no_rain", "label": "鳴門 3単 後半雨除外", "stadium": 14, "boat": 3, "race_min": 7, "race_max": 12, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 285.6, "hit_rate": 30.5, "n": 59},
-        {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73},
+        {"key": "ashiya_win4_ace_kimarite_no_rain", "label": "芦屋 4単 雨除外", "stadium": 21, "boat": 4, "race_min": None, "race_max": None, "rain_exclude": True, "target_class": 1, "target_motor_min": 35.0, "attack_wins_min": 2, "attack_rate_min": 3.0, "boat1_motor_max": 40.0, "recovery": 363.3, "hit_rate": 31.5, "n": 73},
     )
     ACE_KIMARITE_WIN_KEYS = tuple(s["key"] for s in ACE_KIMARITE_WIN_STRATEGY_DEFS)
     ADOPTED_DAILY_SELECT_VERSION = ROI_DAILY_CACHE_VERSION

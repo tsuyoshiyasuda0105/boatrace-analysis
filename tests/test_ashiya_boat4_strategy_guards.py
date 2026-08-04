@@ -8,6 +8,15 @@ def test_ashiya_boat4_lift_requires_a1_and_motor40_at_context_entry():
     assert 'and (info.get("boat4_motor_top2") or 0) >= 40' in app_source
 
 
+def test_ashiya_win4_requires_a1_boat4():
+    app_source = Path("src/web/app.py").read_text(encoding="utf-8")
+
+    assert '"key": "ashiya_win4_ace_kimarite_no_rain"' in app_source
+    assert '"target_class": 1, "target_motor_min": 35.0' in app_source
+    assert 'target_class_required = strategy.get("target_class")' in app_source
+    assert 'if target_class_required is not None and target_class != int(target_class_required):' in app_source
+
+
 def test_ashiya_boat4_lift_evaluators_reject_non_a1_or_weak_motor():
     app_source = Path("src/web/app.py").read_text(encoding="utf-8")
 
