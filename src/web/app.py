@@ -1553,6 +1553,70 @@ def _format_jst_minute(value: Any) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
+_STADIUM_TAILWIND_DEG: dict[int, float] = {
+    # NOTE:
+    # Relative wind labels depend on venue-specific course orientation.
+    # We keep the mapping explicit and easy to adjust venue by venue.
+    # Current values are verified / best-effort seeds for venues we have
+    # already analyzed in this project. Unmapped venues fall back to the
+    # previous generic "風 Xm" display so nothing breaks.
+    1: 112.5,  # 桐生: wd=6 が追い風
+    6: 0.0,    # 浜名湖: 北風が追い風寄り
+    18: 0.0,   # 徳山: 南風が向かい風寄り -> 北風が追い風寄り
+}
+
+
+def _wind_number_to_deg(wind_direction_number: Optional[int]) -> Optional[float]:
+    wd = _safe_int(wind_direction_number)
+    if wd is None or wd < 1 or wd > 16:
+        return None
+    return (wd - 1) * 22.5
+
+
+def _normalize_deg(value: float) -> float:
+    return value % 360.0
+
+
+def _relative_wind_label(
+    stadium_number: Optional[int],
+    wind_direction_number: Optional[int],
+) -> Optional[str]:
+    stadium = _safe_int(stadium_number)
+    if stadium is None:
+        return None
+    tailwind_deg = _STADIUM_TAILWIND_DEG.get(stadium)
+    wind_deg = _wind_number_to_deg(wind_direction_number)
+    if tailwind_deg is None or wind_deg is None:
+        return None
+
+    diff = _normalize_deg(wind_deg - tailwind_deg)
+    if diff < 45 or diff >= 315:
+        return "追い風"
+    if 45 <= diff < 135:
+        return "右横風"
+    if 135 <= diff < 225:
+        return "向かい風"
+    return "左横風"
+
+
+def _relative_wind_display(
+    stadium_number: Optional[int],
+    wind_direction_number: Optional[int],
+    wind_speed: Optional[float],
+    *,
+    prefix: str = "風",
+) -> str:
+    label = _relative_wind_label(stadium_number, wind_direction_number)
+    speed = _safe_float(wind_speed)
+    if label and speed is not None:
+        return f"{label} {speed:.0f}m"
+    if label:
+        return label
+    if speed is not None:
+        return f"{prefix} {speed:.0f}m"
+    return f"{prefix} -"
+
+
 def _jp_tide_phase_label(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -1644,6 +1708,7 @@ def _venue_environment_summaries_for_date_impl(
                        s.water,
                        pv.weather_number,
                        pv.wind_speed,
+                       pv.wind_direction_number,
                        pv.wave_height,
                        COALESCE(rt.tide_phase, '') AS tide_phase,
                        rt.tide_height_cm,
@@ -1671,7 +1736,7 @@ def _venue_environment_summaries_for_date_impl(
     grouped: dict[int, list[dict[str, Any]]] = {}
     keys = [
         "race_id", "stadium_number", "race_number", "race_closed_at", "water",
-        "weather_number", "wind_speed", "wave_height", "tide_phase",
+        "weather_number", "wind_speed", "wind_direction_number", "wave_height", "tide_phase",
         "tide_height_cm", "tide_delta_60m_cm", "tide_range_cm",
         "is_high_tide_zone", "is_low_tide_zone", "tide_fetched_at",
     ]
@@ -1733,7 +1798,11 @@ def _venue_environment_summaries_for_date_impl(
             "race_number": chosen.get("race_number"),
             "reference_label": f"次走 {chosen.get('race_number')}R 基準" if is_today else f"{chosen.get('race_number')}R 基準",
             "weather_label": _WEATHER_LABELS.get(_safe_int(chosen.get("weather_number")), "天候 -"),
-            "wind_label": f"風 {_safe_float(chosen.get('wind_speed')):.0f}m" if chosen.get("wind_speed") is not None else "風 -",
+            "wind_label": _relative_wind_display(
+                chosen.get("stadium_number"),
+                chosen.get("wind_direction_number"),
+                chosen.get("wind_speed"),
+            ),
             "wave_label": f"波 {_safe_float(chosen.get('wave_height')):.0f}cm" if chosen.get("wave_height") is not None else "波 -",
             "tide_label": tide_label,
             "trend_tone": tone,
@@ -4695,7 +4764,12 @@ def _build_race_compat_analysis(race_id: str, info: dict[str, Any], preds: list[
         "matrix_rows": matrix_rows,
         "water": {
             "water_label": _WATER_LABELS.get(tide_row.get("water"), "-"),
-            "wind_label": f"{int((_safe_float(conditions.get('wind_speed')) or 0))}m" if conditions.get("wind_speed") is not None else "-",
+            "wind_label": _relative_wind_display(
+                info.get("stadium_number"),
+                conditions.get("wind_direction_number"),
+                conditions.get("wind_speed"),
+                prefix="風",
+            ),
             "wave_label": f"{int((_safe_float(conditions.get('wave_height')) or 0))}cm" if conditions.get("wave_height") is not None else "-",
             "weather_label": _WEATHER_LABELS.get(_safe_int(conditions.get("weather_number")), "-"),
             "tide_label": tide_row.get("tide_phase") or "-",

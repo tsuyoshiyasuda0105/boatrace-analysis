@@ -36,15 +36,19 @@
               {% if p.condition %}<div class="pick-candidate-sub">{{ p.condition }}</div>{% endif %}
             </td>
             <td class="pick-bet" data-label="買い目">{{ p.bet or "-" }}</td>
-            <td class="pick-rec" data-label="検証回収率"><strong>{% if p.recovery is not none %}{{ p.recovery }}%{% else %}-{% endif %}</strong></td>
-            <td class="pick-hit" data-label="的中率">{% if p.hit_rate is not none %}{{ p.hit_rate }}%{% else %}-{% endif %}</td>
+            <td class="pick-rec" data-label="検証回収率">
+              <strong>{% if p.recovery is not none %}{{ p.recovery }}%{% else %}-{% endif %}</strong>
+            </td>
+            <td class="pick-hit" data-label="的中率">
+              {% if p.hit_rate is not none %}{{ p.hit_rate }}%{% else %}-{% endif %}
+            </td>
             <td class="pick-result" data-label="結果">
               {% if p.settled and p.is_hit %}
                 <span class="pick-result-badge is-hit">HIT</span>
               {% elif p.settled %}
                 <span class="pick-result-badge is-miss">MISS</span>
               {% elif p.status == "confirmed" %}
-                <span class="pick-result-badge is-confirmed">採用</span>
+                <span class="pick-result-badge is-confirmed">採用確定</span>
               {% elif p.status == "waiting" %}
                 <span class="pick-result-badge is-waiting">条件待ち</span>
               {% else %}
