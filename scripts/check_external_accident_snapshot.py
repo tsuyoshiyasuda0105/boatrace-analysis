@@ -250,43 +250,26 @@ def mirror_external_period_stats(
     conn.commit()
 
 
-def load_period_rows(
-    conn,
-    period_start: str,
-    *,
-    source_kind: str,
-    period_end: str | None = None,
-) -> dict[int, dict[str, Any]]:
-    where = [
-        "period_start = ?",
-        "source_kind = ?",
-        "rule_version = ?",
-    ]
-    params: list[Any] = [period_start, source_kind, RULE_VERSION]
-    if period_end:
-        where.append("period_end = ?")
-        params.append(period_end)
+def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
     cur = conn.execute(
-        f"""
+        """
         SELECT racer_number, starts_count, accident_points, accident_rate, period_end
           FROM racer_accident_period_stats
-         WHERE {" AND ".join(where)}
+         WHERE period_start = ?
+           AND source_kind = 'reconstructed'
+           AND rule_version = ?
         """,
-        tuple(params),
+        (period_start, RULE_VERSION),
     )
-    rows: dict[int, dict[str, Any]] = {}
+    internal: dict[int, dict[str, Any]] = {}
     for racer_number, starts_count, accident_points, accident_rate, period_end in cur.fetchall():
-        rows[int(racer_number)] = {
+        internal[int(racer_number)] = {
             "starts_count": int(starts_count or 0),
             "accident_points": int(accident_points or 0),
             "accident_rate": round(float(accident_rate or 0.0), 2),
             "period_end": str(period_end) if period_end else None,
         }
-    return rows
-
-
-def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
-    return load_period_rows(conn, period_start, source_kind="reconstructed")
+    return internal
 
 
 def compare_rows(
@@ -411,14 +394,8 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
             period_end=period_end,
             rows=external_rows,
         )
-        official_rows = load_period_rows(
-            conn,
-            period_start,
-            period_end=period_end,
-            source_kind="official_external",
-        )
-        summary = compare_rows(external_rows, official_rows)
-        reconstruction_summary = compare_rows(external_rows, load_internal_rows(conn, period_start))
+        internal_rows = load_internal_rows(conn, period_start)
+        summary = compare_rows(external_rows, internal_rows)
 
     summary.update(
         {
@@ -426,9 +403,7 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
             "period_start": period_start,
             "period_end": period_end,
             "external_rows": len(external_rows),
-            "internal_rows": len(official_rows),
-            "internal_source_kind": "official_external",
-            "reconstruction_audit": reconstruction_summary,
+            "internal_rows": len(internal_rows),
             "source_url": SOURCE_HTML_URL,
         }
     )
