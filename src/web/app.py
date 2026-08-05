@@ -5052,14 +5052,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     (today_iso,)
                 )
                 for cn, st, msg, at in cur.fetchall():
+                    if cn == "accident_external_compare":
+                        continue
                     display_status = st
                     display_name = cn
                     display_message = msg
-                    if cn == "accident_external_compare":
-                        display_status = "warning"
-                        display_name = "accident_external_audit"
-                        if msg:
-                            display_message = f"事故率監査: {msg}"
                     warnings_list.append({
                         "check_name": cn,
                         "status": st,

@@ -57,8 +57,11 @@
   </div>
 
   {% if accident_compare %}
-    <div class="{% if accident_compare.status in ['error', 'warning'] %}accident-warning{% else %}accident-note-card{% endif %}">
-      <div><strong>外部照合:</strong> {{ accident_compare.message }}</div>
+    <div class="{% if selected_meta.source_kind == 'official_external' %}accident-note-card{% elif accident_compare.status in ['error', 'warning'] %}accident-warning{% else %}accident-note-card{% endif %}">
+      <div>
+        <strong>{% if selected_meta.source_kind == 'official_external' %}再構築監査:{% else %}外部照合:{% endif %}</strong>
+        {{ accident_compare.message }}
+      </div>
       <div class="dashboard-hint">
         照合日 {{ accident_compare.check_date or '-' }} / checked_at {{ accident_compare.checked_at or '-' }}
         / 比較 {{ accident_compare.compared_rows }}件
@@ -66,6 +69,11 @@
         / 総差分 {{ accident_compare.mismatch_rows }}件
         / 非ゼロ事故点一致率 {{ '%.1f' | format((accident_compare.nonzero_point_coverage or 0) * 100) }}%
       </div>
+      {% if selected_meta.source_kind == 'official_external' %}
+        <div class="dashboard-hint">
+          表示中の事故率一覧は外部基準スナップショットです。ここで出している差分は再構築ロジックの監査結果です。
+        </div>
+      {% endif %}
       {% if accident_compare.source_url %}
         <div class="dashboard-hint"><a href="{{ accident_compare.source_url }}" target="_blank" rel="noopener">外部基準サイトを開く</a></div>
       {% endif %}
