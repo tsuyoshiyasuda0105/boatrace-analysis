@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}権限がありません | BOATRACE WEB{% endblock %}
+{% block content %}
+<section class="auth-message-panel">
+  <h2>権限がありません</h2>
+  <p>この画面は管理者のみ利用できます。</p>
+  <p>管理者権限が必要な場合は、Supabase の <code>profiles.role</code> を <code>admin</code> に変更してください。</p>
+  <p><a href="{{ url_for('races', date=today_iso_global) }}" class="account-btn account-btn-login">レース一覧へ戻る</a></p>
+</section>
+{% endblock %}

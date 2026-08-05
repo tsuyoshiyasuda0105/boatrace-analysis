@@ -5046,6 +5046,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         ), 500
 
     # テンプレートから is_member() を呼べるように
+    @app.errorhandler(403)
+    def handle_403(err):
+        logger.warning(
+            "403 forbidden path=%s role=%s provider=%s",
+            request.path,
+            current_role(),
+            current_auth_provider(),
+        )
+        return render_template("forbidden.html"), 403
+
     app.jinja_env.globals["is_member"] = is_member
     app.jinja_env.globals["is_admin"] = is_admin
     app.jinja_env.globals["is_supabase_auth_enabled"] = is_supabase_auth_enabled

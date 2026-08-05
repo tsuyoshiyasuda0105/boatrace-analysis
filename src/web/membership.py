@@ -8,6 +8,7 @@ from src.db.connection import connect as db_connect
 
 ROLE_RANK = {"guest": 0, "free_member": 10, "paid_member": 20, "admin": 100}
 ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
+_SCHEMA_CHECKED = False
 
 
 def now_iso() -> str:
@@ -23,7 +24,64 @@ def normalize_role(role: str | None) -> str:
     return role if role in ROLE_RANK and role != "guest" else "free_member"
 
 
+def ensure_membership_schema() -> None:
+    """Create the staged Supabase Auth membership tables when missing.
+
+    Production already has these tables, but local/test databases may not.
+    Keeping this idempotent prevents a missing auth table from turning every
+    logged-in request into a 500.
+    """
+    global _SCHEMA_CHECKED
+    if _SCHEMA_CHECKED:
+        return
+    ts = now_iso()
+    with db_connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                email TEXT,
+                stripe_customer_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_roles (
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                granted_at TEXT NOT NULL,
+                expires_at TEXT,
+                created_at TEXT NOT NULL DEFAULT '',
+                UNIQUE(user_id, role)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                user_id TEXT NOT NULL,
+                stripe_customer_id TEXT,
+                stripe_subscription_id TEXT PRIMARY KEY,
+                stripe_price_id TEXT,
+                status TEXT,
+                current_period_end TEXT,
+                cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        try:
+            conn.execute("UPDATE user_roles SET created_at = ? WHERE created_at = ''", (ts,))
+        except Exception:
+            pass
+    _SCHEMA_CHECKED = True
+
+
 def ensure_profile(user_id: str, email: str | None = None) -> None:
+    ensure_membership_schema()
     ts = now_iso()
     with db_connect() as conn:
         conn.execute(
