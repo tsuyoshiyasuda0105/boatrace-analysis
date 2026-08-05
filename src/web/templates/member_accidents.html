@@ -59,7 +59,7 @@
   {% if accident_compare %}
     <div class="{% if selected_meta.source_kind == 'official_external' %}accident-note-card{% elif accident_compare.status in ['error', 'warning'] %}accident-warning{% else %}accident-note-card{% endif %}">
       <div>
-        <strong>{% if selected_meta.source_kind == 'official_external' %}再構築監査:{% else %}外部照合:{% endif %}</strong>
+        <strong>{% if selected_meta.source_kind == 'official_external' and accident_compare.status != 'ok' %}再構築監査:{% else %}外部照合:{% endif %}</strong>
         {{ accident_compare.message }}
       </div>
       <div class="dashboard-hint">
@@ -69,7 +69,7 @@
         / 総差分 {{ accident_compare.mismatch_rows }}件
         / 非ゼロ事故点一致率 {{ '%.1f' | format((accident_compare.nonzero_point_coverage or 0) * 100) }}%
       </div>
-      {% if selected_meta.source_kind == 'official_external' %}
+      {% if selected_meta.source_kind == 'official_external' and accident_compare.status != 'ok' %}
         <div class="dashboard-hint">
           表示中の事故率一覧は外部基準スナップショットです。ここで出している差分は再構築ロジックの監査結果です。
         </div>
