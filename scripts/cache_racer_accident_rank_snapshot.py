@@ -20,7 +20,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from scripts.rebuild_racer_accident_stats import RULE_VERSION  # noqa: E402
-from src.db.connection import connect as db_connect  # noqa: E402
+from src.db.connection import assert_safe_production_write, connect as db_connect  # noqa: E402
 
 
 def accident_period_start_for_date(date_iso: str) -> str:
@@ -96,35 +96,41 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
         ensure_table(conn)
         period_row = conn.execute(
             """
-            SELECT period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
+            SELECT source_kind, period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
                    MAX(updated_at) AS source_updated_at
               FROM racer_accident_period_stats
              WHERE period_start = ?
-               AND source_kind = 'reconstructed'
+               AND source_kind IN ('official_external', 'reconstructed')
                AND rule_version = ?
-             GROUP BY period_start
+             GROUP BY source_kind, period_start
+             ORDER BY CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END,
+                      MAX(period_end) DESC
+             LIMIT 1
             """,
             (period_start, RULE_VERSION),
         ).fetchone()
         if not period_row:
             period_row = conn.execute(
                 """
-                SELECT period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
+                SELECT source_kind, period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
                        MAX(updated_at) AS source_updated_at
                   FROM racer_accident_period_stats
-                 WHERE source_kind = 'reconstructed'
+                 WHERE source_kind IN ('official_external', 'reconstructed')
                    AND rule_version = ?
-                 GROUP BY period_start
-                 ORDER BY period_start DESC
+                 GROUP BY source_kind, period_start
+                 ORDER BY period_start DESC,
+                          CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END,
+                          MAX(period_end) DESC
                  LIMIT 1
                 """,
                 (RULE_VERSION,),
             ).fetchone()
         if not period_row:
-            raise RuntimeError("racer_accident_period_stats has no reconstructed rows")
+            raise RuntimeError("racer_accident_period_stats has no official_external/reconstructed rows")
 
-        period_start = str(period_row[0])
-        period_end = str(period_row[1])
+        source_kind = str(period_row[0] or "reconstructed")
+        period_start = str(period_row[1])
+        period_end = str(period_row[2])
         if period_end < str(target_date):
             raise RuntimeError(
                 "racer_accident_period_stats is stale "
@@ -156,16 +162,16 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
                 ON le.racer_number = s.racer_number AND le.rn = 1
              WHERE s.period_start = ?
                AND s.period_end = ?
-               AND s.source_kind = 'reconstructed'
+               AND s.source_kind = ?
                AND s.rule_version = ?
-             ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
+              ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
             """,
-            (class_as_of, period_start, period_end, RULE_VERSION),
+            (class_as_of, period_start, period_end, source_kind, RULE_VERSION),
         ).fetchall()
 
         conn.execute(
-            "DELETE FROM racer_accident_rank_snapshots WHERE period_start = ?",
-            (period_start,),
+            "DELETE FROM racer_accident_rank_snapshots WHERE period_start = ? AND source_kind = ?",
+            (period_start, source_kind),
         )
         payload = []
         for rank_no, row in enumerate(rows, start=1):
@@ -186,7 +192,7 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
                     accident_rank_tone(cls, rate),
                     rank_no,
                     RULE_VERSION,
-                    "reconstructed",
+                    source_kind,
                     target_date,
                 )
             )
@@ -207,6 +213,7 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
         "period_end": period_end,
         "rows": len(payload),
         "snapshot_date": target_date,
+        "source_kind": source_kind,
     }
 
 
@@ -216,6 +223,11 @@ def main() -> int:
     ap.add_argument("--period")
     ap.add_argument("--db-path", help="Use a local SQLite DB path even when DATABASE_URL exists.")
     args = ap.parse_args()
+    assert_safe_production_write(
+        action="cache_racer_accident_rank_snapshot",
+        db_path=args.db_path,
+        allow_env_var="BOATRACE_ALLOW_ACCIDENT_PROD_WRITE",
+    )
     summary = build_snapshot(args.date, args.period, args.db_path)
     print(
         "cached accident ranking "

@@ -29,7 +29,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import config  # noqa: E402
-from src.db.connection import connect as db_connect  # noqa: E402
+from src.db.connection import assert_safe_production_write, connect as db_connect  # noqa: E402
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -256,7 +256,7 @@ def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
         SELECT racer_number, starts_count, accident_points, accident_rate, period_end
           FROM racer_accident_period_stats
          WHERE period_start = ?
-           AND source_kind = 'internal_rebuild'
+           AND source_kind = 'reconstructed'
            AND rule_version = ?
         """,
         (period_start, RULE_VERSION),
@@ -416,6 +416,10 @@ def main() -> int:
     ap.add_argument("--no-write-status", action="store_true")
     args = ap.parse_args()
 
+    assert_safe_production_write(
+        action="check_external_accident_snapshot",
+        allow_env_var="BOATRACE_ALLOW_ACCIDENT_PROD_WRITE",
+    )
     summary = build_and_compare(args.date)
     status, message = status_from_summary(summary)
     print(json.dumps({"status": status, "message": message, **summary}, ensure_ascii=False, indent=2))

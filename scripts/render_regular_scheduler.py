@@ -787,18 +787,27 @@ def run_accident_rank_snapshot(target_date: str) -> bool:
     return run_py(args, timeout=300)
 
 
+def run_accident_external_check(target_date: str) -> bool:
+    return run_py(["scripts/check_external_accident_snapshot.py", "--date", target_date], timeout=300)
+
+
 def latest_accident_snapshot_state() -> tuple[str | None, str | None]:
     try:
         with db_connect() as conn:
             row = conn.execute(
                 """
-                SELECT MAX(snapshot_date), MAX(period_end)
+                SELECT source_kind, MAX(snapshot_date), MAX(period_end)
                   FROM racer_accident_rank_snapshots
-                 WHERE source_kind = 'reconstructed'
+                 WHERE source_kind IN ('official_external', 'reconstructed')
+                 GROUP BY source_kind
+                 ORDER BY CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END,
+                          MAX(period_end) DESC,
+                          MAX(snapshot_date) DESC
+                 LIMIT 1
                 """
             ).fetchone()
-        snapshot_date = str(row[0]) if row and row[0] else None
-        period_end = str(row[1]) if row and row[1] else None
+        snapshot_date = str(row[1]) if row and row[1] else None
+        period_end = str(row[2]) if row and row[2] else None
         return snapshot_date, period_end
     except Exception as exc:
         print(
@@ -831,6 +840,8 @@ def latest_completed_results_date() -> str | None:
 def run_accident_full_refresh(target_date: str) -> bool:
     target_dt = datetime.fromisoformat(target_date).replace(tzinfo=JST)
     ok = run_accident_rebuild(accident_period_start(target_dt), target_date)
+    if ok:
+        ok = run_accident_external_check(target_date)
     if ok:
         ok = run_accident_rank_snapshot(target_date)
     race_count = race_count_for_date(target_date) if ok else 0

@@ -40,6 +40,38 @@ def _normalize_pg_url(url: str) -> str:
     return url
 
 
+def targets_postgres(db_path: Optional[str] = None) -> bool:
+    """Return True when connect() would target Postgres/Supabase."""
+    if db_path:
+        return False
+    db_url = os.getenv("DATABASE_URL", "").strip()
+    return bool(db_url and _is_postgres_url(db_url))
+
+
+def assert_safe_production_write(
+    *,
+    action: str,
+    db_path: Optional[str] = None,
+    allow_env_var: str = "BOATRACE_ALLOW_PROD_WRITE",
+) -> None:
+    """Refuse local writes to production Postgres unless explicitly allowed.
+
+    Accident-related batch jobs must not overwrite the production Supabase data
+    from a local shell by accident. Render cron remains allowed, and callers can
+    still target a local SQLite path explicitly.
+    """
+    if db_path or not targets_postgres(db_path):
+        return
+    if os.getenv("RENDER", "").strip():
+        return
+    if os.getenv(allow_env_var, "").strip() == "1":
+        return
+    raise RuntimeError(
+        f"{action} refused: local process would write to production Postgres via DATABASE_URL. "
+        f"Use local SQLite, run on Render, or set {allow_env_var}=1 only for an intentional emergency override."
+    )
+
+
 def _placeholder_pg(sql: str) -> str:
     """SQLite の `?` プレースホルダを Postgres の `%s` に変換。
     クォート内の '?' は触らない (素朴な実装)。"""

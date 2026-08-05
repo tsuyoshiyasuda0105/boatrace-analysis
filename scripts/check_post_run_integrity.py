@@ -202,15 +202,29 @@ def check_motor_history_caches(conn, target_date: str, race_ids: list[str] | Non
 
 def check_accident_integrity(conn, target_date: str, _race_ids: list[str] | None = None) -> tuple[str, str, dict]:
     period_start = accident_period_start_for_date(target_date)
+    preferred_source_row = conn.execute(
+        """
+        SELECT source_kind
+          FROM racer_accident_period_stats
+         WHERE period_start = ?
+           AND source_kind IN ('official_external', 'reconstructed')
+           AND rule_version = ?
+         GROUP BY source_kind
+         ORDER BY CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END
+         LIMIT 1
+        """,
+        (period_start, RULE_VERSION),
+    ).fetchone()
+    source_kind = str(preferred_source_row[0]) if preferred_source_row and preferred_source_row[0] else "reconstructed"
     period = conn.execute(
         """
         SELECT MAX(period_end), COUNT(*), MAX(updated_at)
           FROM racer_accident_period_stats
          WHERE period_start = ?
-           AND source_kind = 'reconstructed'
+           AND source_kind = ?
            AND rule_version = ?
         """,
-        (period_start, RULE_VERSION),
+        (period_start, source_kind, RULE_VERSION),
     ).fetchone()
     period_end = str(period[0]) if period and period[0] else None
     period_rows = int(period[1] or 0) if period else 0
@@ -219,10 +233,10 @@ def check_accident_integrity(conn, target_date: str, _race_ids: list[str] | None
         SELECT MAX(snapshot_date), MAX(period_end), COUNT(*), MAX(updated_at)
           FROM racer_accident_rank_snapshots
          WHERE period_start = ?
-           AND source_kind = 'reconstructed'
+           AND source_kind = ?
            AND source_rule_version = ?
         """,
-        (period_start, RULE_VERSION),
+        (period_start, source_kind, RULE_VERSION),
     ).fetchone()
     snapshot_date = str(snapshot[0]) if snapshot and snapshot[0] else None
     snapshot_end = str(snapshot[1]) if snapshot and snapshot[1] else None
@@ -232,11 +246,11 @@ def check_accident_integrity(conn, target_date: str, _race_ids: list[str] | None
         SELECT COUNT(*)
           FROM racer_accident_period_stats
          WHERE period_start = ?
-           AND source_kind = 'reconstructed'
+           AND source_kind = ?
            AND rule_version = ?
            AND (accident_rate < 0 OR accident_rate > 10)
         """,
-        (period_start, RULE_VERSION),
+        (period_start, source_kind, RULE_VERSION),
     ).fetchone()[0]
     detail = {
         "period_start": period_start,
@@ -247,6 +261,7 @@ def check_accident_integrity(conn, target_date: str, _race_ids: list[str] | None
         "snapshot_rows": snapshot_rows,
         "invalid_rate_rows": int(invalid_rates or 0),
         "rule_version": RULE_VERSION,
+        "source_kind": source_kind,
     }
     if period_rows == 0:
         return "error", "事故率period_statsが0件です", detail

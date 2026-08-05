@@ -26,7 +26,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import config
-from src.db.connection import connect as db_connect
+from src.db.connection import assert_safe_production_write, connect as db_connect
 
 
 RULE_VERSION = "official_table_2025_05_reconstructed_v2"
@@ -894,6 +894,12 @@ def main() -> int:
         help="CSV path for K raw rows that could not be matched to DB entries.",
     )
     args = parser.parse_args()
+
+    if not args.local and not args.dry_run:
+        assert_safe_production_write(
+            action="rebuild_racer_accident_stats",
+            allow_env_var="BOATRACE_ALLOW_ACCIDENT_PROD_WRITE",
+        )
 
     conn = db_connect(config.DB_PATH) if args.local else db_connect()
     try:
