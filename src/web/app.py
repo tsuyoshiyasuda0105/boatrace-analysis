@@ -5375,6 +5375,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "adopted": is_display_confirmed,
                     "closed": is_closed,
                     "status": status,
+                    "settled": False,
+                    "is_hit": None,
+                    "stake": None,
+                    "payout": None,
+                    "profit": None,
+                    "actual_recovery": None,
                 }
             )
         rows.sort(key=lambda row: row.get("closed_at") or "")
