@@ -5136,7 +5136,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     (today_iso,)
                 )
                 for cn, st, msg, at in cur.fetchall():
-                    if cn in {"accident_external_compare", "accident_reconstruction_gap"}:
+                    if cn == "accident_external_compare":
                         continue
                     display_status = st
                     display_name = cn

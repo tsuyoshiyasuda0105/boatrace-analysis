@@ -41,7 +41,6 @@ JS_FILES = {
     "tensu": "tensu2000.js",
 }
 CHECK_NAME = "accident_external_compare"
-RECONSTRUCTION_CHECK_NAME = "accident_reconstruction_gap"
 RULE_VERSION = "official_table_2025_05_reconstructed_v2"
 ROW_RE = re.compile(r"yp\[(\d+)\]='([^']*)';")
 XP_RE = re.compile(r"xp\[(\d+)\]='([^']*)';")
@@ -251,39 +250,26 @@ def mirror_external_period_stats(
     conn.commit()
 
 
-def load_period_rows(
-    conn,
-    period_start: str,
-    *,
-    source_kind: str,
-    period_end: str | None = None,
-) -> dict[int, dict[str, Any]]:
-    where = ["period_start = ?", "source_kind = ?", "rule_version = ?"]
-    params: list[Any] = [period_start, source_kind, RULE_VERSION]
-    if period_end:
-        where.append("period_end = ?")
-        params.append(period_end)
+def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
     cur = conn.execute(
-        f"""
+        """
         SELECT racer_number, starts_count, accident_points, accident_rate, period_end
           FROM racer_accident_period_stats
-         WHERE {" AND ".join(where)}
+         WHERE period_start = ?
+           AND source_kind = 'reconstructed'
+           AND rule_version = ?
         """,
-        tuple(params),
+        (period_start, RULE_VERSION),
     )
-    rows: dict[int, dict[str, Any]] = {}
+    internal: dict[int, dict[str, Any]] = {}
     for racer_number, starts_count, accident_points, accident_rate, period_end in cur.fetchall():
-        rows[int(racer_number)] = {
+        internal[int(racer_number)] = {
             "starts_count": int(starts_count or 0),
             "accident_points": int(accident_points or 0),
             "accident_rate": round(float(accident_rate or 0.0), 2),
             "period_end": str(period_end) if period_end else None,
         }
-    return rows
-
-
-def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
-    return load_period_rows(conn, period_start, source_kind="reconstructed")
+    return internal
 
 
 def compare_rows(
@@ -408,14 +394,8 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
             period_end=period_end,
             rows=external_rows,
         )
-        official_rows = load_period_rows(
-            conn,
-            period_start,
-            source_kind="official_external",
-            period_end=period_end,
-        )
-        reconstruction_summary = compare_rows(external_rows, load_internal_rows(conn, period_start))
-        summary = compare_rows(external_rows, official_rows)
+        internal_rows = load_internal_rows(conn, period_start)
+        summary = compare_rows(external_rows, internal_rows)
 
     summary.update(
         {
@@ -423,9 +403,7 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
             "period_start": period_start,
             "period_end": period_end,
             "external_rows": len(external_rows),
-            "internal_rows": len(official_rows),
-            "internal_source_kind": "official_external",
-            "reconstruction_audit": reconstruction_summary,
+            "internal_rows": len(internal_rows),
             "source_url": SOURCE_HTML_URL,
         }
     )
@@ -449,23 +427,6 @@ def main() -> int:
     if not args.no_write_status:
         with db_connect() as conn:
             upsert_status(conn, CHECK_NAME, args.date, status, message, summary)
-            reconstruction_summary = summary.get("reconstruction_audit") or {}
-            reconstruction_status, reconstruction_message = status_from_summary(reconstruction_summary)
-            upsert_status(
-                conn,
-                RECONSTRUCTION_CHECK_NAME,
-                args.date,
-                reconstruction_status,
-                reconstruction_message,
-                {
-                    **reconstruction_summary,
-                    "check_date": args.date,
-                    "period_start": summary.get("period_start"),
-                    "period_end": summary.get("period_end"),
-                    "source_url": summary.get("source_url"),
-                    "note": "Reference audit only. Production accident rates use official_external.",
-                },
-            )
     return 0 if status in {"ok", "warning"} else 1
 
 
