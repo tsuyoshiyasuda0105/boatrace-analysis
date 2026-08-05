@@ -56,6 +56,22 @@
     <div>画面反映日時: {{ selected_meta.updated_at or '-' }}{% if selected_meta.snapshot_date %} / スナップショット日: {{ selected_meta.snapshot_date }}{% endif %}</div>
   </div>
 
+  {% if accident_compare %}
+    <div class="{% if accident_compare.status in ['error', 'warning'] %}accident-warning{% else %}accident-note-card{% endif %}">
+      <div><strong>外部照合:</strong> {{ accident_compare.message }}</div>
+      <div class="dashboard-hint">
+        照合日 {{ accident_compare.check_date or '-' }} / checked_at {{ accident_compare.checked_at or '-' }}
+        / 比較 {{ accident_compare.compared_rows }}件
+        / 点数差 {{ accident_compare.point_mismatch_rows }}件
+        / 総差分 {{ accident_compare.mismatch_rows }}件
+        / 非ゼロ事故点一致率 {{ '%.1f' | format((accident_compare.nonzero_point_coverage or 0) * 100) }}%
+      </div>
+      {% if accident_compare.source_url %}
+        <div class="dashboard-hint"><a href="{{ accident_compare.source_url }}" target="_blank" rel="noopener">外部基準サイトを開く</a></div>
+      {% endif %}
+    </div>
+  {% endif %}
+
   {% if error_message %}
     <div class="accident-error">事故率データの取得に失敗しました: {{ error_message }}</div>
   {% endif %}

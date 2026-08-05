@@ -744,6 +744,22 @@ html.is-navigating::before {
   background: rgba(127, 29, 29, 0.25);
   color: #fecaca;
 }
+.accident-warning {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: 8px;
+  background: rgba(120, 53, 15, 0.20);
+  color: #fde68a;
+}
+.accident-note-card {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(34, 211, 238, 0.30);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, 0.22);
+  color: rgba(255, 255, 255, 0.88);
+}
 .accident-note {
   margin-top: 12px;
 }
@@ -2450,6 +2466,11 @@ main h2 {
   color: var(--accent);
   box-shadow: 0 0 12px rgba(0, 212, 255, 0.12);
 }
+.kimarite-skill-tag.is-context {
+  border-color: rgba(94, 234, 212, 0.44);
+  background: rgba(13, 148, 136, 0.16);
+  color: #ccfbf1;
+}
 
 .racer-detail-btn,
 .racer-name-static {
@@ -2475,6 +2496,12 @@ main h2 {
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
+}
+.racer-age-branch {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
 }
 .racer-class-badge--name {
   min-width: 26px;
@@ -3155,6 +3182,35 @@ main h2 {
 }
 .pick-profit strong.flat {
   color: #fff2b8;
+}
+.todays-picks-table tbody tr.is-today-settled {
+  opacity: 1;
+  background: linear-gradient(90deg,
+    rgba(14, 165, 233, 0.18),
+    rgba(34, 197, 94, 0.10));
+  box-shadow: inset 3px 0 0 rgba(34, 211, 238, 0.78);
+}
+.todays-picks-table tbody tr.is-today-settled td,
+.todays-picks-table tbody tr.is-today-settled strong,
+.todays-picks-table tbody tr.is-today-settled .pick-rec,
+.todays-picks-table tbody tr.is-today-settled .pick-time,
+.todays-picks-table tbody tr.is-today-settled .pick-place,
+.todays-picks-table tbody tr.is-today-settled .pick-type,
+.todays-picks-table tbody tr.is-today-settled .pick-racer,
+.todays-picks-table tbody tr.is-today-settled .pick-rank {
+  color: #dffbff !important;
+}
+.todays-picks-table tbody tr.is-today-settled .pick-time,
+.todays-picks-table tbody tr.is-today-settled .pick-til {
+  color: #67e8f9 !important;
+  font-weight: 800;
+}
+.todays-picks-table tbody tr.is-today-settled .pick-rec strong {
+  color: #fef08a !important;
+}
+.todays-picks-table tbody tr.is-today-settled .pick-link a {
+  color: #38bdf8;
+  text-decoration: none;
 }
 .today-races-panel {
   display: grid;
