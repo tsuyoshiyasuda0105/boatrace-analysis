@@ -92,9 +92,10 @@ services:
     branch: main
     region: singapore
     autoDeploy: true
-    # 22:00 UTC = 07:00 JST. Finish the stable-data prewarm before
-    # users start opening the morning race-detail pages.
-    schedule: "0 22 * * *"
+    # 21:45 UTC = 06:45 JST. Keep the heavy race-detail prewarm behind the
+    # first morning source/prediction/signal refresh so ROI pages become
+    # available first, then fill the detail caches.
+    schedule: "45 21 * * *"
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt

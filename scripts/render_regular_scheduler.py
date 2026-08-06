@@ -414,8 +414,10 @@ def run_morning(now: datetime) -> bool:
     ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
+    # Accident-based strategies and tags should be ready before the first
+    # morning prediction/signal materialization.
+    ok &= run_accident_self_heal(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
-    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     return ok
 
@@ -991,7 +993,10 @@ def main() -> int:
     # keeps the dashboard snapshot close to the five-minute cron cadence.
     if 6 <= now.hour <= 23:
         run_tide_self_heal(now)
-        run_signal_refresh_slot(now)
+        signal_ok = run_signal_refresh_slot(now)
+        if signal_ok and not task_success_exists("render_detail_tags_today", today):
+            ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
+            record_task("render_detail_tags_today", today, "success" if ok else "failure")
 
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
