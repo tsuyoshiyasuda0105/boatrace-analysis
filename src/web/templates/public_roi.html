@@ -1,84 +1,95 @@
 {% extends "base.html" %}
-{% block title %}公開用データ | BOATRACE WEB{% endblock %}
+{% block title %}公開ROI | BOATRACE WEB{% endblock %}
 
 {% block content %}
-<section class="public-roi-page">
-  <div class="public-roi-hero">
+<section class="public-roi-page public-roi-page-compact" data-public-roi-page>
+  <div class="public-roi-toolbar" data-public-roi-toolbar>
     <div>
-      <p class="public-roi-kicker">PUBLIC ROI SIGNAL</p>
-      <h2>{{ target_date }} 公開用データ</h2>
-      <p class="public-roi-lead">
-        ROIが高い候補だけを絞って表示します。条件詳細と具体的な閾値は公開前に固定し、
-        レース後に検証結果として開示する想定です。
-      </p>
+      <p class="public-roi-kicker">PUBLIC ROI LIST</p>
+      <h2>{{ target_date }} 公開ROI</h2>
     </div>
-    <div class="public-roi-stamp">
-      <span>候補</span>
-      <strong>{{ summary.count }}</strong>
-      <small>{% if computed_at %}算出 {{ computed_at[11:16] }}{% else %}cache only{% endif %}</small>
+    <div class="public-roi-toolbar-actions">
+      <button type="button" class="public-roi-toggle" data-toggle-public-header>
+        ヘッダーを閉じる
+      </button>
+      <span class="public-roi-count">{{ summary.count }}件</span>
     </div>
   </div>
 
-  <div class="public-roi-summary">
-    <div class="public-roi-metric">
-      <span>採用確定</span>
-      <b>{{ summary.confirmed }}</b>
-    </div>
-    <div class="public-roi-metric">
-      <span>条件待ち</span>
-      <b>{{ summary.waiting }}</b>
-    </div>
-    <div class="public-roi-metric">
-      <span>終了</span>
-      <b>{{ summary.closed }}</b>
-    </div>
-    <div class="public-roi-metric public-roi-metric-hot">
-      <span>最高検証ROI</span>
-      <b>{% if summary.max_recovery is not none %}{{ "%.1f"|format(summary.max_recovery) }}%{% else %}-{% endif %}</b>
-    </div>
+  <div class="public-roi-summary public-roi-summary-compact">
+    <div><span>採用</span><b>{{ summary.confirmed }}</b></div>
+    <div><span>条件待ち</span><b>{{ summary.waiting }}</b></div>
+    <div><span>終了</span><b>{{ summary.closed }}</b></div>
+    <div><span>最高ROI</span><b>{% if summary.max_recovery is not none %}{{ "%.1f"|format(summary.max_recovery) }}%{% else %}-{% endif %}</b></div>
   </div>
 
-  <div class="public-roi-note">
-    <strong>公開ルール</strong>
-    <span>レース・カテゴリ・検証ROI・件数・状態だけを公開。買い目、複合条件、閾値は公開ページでは伏せます。</span>
-  </div>
+  <p class="public-roi-mini-note">
+    X投稿用の簡易リストです。買い目は表示し、細かい条件・画像・説明文は省略しています。
+    {% if computed_at %}<span>更新 {{ computed_at[11:16] }}</span>{% endif %}
+  </p>
 
   {% if rows %}
-  <div class="public-roi-list">
-    {% for row in rows %}
-    <article class="public-roi-card public-roi-card-{{ row.status_tone }}">
-      <div class="public-roi-race">
-        <strong>{{ row.place }}</strong>
-        <span>{{ row.time or "時刻未定" }}</span>
-      </div>
-      <div class="public-roi-body">
-        <div class="public-roi-category">{{ row.category }}</div>
-        <div class="public-roi-sub">
-          {% if row.bet %}<span>買い目 {{ row.bet }}</span>{% endif %}
-          {{ row.rank }}
-          {% if row.n is not none %}<span>n={{ row.n }}</span>{% endif %}
-          {% if row.hit_rate is not none %}<span>的中率 {{ row.hit_rate }}%</span>{% endif %}
-        </div>
-      </div>
-      <div class="public-roi-score">
-        <strong>{{ "%.1f"|format(row.recovery) }}%</strong>
-        <span>検証ROI</span>
-      </div>
-      <div class="public-roi-status public-roi-status-{{ row.status_tone }}">
-        {{ row.status_label }}
-      </div>
-    </article>
-    {% endfor %}
+  <div class="public-roi-table-wrap">
+    <table class="public-roi-table" aria-label="公開ROIリスト">
+      <thead>
+        <tr>
+          <th>締切</th>
+          <th>会場R</th>
+          <th>買い目</th>
+          <th>候補</th>
+          <th>ROI</th>
+          <th>状態</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in rows %}
+        <tr class="public-roi-row public-roi-row-{{ row.status_tone }}">
+          <td class="public-roi-time">{{ row.time or "-" }}</td>
+          <td class="public-roi-place">{{ row.place }}</td>
+          <td class="public-roi-bet">{{ row.bet or "-" }}</td>
+          <td class="public-roi-category-cell">
+            <strong>{{ row.category }}</strong>
+            <small>
+              {{ row.rank }}
+              {% if row.n is not none %} / n={{ row.n }}{% endif %}
+              {% if row.hit_rate is not none %} / 的中{{ row.hit_rate }}%{% endif %}
+            </small>
+          </td>
+          <td class="public-roi-recovery">{{ "%.1f"|format(row.recovery) }}%</td>
+          <td><span class="public-roi-status public-roi-status-{{ row.status_tone }}">{{ row.status_label }}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
   {% else %}
   <div class="public-roi-empty">
-    <h3>公開対象の高ROI候補はありません</h3>
-    <p>本日は条件を満たす候補がないか、まだ事前生成データが反映されていません。</p>
+    <h3>公開対象のROI候補はありません</h3>
+    <p>条件を満たす候補がないか、まだ事前生成データが反映されていません。</p>
   </div>
   {% endif %}
-
-  <div class="public-roi-footer-note">
-    統計情報の公開サンプルです。投票の推奨、的中、利益を保証するものではありません。
-  </div>
 </section>
+
+<script>
+  (() => {
+    const page = document.querySelector("[data-public-roi-page]");
+    const button = document.querySelector("[data-toggle-public-header]");
+    if (!page || !button) return;
+
+    const setCollapsed = (collapsed) => {
+      document.body.classList.toggle("public-roi-header-collapsed", collapsed);
+      page.classList.toggle("is-screen-tight", collapsed);
+      button.textContent = collapsed ? "ヘッダーを開く" : "ヘッダーを閉じる";
+    };
+
+    const stored = localStorage.getItem("publicRoiHeaderCollapsed");
+    setCollapsed(stored === "1");
+
+    button.addEventListener("click", () => {
+      const next = !document.body.classList.contains("public-roi-header-collapsed");
+      localStorage.setItem("publicRoiHeaderCollapsed", next ? "1" : "0");
+      setCollapsed(next);
+    });
+  })();
+</script>
 {% endblock %}
