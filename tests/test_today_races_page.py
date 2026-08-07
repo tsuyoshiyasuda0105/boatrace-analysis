@@ -181,6 +181,64 @@ def test_races_page_excludes_roi_list_and_does_not_read_snapshot(monkeypatch):
     assert "const marketSignalsEnabled = false" in html
 
 
+def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch):
+    race = {
+        "race_id": "202607300101",
+        "race_date": "2026-07-30",
+        "race_number": 1,
+        "race_closed_at": "2026-07-30 08:32:00",
+        "stadium_number": 1,
+        "stadium_name": "Kiryu",
+        "results_count": 0,
+    }
+    snapshot = {
+        "version": web_app.TOP_PAGE_SNAPSHOT_VERSION,
+        "date": "2026-07-30",
+        "stadium_groups": [
+            {
+                "stadium_number": 1,
+                "stadium_name": "Kiryu",
+                "environment": {},
+                "races": [race],
+            }
+        ],
+        "initial_market_signals": {
+            "date": "2026-07-30",
+            "race_badges": {},
+            "accident_watch": {},
+        },
+        "empty": False,
+    }
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: snapshot)
+    monkeypatch.setattr(
+        web_app,
+        "_races_for_date",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("TOP snapshot path must not read races")
+        ),
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_hydrate_market_race_badges",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("TOP snapshot path must not hydrate badges")
+        ),
+    )
+    web_app.invalidate_cache()
+
+    app = web_app.create_app()
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["is_member"] = True
+
+    response = client.get("/races?date=2026-07-30")
+
+    assert response.status_code == 200
+    assert "Kiryu" in response.get_data(as_text=True)
+    assert "stale-while-revalidate=300" in response.headers["Cache-Control"]
+
+
 def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
     monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
 

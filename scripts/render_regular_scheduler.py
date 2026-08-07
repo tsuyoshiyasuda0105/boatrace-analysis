@@ -419,8 +419,23 @@ def run_morning(now: datetime) -> bool:
     ok &= run_accident_self_heal(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
+    ok &= run_top_page_snapshot(now, lightweight=False)
     return ok
 
+
+
+def run_top_page_snapshot(now: datetime, *, lightweight: bool) -> bool:
+    today = now.date().isoformat()
+    args = ["scripts/build_top_page_snapshot.py", "--date", today]
+    if lightweight:
+        args.append("--lightweight")
+    ok = run_py(args, timeout=900)
+    record_task(
+        "render_top_snapshot_lightweight" if lightweight else "render_top_snapshot_full",
+        today,
+        "success" if ok else "failure",
+    )
+    return ok
 
 
 def tide_refresh_needed(run_date: str) -> bool:
@@ -997,6 +1012,10 @@ def main() -> int:
         if signal_ok and not task_success_exists("render_detail_tags_today", today):
             ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
             record_task("render_detail_tags_today", today, "success" if ok else "failure")
+            if ok:
+                run_top_page_snapshot(now, lightweight=False)
+        elif signal_ok:
+            run_top_page_snapshot(now, lightweight=True)
 
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
@@ -1006,6 +1025,7 @@ def main() -> int:
             timeout=300,
         )
         run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
+        run_top_page_snapshot(now, lightweight=True)
 
     # Hourly summaries/health checks near the top of the hour.
     if now.minute < 5 and 9 <= now.hour <= 23:

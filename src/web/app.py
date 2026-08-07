@@ -579,7 +579,12 @@ def _normalize_race_badge_labels(race_badges: Any) -> dict[str, dict[str, Any]]:
     return normalized
 
 
-def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str, Any]:
+def _race_grid_badges_payload(
+    target_date: str,
+    race_ids: list[str],
+    *,
+    allow_expensive_fallback: bool = True,
+) -> dict[str, Any]:
     wanted = {str(rid) for rid in race_ids if rid}
     for cache_key in (
         _market_signals_last_good_cache_key(target_date),
@@ -588,7 +593,8 @@ def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str
         payload = _read_json_cache_stale(cache_key)
         if not isinstance(payload, dict) or payload.get("date") != target_date:
             continue
-        payload = _hydrate_market_race_badges(payload, target_date)
+        if allow_expensive_fallback:
+            payload = _hydrate_market_race_badges(payload, target_date)
         race_badges = payload.get("race_badges")
         if isinstance(race_badges, dict) and race_badges:
             race_badges = _normalize_race_badge_labels(race_badges)
@@ -602,6 +608,12 @@ def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str
                 "race_badges": filtered,
                 "accident_watch": {},
             }
+    if not allow_expensive_fallback:
+        return {
+            "date": target_date,
+            "race_badges": {},
+            "accident_watch": {},
+        }
     fallback_payload = _hydrate_market_race_badges(
         {"date": target_date, "signals": {}, "race_badges": {}},
         target_date,
@@ -624,6 +636,79 @@ def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str
         "race_badges": {},
         "accident_watch": {},
     }
+
+
+TOP_PAGE_SNAPSHOT_VERSION = "v1"
+
+
+def _top_page_snapshot_cache_key(target_date: str) -> str:
+    return f"top_page_snapshot:{TOP_PAGE_SNAPSHOT_VERSION}:{MARKET_SIGNALS_CACHE_VERSION}:{target_date}"
+
+
+def _build_top_page_snapshot_payload(
+    target_date: str,
+    *,
+    conn: Any = None,
+    allow_expensive_badges: bool = True,
+) -> dict[str, Any]:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
+    try:
+        races_list = _races_for_date(target_date, conn=conn)
+        venue_environment = _venue_environment_summaries_for_date(target_date, conn=conn)
+    finally:
+        if owns_connection:
+            conn.close()
+
+    stadium_groups: dict[int, dict[str, Any]] = {}
+    for race in races_list:
+        sn = race["stadium_number"]
+        if sn not in stadium_groups:
+            stadium_groups[sn] = {
+                "stadium_number": sn,
+                "stadium_name": race["stadium_name"],
+                "races": [],
+                "environment": venue_environment.get(sn, {}),
+            }
+        stadium_groups[sn]["races"].append(race)
+
+    race_ids = [str(r.get("race_id")) for r in races_list]
+    return {
+        "version": TOP_PAGE_SNAPSHOT_VERSION,
+        "date": target_date,
+        "generated_at": datetime.now(tz=JST).isoformat(timespec="seconds"),
+        "stadium_groups": sorted(
+            stadium_groups.values(),
+            key=lambda group: group["stadium_number"],
+        ),
+        "initial_market_signals": _race_grid_badges_payload(
+            target_date,
+            race_ids,
+            allow_expensive_fallback=allow_expensive_badges,
+        ),
+        "empty": not bool(races_list),
+    }
+
+
+def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    snapshot = payload or _build_top_page_snapshot_payload(target_date)
+    _write_json_cache(_top_page_snapshot_cache_key(target_date), snapshot)
+    return snapshot
+
+
+def _read_top_page_snapshot(target_date: str) -> Optional[dict[str, Any]]:
+    payload = _read_json_cache_stale(_top_page_snapshot_cache_key(target_date))
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("version") != TOP_PAGE_SNAPSHOT_VERSION:
+        return None
+    if payload.get("date") != target_date:
+        return None
+    groups = payload.get("stadium_groups")
+    if not isinstance(groups, list):
+        return None
+    return payload
 
 
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
@@ -5578,6 +5663,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # CDN ヒット率が大幅向上し、ユーザ体感速度が改善する。
     def races():
         target_date = request.args.get("date") or _today_jst_iso()
+        snapshot = _read_top_page_snapshot(target_date)
+        if snapshot is not None:
+            resp = make_response(render_template(
+                "index.html",
+                target_date=target_date,
+                today_iso=_today_jst_iso(),
+                stadium_groups=snapshot.get("stadium_groups") or [],
+                market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
+                market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
+                market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
+                initial_market_signals=snapshot.get("initial_market_signals") or {
+                    "date": target_date,
+                    "race_badges": {},
+                    "accident_watch": {},
+                },
+                roi_picks_visible=False,
+                empty=bool(snapshot.get("empty")),
+            ))
+            resp.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=300"
+            return resp
+
         with db_connect() as conn:
             races_list = _races_for_date(target_date, conn=conn)
             venue_environment = _venue_environment_summaries_for_date(
@@ -5635,6 +5741,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             initial_market_signals=_race_grid_badges_payload(
                 target_date,
                 [str(r.get("race_id")) for r in races_list],
+                allow_expensive_fallback=False,
             ),
             roi_picks_visible=False,
             empty=False,
@@ -5642,8 +5749,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # ROI candidates belong to /member/today-races.  The top race list does
         # not read or embed that cache, keeping DB capacity focused on races and
         # venue tags required for the first paint.
-        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=300"
         return resp
 
     @app.route("/member/today-races")
