@@ -567,10 +567,14 @@
     </div>
     </details>
 
-    <section class="start-prediction" data-start-prediction data-race-id="{{ info.race_id }}">
+    <details class="collapsible-section start-prediction-details" data-start-prediction-details>
+      <summary class="section-heading-collapsible">
+        <span>スタート簡易比較</span>
+      </summary>
+      <section class="start-prediction" data-start-prediction data-race-id="{{ info.race_id }}" data-start-prediction-src="{{ url_for('static', filename='start_prediction.js') }}?v={{ static_version }}">
       <div class="motor-history-loading">展開予測を読み込み中...</div>
-    </section>
+      </section>
+    </details>
   {% endif %}
   <script src="{{ url_for('static', filename='race_detail.js') }}?v={{ static_version }}" defer></script>
-  <script src="{{ url_for('static', filename='start_prediction.js') }}?v={{ static_version }}" defer></script>
 {% endblock %}

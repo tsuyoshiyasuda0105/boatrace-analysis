@@ -1632,19 +1632,18 @@ def _parse_local_datetime(value: Any) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace(" ", "T"))
+        dt = datetime.fromisoformat(str(value).replace(" ", "T"))
     except Exception:
         return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=JST)
+    return dt.astimezone(JST)
 
 
 def _format_jst_minute(value: Any) -> str:
     dt = _parse_local_datetime(value)
     if not dt:
         return "-"
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=JST)
-    else:
-        dt = dt.astimezone(JST)
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
@@ -5103,6 +5102,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         elif path == "/races" or path.startswith("/race/"):
             # HTML ページ: 過去日は長く、今日は短く
             try:
+                existing_cache_control = str(response.headers.get("Cache-Control") or "")
+                if "stale-while-revalidate" in existing_cache_control:
+                    return response
                 req_date = request.args.get("date", "")
                 # /race/<id> は race_id から日付抽出 (path の数字 8 桁)
                 if not req_date and path.startswith("/race/"):
@@ -5816,7 +5818,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return resp
 
     @app.route("/member/today-races")
-    @admin_required
+    @login_required
     @cached(ttl=30, past_ttl=3600)
     def member_today_races():
         target_date = request.args.get("date") or _today_jst_iso()
@@ -5881,7 +5883,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
 
     @app.route("/member/today-races/history")
-    @admin_required
+    @login_required
     @cached(ttl=60, past_ttl=3600)
     def member_today_race_history():
         today_iso = _today_jst_iso()
@@ -6059,8 +6061,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         should_check_result = True
         if info.get("race_date") >= _today_jst_iso() and closed_at_raw:
             try:
-                closed_at = datetime.fromisoformat(str(closed_at_raw).replace(" ", "T"))
-                if closed_at > (_now_jst() if closed_at.tzinfo is None else datetime.now(closed_at.tzinfo)):
+                closed_at = _parse_local_datetime(closed_at_raw)
+                if closed_at and closed_at > _now_jst():
                     should_check_result = False
             except Exception:
                 should_check_result = True
@@ -8717,12 +8719,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """Return True from five minutes before close; weather is judged then."""
             if not race_closed_at:
                 return False
-            try:
-                closed = datetime.fromisoformat(str(race_closed_at).replace(" ", "T"))
-            except (TypeError, ValueError):
+            closed = _parse_local_datetime(race_closed_at)
+            if not closed:
                 return False
-            now = datetime.now(closed.tzinfo) if closed.tzinfo else _now_jst()
-            return now >= closed - timedelta(minutes=5)
+            return _now_jst() >= closed - timedelta(minutes=5)
 
         def _l4_rank(natl_1, local_1):
             """1号艇選手の成績から L4 のサブランク判定 (単一情報源を委譲)"""
