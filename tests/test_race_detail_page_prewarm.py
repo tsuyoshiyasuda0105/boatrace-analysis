@@ -118,6 +118,14 @@ def test_venue_environment_accepts_timezone_aware_race_closed_at(monkeypatch):
     assert result[2]["fetched_at_label"] == "2026-08-08 12:00"
 
 
+def test_race_detail_datetime_checks_use_jst_normalizer():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+
+    assert "closed_at = _parse_local_datetime(closed_at_raw)" in source
+    assert "closed = _parse_local_datetime(race_closed_at)" in source
+    assert "datetime.fromisoformat(str(race_closed_at).replace" not in source
+
+
 def test_attach_race_detail_display_facts_skips_db_when_preds_are_already_complete(monkeypatch):
     preds = [
         {

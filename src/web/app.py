@@ -6061,8 +6061,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         should_check_result = True
         if info.get("race_date") >= _today_jst_iso() and closed_at_raw:
             try:
-                closed_at = datetime.fromisoformat(str(closed_at_raw).replace(" ", "T"))
-                if closed_at > (_now_jst() if closed_at.tzinfo is None else datetime.now(closed_at.tzinfo)):
+                closed_at = _parse_local_datetime(closed_at_raw)
+                if closed_at and closed_at > _now_jst():
                     should_check_result = False
             except Exception:
                 should_check_result = True
@@ -8719,12 +8719,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             """Return True from five minutes before close; weather is judged then."""
             if not race_closed_at:
                 return False
-            try:
-                closed = datetime.fromisoformat(str(race_closed_at).replace(" ", "T"))
-            except (TypeError, ValueError):
+            closed = _parse_local_datetime(race_closed_at)
+            if not closed:
                 return False
-            now = datetime.now(closed.tzinfo) if closed.tzinfo else _now_jst()
-            return now >= closed - timedelta(minutes=5)
+            return _now_jst() >= closed - timedelta(minutes=5)
 
         def _l4_rank(natl_1, local_1):
             """1号艇選手の成績から L4 のサブランク判定 (単一情報源を委譲)"""
