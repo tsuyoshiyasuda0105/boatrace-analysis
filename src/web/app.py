@@ -3384,6 +3384,10 @@ def _attach_accident_watch_tags(race_id: str, preds: list[dict]) -> None:
         p["accident_rate"] = acc["rate"]
         p["accident_points"] = acc["points"]
         p["accident_starts"] = acc["starts"]
+        if acc.get("flying_count") is not None:
+            p["flying_count"] = max(int(p.get("flying_count") or 0), int(acc.get("flying_count") or 0))
+        if acc.get("late_count") is not None:
+            p["late_count"] = max(int(p.get("late_count") or 0), int(acc.get("late_count") or 0))
         p["has_accident_watch"] = acc["rate"] >= 0.7
         if acc["rate"] >= 0.7:
             p["accident_display_level"] = "high"
@@ -3410,7 +3414,8 @@ def _accident_watch_map(
                 SELECT racer_number,
                        accident_rate,
                        accident_points,
-                       starts_count
+                       starts_count,
+                       accident_codes_raw
                   FROM racer_accident_external_snapshots
                  WHERE period_start = ?
                    AND period_end = ?
@@ -3425,7 +3430,8 @@ def _accident_watch_map(
                 SELECT racer_number,
                        accident_rate,
                        accident_points,
-                       starts_count
+                       starts_count,
+                       NULL AS accident_codes_raw
                   FROM racer_accident_period_stats
                  WHERE period_start = ?
                    AND period_end = ?
@@ -3435,16 +3441,19 @@ def _accident_watch_map(
                 """,
                 (period_start, period_end, *racer_numbers),
             ).fetchall()
-    out: dict[int, dict[str, int | float]] = {}
-    for racer_number, rate, points, starts in rows:
+    out: dict[int, dict[str, int | float | None]] = {}
+    for racer_number, rate, points, starts, codes_raw in rows:
         try:
             key = int(racer_number)
         except Exception:
             continue
+        codes = str(codes_raw or "")
         out[key] = {
             "rate": round(float(rate or 0.0), 3),
             "points": int(points or 0),
             "starts": int(starts or 0),
+            "flying_count": codes.count("F") if codes else None,
+            "late_count": codes.count("L") if codes else None,
         }
     return out
 
@@ -3869,7 +3878,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v5"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v10"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v11"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -3933,6 +3942,8 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
                     "accident_rate": rate,
                     "accident_points": int(accident["points"]),
                     "accident_starts": int(accident["starts"]),
+                    "flying_count": accident.get("flying_count"),
+                    "late_count": accident.get("late_count"),
                     "has_accident_watch": rate >= 0.7,
                     "accident_display_level": (
                         "high" if rate >= 0.7 else "watch" if rate >= 0.5 else None
@@ -6050,8 +6061,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     fallback_notice = "予測データ未投入のため、出走表ベースの詳細を表示しています。"
             # Keep the request path read-only and fast. The scheduled prewarm
             # job generates these historical tags ahead of page access.
-            _attach_precomputed_race_detail_tags(race_id, preds)
             _attach_race_detail_display_facts(race_id, preds)
+            _attach_precomputed_race_detail_tags(race_id, preds)
             _attach_motor_fact_grades(
                 race_id, preds, info=info, allow_ace_recompute=False
             )
@@ -6072,8 +6083,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 user_msg = f"予測エラー: {err_str[:200]}"
             preds = _race_entry_fallback_rows(race_id)
             if preds:
-                _attach_precomputed_race_detail_tags(race_id, preds)
                 _attach_race_detail_display_facts(race_id, preds)
+                _attach_precomputed_race_detail_tags(race_id, preds)
                 _attach_motor_fact_grades(
                     race_id, preds, info=info, allow_ace_recompute=False
                 )

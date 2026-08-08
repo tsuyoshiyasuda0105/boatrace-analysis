@@ -497,3 +497,14 @@ def test_render_jobs_build_derived_start_stats_before_roi_signals():
     assert exhibition_signal_block.index('"scripts/build_derived_start_stats.py"') < exhibition_signal_block.index(
         '"scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date'
     )
+
+
+def test_race_detail_fl_counts_fallback_to_external_accident_codes():
+    source = _read("src/web/app.py")
+
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v11"' in source
+    assert "accident_codes_raw" in source
+    assert 'codes.count("F")' in source
+    assert 'codes.count("L")' in source
+    assert 'p["flying_count"] = max(int(p.get("flying_count") or 0), int(acc.get("flying_count") or 0))' in source
+    assert 'p["late_count"] = max(int(p.get("late_count") or 0), int(acc.get("late_count") or 0))' in source
