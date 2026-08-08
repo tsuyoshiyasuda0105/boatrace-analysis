@@ -61,6 +61,42 @@ def _hash_ip(ip: str) -> str:
     return hashlib.sha256(ip.encode("utf-8")).hexdigest()[:16]
 
 
+def _table_columns(conn, table_name: str) -> set[str]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema='public' AND table_name = ?
+            """,
+            (table_name,),
+        ).fetchall()
+        if rows:
+            return {str(row[0]) for row in rows}
+    except Exception:
+        pass
+
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    except Exception:
+        return set()
+    return {str(row[1]) for row in rows}
+
+
+def _ensure_schema(conn) -> None:
+    columns = _table_columns(conn, "alert_subscribers")
+    if not columns:
+        return
+
+    for column_name, ddl in (
+        ("subject_template", "ALTER TABLE alert_subscribers ADD COLUMN subject_template TEXT"),
+        ("body_template", "ALTER TABLE alert_subscribers ADD COLUMN body_template TEXT"),
+    ):
+        if column_name not in columns:
+            conn.execute(ddl)
+            columns.add(column_name)
+
+
 def subscribe(
     email: str,
     alert_types: list[str],
@@ -95,6 +131,7 @@ def subscribe(
     ip_hashed = _hash_ip(ip)
 
     with db_connect() as conn:
+        _ensure_schema(conn)
         # 既存登録があれば「再認証」扱いで token を上書き
         existing = conn.execute(
             "SELECT email_hash, is_verified FROM alert_subscribers WHERE email_hash = ?",
@@ -141,6 +178,7 @@ def verify(token: str) -> Optional[str]:
     if not token:
         return None
     with db_connect() as conn:
+        _ensure_schema(conn)
         row = conn.execute(
             """SELECT email_hash, verification_expires_at FROM alert_subscribers
                WHERE verification_token = ? AND is_active = 1""",
@@ -190,6 +228,7 @@ def list_active_subscribers() -> list[dict]:
     複号はここで実施 (送信処理から呼ばれる)。"""
     out = []
     with db_connect() as conn:
+        _ensure_schema(conn)
         cur = conn.execute(
             """SELECT email_hash, email_encrypted, alert_types,
                       min_recovery_rate, unsubscribe_token

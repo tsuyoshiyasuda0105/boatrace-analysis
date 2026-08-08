@@ -34,9 +34,19 @@ if hasattr(time, "tzset"):
 JST = ZoneInfo("Asia/Tokyo")
 
 
+def _now_jst() -> datetime:
+    """Return current JST datetime, independent of OS/TZ quirks."""
+    return datetime.now(JST)
+
+
+def _today_jst_date() -> date:
+    """Return today's date in JST, independent of OS/TZ quirks."""
+    return _now_jst().date()
+
+
 def _today_jst_iso() -> str:
     """Return today's date in JST, independent of OS/TZ quirks."""
-    return datetime.now(JST).date().isoformat()
+    return _today_jst_date().isoformat()
 
 from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 
@@ -776,7 +786,7 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
             # 過去日リクエストは長期キャッシュ
             effective_ttl = ttl
             try:
-                today_iso = date.today().isoformat()
+                today_iso = _today_jst_iso()
                 if request:
                     req_date = request.args.get("date", "")
                     if req_date and req_date < today_iso:
@@ -1829,8 +1839,8 @@ def _venue_environment_summaries_for_date_impl(
         d = dict(zip(keys, row))
         grouped.setdefault(int(d["stadium_number"]), []).append(d)
 
-    now_dt = datetime.now()
-    is_today = target_date == date.today().isoformat()
+    now_dt = _now_jst()
+    is_today = target_date == _today_jst_iso()
     out: dict[int, dict[str, Any]] = {}
 
     def _data_score(row: dict[str, Any]) -> int:
@@ -2376,7 +2386,7 @@ def _kimarite_skill_tags_for_race_cached(
     info = _race_basic_info(race_id)
     if not info:
         return {}
-    today_iso = date.today().isoformat()
+    today_iso = _today_jst_iso()
     cache_key = f"race_kimarite_tags:v2:{race_id}"
     cache_ttl = 300 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -3141,7 +3151,7 @@ def _race_actual_result_cached(
     info = _race_basic_info(race_id)
     if not info:
         return None
-    today_iso = date.today().isoformat()
+    today_iso = _today_jst_iso()
     cache_key = f"race_actual_result:{race_id}"
     cache_ttl = 120 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -3227,7 +3237,7 @@ def _race_current_conditions_cached(
     info = _race_basic_info(race_id)
     if not info:
         return _race_current_conditions(race_id)
-    today_iso = date.today().isoformat()
+    today_iso = _today_jst_iso()
     cache_key = f"race_conditions:{race_id}"
     cache_ttl = 180 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -4028,9 +4038,42 @@ def _attach_precomputed_race_detail_tags(race_id: str, preds: list[dict]) -> Non
                 pred[key] = value
 
 
+_RACE_DETAIL_DISPLAY_FACT_KEYS = (
+    "branch_number",
+    "branch_label",
+    "age",
+    "weight",
+    "flying_count",
+    "late_count",
+    "national_top_1_percent",
+    "national_top_2_percent",
+    "local_top_2_percent",
+    "tilt_adjustment",
+    "avg_start_timing",
+    "dash_time",
+    "turn_time",
+    "straight_time",
+    "current_course_number",
+    "venue_recent10_course_win_starts",
+    "venue_recent10_course_win_rate",
+    "national_course_win_starts",
+    "national_course_win_rate",
+    "national_course_second_rate",
+    "national_course_top3_rate",
+)
+
+
+def _preds_have_race_detail_display_facts(preds: list[dict]) -> bool:
+    if not preds:
+        return True
+    return all(all(key in pred for key in _RACE_DETAIL_DISPLAY_FACT_KEYS) for pred in preds)
+
+
 def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
     """Attach current entry/preview facts omitted by older prediction caches."""
     if not preds:
+        return
+    if _preds_have_race_detail_display_facts(preds):
         return
     with db_connect() as conn:
         info_row = conn.execute(
@@ -5040,7 +5083,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         response.headers["Expires"] = "0"
                         return response
                     req_date = request.args.get("date", "")
-                    if req_date and req_date < date.today().isoformat():
+                    if req_date and req_date < _today_jst_iso():
                         response.headers["Cache-Control"] = "private, max-age=600"
                     else:
                         response.headers["Cache-Control"] = "private, max-age=60"
@@ -5066,7 +5109,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     rid = path.split("/")[-1]
                     if len(rid) >= 8 and rid[:8].isdigit():
                         req_date = f"{rid[:4]}-{rid[4:6]}-{rid[6:8]}"
-                if req_date and req_date < date.today().isoformat():
+                if req_date and req_date < _today_jst_iso():
                     # 過去日 HTML: 5 分キャッシュ (L4 マーク更新を反映するため)
                     response.headers["Cache-Control"] = "public, max-age=300, must-revalidate"
                 else:
@@ -5211,7 +5254,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return {"system_warnings": cache["warnings"]}
         warnings_list: list[dict] = []
         try:
-            today_iso = date.today().isoformat()
+            today_iso = _today_jst_iso()
             with db_connect() as conn:
                 cur = conn.execute(
                     "SELECT check_name, status, message, checked_at "
@@ -5309,7 +5352,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # データ品質 (今日の system_status 集計) は 200 のまま JSON のみ
         try:
-            today_iso = date.today().isoformat()
+            today_iso = _today_jst_iso()
             with db_connect() as conn:
                 cur = conn.execute(
                     "SELECT status, COUNT(*) FROM system_status "
@@ -5330,7 +5373,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # 当日投入件数の軽量サマリを返す。候補ゼロとデータ未投入を切り分けるための補助。
         try:
-            today_iso = date.today().isoformat()
+            today_iso = _today_jst_iso()
             with db_connect() as conn:
                 row = conn.execute(
                     """
@@ -5373,7 +5416,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return [], {}
 
         race_by_id = {str(r.get("race_id")): r for r in races_list}
-        today_iso = date.today().isoformat()
+        today_iso = _today_jst_iso()
         cache_ttl = 15 if target_date >= today_iso else 3600
         signal_payload, _signal_cache_state = _read_best_market_signals_snapshot(
             target_date,
@@ -5606,7 +5649,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @admin_required
     @cached(ttl=60, past_ttl=3600)
     def public_roi():
-        target_date = request.args.get("date") or date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
         try:
             with db_connect() as conn:
                 races_list = _races_for_date(target_date, conn=conn)
@@ -5636,7 +5679,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return render_template(
             "public_roi.html",
             target_date=target_date,
-            today_iso=date.today().isoformat(),
+            today_iso=_today_jst_iso(),
             date_form_action=url_for("public_roi"),
             rows=public_rows,
             summary=summary,
@@ -6014,10 +6057,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         actual_result = None
         closed_at_raw = info.get("race_closed_at")
         should_check_result = True
-        if info.get("race_date") >= date.today().isoformat() and closed_at_raw:
+        if info.get("race_date") >= _today_jst_iso() and closed_at_raw:
             try:
                 closed_at = datetime.fromisoformat(str(closed_at_raw).replace(" ", "T"))
-                if closed_at > datetime.now():
+                if closed_at > (_now_jst() if closed_at.tzinfo is None else datetime.now(closed_at.tzinfo)):
                     should_check_result = False
             except Exception:
                 should_check_result = True
@@ -6646,8 +6689,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
           理由: 旧設定では T-5 目標時刻から UI 表示まで中央値 56s/最悪 113s かかっていた。
           新設定: 中央値 ~12s, 最悪 ~50s。BAN リスクなし(自社 API のみ短縮)。
         """
-        target_date = request.args.get("date") or date.today().isoformat()
-        today_iso = date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
+        today_iso = _today_jst_iso()
         cache_ttl = 8 if target_date >= today_iso else 3600
         cache_key = f"odds_123_timeline:{target_date}"
         cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -6707,8 +6750,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
           2. final 払戻 MIN (上記オッズが無い過去日のフォールバック)
         各レースのトリフェクタ1番人気の払戻を見て +EV/-EV ゾーンを判定
         """
-        target_date = request.args.get("date") or date.today().isoformat()
-        today_iso = date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
+        today_iso = _today_jst_iso()
         cache_ttl = 15 if target_date >= today_iso else 3600
         force_recompute = _effective_force_recompute()
         # v6: avoid serving stale empty signals after race data catches up.
@@ -7008,7 +7051,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 logger.warning("cached start-prediction filter overlay failed: %s", e)
             return payload
 
-        recent_cache_floor = (date.today() - timedelta(days=2)).isoformat()
+        recent_cache_floor = (_today_jst_date() - timedelta(days=2)).isoformat()
 
         def _with_current_data_status(payload: Any) -> Any:
             """Overlay live source counts without rebuilding cached signals."""
@@ -7101,7 +7144,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             pending_payload = {
                 "date": target_date,
                 "cache_version": MARKET_SIGNALS_CACHE_VERSION,
-                "computed_at": datetime.now().isoformat(timespec="seconds"),
+                "computed_at": _now_jst().isoformat(timespec="seconds"),
                 "n_races": 0,
                 "n_positive_ev": 0,
                 "n_l4": 0,
@@ -8678,7 +8721,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 closed = datetime.fromisoformat(str(race_closed_at).replace(" ", "T"))
             except (TypeError, ValueError):
                 return False
-            now = datetime.now(closed.tzinfo) if closed.tzinfo else datetime.now()
+            now = datetime.now(closed.tzinfo) if closed.tzinfo else _now_jst()
             return now >= closed - timedelta(minutes=5)
 
         def _l4_rank(natl_1, local_1):
@@ -14378,7 +14421,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         payload = {
             "date": target_date,
             "cache_version": MARKET_SIGNALS_CACHE_VERSION,
-            "computed_at": datetime.now().isoformat(timespec="seconds"),
+                "computed_at": _now_jst().isoformat(timespec="seconds"),
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
@@ -19286,7 +19329,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         単勝 / 2連単1-2 / 3連単1-2-3 の通算 ROI を併記。
         A2 派生 は別戦略のため明細には表示せず、L4 [A1] のみ。
         """
-        target_date = request.args.get("date") or date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
         try:
             date.fromisoformat(target_date)
         except ValueError:
@@ -19321,7 +19364,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return render_template(
             "member_strategy_races.html",
             target_date=target_date,
-            today_iso=date.today().isoformat(),
+            today_iso=_today_jst_iso(),
             races=races,
             n_total=n_total,
             n_pp=n_pp, n_p=n_p,
@@ -19989,7 +20032,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def member_strategy():
         """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
         from datetime import timedelta
-        today = date.today()
+        today = _today_jst_date()
         to_d = request.args.get("to") or today.isoformat()
         # ROI 画面の既定表示は 1年6か月分に拡張
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
@@ -20208,7 +20251,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             health_results=[],
             from_date=from_d,
             to_date=to_d,
-            today_iso=date.today().isoformat(),
+            today_iso=_today_jst_iso(),
             recomputed=force_recompute,
         )
         _write_page_html_cache(page_cache_key, html)
@@ -20221,7 +20264,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """月別 ROI (長期推移) 専用ページ — テーブル + 推移グラフ。
         backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
         """
-        today = date.today()
+        today = _today_jst_date()
         monthly_from = "2024-06-01"
         monthly_to   = today.isoformat()
         # keep visible near the top for source-regression coverage:
@@ -20400,7 +20443,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """
         from datetime import timedelta
         from src.evaluation.strategy_monitor import evaluate_all_strategies
-        today = date.today()
+        today = _today_jst_date()
         to_d = request.args.get("to") or today.isoformat()
         # backlog item 19: デフォルトは「今日から 1 ヶ月前」
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
@@ -20450,7 +20493,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     def member_accidents():
         """事故率の選手一覧。夜間集計済みスナップショットを表示する。"""
-        today_iso = date.today().isoformat()
+        today_iso = _today_jst_iso()
         selected_period = request.args.get("period") or _accident_period_start_for_date(today_iso)
         class_filter = (request.args.get("class") or "all").strip().lower()
         if class_filter not in {"all", "a", "a1", "a2", "b1", "b2"}:
@@ -20675,7 +20718,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def api_l4_stats():
         """JSON 版 (グラフ用)"""
         from datetime import timedelta
-        today = date.today()
+        today = _today_jst_date()
         to_d = request.args.get("to") or today.isoformat()
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
         rows = _candidate_134_daily_stats(from_d, to_d)

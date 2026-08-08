@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS alert_subscribers (
   created_at              TEXT NOT NULL,
   last_notified_at        TEXT,
   notify_count            INTEGER NOT NULL DEFAULT 0,
-  ip_at_signup            TEXT
+  ip_at_signup            TEXT,
+  subject_template        TEXT,
+  body_template           TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_alert_sub_active ON alert_subscribers(is_active, is_verified);
 
@@ -68,7 +70,9 @@ CREATE TABLE IF NOT EXISTS alert_subscribers (
   created_at         TEXT NOT NULL,
   last_notified_at   TEXT,
   notify_count       INTEGER NOT NULL DEFAULT 0,
-  ip_at_signup       TEXT
+  ip_at_signup       TEXT,
+  subject_template   TEXT,
+  body_template      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_alert_sub_active ON alert_subscribers(is_active, is_verified);
 

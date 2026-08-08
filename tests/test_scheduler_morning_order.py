@@ -30,6 +30,6 @@ def test_race_detail_cron_schedule_moves_after_morning_refresh():
     src = (REPO / "render.yaml").read_text(encoding="utf-8")
 
     cron_idx = src.index("name: boatrace-race-detail-cron")
-    schedule_idx = src.index('schedule: "45 21 * * *"', cron_idx)
+    schedule_idx = src.index('schedule: "0 19 * * *"', cron_idx)
 
     assert schedule_idx > cron_idx
