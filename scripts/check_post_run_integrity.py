@@ -200,6 +200,113 @@ def check_motor_history_caches(conn, target_date: str, race_ids: list[str] | Non
     return "ok", f"モーター履歴キャッシュOK {len(motor_keys)}件", detail
 
 
+def check_motor_history_caches(conn, target_date: str, race_ids: list[str] | None = None) -> tuple[str, str, dict]:
+    target_races = _select_race_ids(conn, target_date, race_ids)
+    if not target_races:
+        return "error", "target races not found", {"race_count": 0}
+    race_rows = conn.execute(
+        f"""
+        SELECT race_id, stadium_number, race_number
+          FROM races
+         WHERE race_id IN ({_placeholders(target_races)})
+         ORDER BY stadium_number, race_number
+        """,
+        tuple(target_races),
+    ).fetchall()
+    race_meta = {
+        str(row[0]): {"stadium_number": row[1], "race_number": row[2]}
+        for row in race_rows
+    }
+    expected = [
+        (race_id, boat, f"motor_history_{MOTOR_CACHE_VERSION}:{race_id}:{boat}")
+        for race_id in target_races
+        for boat in range(1, 7)
+    ]
+    payloads: dict[str, str] = {}
+    for start in range(0, len(expected), 900):
+        chunk = [key for _race_id, _boat, key in expected[start : start + 900]]
+        rows = conn.execute(
+            f"SELECT cache_key, html FROM page_html_cache WHERE cache_key IN ({_placeholders(chunk)})",
+            tuple(chunk),
+        ).fetchall()
+        payloads.update({str(row[0]): row[1] for row in rows})
+
+    missing: list[str] = []
+    invalid: list[dict] = []
+    missing_by_stadium: dict[str, int] = {}
+    invalid_by_stadium: dict[str, int] = {}
+
+    def add_count(bucket: dict[str, int], race_id: str) -> None:
+        meta = race_meta.get(race_id) or {}
+        stadium = str(meta.get("stadium_number") or "-")
+        bucket[stadium] = bucket.get(stadium, 0) + 1
+
+    for race_id, boat, key in expected:
+        raw = payloads.get(key)
+        if raw is None:
+            missing.append(key)
+            add_count(missing_by_stadium, race_id)
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception as exc:  # noqa: BLE001
+            invalid.append({"cache_key": key, "reason": f"json:{type(exc).__name__}"})
+            add_count(invalid_by_stadium, race_id)
+            continue
+        if not isinstance(payload, dict):
+            invalid.append({"cache_key": key, "reason": "not_object"})
+            add_count(invalid_by_stadium, race_id)
+            continue
+
+        position_rows = payload.get("position_rows")
+        position_boats: set[int] = set()
+        if isinstance(position_rows, list):
+            for row in position_rows:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    boat_no = int(row.get("boat_number") or 0)
+                except (TypeError, ValueError):
+                    boat_no = 0
+                if 1 <= boat_no <= 6:
+                    position_boats.add(boat_no)
+        history_rows = payload.get("history")
+        reasons: list[str] = []
+        if "current" not in payload:
+            reasons.append("missing_current")
+        if len(position_boats) < 6:
+            reasons.append(f"position_boats={len(position_boats)}")
+        if not isinstance(history_rows, list) or not history_rows:
+            reasons.append("empty_history")
+        if reasons:
+            meta = race_meta.get(race_id) or {}
+            invalid.append(
+                {
+                    "cache_key": key,
+                    "race_id": race_id,
+                    "stadium_number": meta.get("stadium_number"),
+                    "race_number": meta.get("race_number"),
+                    "boat": boat,
+                    "reason": ",".join(reasons),
+                }
+            )
+            add_count(invalid_by_stadium, race_id)
+
+    detail = {
+        "target_races": len(target_races),
+        "expected_motor_histories": len(expected),
+        "missing_motor_histories": missing[:20],
+        "missing_motor_histories_count": len(missing),
+        "invalid_motor_histories": invalid[:20],
+        "invalid_motor_histories_count": len(invalid),
+        "missing_by_stadium": missing_by_stadium,
+        "invalid_by_stadium": invalid_by_stadium,
+    }
+    if missing or invalid:
+        return "error", f"motor history cache incomplete {len(missing) + len(invalid)} items", detail
+    return "ok", f"motor history cache OK {len(expected)} items", detail
+
+
 def check_accident_integrity(conn, target_date: str, _race_ids: list[str] | None = None) -> tuple[str, str, dict]:
     period_start = accident_period_start_for_date(target_date)
     preferred_source_row = conn.execute(

@@ -108,6 +108,9 @@ def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
     assert "def check_accident_integrity" in source
     assert "assigned_motor_number IS NOT NULL" in source
     assert "motor_history_" in source
+    assert "invalid_motor_histories_count" in source
+    assert "position_boats" in source
+    assert "missing_current" in source
     assert "_race_detail_page_cache_key" in source
     assert "_race_detail_tag_cache_key" in source
     assert "racer_accident_period_stats" in source

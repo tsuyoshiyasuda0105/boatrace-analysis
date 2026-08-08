@@ -5729,20 +5729,40 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             stadium_groups[sn]["races"].append(r)
 
+        initial_market_signals = _race_grid_badges_payload(
+            target_date,
+            [str(r.get("race_id")) for r in races_list],
+            allow_expensive_fallback=False,
+        )
+        sorted_stadium_groups = sorted(
+            stadium_groups.values(),
+            key=lambda g: g["stadium_number"],
+        )
+        try:
+            _write_top_page_snapshot(
+                target_date,
+                {
+                    "version": TOP_PAGE_SNAPSHOT_VERSION,
+                    "date": target_date,
+                    "generated_at": datetime.now(tz=JST).isoformat(timespec="seconds"),
+                    "stadium_groups": sorted_stadium_groups,
+                    "initial_market_signals": initial_market_signals,
+                    "empty": False,
+                    "source": "web-lightweight-fallback",
+                },
+            )
+        except Exception:
+            logger.exception("failed to write lightweight TOP snapshot: %s", target_date)
+
         resp = make_response(render_template(
             "index.html",
             target_date=target_date,
             today_iso=_today_jst_iso(),
-            stadium_groups=sorted(stadium_groups.values(),
-                                  key=lambda g: g["stadium_number"]),
+            stadium_groups=sorted_stadium_groups,
             market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
             market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
             market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
-            initial_market_signals=_race_grid_badges_payload(
-                target_date,
-                [str(r.get("race_id")) for r in races_list],
-                allow_expensive_fallback=False,
-            ),
+            initial_market_signals=initial_market_signals,
             roi_picks_visible=False,
             empty=False,
         ))

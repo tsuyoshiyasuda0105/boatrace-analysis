@@ -181,6 +181,25 @@ def test_races_page_excludes_roi_list_and_does_not_read_snapshot(monkeypatch):
     assert "const marketSignalsEnabled = false" in html
 
 
+def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
+    written = {}
+
+    def fake_write(target_date, payload=None):
+        written["target_date"] = target_date
+        written["payload"] = payload
+        return payload
+
+    client = _member_client(monkeypatch)
+    monkeypatch.setattr(web_app, "_write_top_page_snapshot", fake_write)
+
+    response = client.get("/races?date=2026-07-30")
+
+    assert response.status_code == 200
+    assert written["target_date"] == "2026-07-30"
+    assert written["payload"]["source"] == "web-lightweight-fallback"
+    assert written["payload"]["stadium_groups"]
+
+
 def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch):
     race = {
         "race_id": "202607300101",
