@@ -469,6 +469,20 @@ def test_reference_market_signals_are_not_today_roi_candidates():
     assert "if (isRef && (level === 'morning_general' || level === 'general'))" not in block
 
 
+def test_inside_escape_signals_with_entry_change_caution_are_excluded():
+    src = _read("src/web/app.py")
+    assert "def _market_signal_is_inside_escape" in src
+    assert "def _race_has_entry_change_caution_outside_in" in src
+
+    route_start = src.index("def market_signals_for_date():")
+    route_end = src.index("@app.route", route_start + 1)
+    route = src[route_start:route_end]
+
+    assert "_market_signal_is_inside_escape(l4)" in route
+    assert "_race_has_entry_change_caution_outside_in(race_id)" in route
+    assert "filtered_signals.append(s)" in route
+
+
 def test_render_jobs_build_derived_start_stats_before_roi_signals():
     scheduler = _read("scripts/render_regular_scheduler.py")
     assert "def run_derived_start_stats(" in scheduler

@@ -1670,6 +1670,34 @@ def _parse_market_signal_bets_for_roi(l4: dict) -> list[tuple[str, str]]:
     return [("win", win_match.group(1))] if win_match else []
 
 
+def _market_signal_is_inside_escape(l4: dict | None) -> bool:
+    bets = _parse_market_signal_bets_for_roi(l4 or {})
+    if not bets:
+        return False
+    for bet_type, combo in bets:
+        if bet_type == "win":
+            if str(combo) != "1":
+                return False
+            continue
+        if str(combo).split("-", 1)[0] != "1":
+            return False
+    return True
+
+
+def _race_has_entry_change_caution_outside_in(race_id: str) -> bool:
+    detail_tags = _race_detail_tag_snapshot(race_id, recompute=False)
+    boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else {}
+    if not isinstance(boats, dict):
+        return False
+    for boat_key, boat_tag in boats.items():
+        boat_no = _safe_int(boat_key)
+        if boat_no is None or boat_no <= 1:
+            continue
+        if isinstance(boat_tag, dict) and boat_tag.get("entry_change_tag"):
+            return True
+    return False
+
+
 def _format_race_id(race_id: str) -> tuple[str, int, int]:
     """'YYYYMMDD-SS-RR' → (date_str, stadium, race_no)"""
     parts = race_id.split("-")
@@ -14511,6 +14539,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     level in adopted_signal_levels or level in adopted_watch_levels
                     for level in level_candidates
                 ):
+                    race_id = str(s.get("race_id") or "")
+                    if (
+                        race_id
+                        and _market_signal_is_inside_escape(l4)
+                        and _race_has_entry_change_caution_outside_in(race_id)
+                    ):
+                        continue
                     filtered_signals.append(s)
             signals = filtered_signals
 
