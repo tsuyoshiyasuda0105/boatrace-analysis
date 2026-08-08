@@ -3,6 +3,42 @@
   const inspectorShell = document.getElementById("motor-inspector-shell");
   const inspectorBody = inspectorShell?.querySelector("[data-motor-inspector-body]");
   const staticVersion = shell?.dataset?.staticVersion || "v1";
+  const startPredictionShell = document.querySelector("[data-start-prediction]");
+  const startPredictionDetails = document.querySelector("[data-start-prediction-details]");
+  let startPredictionScriptPromise;
+
+  const ensureStartPredictionScript = () => {
+    if (!startPredictionShell) return Promise.resolve(false);
+    if (window.__boatraceStartPredictionLoaded) return Promise.resolve(true);
+    if (startPredictionScriptPromise) return startPredictionScriptPromise;
+    const src = startPredictionShell.dataset.startPredictionSrc;
+    if (!src) return Promise.resolve(false);
+    startPredictionScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = src;
+      script.defer = true;
+      script.dataset.startPredictionScript = "1";
+      script.addEventListener("load", () => resolve(true), { once: true });
+      script.addEventListener("error", (event) => {
+        startPredictionScriptPromise = undefined;
+        reject(event);
+      }, { once: true });
+      document.body.appendChild(script);
+    });
+    return startPredictionScriptPromise;
+  };
+
+  const setupStartPredictionLazyLoad = () => {
+    if (!startPredictionDetails || !startPredictionShell) return;
+    const loadOnDemand = () => ensureStartPredictionScript().catch(() => {});
+    if (startPredictionDetails.open) {
+      loadOnDemand();
+      return;
+    }
+    startPredictionDetails.addEventListener("toggle", () => {
+      if (startPredictionDetails.open) loadOnDemand();
+    });
+  };
 
   const normalizeRaceDetailLayout = () => {
     document.querySelectorAll(".top-pick, .market-signal").forEach((node) => node.remove());
@@ -11,7 +47,6 @@
     if (marketContainer) marketContainer.remove();
     const legacySignalShell = document.getElementById("race-signal-shell");
     if (legacySignalShell && !legacySignalShell.textContent.trim()) legacySignalShell.remove();
-    const startPredictionShell = document.querySelector("[data-start-prediction]");
     if (
       inspectorShell
       && startPredictionShell
@@ -26,6 +61,7 @@
   };
 
   normalizeRaceDetailLayout();
+  setupStartPredictionLazyLoad();
 
   const esc = (value) => String(value ?? "").replace(/[&<>\"']/g, (ch) => ({
     "&": "&amp;",

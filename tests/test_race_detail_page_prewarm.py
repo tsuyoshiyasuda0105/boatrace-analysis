@@ -57,3 +57,48 @@ def test_race_detail_venue_environment_cache_reuses_same_date(monkeypatch):
 
     assert first == second == {1: {"label": "2026-08-04"}}
     assert calls == ["2026-08-04"]
+
+
+def test_attach_race_detail_display_facts_skips_db_when_preds_are_already_complete(monkeypatch):
+    preds = [
+        {
+            "boat_number": 1,
+            "branch_number": 4123,
+            "branch_label": "Tokyo",
+            "age": 31,
+            "weight": 52.0,
+            "flying_count": 0,
+            "late_count": 0,
+            "national_top_1_percent": 7.1,
+            "national_top_2_percent": 13.4,
+            "local_top_2_percent": 18.2,
+            "tilt_adjustment": -0.5,
+            "avg_start_timing": 0.14,
+            "dash_time": 6.72,
+            "turn_time": 36.1,
+            "straight_time": 7.11,
+            "current_course_number": 1,
+            "venue_recent10_course_win_starts": 8,
+            "venue_recent10_course_win_rate": 37.5,
+            "national_course_win_starts": 42,
+            "national_course_win_rate": 45.2,
+            "national_course_second_rate": 21.4,
+            "national_course_top3_rate": 71.4,
+        }
+    ]
+
+    def fail_db_connect():
+        raise AssertionError("db_connect should not be used when facts are already present")
+
+    monkeypatch.setattr(web_app, "db_connect", fail_db_connect)
+    monkeypatch.setattr(
+        web_app,
+        "_original_exhibition_quality_marks",
+        lambda race_ids: (_ for _ in ()).throw(
+            AssertionError("quality marks should not be recomputed")
+        ),
+    )
+
+    web_app._attach_race_detail_display_facts("20260804-01-01", preds)
+
+    assert preds[0]["national_course_top3_rate"] == 71.4
