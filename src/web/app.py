@@ -1632,19 +1632,18 @@ def _parse_local_datetime(value: Any) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace(" ", "T"))
+        dt = datetime.fromisoformat(str(value).replace(" ", "T"))
     except Exception:
         return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=JST)
+    return dt.astimezone(JST)
 
 
 def _format_jst_minute(value: Any) -> str:
     dt = _parse_local_datetime(value)
     if not dt:
         return "-"
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=JST)
-    else:
-        dt = dt.astimezone(JST)
     return dt.strftime("%Y-%m-%d %H:%M")
 
 

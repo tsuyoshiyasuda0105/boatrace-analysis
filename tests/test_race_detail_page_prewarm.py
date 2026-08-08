@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from src.web import app as web_app
@@ -57,6 +58,64 @@ def test_race_detail_venue_environment_cache_reuses_same_date(monkeypatch):
 
     assert first == second == {1: {"label": "2026-08-04"}}
     assert calls == ["2026-08-04"]
+
+
+def test_parse_local_datetime_normalizes_naive_and_aware_values_to_jst():
+    naive = web_app._parse_local_datetime("2026-08-08 16:30:00")
+    aware = web_app._parse_local_datetime("2026-08-08T16:30:00+09:00")
+    now = web_app._now_jst()
+
+    assert naive is not None
+    assert aware is not None
+    assert naive.tzinfo is not None
+    assert aware.tzinfo is not None
+    assert naive.utcoffset() == aware.utcoffset()
+    assert (aware - now).total_seconds()
+    assert (naive - now).total_seconds()
+
+
+def test_venue_environment_accepts_timezone_aware_race_closed_at(monkeypatch):
+    class FakeCursor:
+        def fetchall(self):
+            return [
+                (
+                    "202608080201",
+                    2,
+                    1,
+                    "2026-08-08T16:30:00+09:00",
+                    "fresh",
+                    1,
+                    2.0,
+                    4,
+                    1.0,
+                    "mid",
+                    120.0,
+                    5.0,
+                    30.0,
+                    0,
+                    0,
+                    "2026-08-08T12:00:00+09:00",
+                )
+            ]
+
+    class FakeConn:
+        def execute(self, *_args, **_kwargs):
+            return FakeCursor()
+
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-08")
+    monkeypatch.setattr(
+        web_app,
+        "_now_jst",
+        lambda: datetime(2026, 8, 8, 16, 0, tzinfo=web_app.JST),
+    )
+
+    result = web_app._venue_environment_summaries_for_date_impl(
+        "2026-08-08",
+        conn=FakeConn(),
+    )
+
+    assert result[2]["race_number"] == 1
+    assert result[2]["fetched_at_label"] == "2026-08-08 12:00"
 
 
 def test_attach_race_detail_display_facts_skips_db_when_preds_are_already_complete(monkeypatch):
