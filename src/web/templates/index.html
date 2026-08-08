@@ -329,6 +329,7 @@
         const targetDate = "{{ target_date }}";
         const roiPicksVisible = {{ roi_picks_visible|default(false)|tojson }};
         const marketSignalsEnabled = {{ show_today_picks_panel|default(false)|tojson }};
+        const showRaceTileCountdown = roiPicksVisible;
         const initialMarketSignalsPayload = {{ initial_market_signals|default({})|tojson }};
         let marketSignalsLoading = false;
         let marketSignalsLoaded = Boolean(initialMarketSignalsPayload && initialMarketSignalsPayload.signals);
@@ -1167,7 +1168,7 @@
             if (minutesUntil >= -1 && minutesUntil <= 180) {
               upcoming.push({ el, minutesUntil, closedAt });
               // "あと X 分" 表示は 60 分以内のみ (backlog item 18)
-              if (tilEl && minutesUntil <= 60) {
+              if (tilEl && showRaceTileCountdown && minutesUntil <= 60) {
                 tilEl.textContent = fmtTimeTil(minutesUntil);
                 tilEl.hidden = false;
               }
@@ -1238,6 +1239,7 @@
         const ODDS123_LABELS = ['T-5min', 'T-4min', 'T-3min', 'T-2min', 'T-1min'];
 
         async function loadOdds123Timeline() {
+          if (!roiPicksVisible) return;
           try {
             const r = await fetch(`/api/odds-123-timeline?date=${targetDate}`);
             if (!r.ok) return;
@@ -1838,7 +1840,7 @@ function updateClosedRaceTiles() {
           // lightweight pending/cache response immediately.
           refreshDashboard();
         }
-        setInterval(refreshDashboard, 30000);
+        setInterval(refreshDashboard, 60000);
         document.addEventListener('visibilitychange', () => {
           if (!document.hidden) refreshDashboard();
         });

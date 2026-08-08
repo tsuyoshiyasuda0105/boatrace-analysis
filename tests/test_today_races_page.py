@@ -1,5 +1,6 @@
 import os
 from contextlib import contextmanager
+from pathlib import Path
 
 os.environ["DATABASE_URL"] = ""
 
@@ -212,6 +213,15 @@ def test_races_page_excludes_roi_list_and_does_not_read_snapshot(monkeypatch):
     assert "ROIが高いレース候補" not in html
     assert "G2/G3 1-2-3" not in html
     assert "const marketSignalsEnabled = false" in html
+
+
+def test_top_page_template_uses_slower_refresh_and_hides_tile_countdown():
+    source = Path("src/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert "const showRaceTileCountdown = roiPicksVisible;" in source
+    assert "if (tilEl && showRaceTileCountdown && minutesUntil <= 60)" in source
+    assert "if (!roiPicksVisible) return;" in source
+    assert "setInterval(refreshDashboard, 60000);" in source
 
 
 def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
