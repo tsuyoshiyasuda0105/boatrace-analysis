@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from flask import Blueprint, jsonify, render_template, request
 
@@ -10,10 +11,31 @@ from src.web.auth import admin_only_api, admin_required
 
 bp = Blueprint("start_prediction", __name__)
 logger = logging.getLogger(__name__)
+_TIMELINE_CACHE_TTL_SECONDS = 300
+_TIMELINE_CACHE: dict[str, tuple[float, dict]] = {}
 
 
 def _service() -> StartPredictionService:
     return StartPredictionService()
+
+
+def _clear_timeline_cache(race_id: str) -> None:
+    _TIMELINE_CACHE.pop(str(race_id), None)
+
+
+def _get_cached_timeline(race_id: str) -> dict | None:
+    cached = _TIMELINE_CACHE.get(str(race_id))
+    if not cached:
+        return None
+    cached_at, payload = cached
+    if (time.time() - cached_at) > _TIMELINE_CACHE_TTL_SECONDS:
+        _clear_timeline_cache(race_id)
+        return None
+    return payload
+
+
+def _set_cached_timeline(race_id: str, payload: dict) -> None:
+    _TIMELINE_CACHE[str(race_id)] = (time.time(), payload)
 
 
 @bp.post("/api/predictions/races/<race_id>")
@@ -22,7 +44,9 @@ def create_race_prediction(race_id: str):
     payload = request.get_json(silent=True) or {}
     stage = str(payload.get("stage") or request.args.get("stage") or "post_exhibition")
     try:
-        return jsonify(_service().generate(race_id, stage))
+        generated = _service().generate(race_id, stage)
+        _clear_timeline_cache(race_id)
+        return jsonify(generated)
     except (LookupError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 422
     except Exception:
@@ -42,14 +66,21 @@ def get_race_prediction(race_id: str):
 @bp.get("/api/predictions/races/<race_id>/timeline")
 @admin_only_api
 def get_race_prediction_timeline(race_id: str):
-    return jsonify(_service().timeline(race_id))
+    cached = _get_cached_timeline(race_id)
+    if cached is not None:
+        return jsonify(cached)
+    payload = _service().timeline(race_id)
+    _set_cached_timeline(race_id, payload)
+    return jsonify(payload)
 
 
 @bp.post("/api/predictions/races/<race_id>/evaluate")
 @admin_only_api
 def evaluate_race_prediction(race_id: str):
     try:
-        return jsonify(_service().evaluate(race_id, request.args.get("stage")))
+        evaluated = _service().evaluate(race_id, request.args.get("stage"))
+        _clear_timeline_cache(race_id)
+        return jsonify(evaluated)
     except (LookupError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 422
     except Exception:

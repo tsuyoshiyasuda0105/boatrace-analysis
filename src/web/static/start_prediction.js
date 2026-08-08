@@ -1,6 +1,7 @@
 (() => {
   const root = document.querySelector("[data-start-prediction]");
   if (!root) return;
+  window.__boatraceStartPredictionLoaded = true;
 
   const raceId = root.dataset.raceId;
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({
@@ -96,8 +97,8 @@
       const offset = boatOffset(b, idx);
       const isTop = Number(b.predicted_start_rank || 9) === 1;
       const finish = result?.finishing_position ? `${result.finishing_position}着` : "";
-      return `<div class="start-lite-row${isTop ? " is-top" : ""}"><div>${lane(course)}</div><div class="start-lite-track"><span class="start-lite-arrow" style="left:${offset}%">→</span></div><div class="start-lite-st"><b>${stText(b.predicted_st)}</b><small>${pct(b.start_top_probability)}</small>${finish ? `<em>${esc(finish)}</em>` : ""}</div></div>`;
-    }).join("")}</div><div class="start-lite-legend"><span><b>→</b> 前に出るほど先行気配</span><span>右列は予測ST / ST先行率</span></div></div>`;
+      return `<div class="start-lite-row${isTop ? " is-top" : ""}"><div>${lane(course)}</div><div class="start-lite-track"><span class="start-lite-arrow" style="left:${offset}%">▲</span></div><div class="start-lite-st"><b>${stText(b.predicted_st)}</b><small>${pct(b.start_top_probability)}</small>${finish ? `<em>${esc(finish)}</em>` : ""}</div></div>`;
+    }).join("")}</div><div class="start-lite-legend"><span><b>▲</b> 前に出るほど優位</span><span>数値は予測ST / STトップ確率</span></div></div>`;
   };
 
   const renderStageCard = (stage, prediction, actual) => {
@@ -107,7 +108,7 @@
     const leader = bestBoat(prediction, "first_probability");
     const startTop = bestBoat(prediction, "start_top_probability");
     const top3 = (prediction.trifectas || []).slice(0, 3).map((x) => `<li><b>${esc(x.scenario_key || x.combination)}</b><span>${pct(x.probability)}</span></li>`).join("");
-    return `<article class="start-lite-card" data-stage-card="${stage}"><div class="start-lite-title"><div><strong>${esc(stageLabel[stage])}</strong><span>${esc(stageSub[stage])}</span></div><b>信頼 ${pct(prediction.confidence)}</b></div>${renderArrowBoard(prediction, actual)}<div class="start-lite-facts"><div class="start-lite-fact"><span>ST先行</span><b>${startTop ? `${lane(startTop.boat_number)} ${pct(startTop.start_top_probability)}` : "-"}</b></div><div class="start-lite-fact"><span>1M先頭</span><b>${prediction.first_mark_boat ? `${lane(prediction.first_mark_boat)} ${pct(prediction.first_mark_probability)}` : "-"}</b></div><div class="start-lite-fact"><span>決まり手</span><b>${esc(prediction.predicted_kimarite || "-")}</b></div><div class="start-lite-fact"><span>1着最有力</span><b>${leader ? `${lane(leader.boat_number)} ${pct(leader.first_probability)}` : "-"}</b></div></div><ol class="start-lite-combos">${top3}</ol></article>`;
+    return `<article class="start-lite-card" data-stage-card="${stage}"><div class="start-lite-title"><div><strong>${esc(stageLabel[stage])}</strong><span>${esc(stageSub[stage])}</span></div><b>信頼 ${pct(prediction.confidence)}</b></div>${renderArrowBoard(prediction, actual)}<div class="start-lite-facts"><div class="start-lite-fact"><span>STトップ</span><b>${startTop ? `${lane(startTop.boat_number)} ${pct(startTop.start_top_probability)}` : "-"}</b></div><div class="start-lite-fact"><span>1M先頭</span><b>${prediction.first_mark_boat ? `${lane(prediction.first_mark_boat)} ${pct(prediction.first_mark_probability)}` : "-"}</b></div><div class="start-lite-fact"><span>決まり手</span><b>${esc(prediction.predicted_kimarite || "-")}</b></div><div class="start-lite-fact"><span>1着期待</span><b>${leader ? `${lane(leader.boat_number)} ${pct(leader.first_probability)}` : "-"}</b></div></div><ol class="start-lite-combos">${top3}</ol></article>`;
   };
 
   const renderActualCard = (actual, postPrediction) => {
@@ -116,9 +117,24 @@
     }
     const resultByBoat = actualMap(actual);
     const predictionByBoat = boatMap(postPrediction);
-    const actualPrediction = { boats: [1, 2, 3, 4, 5, 6].map((boat) => { const result = resultByBoat[boat] || {}; return { boat_number: boat, entry_course: result.course_number || boat, predicted_st: result.start_timing, predicted_start_rank: result.start_timing == null ? 9 : null, start_top_probability: boat === Number(actual.actual_start_top_boat) ? 1 : 0 }; }).sort((a, b) => Number(a.boat_number) - Number(b.boat_number)) };
+    const actualPrediction = { boats: [1, 2, 3, 4, 5, 6].map((boat) => {
+      const result = resultByBoat[boat] || {};
+      return {
+        boat_number: boat,
+        entry_course: result.course_number || boat,
+        predicted_st: result.start_timing,
+        predicted_start_rank: result.start_timing == null ? 9 : null,
+        start_top_probability: boat === Number(actual.actual_start_top_boat) ? 1 : 0,
+      };
+    }).sort((a, b) => Number(a.boat_number) - Number(b.boat_number)) };
     actualPrediction.boats.filter((b) => b.predicted_st != null).sort((a, b) => Number(a.predicted_st) - Number(b.predicted_st)).forEach((b, i) => { b.predicted_start_rank = i + 1; });
-    const rows = [1, 2, 3, 4, 5, 6].map((boat) => { const result = resultByBoat[boat] || {}; const pred = predictionByBoat[boat] || {}; const stDiff = result.start_timing == null || pred.predicted_st == null ? null : Number(result.start_timing) - Number(pred.predicted_st); const tone = stDiff == null ? "" : stDiff <= -0.02 ? " is-good" : stDiff >= 0.02 ? " is-bad" : " is-flat"; return `<tr><td>${lane(boat)}</td><td>${result.finishing_position ? `${result.finishing_position}着` : "-"}</td><td>${num(result.start_timing, 2)}</td><td>${num(pred.predicted_st, 2)}</td><td class="start-lite-diff${tone}">${stDiff == null ? "-" : `${stDiff >= 0 ? "+" : ""}${stDiff.toFixed(3)}`}</td><td>${esc(result.kimarite || "-")}</td></tr>`; }).join("");
+    const rows = [1, 2, 3, 4, 5, 6].map((boat) => {
+      const result = resultByBoat[boat] || {};
+      const pred = predictionByBoat[boat] || {};
+      const stDiff = result.start_timing == null || pred.predicted_st == null ? null : Number(result.start_timing) - Number(pred.predicted_st);
+      const tone = stDiff == null ? "" : stDiff <= -0.02 ? " is-good" : stDiff >= 0.02 ? " is-bad" : " is-flat";
+      return `<tr><td>${lane(boat)}</td><td>${result.finishing_position ? `${result.finishing_position}着` : "-"}</td><td>${num(result.start_timing, 2)}</td><td>${num(pred.predicted_st, 2)}</td><td class="start-lite-diff${tone}">${stDiff == null ? "-" : `${stDiff >= 0 ? "+" : ""}${stDiff.toFixed(3)}`}</td><td>${esc(result.kimarite || "-")}</td></tr>`;
+    }).join("");
     return `<article class="start-lite-card"><div class="start-lite-title"><div><strong>本番結果</strong><span>予測と結果の差分を確認</span></div><b>${esc(actual.actual_combo || "結果")}</b></div>${renderArrowBoard(actualPrediction, actual)}<div class="start-lite-actual-summary"><div class="start-lite-fact"><span>1着</span><b>${actual.actual_first_boat ? lane(actual.actual_first_boat) : "-"}</b></div><div class="start-lite-fact"><span>STトップ</span><b>${actual.actual_start_top_boat ? lane(actual.actual_start_top_boat) : "-"}</b></div><div class="start-lite-fact"><span>決まり手</span><b>${esc(actual.actual_kimarite || "-")}</b></div></div><div class="start-lite-table-wrap"><table class="start-lite-table"><thead><tr><th>艇</th><th>着</th><th>本番ST</th><th>予測ST</th><th>差</th><th>決まり手</th></tr></thead><tbody>${rows}</tbody></table></div></article>`;
   };
 
@@ -127,46 +143,76 @@
     const pre = data.pre_exhibition;
     const post = data.post_exhibition;
     const actual = data.actual;
-    root.innerHTML = `<div class="start-lite-shell"><div class="start-lite-head"><div><h3>スタート簡易比較</h3><p>矢印だけで位置差を比較する軽量表示です。</p></div><div class="start-lite-actions"><button type="button" data-generate-start="pre_exhibition">展示前生成</button><button type="button" data-generate-start="post_exhibition">展示後生成</button><button type="button" data-evaluate-start>結果照合</button></div></div><div class="start-lite-grid">${renderStageCard("pre_exhibition", pre, actual)}${renderStageCard("post_exhibition", post, actual)}${renderActualCard(actual, post || pre)}</div></div>`;
+    root.innerHTML = `<div class="start-lite-shell"><div class="start-lite-head"><div><h3>スタート簡易比較</h3><p>矢印だけで位置差を比較する軽量表示です。</p></div><div class="start-lite-actions"><button type="button" data-load-start-timeline>比較更新</button><button type="button" data-generate-start="pre_exhibition">展示前生成</button><button type="button" data-generate-start="post_exhibition">展示後生成</button><button type="button" data-evaluate-start>結果照合</button></div></div><div class="start-lite-grid">${renderStageCard("pre_exhibition", pre, actual)}${renderStageCard("post_exhibition", post, actual)}${renderActualCard(actual, post || pre)}</div></div>`;
+  };
+
+  const renderIdleShell = (message = "表示は必要なときだけ読み込みます。展示前または展示後の予測を必要なときだけ生成できます。") => {
+    ensureLiteStyles();
+    root.innerHTML = `<div class="start-prediction-empty"><div><b>スタート比較は未生成です</b><span>${esc(message)}</span></div><div class="start-lite-actions" style="margin-top:10px"><button type="button" data-load-start-timeline>既存比較を表示</button><button type="button" data-generate-start="pre_exhibition">展示前生成</button><button type="button" data-generate-start="post_exhibition">展示後生成</button><button type="button" data-evaluate-start>結果照合</button></div></div>`;
   };
 
   const loadTimeline = async () => {
     const res = await fetch(`/api/predictions/races/${encodeURIComponent(raceId)}/timeline`, { credentials: "same-origin" });
+    if (res.status === 404) {
+      renderIdleShell("既存の比較はまだありません。必要な段階だけ生成できます。");
+      return false;
+    }
     if (!res.ok) throw new Error("timeline not found");
     renderComparison(await res.json());
+    return true;
   };
 
-  const setBusy = (button, text) => { if (!button) return; button.disabled = true; button.dataset.originalText = button.textContent; button.textContent = text; };
-  const clearBusy = (button) => { if (!button) return; button.disabled = false; button.textContent = button.dataset.originalText || button.textContent; };
+  const setBusy = (button, text) => {
+    if (!button) return;
+    button.disabled = true;
+    button.dataset.originalText = button.textContent;
+    button.textContent = text;
+  };
+  const clearBusy = (button) => {
+    if (!button) return;
+    button.disabled = false;
+    button.textContent = button.dataset.originalText || button.textContent;
+  };
 
   root.addEventListener("click", async (event) => {
     const target = event.target instanceof Element ? event.target : null;
+    const loadButton = target?.closest("[data-load-start-timeline]");
     const generateButton = target?.closest("[data-generate-start]");
     const evaluateButton = target?.closest("[data-evaluate-start]");
+    root.querySelectorAll(".start-prediction-error").forEach((node) => node.remove());
     try {
+      if (loadButton) {
+        setBusy(loadButton, "読込中...");
+        await loadTimeline();
+      }
       if (generateButton) {
         const stage = generateButton.dataset.generateStart || "post_exhibition";
         setBusy(generateButton, "生成中...");
-        const res = await fetch(`/api/predictions/races/${encodeURIComponent(raceId)}`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stage }) });
+        const res = await fetch(`/api/predictions/races/${encodeURIComponent(raceId)}`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stage }),
+        });
         if (!res.ok) throw new Error("prediction generation failed");
         await loadTimeline();
       }
       if (evaluateButton) {
         setBusy(evaluateButton, "照合中...");
-        const res = await fetch(`/api/predictions/races/${encodeURIComponent(raceId)}/evaluate`, { method: "POST", credentials: "same-origin" });
+        const res = await fetch(`/api/predictions/races/${encodeURIComponent(raceId)}/evaluate`, {
+          method: "POST",
+          credentials: "same-origin",
+        });
         if (!res.ok) throw new Error("prediction evaluation failed");
         await loadTimeline();
       }
     } catch (err) {
-      const message = esc(err?.message || "スタート予測の処理に失敗しました");
+      const message = esc(err?.message || "スタート比較の取得に失敗しました");
       root.insertAdjacentHTML("afterbegin", `<div class="start-prediction-error">${message}</div>`);
     } finally {
-      clearBusy(generateButton || evaluateButton);
+      clearBusy(loadButton || generateButton || evaluateButton);
     }
   });
 
-  loadTimeline().catch(() => {
-    ensureLiteStyles();
-    root.innerHTML = `<div class="start-prediction-empty"><div><b>スタート比較は未生成です</b><span>展示前または展示後の予測を必要なときだけ生成できます。</span></div><div class="start-lite-actions" style="margin-top:10px"><button type="button" data-generate-start="pre_exhibition">展示前生成</button><button type="button" data-generate-start="post_exhibition">展示後生成</button></div></div>`;
-  });
+  renderIdleShell();
 })();

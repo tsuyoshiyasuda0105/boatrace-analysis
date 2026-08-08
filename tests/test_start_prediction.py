@@ -144,6 +144,8 @@ def test_future_result_fields_are_not_in_input_snapshot():
 
 
 def test_prediction_api_requires_member_and_returns_payload(monkeypatch):
+    timeline_calls = {"count": 0}
+
     class FakeService:
         def get(self, race_id, stage=None):
             return {"race_id": race_id, "stage": stage, "boats": []}
@@ -151,12 +153,16 @@ def test_prediction_api_requires_member_and_returns_payload(monkeypatch):
             return {"race_id": race_id, "stage": stage, "status": "predicted"}
         def evaluate(self, race_id, stage=None):
             return {"race_id": race_id, "stage": stage, "status": "evaluated"}
+        def timeline(self, race_id):
+            timeline_calls["count"] += 1
+            return {"race_id": race_id, "pre_exhibition": None, "post_exhibition": None, "actual": None}
     monkeypatch.setattr("src.web.start_prediction_api._service", lambda: FakeService())
     app = Flask(__name__); app.secret_key = "test"; app.register_blueprint(bp)
     client = app.test_client()
     assert client.get("/api/predictions/races/R1").status_code == 401
     with client.session_transaction() as session:
         session["is_member"] = True
+        session["role"] = "admin"
     response = client.get("/api/predictions/races/R1?stage=post_exhibition")
     assert response.status_code == 200
     assert response.get_json()["race_id"] == "R1"
@@ -166,9 +172,34 @@ def test_prediction_api_requires_member_and_returns_payload(monkeypatch):
     )
     assert generated.status_code == 200
     assert generated.get_json()["status"] == "predicted"
+    first_timeline = client.get("/api/predictions/races/R1/timeline")
+    second_timeline = client.get("/api/predictions/races/R1/timeline")
+    assert first_timeline.status_code == 200
+    assert second_timeline.status_code == 200
+    assert timeline_calls["count"] == 1
     evaluated = client.post("/api/predictions/races/R1/evaluate?stage=post_exhibition")
     assert evaluated.status_code == 200
     assert evaluated.get_json()["status"] == "evaluated"
+    refreshed_timeline = client.get("/api/predictions/races/R1/timeline")
+    assert refreshed_timeline.status_code == 200
+    assert timeline_calls["count"] == 2
+
+
+def test_start_prediction_ui_is_lazy_loaded_and_waits_for_button_press():
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "src/web/templates/race.html").read_text(encoding="utf-8")
+    detail_script = (root / "src/web/static/race_detail.js").read_text(encoding="utf-8")
+    start_script = (root / "src/web/static/start_prediction.js").read_text(encoding="utf-8")
+
+    assert 'data-start-prediction-details' in template
+    assert 'data-start-prediction-src="{{ url_for(\'static\', filename=\'start_prediction.js\') }}?v={{ static_version }}"' in template
+    assert 'filename=\'start_prediction.js\'' not in template.split('filename=\'race_detail.js\'', 1)[1]
+    assert "ensureStartPredictionScript" in detail_script
+    assert 'data-start-prediction-script = "1"' not in detail_script
+    assert 'script.dataset.startPredictionScript = "1"' in detail_script
+    assert "data-load-start-timeline" in start_script
+    assert "renderIdleShell();" in start_script
+    assert "loadTimeline().catch" not in start_script
 
 
 def test_start_prediction_assets_are_valid_utf8_without_mojibake():
