@@ -7,6 +7,7 @@ Layer 3 共通 HTTP クライアント
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import threading
 import time
@@ -22,6 +23,16 @@ logger = logging.getLogger(__name__)
 _session: Optional[requests.Session] = None
 _lock = threading.Lock()
 _last_request_at: float = 0.0
+
+
+@dataclass(frozen=True)
+class FetchHtmlResult:
+    ok: bool
+    html: Optional[str]
+    error_type: Optional[str] = None
+    status_code: Optional[int] = None
+    retryable: bool = False
+    attempts: int = 0
 
 
 def _get_session() -> requests.Session:
@@ -63,6 +74,11 @@ def _wait_interval() -> None:
 
 
 def fetch_html(url: str) -> Optional[str]:
+    result = fetch_html_detailed(url)
+    return result.html if result.ok else None
+
+
+def fetch_html_detailed(url: str) -> FetchHtmlResult:
     """
     HTML を取得。
 
@@ -86,35 +102,82 @@ def fetch_html(url: str) -> Optional[str]:
             # DNS / name resolution failures never recover within the same run.
             cause = getattr(e, "__cause__", None)
             message = f"{e} {cause or ''}".lower()
+            error_type = "request_error"
+            if isinstance(e, requests.Timeout):
+                error_type = "timeout"
             if isinstance(e, ConnectionError) and (
                 "nameresolutionerror" in message
                 or "getaddrinfo failed" in message
                 or "failed to resolve" in message
             ):
-                return None
+                return FetchHtmlResult(
+                    ok=False,
+                    html=None,
+                    error_type="name_resolution",
+                    retryable=False,
+                    attempts=attempt,
+                )
             if attempt < config.LAYER3_MAX_RETRIES:
                 time.sleep(config.LAYER3_RETRY_BACKOFF_SECONDS)
                 continue
-            return None
+            return FetchHtmlResult(
+                ok=False,
+                html=None,
+                error_type=error_type,
+                retryable=True,
+                attempts=attempt,
+            )
 
         if resp.status_code == 404:
             logger.info("not found 404: %s", url)
-            return None
+            return FetchHtmlResult(
+                ok=False,
+                html=None,
+                error_type="http_404",
+                status_code=404,
+                retryable=False,
+                attempts=attempt,
+            )
 
         if 500 <= resp.status_code < 600:
             logger.warning("server error %d attempt=%d url=%s", resp.status_code, attempt, url)
             if attempt < config.LAYER3_MAX_RETRIES:
                 time.sleep(config.LAYER3_RETRY_BACKOFF_SECONDS)
                 continue
-            return None
+            return FetchHtmlResult(
+                ok=False,
+                html=None,
+                error_type="http_5xx",
+                status_code=resp.status_code,
+                retryable=True,
+                attempts=attempt,
+            )
 
         if resp.status_code >= 400:
             logger.warning("client error %d url=%s", resp.status_code, url)
-            return None
+            return FetchHtmlResult(
+                ok=False,
+                html=None,
+                error_type="http_4xx",
+                status_code=resp.status_code,
+                retryable=False,
+                attempts=attempt,
+            )
 
         # boatrace.jp は UTF-8 だが念のため
         if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
             resp.encoding = resp.apparent_encoding or "utf-8"
-        return resp.text
+        return FetchHtmlResult(
+            ok=True,
+            html=resp.text,
+            status_code=resp.status_code,
+            attempts=attempt,
+        )
 
-    return None
+    return FetchHtmlResult(
+        ok=False,
+        html=None,
+        error_type="request_error",
+        retryable=True,
+        attempts=config.LAYER3_MAX_RETRIES,
+    )

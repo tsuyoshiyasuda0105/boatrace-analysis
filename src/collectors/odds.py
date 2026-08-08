@@ -9,16 +9,20 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import date, datetime
-from pathlib import Path
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import config
-from src.collectors._http import fetch_html
+from src.collectors._http import FetchHtmlResult, fetch_html_detailed
 from src.db.connection import connect as db_connect
 from src.parsers.odds import parse_trifecta_odds
 
 logger = logging.getLogger(__name__)
+EXPECTED_TRIFECTA_COMBINATIONS = 120
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _save_raw_html(target_date: date, stadium: int, race_no: int, html: str) -> None:
@@ -45,9 +49,23 @@ def _list_target_races(
             SELECT r.race_id, r.stadium_number, r.race_number
               FROM races r
              WHERE r.race_date = ?
-               AND r.race_id NOT IN (SELECT DISTINCT race_id FROM odds_trifecta)
+               AND r.race_id IN (
+                    SELECT r2.race_id
+                      FROM races r2
+                      LEFT JOIN odds_trifecta o
+                        ON o.race_id = r2.race_id
+                     WHERE r2.race_date = ?
+                     GROUP BY r2.race_id
+                    HAVING COUNT(DISTINCT o.combination) < ?
+               )
              ORDER BY r.stadium_number, r.race_number
         """
+        return list(
+            conn.execute(
+                sql,
+                (target_date.isoformat(), target_date.isoformat(), EXPECTED_TRIFECTA_COMBINATIONS),
+            ).fetchall()
+        )
     return list(conn.execute(sql, (target_date.isoformat(),)).fetchall())
 
 
@@ -85,6 +103,88 @@ def _upsert_odds(
     return len(rows)
 
 
+def _ensure_fetch_status_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS odds_fetch_status (
+          race_id             TEXT NOT NULL,
+          snapshot_label      TEXT NOT NULL,
+          state               TEXT NOT NULL,
+          detail_code         TEXT NOT NULL,
+          http_status         INTEGER,
+          combination_count   INTEGER NOT NULL DEFAULT 0,
+          retryable           INTEGER NOT NULL DEFAULT 0,
+          attempts            INTEGER NOT NULL DEFAULT 0,
+          checked_at          TEXT NOT NULL,
+          last_success_at     TEXT,
+          note                TEXT,
+          PRIMARY KEY (race_id, snapshot_label)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_odds_fetch_status_state
+          ON odds_fetch_status(state, checked_at)
+        """
+    )
+
+
+def _record_fetch_status(
+    conn: sqlite3.Connection,
+    *,
+    race_id: str,
+    snapshot_label: str,
+    state: str,
+    detail_code: str,
+    checked_at: str,
+    http_status: Optional[int] = None,
+    combination_count: int = 0,
+    retryable: bool = False,
+    attempts: int = 0,
+    note: Optional[str] = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO odds_fetch_status
+            (race_id, snapshot_label, state, detail_code, http_status,
+             combination_count, retryable, attempts, checked_at, last_success_at, note)
+        VALUES (
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, 
+            CASE WHEN ? = 'fetched' THEN ? ELSE (
+                SELECT last_success_at FROM odds_fetch_status
+                 WHERE race_id = ? AND snapshot_label = ?
+            ) END,
+            ?
+        )
+        """,
+        (
+            race_id,
+            snapshot_label,
+            state,
+            detail_code,
+            http_status,
+            combination_count,
+            1 if retryable else 0,
+            attempts,
+            checked_at,
+            state,
+            checked_at,
+            race_id,
+            snapshot_label,
+            note,
+        ),
+    )
+
+
+def _state_from_fetch_result(result: FetchHtmlResult) -> tuple[str, str]:
+    detail_code = result.error_type or "request_error"
+    if result.retryable:
+        return "retry_waiting", detail_code
+    return "missing", detail_code
+
+
 def collect_one_race(
     race_id: str,
     snapshot_label: str,
@@ -93,7 +193,8 @@ def collect_one_race(
     """単一レースのオッズを 1 回スナップショット取得"""
     config.ensure_dirs()
     conn = db_connect(db_path)
-    recorded_at = datetime.utcnow().isoformat(timespec="seconds")
+    _ensure_fetch_status_table(conn)
+    recorded_at = _utc_now_iso()
     summary = {"race_id": race_id, "snapshot_label": snapshot_label, "odds_inserted": 0}
     try:
         # race_id から jcd, date, rno を抽出
@@ -101,17 +202,70 @@ def collect_one_race(
         jcd = int(jcd_str)
         rno = int(rno_str)
         url = config.ODDS_TRIFECTA_URL.format(jcd=jcd, date=date_str, rno=rno)
-        html = fetch_html(url)
-        if not html:
-            summary["error"] = "no html"
+        fetch_result = fetch_html_detailed(url)
+        if not fetch_result.ok or not fetch_result.html:
+            state, detail_code = _state_from_fetch_result(fetch_result)
+            _record_fetch_status(
+                conn,
+                race_id=race_id,
+                snapshot_label=snapshot_label,
+                state=state,
+                detail_code=detail_code,
+                checked_at=recorded_at,
+                http_status=fetch_result.status_code,
+                retryable=fetch_result.retryable,
+                attempts=fetch_result.attempts,
+            )
+            conn.commit()
+            summary["error"] = detail_code
+            summary["fetch_state"] = state
             return summary
-        odds_map = parse_trifecta_odds(html)
+        odds_map = parse_trifecta_odds(fetch_result.html)
         if not odds_map:
-            summary["error"] = "no odds parsed"
+            _record_fetch_status(
+                conn,
+                race_id=race_id,
+                snapshot_label=snapshot_label,
+                state="missing",
+                detail_code="parse_empty",
+                checked_at=recorded_at,
+                attempts=fetch_result.attempts,
+            )
+            conn.commit()
+            summary["error"] = "parse_empty"
+            summary["fetch_state"] = "missing"
             return summary
         is_final = 1 if _is_finalized(conn, race_id) else 0
         n = _upsert_odds(conn, race_id, odds_map, recorded_at, is_final, snapshot_label)
         summary["odds_inserted"] = n
+        combination_count = len(odds_map)
+        if combination_count < EXPECTED_TRIFECTA_COMBINATIONS:
+            _record_fetch_status(
+                conn,
+                race_id=race_id,
+                snapshot_label=snapshot_label,
+                state="missing",
+                detail_code="partial_data",
+                checked_at=recorded_at,
+                combination_count=combination_count,
+                attempts=fetch_result.attempts,
+                note=f"expected={EXPECTED_TRIFECTA_COMBINATIONS}",
+            )
+            summary["error"] = "partial_data"
+            summary["fetch_state"] = "missing"
+            summary["missing_combinations"] = EXPECTED_TRIFECTA_COMBINATIONS - combination_count
+        else:
+            _record_fetch_status(
+                conn,
+                race_id=race_id,
+                snapshot_label=snapshot_label,
+                state="fetched",
+                detail_code="fetched",
+                checked_at=recorded_at,
+                combination_count=combination_count,
+                attempts=fetch_result.attempts,
+            )
+            summary["fetch_state"] = "fetched"
         conn.commit()
     finally:
         conn.close()
@@ -127,7 +281,8 @@ def collect_for_date(
 ) -> dict:
     config.ensure_dirs()
     conn = db_connect(db_path)
-    recorded_at = datetime.utcnow().isoformat(timespec="seconds")
+    _ensure_fetch_status_table(conn)
+    recorded_at = _utc_now_iso()
 
     summary = {
         "date": target_date.isoformat(),
@@ -147,27 +302,74 @@ def collect_for_date(
 
         for race_id, stadium, race_no in targets:
             url = config.ODDS_TRIFECTA_URL.format(jcd=stadium, date=date_str, rno=race_no)
-            html = fetch_html(url)
-            if not html:
-                logger.info("skip (no html): %s", race_id)
+            fetch_result = fetch_html_detailed(url)
+            label = snapshot_label or ("final" if _is_finalized(conn, race_id) else "intermediate")
+            if not fetch_result.ok or not fetch_result.html:
+                state, detail_code = _state_from_fetch_result(fetch_result)
+                _record_fetch_status(
+                    conn,
+                    race_id=race_id,
+                    snapshot_label=label,
+                    state=state,
+                    detail_code=detail_code,
+                    checked_at=recorded_at,
+                    http_status=fetch_result.status_code,
+                    retryable=fetch_result.retryable,
+                    attempts=fetch_result.attempts,
+                )
+                conn.commit()
+                logger.info("skip (%s): %s", detail_code, race_id)
                 continue
 
             if save_html:
                 try:
-                    _save_raw_html(target_date, stadium, race_no, html)
+                    _save_raw_html(target_date, stadium, race_no, fetch_result.html)
                 except OSError as e:
                     logger.warning("html save failed %s: %s", race_id, e)
 
-            odds_map = parse_trifecta_odds(html)
+            odds_map = parse_trifecta_odds(fetch_result.html)
             if not odds_map:
+                _record_fetch_status(
+                    conn,
+                    race_id=race_id,
+                    snapshot_label=label,
+                    state="missing",
+                    detail_code="parse_empty",
+                    checked_at=recorded_at,
+                    attempts=fetch_result.attempts,
+                )
+                conn.commit()
                 logger.info("no odds parsed: %s", race_id)
                 continue
 
             is_final = 1 if _is_finalized(conn, race_id) else 0
-            label = snapshot_label or ("final" if is_final else "intermediate")
             n = _upsert_odds(conn, race_id, odds_map, recorded_at, is_final, label)
             summary["races_fetched"] += 1
             summary["odds_inserted"] += n
+            combination_count = len(odds_map)
+            if combination_count < EXPECTED_TRIFECTA_COMBINATIONS:
+                _record_fetch_status(
+                    conn,
+                    race_id=race_id,
+                    snapshot_label=label,
+                    state="missing",
+                    detail_code="partial_data",
+                    checked_at=recorded_at,
+                    combination_count=combination_count,
+                    attempts=fetch_result.attempts,
+                    note=f"expected={EXPECTED_TRIFECTA_COMBINATIONS}",
+                )
+            else:
+                _record_fetch_status(
+                    conn,
+                    race_id=race_id,
+                    snapshot_label=label,
+                    state="fetched",
+                    detail_code="fetched",
+                    checked_at=recorded_at,
+                    combination_count=combination_count,
+                    attempts=fetch_result.attempts,
+                )
 
             conn.commit()
 

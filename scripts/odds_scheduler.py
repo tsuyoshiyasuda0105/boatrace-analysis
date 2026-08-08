@@ -72,6 +72,7 @@ L4_A2_PROB_MIN, L4_A2_PROB_MAX = 0.55, 0.75
 # 構造的エッジで prob_first に依存せず確実に捕捉する。
 F1_NATIONAL_TOP1_MIN = 7.0
 F1_BOAT2_TOP2_MIN = 40.0
+EXPECTED_TRIFECTA_COMBINATIONS = 120
 
 
 def _get_l4_candidate_race_ids(target_dates: list[str]) -> set[str]:
@@ -159,6 +160,41 @@ def _parse_close_jst(closed_at, race_date) -> datetime:
     return t.replace(tzinfo=JST)
 
 
+def _existing_completed_snapshots(conn) -> set[tuple[str, str]]:
+    """完全取得済みの (race_id, snapshot_label) だけを返す。
+
+    odds_fetch_status がある場合は最新状態を優先し、無い環境では odds_trifecta の
+    組み合わせ件数からフォールバック判定する。
+    """
+    existing: set[tuple[str, str]] = set()
+    try:
+        rows = conn.execute(
+            """
+            SELECT race_id, snapshot_label
+              FROM odds_fetch_status
+             WHERE state = 'fetched'
+               AND combination_count >= ?
+            """,
+            (EXPECTED_TRIFECTA_COMBINATIONS,),
+        ).fetchall()
+        existing.update((r[0], r[1]) for r in rows)
+    except Exception:
+        pass
+
+    fallback_rows = conn.execute(
+        """
+        SELECT race_id, snapshot_label
+          FROM odds_trifecta
+         WHERE snapshot_label IS NOT NULL
+         GROUP BY race_id, snapshot_label
+        HAVING COUNT(DISTINCT combination) >= ?
+        """,
+        (EXPECTED_TRIFECTA_COMBINATIONS,),
+    ).fetchall()
+    existing.update((r[0], r[1]) for r in fallback_rows)
+    return existing
+
+
 def find_due_snapshots(now_jst: datetime, lookahead_min: int = 30) -> list[tuple[str, str]]:
     """
     今この瞬間に取得すべき (race_id, snapshot_label) のリストを返す。
@@ -189,12 +225,7 @@ def find_due_snapshots(now_jst: datetime, lookahead_min: int = 30) -> list[tuple
             sql,
             (target_dates[0], target_dates[-1]),
         ).fetchall()
-        # 既に取得済みの (race_id, snapshot_label) セット
-        existing = set()
-        for r in conn.execute(
-            "SELECT DISTINCT race_id, snapshot_label FROM odds_trifecta WHERE snapshot_label IS NOT NULL"
-        ).fetchall():
-            existing.add((r[0], r[1]))
+        existing = _existing_completed_snapshots(conn)
 
     # L4 候補レース ID 集合 (predictions ベース)
     l4_candidates = _get_l4_candidate_race_ids(target_dates)
