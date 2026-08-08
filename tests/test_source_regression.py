@@ -397,6 +397,38 @@ def test_market_signals_recent_empty_cache_self_heals():
     assert "and _is_empty_market_signals_payload(compat_payload)" in src
 
 
+def test_recent_missing_market_signal_cache_keeps_raw_adopted_roi_counts():
+    src = _read("src/web/app.py")
+    overlay_start = src.index("def _overlay_market_signal_cache_daily")
+    overlay_end = src.index("for row in cur:", overlay_start)
+    overlay = src[overlay_start:overlay_end]
+    assert 'day_d["_adopted_market_signals_cache_missing"] = True' in overlay
+    assert 'day_d["_adopted_from_raw_fallback"] = True' in overlay
+    missing_branch = overlay.split("if (", 1)[1].split("continue", 1)[0]
+    assert "_clear_adopted_counts(day_d)" not in missing_branch
+
+
+def test_market_signal_adopted_filter_accepts_matched_levels():
+    src = _read("src/web/app.py")
+    start = src.index("adopted_signal_levels = set(MARKET_SIGNAL_ADOPTED_LEVELS)")
+    end = src.index("# The per-race accident watch blob", start)
+    block = src[start:end]
+    assert 'l4.get("matched_levels")' in block
+    assert "for level in level_candidates" in block
+
+
+def test_boat2_wall_daily_stats_opens_its_own_connection():
+    src = _read("src/web/app.py")
+    start = src.index("def _boat2_wall_daily_flags")
+    end = src.index('logger.warning("boat2 wall adopted daily stats failed', start)
+    block = src[start:end]
+    assert "with db_connect() as conn_bw:" in block
+    assert "boat2_wall_rows = conn_bw.execute(" in block
+    assert "WITH target_racers AS" in block
+    assert "history_prefix = {}" in block
+    assert "SELECT AVG(rr.start_timing)" not in block
+
+
 def test_roi_daily_stats_do_not_count_unsettled_market_signal_candidates():
     src = _read("src/web/app.py")
     assert "def _settled_race_ids_for_range" in src
@@ -419,3 +451,43 @@ def test_roi_cache_only_clears_unsettled_day_metrics():
     assert "if rdate not in settled_dates:" in block
     assert "_clear_roi_result_metrics(day)" in block
     assert 'day["_roi_unsettled_result_guard"] = True' in block
+
+
+def test_reference_market_signals_are_not_today_roi_candidates():
+    src = _read("src/web/app.py")
+    start = src.index("def _market_pick_rows_for_display(")
+    end = src.index("@app.route", start)
+    block = src[start:end]
+    assert 'if l4.get("is_reference"):' in block
+    assert 'if l4.get("is_reference") and level in ("morning_general", "general"):' not in block
+
+    template = _read("src/web/templates/index.html")
+    start = template.index("function renderTodaysPicks()")
+    end = template.index("function renderPickRows", start)
+    block = template[start:end]
+    assert "if (isRef) {" in block
+    assert "if (isRef && (level === 'morning_general' || level === 'general'))" not in block
+
+
+def test_render_jobs_build_derived_start_stats_before_roi_signals():
+    scheduler = _read("scripts/render_regular_scheduler.py")
+    assert "def run_derived_start_stats(" in scheduler
+    signal_start = scheduler.index("def run_signal_refresh_slot(")
+    signal_end = scheduler.index("def run_roi_history_slot", signal_start)
+    signal_block = scheduler[signal_start:signal_end]
+    assert "ok = run_derived_start_stats(today, today)" in signal_block
+    assert signal_block.index("run_derived_start_stats(today, today)") < signal_block.index(
+        '"scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today'
+    )
+
+    nightly_start = scheduler.index("def run_nightly(")
+    nightly_end = scheduler.index("def main()", nightly_start)
+    nightly_block = scheduler[nightly_start:nightly_end]
+    assert "ok &= run_derived_start_stats(today, tomorrow)" in nightly_block
+    assert nightly_block.index("run_derived_start_stats(today, tomorrow)") < nightly_block.index(
+        '"scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow'
+    )
+
+    refresh = _read("scripts/refresh_race_detail_after_exhibition.py")
+    assert '"scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date' in refresh
+    assert refresh.index('"scripts/build_derived_start_stats.py"') < refresh.index('"scripts/generate_start_predictions.py"')

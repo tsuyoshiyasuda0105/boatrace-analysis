@@ -55,6 +55,7 @@ def load_base_dataframe(
         r.race_grade_number, r.race_distance,
 
         e.boat_number, e.racer_number, e.class_number,
+        e.branch_number, e.birthplace_number,
         e.age, e.weight, e.flying_count, e.late_count,
         e.avg_start_timing,
         e.national_top_1_percent, e.national_top_2_percent, e.national_top_3_percent,

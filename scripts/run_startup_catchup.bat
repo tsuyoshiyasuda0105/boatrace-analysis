@@ -1,4 +1,5 @@
 @echo off
+if exist C:\boat_project\boatrace-analysis\.pc_schedule_paused exit /b 0
 REM ============================================================
 REM サーバー(ローカルPC)起動時のタスク・キャッチアップ
 REM   Task Scheduler の ONSTART トリガから呼ばれる前提

@@ -44,6 +44,25 @@ def _stadium_name_to_number() -> dict[str, int]:
     return out
 
 
+KIMARITE_VALUES = [
+    "まくり差し",
+    "逃げ",
+    "差し",
+    "まくり",
+    "抜き",
+    "恵まれ",
+]
+
+
+def _extract_kimarite(line: str) -> Optional[str]:
+    """Extract the winning method from the result table header line."""
+    norm = _to_half(line)
+    for value in KIMARITE_VALUES:
+        if value in norm:
+            return value
+    return None
+
+
 # ============================================================
 # 結果行: '  01  1 3773 谷川 翔太郎 57   25  6.84   1    0.16     1.49.5'
 # 着順(2) 空白 艇番(1) 空白 登番(4) 空白 選手名(変動) motor_no boat_no time_lap1 course_no st race_time
@@ -209,6 +228,11 @@ def parse_k_text(text: str, target_date: _date) -> list[dict]:
 
     def _flush():
         if cur_race is not None and len(cur_race["results"]) > 0:
+            kim = cur_race.get("kimarite")
+            if kim:
+                for rr in cur_race["results"]:
+                    if rr.get("finishing_position") == 1 and not rr.get("kimarite"):
+                        rr["kimarite"] = kim
             cur_race["payouts"] = _parse_payouts(payout_buffer)
             out.append(cur_race)
 
@@ -231,14 +255,23 @@ def parse_k_text(text: str, target_date: _date) -> list[dict]:
                 "wind_speed": weather["wind_speed"],
                 "wave_height": weather["wave_height"],
                 "weather_text": weather["weather_text"],
+                "kimarite": None,
                 "results": [],
                 "payouts": [],
             }
             continue
 
+        if cur_race is not None and cur_race.get("kimarite") is None:
+            kim = _extract_kimarite(line)
+            if kim:
+                cur_race["kimarite"] = kim
+                continue
+
         # 結果行
         rrow = _parse_result_row(line)
         if rrow is not None and cur_race is not None and len(cur_race["results"]) < 6:
+            if rrow.get("finishing_position") == 1 and cur_race.get("kimarite"):
+                rrow["kimarite"] = cur_race["kimarite"]
             cur_race["results"].append(rrow)
             continue
 

@@ -11,6 +11,36 @@ def _fake_connection():
     yield object()
 
 
+def test_today_pages_default_to_jst_date(monkeypatch):
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-04")
+    monkeypatch.setattr(web_app, "db_connect", _fake_connection)
+    monkeypatch.setattr(
+        web_app,
+        "_races_for_date",
+        lambda target_date, conn=None: [],
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_venue_environment_summaries_for_date",
+        lambda _target_date, conn=None: {},
+    )
+    web_app.invalidate_cache()
+
+    app = web_app.create_app()
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["is_member"] = True
+
+    races_response = client.get("/")
+    today_response = client.get("/member/today-races")
+
+    assert races_response.status_code == 302
+    assert races_response.headers["Location"].endswith("/races?date=2026-08-04")
+    assert today_response.status_code == 200
+    assert "2026-08-04" in today_response.get_data(as_text=True)
+
+
 def _member_client(monkeypatch):
     race = {
         "race_id": "202607300101",

@@ -198,6 +198,10 @@ def ensure_schema(conn) -> None:
           turn_time          REAL,
           straight_time      REAL,
           original_rank      INTEGER,
+          dash_mark          TEXT,
+          turn_mark          TEXT,
+          straight_mark      TEXT,
+          motor_eval_points  INTEGER,
           raw_text           TEXT,
           source_url         TEXT,
           collected_at       TEXT,
@@ -205,6 +209,10 @@ def ensure_schema(conn) -> None:
         )
         """,
     )
+    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN dash_mark TEXT")
+    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN turn_mark TEXT")
+    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN straight_mark TEXT")
+    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN motor_eval_points INTEGER")
     _execute_ddl(
         conn,
         "CREATE INDEX IF NOT EXISTS idx_original_exhibitions_race ON race_original_exhibitions(race_id)",
@@ -297,6 +305,10 @@ def _upsert_rows(
                 row.get("turn_time"),
                 row.get("straight_time"),
                 row.get("original_rank"),
+                row.get("dash_mark"),
+                row.get("turn_mark"),
+                row.get("straight_mark"),
+                row.get("motor_eval_points"),
                 row.get("raw_text"),
                 source_url,
                 now_iso,
@@ -309,8 +321,9 @@ def _upsert_rows(
         INSERT OR REPLACE INTO race_original_exhibitions (
             race_id, boat_number, source_name, stadium_number, race_date,
             race_number, lap_time, turn_time, straight_time, original_rank,
+            dash_mark, turn_mark, straight_mark, motor_eval_points,
             raw_text, source_url, collected_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         payload,
     )

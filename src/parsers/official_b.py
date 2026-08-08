@@ -100,6 +100,8 @@ def _extract_closed_at(line: str, target_date: _date) -> Optional[str]:
     norm = _to_half(line)
     m = CLOSED_AT_RE.search(norm)
     if not m:
+        m = re.search(r"(?:電話投票)?締切(?:予定)?\s*(\d{1,2})\s*[:：]\s*(\d{2})", norm)
+    if not m:
         return None
     try:
         hh = int(m.group(1))
@@ -134,6 +136,16 @@ def _extract_stadium(line: str, stadium_map: dict[str, int]) -> Optional[int]:
     """
     'ボートレース桐 生' / 'ボートレース　住之江' → stadium_number
     """
+    line_norm = _to_half(line).strip()
+    m_code = re.match(r"^(\d{2})BBGN$", line_norm)
+    if m_code:
+        try:
+            sn = int(m_code.group(1))
+            if 1 <= sn <= 24:
+                return sn
+        except Exception:
+            pass
+
     m = STADIUM_RE.search(line)
     if not m:
         return None

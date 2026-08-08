@@ -40,6 +40,13 @@ from src.db import task_log  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
+SCHEDULED_TASKS = {
+    "daily_collect": "BoatraceDailyCollect",
+    "morning": "BoatraceMorningTask",
+    "hourly": "BoatraceHourlyResults",
+    "beforeinfo_live": "BoatraceBeforeinfoLive",
+    "poll_results": "BoatraceResultsPolling",
+}
 
 # キャッチアップ対象タスク定義 (単一の真実)
 #   strategy:
@@ -83,6 +90,40 @@ def last_log_update(task: dict) -> datetime | None:
         if latest is None or dt > latest:
             latest = dt
     return latest
+
+
+def ensure_task_enabled(task_name: str, log) -> None:
+    """Best-effort self-heal for disabled Windows scheduled tasks."""
+    try:
+        query = subprocess.run(
+            ["schtasks", "/Query", "/TN", task_name, "/V", "/FO", "LIST"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as e:  # noqa: BLE001
+        log(f"[task-heal] {task_name}: state check failed ({type(e).__name__}: {e})")
+        return
+
+    output = f"{query.stdout}\n{query.stderr}"
+    if query.returncode != 0:
+        log(f"[task-heal] {task_name}: query skipped (exit={query.returncode})")
+        return
+
+    normalized = output.lower()
+    if "scheduled task state:" in normalized and "disabled" in normalized:
+        log(f"[task-heal] {task_name}: disabled -> enabling")
+        enable = subprocess.run(
+            ["schtasks", "/Change", "/TN", task_name, "/ENABLE"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if enable.returncode == 0:
+            log(f"[task-heal] {task_name}: enabled")
+        else:
+            err = (enable.stderr or enable.stdout).strip()
+            log(f"[task-heal] {task_name}: enable failed exit={enable.returncode} {err}")
 
 
 def needs_catchup(task: dict, now: datetime):
@@ -181,6 +222,9 @@ def main() -> int:
 
     now = datetime.now()
     log(f"=== 起動時タスクキャッチアップ {now:%Y-%m-%d %H:%M:%S} ===")
+
+    for scheduled_name in SCHEDULED_TASKS.values():
+        ensure_task_enabled(scheduled_name, log)
 
     ran = caught = skipped = 0
     for task in TASKS:

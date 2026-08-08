@@ -94,18 +94,20 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
     period_start = period_start or accident_period_start_for_date(target_date)
     with db_connect(db_path) as conn:
         ensure_table(conn)
+        source_kind = "reconstructed"
         period_row = conn.execute(
             """
             SELECT period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
-                   MAX(updated_at) AS source_updated_at
-              FROM racer_accident_period_stats
+                   MAX(created_at) AS source_updated_at
+              FROM racer_accident_external_snapshots
              WHERE period_start = ?
-               AND source_kind = 'reconstructed'
-               AND rule_version = ?
+               AND source_kind = 'interq_class2000'
              GROUP BY period_start
             """,
-            (period_start, RULE_VERSION),
+            (period_start,),
         ).fetchone()
+        if period_row:
+            source_kind = "official_external"
         if not period_row:
             period_row = conn.execute(
                 """
@@ -131,37 +133,69 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
                 f"period_end={period_end} target_date={target_date}"
             )
         class_as_of = period_end
-        rows = conn.execute(
-            """
-            WITH latest_entry AS (
-                SELECT e.racer_number, e.racer_name, e.class_number,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY e.racer_number
-                           ORDER BY r.race_date DESC, e.race_id DESC
-                       ) AS rn
-                  FROM race_entries e
-                  JOIN races r ON r.race_id = e.race_id
-                 WHERE r.race_date <= ?
-            )
-            SELECT s.racer_number,
-                   COALESCE(NULLIF(le.racer_name, ''), rc.name, '') AS racer_name,
-                   le.class_number,
-                   s.accident_points,
-                   s.accident_rate,
-                   s.starts_count,
-                   s.accident_events
-              FROM racer_accident_period_stats s
-              LEFT JOIN racers rc ON rc.racer_number = s.racer_number
-              LEFT JOIN latest_entry le
-                ON le.racer_number = s.racer_number AND le.rn = 1
-             WHERE s.period_start = ?
-               AND s.period_end = ?
-               AND s.source_kind = 'reconstructed'
-               AND s.rule_version = ?
-             ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
-            """,
-            (class_as_of, period_start, period_end, RULE_VERSION),
-        ).fetchall()
+        if source_kind == "official_external":
+            rows = conn.execute(
+                """
+                WITH latest_entry AS (
+                    SELECT e.racer_number, e.racer_name, e.class_number,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY e.racer_number
+                               ORDER BY r.race_date DESC, e.race_id DESC
+                           ) AS rn
+                      FROM race_entries e
+                      JOIN races r ON r.race_id = e.race_id
+                     WHERE r.race_date <= ?
+                )
+                SELECT s.racer_number,
+                       COALESCE(NULLIF(le.racer_name, ''), rc.name, '') AS racer_name,
+                       le.class_number,
+                       s.accident_points,
+                       s.accident_rate,
+                       s.starts_count,
+                       LENGTH(COALESCE(s.accident_codes_raw, '')) AS accident_events
+                  FROM racer_accident_external_snapshots s
+                  LEFT JOIN racers rc ON rc.racer_number = s.racer_number
+                  LEFT JOIN latest_entry le
+                    ON le.racer_number = s.racer_number AND le.rn = 1
+                 WHERE s.period_start = ?
+                   AND s.period_end = ?
+                   AND s.source_kind = 'interq_class2000'
+                 ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
+                """,
+                (class_as_of, period_start, period_end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                WITH latest_entry AS (
+                    SELECT e.racer_number, e.racer_name, e.class_number,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY e.racer_number
+                               ORDER BY r.race_date DESC, e.race_id DESC
+                           ) AS rn
+                      FROM race_entries e
+                      JOIN races r ON r.race_id = e.race_id
+                     WHERE r.race_date <= ?
+                )
+                SELECT s.racer_number,
+                       COALESCE(NULLIF(le.racer_name, ''), rc.name, '') AS racer_name,
+                       le.class_number,
+                       s.accident_points,
+                       s.accident_rate,
+                       s.starts_count,
+                       s.accident_events
+                  FROM racer_accident_period_stats s
+                  LEFT JOIN racers rc ON rc.racer_number = s.racer_number
+                  LEFT JOIN latest_entry le
+                    ON le.racer_number = s.racer_number AND le.rn = 1
+                 WHERE s.period_start = ?
+                   AND s.period_end = ?
+                   AND s.source_kind = 'reconstructed'
+                   AND s.rule_version = ?
+                  ORDER BY s.accident_rate DESC, s.accident_points DESC, s.starts_count DESC
+                """,
+                (class_as_of, period_start, period_end, RULE_VERSION),
+            ).fetchall()
 
         conn.execute(
             "DELETE FROM racer_accident_rank_snapshots WHERE period_start = ?",
@@ -186,7 +220,7 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
                     accident_rank_tone(cls, rate),
                     rank_no,
                     RULE_VERSION,
-                    "reconstructed",
+                    source_kind,
                     target_date,
                 )
             )

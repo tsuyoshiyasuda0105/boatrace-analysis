@@ -224,6 +224,10 @@ CREATE TABLE IF NOT EXISTS race_original_exhibitions (
   turn_time          REAL,     -- まわり足/回り足タイム
   straight_time      REAL,     -- 直線タイム
   original_rank      INTEGER,
+  dash_mark          TEXT,
+  turn_mark          TEXT,
+  straight_mark      TEXT,
+  motor_eval_points  INTEGER,
   raw_text           TEXT,
   source_url         TEXT,
   collected_at       TEXT,

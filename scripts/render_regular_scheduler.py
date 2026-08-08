@@ -503,6 +503,8 @@ def run_roi_daily_self_heal(now: datetime) -> bool:
         timeout=1800,
     )
     if ok:
+        ok &= run_derived_start_stats(target_date, target_date)
+    if ok:
         ok &= run_py(
             ["scripts/backfill_accident_dent_daily_cache.py", "--from", target_date, "--to", target_date],
             timeout=900,
@@ -515,6 +517,13 @@ def run_roi_daily_self_heal(now: datetime) -> bool:
         detail=f"cache_verified={verified}",
     )
     return verified
+
+
+def run_derived_start_stats(from_date: str, to_date: str) -> bool:
+    return run_py(
+        ["scripts/build_derived_start_stats.py", "--from", from_date, "--to", to_date],
+        timeout=1800,
+    )
 
 
 def run_tide_self_heal(now: datetime) -> bool:
@@ -626,6 +635,10 @@ def run_signal_refresh_slot(now: datetime) -> bool:
         return True
 
     record_task(task, today, "running")
+    ok = run_derived_start_stats(today, today)
+    if not ok:
+        record_task(task, today, "failure", detail="derived_start_stats_failed")
+        return False
     ok = run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today],
         timeout=1800,
@@ -787,6 +800,10 @@ def run_accident_rank_snapshot(target_date: str) -> bool:
     return run_py(args, timeout=300)
 
 
+def run_accident_external_check(target_date: str) -> bool:
+    return run_py(["scripts/check_external_accident_snapshot.py", "--date", target_date], timeout=300)
+
+
 def latest_accident_snapshot_state() -> tuple[str | None, str | None]:
     try:
         with db_connect() as conn:
@@ -794,9 +811,9 @@ def latest_accident_snapshot_state() -> tuple[str | None, str | None]:
                 """
                 SELECT MAX(snapshot_date), MAX(period_end)
                   FROM racer_accident_rank_snapshots
-                 WHERE source_kind = 'reconstructed'
+                 WHERE source_rule_version = ?
                 """
-            ).fetchone()
+            , ("official_table_2025_05_reconstructed_v2",)).fetchone()
         snapshot_date = str(row[0]) if row and row[0] else None
         period_end = str(row[1]) if row and row[1] else None
         return snapshot_date, period_end
@@ -930,6 +947,7 @@ def run_nightly(now: datetime) -> bool:
     # Build tomorrow's high-ROI snapshot after tomorrow's races and predictions
     # exist. Without this, nightly prewarming only refreshes today's signals and
     # previous-day confirmed candidates do not appear until the morning run.
+    ok &= run_derived_start_stats(today, tomorrow)
     ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", tomorrow], timeout=900)
     ok &= run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow],
@@ -941,6 +959,8 @@ def run_nightly(now: datetime) -> bool:
     )
     ok &= run_py(["scripts/aggregate_start_prediction_metrics.py", "--date", today], timeout=900)
     ok &= run_accident_full_refresh(today)
+    ok &= run_accident_external_check(today)
+    ok &= run_accident_rank_snapshot(today)
     ok &= run_db_maintenance()
     return ok
 

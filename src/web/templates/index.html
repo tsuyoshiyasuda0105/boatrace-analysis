@@ -1477,7 +1477,7 @@ function renderTodaysPicks() {
             const classList = Array.from(l4?.classList || []);
             const isRef = Boolean(l4Data?.is_reference) || classList.includes('l4-reference');
             const level = String(l4Data?.level || '');
-            if (isRef && (level === 'morning_general' || level === 'general')) {
+            if (isRef) {
               hiddenReferenceCount += 1;
               return;
             }
@@ -1571,7 +1571,7 @@ function renderTodaysPicks() {
           }
           if (preconfirmedSubhint) {
             preconfirmedSubhint.textContent = closedOnlyMode
-              ? '\u672c\u65e5\u4e2d\u306b\u8a72\u5f53\u3057\u305f\u30ec\u30fc\u30b9\u3067\u3059\u3002\u7de0\u5207\u30fb\u7d42\u4e86\u5f8c\u3082\u30b0\u30ec\u30fc\u8868\u793a\u3067\u6b8b\u3057\u307e\u3059\u3002'
+              ? '\u672c\u65e5\u4e2d\u306b\u8a72\u5f53\u3057\u305f\u30ec\u30fc\u30b9\u3067\u3059\u3002\u7de0\u5207\u30fb\u7d50\u679c\u78ba\u5b9a\u5f8c\u3082\u8272\u4ed8\u304d\u8868\u793a\u3067\u6b8b\u3057\u307e\u3059\u3002'
               : '\u524d\u65e5\u78ba\u5b9a\u30fb\u6f6e\u78ba\u5b9a\u30fb\u5c55\u793a\u78ba\u5b9a\u306a\u3069\u3001\u8cfc\u5165\u6761\u4ef6\u304c\u56fa\u307e\u3063\u305f\u5019\u88dc\u3067\u3059\u3002';
           }
 
@@ -1610,7 +1610,7 @@ function renderTodaysPicks() {
                 const mm = String(u.closedAt.getMinutes()).padStart(2, '0');
                 const tilStr = u.isClosed ? '\u7de0\u5207\u6e08' : fmtTimeTil(u.minutesUntil);
                 let rowClass = 'todays-pick-row';
-                if (u.isClosed) rowClass += ' is-closed';
+                if (u.isClosed) rowClass += ' is-today-settled';
                 else if (idx === firstUpcomingIdx) rowClass += ' is-next';
                 if (state.pendingConfirmation) rowClass += ' is-watch';
                 if (state.unadopted) rowClass += ' is-odds-mismatch';

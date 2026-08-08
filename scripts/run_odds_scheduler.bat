@@ -1,4 +1,5 @@
 @echo off
+if exist C:\boat_project\boatrace-analysis\.pc_schedule_paused exit /b 0
 REM Odds scheduler launcher (every minute via Task Scheduler).
 REM Task Scheduler calls this through wscript.exe + run_hidden.vbs
 REM so cmd is completely hidden — no visible window in the taskbar.

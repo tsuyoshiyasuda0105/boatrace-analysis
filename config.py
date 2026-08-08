@@ -131,6 +131,23 @@ DEFAULT_MODEL_VERSION = "v0.8"
 EV_THRESHOLD = 0.15           # EV (期待値) 15%以上を Value Bet とする
 KELLY_FRACTION = 0.25         # 1/4 Kelly
 
+# Practical trifecta value-bet profile.
+# Backtest window with full final odds (2026-04-09..2026-05-08):
+# venue x boat + venue x branch x boat correction + EV>=1.00 + top2
+# + prob>=0.8% + odds 15-120 reached the best current practical result
+# (ROI 108.7%, n=1,614).
+PRACTICAL_TRIFECTA_EV_THRESHOLD = 1.00
+PRACTICAL_TRIFECTA_MIN_PROB = 0.008
+PRACTICAL_TRIFECTA_MIN_ODDS = 15.0
+PRACTICAL_TRIFECTA_MAX_ODDS = 120.0
+PRACTICAL_TRIFECTA_MAX_BETS_PER_RACE = 2
+
+# Kimarite tendency is kept for analysis, but not applied to production EV
+# until it clears out-of-sample verification. First combined trial worsened
+# practical trifecta ROI to 68.9% over final-odds races from 2026-04-09
+# through 2026-05-08.
+ENABLE_KIMARITE_METHOD_CORRECTION = False
+
 # ============================================================
 # 補助関数
 # ============================================================

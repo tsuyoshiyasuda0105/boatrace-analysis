@@ -1,4 +1,5 @@
 @echo off
+if exist C:\boat_project\boatrace-analysis\.pc_schedule_paused exit /b 0
 REM Hourly task: race results refresh (every 2h during race times)
 REM
 REM Purpose: re-fetch today's race results so confirmed L4 / payouts are
@@ -21,6 +22,12 @@ REM 1. Race data -> Supabase (results, payouts, etc.)
 REM 2. Race data -> local SQLite (keep both in sync so future morning
 REM tasks and local backtests have consistent data)
 .venv\Scripts\python.exe scripts\daily_collect.py --local >> "%LOG%" 2>&1
+
+REM Tide self-heal -> Supabase
+.venv\Scripts\python.exe scripts\fetch_and_import_jma_tides.py --year-from %date:~0,4% --year-to %date:~0,4% --only-missing --timeout 30 >> "%LOG%" 2>&1
+
+REM Tide self-heal -> local SQLite
+.venv\Scripts\python.exe scripts\fetch_and_import_jma_tides.py --db C:\boat_project\boatrace-analysis\data\boatrace.db --year-from %date:~0,4% --year-to %date:~0,4% --only-missing --timeout 30 >> "%LOG%" 2>&1
 
 REM 3. データ品質再チェック (hourly でリトライ取得後の状態を更新)
 .venv\Scripts\python.exe scripts\check_data_quality.py >> "%LOG%" 2>&1

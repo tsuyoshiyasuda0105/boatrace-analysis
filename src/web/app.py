@@ -5242,7 +5242,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             has_watch = bool(levels & adopted_watch_levels)
             if not (has_adopted or has_watch):
                 continue
-            if l4.get("is_reference") and level in ("morning_general", "general"):
+            if l4.get("is_reference"):
                 continue
 
             race = race_by_id.get(str(race_id))

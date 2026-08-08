@@ -114,7 +114,7 @@ NUKI_N_TRAIN: int = 2273
 NUKI_N_TEST: int = 385
 """test 期間でフィルター成立した race 数 (boat1-1着 cohort)."""
 
-# 検証スプリット日 (kiryu_strategy と整合)
+# 検証スプリット日 (train/test 分割の基準日)
 VERIFICATION_SPLIT_DATE: str = "2025-01-01"
 
 # ============================================================

@@ -94,14 +94,21 @@ def upsert_k(conn: sqlite3.Connection, parsed: list[dict]) -> tuple[int, int, in
         # 結果
         for r in race["results"]:
             conn.execute("""
-                INSERT OR IGNORE INTO race_results (
+                INSERT INTO race_results (
                     race_id, boat_number, finishing_position,
-                    course_number, start_timing, race_time, remarks
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    course_number, start_timing, race_time, remarks, kimarite
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(race_id, boat_number) DO UPDATE SET
+                    finishing_position = COALESCE(excluded.finishing_position, race_results.finishing_position),
+                    course_number = COALESCE(excluded.course_number, race_results.course_number),
+                    start_timing = COALESCE(excluded.start_timing, race_results.start_timing),
+                    race_time = COALESCE(excluded.race_time, race_results.race_time),
+                    remarks = COALESCE(excluded.remarks, race_results.remarks),
+                    kimarite = COALESCE(excluded.kimarite, race_results.kimarite)
             """, (
                 rid, r["boat_number"], r.get("finishing_position"),
                 r.get("course_number"), r.get("start_timing"),
-                r.get("race_time"), r.get("remarks"),
+                r.get("race_time"), r.get("remarks"), r.get("kimarite"),
             ))
             n_results += 1
 

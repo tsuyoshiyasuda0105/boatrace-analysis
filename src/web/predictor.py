@@ -18,6 +18,7 @@ import config
 from src.features.builder import build_inference_frame
 from src.models.train import predict_probs
 from src.models.calibration import apply_calibrators, add_top_k_uncalibrated
+from src.models.venue_correction import apply_venue_boat_correction
 from src.models.cascade import load_cascade, predict_trifecta_joint
 from src.models.cascade_per_winner import (
     load_per_winner_cascade, predict_trifecta_per_winner,
@@ -108,6 +109,8 @@ class Predictor:
             df_pred["prob_first"] = df_pred["prob_first_uncalibrated"]
             df_pred["prob_top_2"] = df_pred["prob_top_2_uncalibrated"]
             df_pred["prob_top_3"] = df_pred["prob_top_3_uncalibrated"]
+
+        df_pred = apply_venue_boat_correction(df_pred, target_date)
 
         with self._lock:
             self._cache[target_date] = df_pred
@@ -228,6 +231,8 @@ class Predictor:
             df_pred["prob_top_2"] = df_pred["prob_top_2_uncalibrated"]
             df_pred["prob_top_3"] = df_pred["prob_top_3_uncalibrated"]
 
+        df_pred = apply_venue_boat_correction(df_pred, target_date)
+
         # 6艇の Stage 1 予測
         boats_out = []
         for _, r in df_pred.sort_values("prob_first", ascending=False).iterrows():
@@ -317,7 +322,9 @@ class Predictor:
         snapshot_label: str = "T-5min",
         ev_threshold: float = 0.0,
         min_prob: float = 0.005,
+        min_odds: float = 1.0,
         max_odds: float = 500.0,
+        max_results: Optional[int] = None,
         odds_lookup: Optional[dict] = None,
         decay_table=None,
     ) -> Optional[dict]:
@@ -369,7 +376,7 @@ class Predictor:
         rows = []
         for comb, prob in combo_dict.items():
             o = odds_lookup.get(comb)
-            if o is None or o < 1.0 or o > max_odds:
+            if o is None or o < min_odds or o > max_odds:
                 continue
             if prob < min_prob:
                 continue
@@ -387,6 +394,8 @@ class Predictor:
                 })
 
         rows.sort(key=lambda x: -x["adj_ev"])
+        if max_results is not None:
+            rows = rows[:max_results]
         best = rows[0] if rows else None
         return {
             "race_id": race_id,

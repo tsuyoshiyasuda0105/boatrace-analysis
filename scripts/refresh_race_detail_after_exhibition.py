@@ -407,6 +407,7 @@ def collect_live_exhibition(target_date: str, now: datetime | None = None) -> di
     flush_updates()
 
     if beforeinfo_summary["races"] > 0:
+        _run_py(["scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date], timeout=1800)
         _run_py(["scripts/render_cache_predictions.py", "--date", target_date], timeout=1800)
         _run_py(["scripts/generate_start_predictions.py", "--date", target_date], timeout=900)
 

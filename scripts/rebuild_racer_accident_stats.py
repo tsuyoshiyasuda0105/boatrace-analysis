@@ -32,8 +32,27 @@ from src.db.connection import connect as db_connect
 RULE_VERSION = "official_table_2025_05_reconstructed_v2"
 RAW_ACCIDENT_CODES = {"F", "L", "K0", "K1", "S0", "S1", "S2", "失", "妨", "転", "落"}
 
+RAW_ACCIDENT_CODES |= {
+    "U", "W", "X", "x",
+    "s", "k", "u", "b", "c", "d", "e",
+    "t", "r",
+}
+
 DEFAULT_POINT_RULES = [
     ("FL", "F/L", 20, 30, "2025-05-01", None, 100, "official_table_2025_05", "F/L. Yusho race uses yusho_points."),
+    ("U", "U", 20, 20, "2025-05-01", None, 100, "official_table_2025_05", "20-point KRAW code U."),
+    ("W", "W", 20, 20, "2025-05-01", None, 100, "official_table_2025_05", "20-point KRAW code W."),
+    ("X", "X", 20, 20, "2025-05-01", None, 100, "official_table_2025_05", "20-point KRAW code X."),
+    ("x", "x", 15, 15, "2025-05-01", None, 100, "official_table_2025_05", "15-point KRAW code x."),
+    ("s", "s", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "10-point KRAW code s."),
+    ("k", "k", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "10-point KRAW code k."),
+    ("u", "u", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "10-point KRAW code u."),
+    ("b", "b", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "10-point KRAW code b."),
+    ("c", "c", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "10-point KRAW code c."),
+    ("d", "d", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "10-point KRAW code d."),
+    ("e", "e", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "10-point KRAW code e."),
+    ("t", "t", 2, 2, "2025-05-01", None, 100, "official_table_2025_05", "2-point KRAW code t."),
+    ("r", "r", 2, 2, "2025-05-01", None, 100, "official_table_2025_05", "2-point KRAW code r."),
     ("OBSTRUCTION", "obstruction", 15, 15, "2025-05-01", None, 100, "official_table_2025_05", "Obstruction disqualification."),
     ("K1", "racer-responsible absence", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "Racer-responsible absence."),
     ("S1", "racer-responsible disqualification", 10, 10, "2025-05-01", None, 100, "official_table_2025_05", "Racer-responsible disqualification."),
@@ -299,6 +318,24 @@ def class_period(race_date: str) -> tuple[int, int, str, str]:
     return d.year, 2, f"{d.year - 1}-11-01", f"{d.year}-04-30"
 
 
+def affected_class_periods(date_from: str, date_to: str) -> list[tuple[int, int, str, str]]:
+    start = date.fromisoformat(date_from)
+    end = date.fromisoformat(date_to)
+    periods: list[tuple[int, int, str, str]] = []
+    seen: set[tuple[int, int]] = set()
+    probe = start
+    while probe <= end:
+        period = class_period(probe.isoformat())
+        key = (period[0], period[1])
+        if key not in seen:
+            periods.append(period)
+            seen.add(key)
+        _, _, _period_start, period_end = period
+        next_day = date.fromisoformat(period_end).toordinal() + 1
+        probe = date.fromordinal(next_day)
+    return periods
+
+
 def normalize_remark(raw: str) -> str:
     return (raw or "").strip().upper().replace(" ", "")
 
@@ -336,6 +373,10 @@ def score_event(raw_remarks: str, is_yusho: int) -> Optional[tuple[str, str, int
 
 
 def score_event_with_rules(raw_remarks: str, is_yusho: int, rules: dict[str, dict]) -> Optional[tuple[str, str, int]]:
+    direct_rule = rules.get(raw_remarks)
+    if direct_rule is not None:
+        points = int(direct_rule["yusho_points"] if is_yusho else direct_rule["base_points"])
+        return str(raw_remarks), str(direct_rule["event_label"]), points
     scored = score_event(raw_remarks, is_yusho)
     if scored is None:
         return None
@@ -433,7 +474,7 @@ def parse_k_accident_line(line: str) -> Optional[tuple[str, int, int]]:
     parts = line.strip().split()
     if len(parts) < 3:
         return None
-    code = parts[0].upper()
+    code = parts[0].strip()
     if code not in RAW_ACCIDENT_CODES:
         return None
     if not parts[1].isdigit() or not parts[2].isdigit():
@@ -501,6 +542,7 @@ def iter_k_raw_events(
         "unmatched": 0,
         "ambiguous": 0,
         "files": 0,
+        "dates_with_files": set(),
     }
     events: list[AccidentEvent] = []
     unmatched_rows: list[KRawUnmatched] = []
@@ -511,6 +553,7 @@ def iter_k_raw_events(
         if race_date is None or race_date < date_from or race_date > date_to:
             continue
         stats["files"] += 1
+        stats["dates_with_files"].add(race_date)
         lookup, context = load_entry_lookup(conn, race_date)
         race_number: Optional[int] = None
         try:
@@ -631,6 +674,48 @@ def iter_k_raw_events(
     return events, unmatched_rows, stats
 
 
+def load_existing_kraw_events(
+    conn: sqlite3.Connection,
+    date_from: str,
+    date_to: str,
+    preserve_dates: set[str],
+) -> list[AccidentEvent]:
+    if not preserve_dates:
+        return []
+    placeholders = ",".join("?" for _ in preserve_dates)
+    sql = f"""
+        SELECT race_id, race_date, stadium_number, race_number, racer_number,
+               boat_number, course_number, class_number, event_code, event_label,
+               accident_points, is_yusho, raw_remarks, rule_version
+          FROM racer_accident_events
+         WHERE race_date BETWEEN ? AND ?
+           AND rule_version = ?
+           AND substr(raw_remarks, 1, 5) = 'KRAW:'
+           AND race_date IN ({placeholders})
+    """
+    params: list[object] = [date_from, date_to, RULE_VERSION, *sorted(preserve_dates)]
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    return [
+        AccidentEvent(
+            race_id=str(row[0]),
+            race_date=str(row[1]),
+            stadium_number=int(row[2]),
+            race_number=int(row[3]),
+            racer_number=int(row[4]),
+            boat_number=int(row[5]),
+            course_number=row[6],
+            class_number=row[7],
+            event_code=str(row[8]),
+            event_label=str(row[9]),
+            accident_points=int(row[10]),
+            is_yusho=int(row[11] or 0),
+            raw_remarks=str(row[12] or ""),
+            rule_version=str(row[13] or RULE_VERSION),
+        )
+        for row in rows
+    ]
+
+
 def dedupe_events(events: Iterable[AccidentEvent]) -> list[AccidentEvent]:
     deduped: dict[tuple[str, int, str], AccidentEvent] = {}
     for ev in events:
@@ -668,7 +753,24 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
     rules = load_point_rules(conn)
     db_events = list(iter_events(conn, date_from, date_to, rules))
     raw_events, unmatched_rows, raw_stats = iter_k_raw_events(conn, date_from, date_to, rules)
-    events = dedupe_events([*db_events, *raw_events])
+    raw_dates = {str(d) for d in raw_stats.get("dates_with_files", set())}
+    existing_dates = set()
+    preserved_existing_events: list[AccidentEvent] = []
+    if not dry_run:
+        existing_rows = conn.execute(
+            """
+            SELECT DISTINCT race_date
+              FROM racer_accident_events
+             WHERE race_date BETWEEN ? AND ?
+               AND rule_version = ?
+               AND substr(raw_remarks, 1, 5) = 'KRAW:'
+            """,
+            (date_from, date_to, RULE_VERSION),
+        ).fetchall()
+        existing_dates = {str(row[0]) for row in existing_rows if row and row[0]}
+        preserve_dates = existing_dates - raw_dates
+        preserved_existing_events = load_existing_kraw_events(conn, date_from, date_to, preserve_dates)
+    events = dedupe_events([*db_events, *raw_events, *preserved_existing_events])
 
     if not dry_run:
         conn.execute("DELETE FROM racer_accident_events WHERE race_date BETWEEN ? AND ? AND rule_version = ?", (date_from, date_to, RULE_VERSION))
@@ -731,11 +833,9 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
 
         # Period stats must be refreshed even on days with no accident events:
         # starts_count still changes, and accident_rate is points / starts.
-        periods = {class_period(date_from), class_period(date_to)}
-        periods.update(class_period(ev.race_date) for ev in events)
-        periods = sorted(periods)
+        periods = affected_class_periods(date_from, date_to)
         for period_year, period_half, period_start, period_end in periods:
-            effective_period_start = max(period_start, date_from)
+            effective_period_start = period_start
             effective_period_end = min(period_end, date_to)
             conn.execute(
                 """
@@ -744,7 +844,7 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
                    AND period_half = ?
                    AND period_end = ?
                    AND rule_version = ?
-                   AND source_kind = 'reconstructed'
+                   AND source_kind = 'internal_rebuild'
                 """,
                 (period_year, period_half, effective_period_end, RULE_VERSION),
             )
@@ -826,7 +926,7 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
                        CASE WHEN s.starts_count > 0
                             THEN CAST(COALESCE(acc.accident_points, 0) + COALESCE(fl_penalty.repeat_fl_points, 0) + COALESCE(adj.adjustment_points, 0) AS REAL) / s.starts_count
                             ELSE NULL END,
-                       ?, 'reconstructed', CURRENT_TIMESTAMP
+                       ?, 'internal_rebuild', CURRENT_TIMESTAMP
                   FROM starts s
                   LEFT JOIN acc ON acc.racer_number = s.racer_number
                   LEFT JOIN fl_penalty ON fl_penalty.racer_number = s.racer_number
@@ -872,6 +972,9 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
         "events": len(events),
         "db_events": len(db_events),
         "raw_events": len(raw_events),
+        "preserved_existing_events": len(preserved_existing_events),
+        "raw_dates": sorted(raw_dates),
+        "existing_kraw_dates": sorted(existing_dates),
         "unmatched_rows": unmatched_rows,
         "unmatched_by_reason": unmatched_by_reason,
         "unmatched_by_detail_reason": unmatched_by_detail_reason,
@@ -902,7 +1005,11 @@ def main() -> int:
         conn.close()
 
     print(f"range={stats['date_from']}..{stats['date_to']} dry_run={stats['dry_run']}")
-    print(f"events={stats['events']} db_events={stats['db_events']} raw_events={stats['raw_events']}")
+    print(
+        "events="
+        f"{stats['events']} db_events={stats['db_events']} raw_events={stats['raw_events']} "
+        f"preserved_existing={stats['preserved_existing_events']}"
+    )
     print(
         "k_raw "
         f"files={stats['raw_stats']['files']} rows={stats['raw_stats']['raw_rows']} "

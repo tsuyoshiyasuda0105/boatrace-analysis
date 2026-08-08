@@ -1,4 +1,5 @@
 @echo off
+if exist C:\boat_project\boatrace-analysis\.pc_schedule_paused exit /b 0
 REM Daily sync: pushes local SQLite to Supabase
 REM Scheduled to run at 23:30 (after all races finish)
 
