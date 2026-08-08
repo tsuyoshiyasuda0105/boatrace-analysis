@@ -22,7 +22,7 @@
 
       {% if is_member() and is_admin() %}
       <nav class="nav-actions" aria-label="管理者メニュー">
-        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="ROIが高いレース">
+        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="本日のROI候補一覧">
           <span class="nav-label">本日のレース</span>
         </a>
         <a href="{{ url_for('member_strategy') }}" class="nav-btn nav-btn-roi" title="ROIダッシュボード">

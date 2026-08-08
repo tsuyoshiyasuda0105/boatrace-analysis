@@ -3869,7 +3869,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v4"
+RACE_DETAIL_TAG_CACHE_VERSION = "v5"
 RACE_DETAIL_PAGE_CACHE_VERSION = "v10"
 
 
@@ -3918,14 +3918,14 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         logger.warning("ace motor snapshot failed for %s", race_id, exc_info=True)
 
     try:
-        boat1_escape = _boat1_national_course1_win_stats(race_id, str(info["race_date"]))
+        boat1_escape = _boat1_monthly_escape_profile(race_id, str(info["race_date"]))
     except Exception:
         boat1_escape = None
         logger.warning("escape tag snapshot failed for %s", race_id, exc_info=True)
 
     boats: dict[str, dict[str, Any]] = {}
     for boat_number, racer_number, motor_rate_raw in entries:
-        boat: dict[str, Any] = {}
+        boat: dict[str, Any] = {"escape_context_tag": None}
         accident = accident_by_racer.get(int(racer_number)) if racer_number is not None else None
         if accident:
             rate = float(accident["rate"])
@@ -3954,6 +3954,8 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
                     "rate": round(float(escape_rate), 1),
                     "wins": int(boat1_escape.get("wins") or 0),
                     "starts": int(boat1_escape.get("starts") or 0),
+                    "snapshot_month": str(boat1_escape.get("snapshot_month") or ""),
+                    "preferred_course": int(boat1_escape.get("preferred_course") or 1),
                 }
                 boat["escape_tag"]["label"] = "逃げ"
         boats[str(int(boat_number))] = boat
@@ -3965,6 +3967,66 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
         "ace_motor_threshold": ace_threshold,
         "boats": boats,
+    }
+
+
+def _monthly_snapshot_window(race_date: str) -> dict[str, str]:
+    """Return a frozen monthly lookback window for race-detail context tags."""
+    d = date.fromisoformat(race_date)
+    month_start = d.replace(day=1)
+    if month_start.month == 1:
+        prev_month_start = month_start.replace(year=month_start.year - 1, month=12)
+    else:
+        prev_month_start = month_start.replace(month=month_start.month - 1)
+    return {
+        "snapshot_month": month_start.strftime("%Y-%m"),
+        "from_date": (month_start - timedelta(days=180)).isoformat(),
+        "to_date": month_start.isoformat(),
+        "previous_month": prev_month_start.strftime("%Y-%m"),
+    }
+
+
+def _boat1_monthly_escape_profile(race_id: str, race_date: str) -> Optional[dict[str, Any]]:
+    """Return a month-frozen course-1 profile for the current boat-1 racer."""
+    window = _monthly_snapshot_window(race_date)
+    preferred_course = 1
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            WITH current_boat1 AS (
+                SELECT racer_number
+                  FROM race_entries
+                 WHERE race_id = ? AND boat_number = 1
+            )
+            SELECT COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+              FROM current_boat1 c
+              JOIN race_entries e1
+                ON e1.racer_number = c.racer_number
+              JOIN races r
+                ON r.race_id = e1.race_id
+               AND r.race_date >= ?
+               AND r.race_date < ?
+              JOIN race_results rr1
+                ON rr1.race_id = e1.race_id
+               AND rr1.boat_number = e1.boat_number
+             WHERE COALESCE(NULLIF(rr1.course_number, 0), e1.boat_number) = 1
+               AND rr1.finishing_position IS NOT NULL
+            """,
+            (race_id, window["from_date"], window["to_date"]),
+        ).fetchone()
+    if not row:
+        return None
+    starts = int(row[0] or 0)
+    wins = int(row[1] or 0)
+    if starts <= 0:
+        return None
+    return {
+        "starts": starts,
+        "wins": wins,
+        "rate": wins / starts * 100.0,
+        "snapshot_month": str(window["snapshot_month"] or ""),
+        "preferred_course": preferred_course,
     }
 
 
@@ -5111,10 +5173,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         req_date = f"{rid[:4]}-{rid[4:6]}-{rid[6:8]}"
                 if req_date and req_date < _today_jst_iso():
                     # 過去日 HTML: 5 分キャッシュ (L4 マーク更新を反映するため)
-                    response.headers["Cache-Control"] = "public, max-age=300, must-revalidate"
+                    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=300"
                 else:
                     # 今日 HTML: 30 秒のみ
-                    response.headers["Cache-Control"] = "public, max-age=30, must-revalidate"
+                    response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=300"
             except Exception:
                 response.headers["Cache-Control"] = "public, max-age=60"
         return response

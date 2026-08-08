@@ -31,6 +31,7 @@ def test_today_pages_default_to_jst_date(monkeypatch):
     client = app.test_client()
     with client.session_transaction() as session:
         session["is_member"] = True
+        session["role"] = "admin"
 
     races_response = client.get("/")
     today_response = client.get("/member/today-races")
@@ -97,6 +98,7 @@ def _member_client(monkeypatch):
     client = app.test_client()
     with client.session_transaction() as session:
         session["is_member"] = True
+        session["role"] = "admin"
     return client
 
 
@@ -182,6 +184,7 @@ def test_today_races_page_marks_adopted_closed_rows_with_profit(monkeypatch):
     client = app.test_client()
     with client.session_transaction() as session:
         session["is_member"] = True
+        session["role"] = "admin"
 
     response = client.get("/member/today-races?date=2026-07-30")
     html = response.get_data(as_text=True)
@@ -280,6 +283,7 @@ def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch)
     client = app.test_client()
     with client.session_transaction() as session:
         session["is_member"] = True
+        session["role"] = "admin"
 
     response = client.get("/races?date=2026-07-30")
 

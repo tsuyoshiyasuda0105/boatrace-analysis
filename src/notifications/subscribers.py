@@ -53,6 +53,15 @@ ALL_ALERT_TYPES = {
     "L4_morning_default":    "🌅朝L4 候補 (予測ベース)",
 }
 
+DEFAULT_SUBJECT_TEMPLATE = "[BOATRACE] 採用確定レース {date} {count}件"
+DEFAULT_BODY_TEMPLATE = (
+    "採用確定レースが {count} 件あります。\n\n"
+    "{items_text}\n"
+    "---\n"
+    "配信停止: {unsubscribe_url}\n"
+    "サイト: {site_url}\n"
+)
+
 
 def _hash_ip(ip: str) -> str:
     """IP もハッシュ化 (追跡防止)"""
