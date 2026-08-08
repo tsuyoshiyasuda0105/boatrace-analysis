@@ -404,6 +404,10 @@
                   >
                     <span class="racer-name-line">
                       <span class="racer-name">{{ racer_names.get(p.boat_number, '—') }}</span>
+                      {% if p.entry_change_tag is defined and p.entry_change_tag %}
+                      <span class="racer-entry-change-alert"
+                            title="進入注意 / 変更率 {{ '%.1f' | format(p.entry_change_tag.change_rate) }}% / 内取り率 {{ '%.1f' | format(p.entry_change_tag.inner_rate) }}% / n={{ p.entry_change_tag.starts }}">!</span>
+                      {% endif %}
                       {% set cls_map = {1: 'A1', 2: 'A2', 3: 'B1', 4: 'B2'} %}
                       {% set cls_label = cls_map.get(p.class_number, '-') %}
                       <span class="racer-class-badge racer-class-badge--name is-{{ cls_label | lower }}">{{ cls_label }}</span>

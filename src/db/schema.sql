@@ -686,3 +686,21 @@ CREATE TABLE IF NOT EXISTS racer_accident_external_snapshots (
   created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (snapshot_date, racer_number, source_kind)
 );
+
+CREATE TABLE IF NOT EXISTS racer_entry_change_snapshots (
+  snapshot_date       TEXT NOT NULL,
+  racer_number        INTEGER NOT NULL,
+  starts_count        INTEGER NOT NULL,
+  change_count        INTEGER NOT NULL,
+  change_rate         REAL NOT NULL,
+  inner_change_count  INTEGER NOT NULL,
+  inner_change_rate   REAL NOT NULL,
+  outer_change_count  INTEGER NOT NULL,
+  outer_change_rate   REAL NOT NULL,
+  level               TEXT,
+  updated_at          TEXT NOT NULL,
+  PRIMARY KEY (snapshot_date, racer_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_racer_entry_change_snapshot_date
+  ON racer_entry_change_snapshots(snapshot_date, level, change_rate);

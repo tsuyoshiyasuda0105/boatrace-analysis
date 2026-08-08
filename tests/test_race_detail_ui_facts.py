@@ -255,6 +255,8 @@ def test_only_motor_number_click_opens_detail_panel():
 
     assert 'class="racer-detail-btn"' not in template
     assert 'class="racer-name-static"' in template
+    assert "entry_change_tag" in template
+    assert "racer-entry-change-alert" in template
     assert 'class="motor-history-btn"' in template
     assert "data-motor-position-boat" in script
     assert "openMotorHistory" in script

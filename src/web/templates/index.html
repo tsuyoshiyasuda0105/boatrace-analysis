@@ -354,7 +354,7 @@
           raceBadgesCache
         );
         const SHOW_STRATEGY_RACE_CHIPS = false;
-        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge';
+        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .entry-change-watch-badge';
         const STRATEGY_BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetails = () => {
           // Race detail pages now load heavy motor/history/affinity data lazily
@@ -479,6 +479,7 @@
             const accident = badges?.accident || {};
             const ace = badges?.ace_motor || {};
             const escape = badges?.escape || {};
+            const entryChange = badges?.entry_change || {};
             rows.push([
               raceId,
               'badges',
@@ -488,6 +489,8 @@
               Array.isArray(ace.boats) ? ace.boats.join(',') : '',
               escape.max_rate ?? '',
               Array.isArray(escape.boats) ? escape.boats.join(',') : '',
+              entryChange.max_rate ?? '',
+              Array.isArray(entryChange.boats) ? entryChange.boats.join(',') : '',
             ].join(':'));
           });
           rows.sort();
@@ -663,6 +666,14 @@
               const primary = items[0] || null;
               badge.textContent = '逃げ';
               badge.title = escape.label || (primary?.rate != null ? `全国1コース1着率 ${Number(primary.rate).toFixed(1)}%` : '1号艇の全国1コース1着率70%以上');
+              ensureBadgeRow().appendChild(badge);
+            }
+            const entryChange = badges?.entry_change;
+            if (entryChange) {
+              const badge = document.createElement('span');
+              badge.className = 'entry-change-watch-badge';
+              badge.textContent = '!';
+              badge.title = entryChange.label || '進入注意';
               ensureBadgeRow().appendChild(badge);
             }
           });

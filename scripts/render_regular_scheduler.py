@@ -162,6 +162,41 @@ def race_count_for_date(target_date: str) -> int:
         return 0
 
 
+def entry_change_snapshot_row_count(target_date: str) -> int | None:
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                  FROM racer_entry_change_snapshots
+                 WHERE snapshot_date = ?
+                """,
+                (target_date,),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception as exc:
+        if "no such table" in str(exc).lower():
+            print(f"[entry-change] row-count unavailable date={target_date} reason=missing-table", flush=True)
+            return None
+        print(f"[entry-change] row-count failed date={target_date} error={type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
+def run_entry_change_snapshot(target_date: str) -> bool:
+    race_count = race_count_for_date(target_date)
+    if race_count <= 0:
+        print(f"[entry-change] skip date={target_date} reason=no-races", flush=True)
+        return True
+    ok = run_py(["scripts/build_racer_entry_change_stats.py", "--date", target_date], timeout=900)
+    row_count = entry_change_snapshot_row_count(target_date) if ok else 0
+    verified = bool(ok and (row_count is None or row_count > 0))
+    print(
+        f"[entry-change] date={target_date} races={race_count} rows={row_count} verified={verified}",
+        flush=True,
+    )
+    return verified
+
+
 def task_success_exists(task_name: str, run_date: str) -> bool:
     try:
         with db_connect() as conn:
@@ -417,6 +452,7 @@ def run_morning(now: datetime) -> bool:
     # Accident-based strategies and tags should be ready before the first
     # morning prediction/signal materialization.
     ok &= run_accident_self_heal(now)
+    ok &= run_entry_change_snapshot(today)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
     ok &= run_top_page_snapshot(now, lightweight=False)
@@ -972,6 +1008,7 @@ def run_nightly(now: datetime) -> bool:
     # exist. Without this, nightly prewarming only refreshes today's signals and
     # previous-day confirmed candidates do not appear until the morning run.
     ok &= run_derived_start_stats(today, tomorrow)
+    ok &= run_entry_change_snapshot(tomorrow)
     ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", tomorrow], timeout=900)
     ok &= run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow],

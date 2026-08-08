@@ -2751,6 +2751,21 @@ main h2 {
   flex-wrap: wrap;
   gap: 6px;
 }
+.racer-entry-change-alert {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(180, 83, 9, 0.98), rgba(245, 158, 11, 0.9));
+  color: #fff7ed;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.28);
+  cursor: help;
+}
 .racer-age-branch {
   font-size: 12px;
   font-weight: 600;
@@ -4897,7 +4912,8 @@ main h2 {
 .accident-watch-badge,
 .ace-motor-watch-badge,
 .kimarite-watch-badge,
-.escape-watch-badge {
+.escape-watch-badge,
+.entry-change-watch-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4924,7 +4940,8 @@ main h2 {
 .race-item a .accident-watch-badge,
 .race-item a .ace-motor-watch-badge,
 .race-item a .kimarite-watch-badge,
-.race-item a .escape-watch-badge {
+.race-item a .escape-watch-badge,
+.race-item a .entry-change-watch-badge {
   position: static;
   z-index: 4;
   max-width: 100%;
@@ -4965,14 +4982,23 @@ main h2 {
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.36);
 }
 
+.entry-change-watch-badge {
+  border: 1px solid rgba(251, 191, 36, 0.92);
+  background: linear-gradient(135deg, rgba(120, 53, 15, 0.96), rgba(245, 158, 11, 0.84));
+  color: #fff7ed;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.34);
+}
+
 .race-item.done .accident-watch-badge,
 .race-item.done .ace-motor-watch-badge,
 .race-item.done .kimarite-watch-badge,
 .race-item.done .escape-watch-badge,
+.race-item.done .entry-change-watch-badge,
 .race-item.is-closed .accident-watch-badge,
 .race-item.is-closed .ace-motor-watch-badge,
 .race-item.is-closed .kimarite-watch-badge,
-.race-item.is-closed .escape-watch-badge {
+.race-item.is-closed .escape-watch-badge,
+.race-item.is-closed .entry-change-watch-badge {
   opacity: 1;
   filter: none;
 }

@@ -20,6 +20,7 @@ def test_strategy_cleanup_keeps_lightweight_data_badges() -> None:
     assert "ace-motor-watch-badge" not in strategy_selector
     assert "kimarite-watch-badge" not in strategy_selector
     assert "escape-watch-badge" not in strategy_selector
+    assert "entry-change-watch-badge" not in strategy_selector
     assert "item.querySelectorAll(STRATEGY_BADGE_SELECTOR)" in source
 
 
@@ -39,7 +40,10 @@ def test_lightweight_badges_include_escape_and_render_on_top_page() -> None:
     source = _source()
 
     assert ".escape-watch-badge" in source
+    assert ".entry-change-watch-badge" in source
     assert "const escape = badges?.escape;" in source
+    assert "const entryChange = badges?.entry_change;" in source
+    assert "badge.textContent = '!';" in source
     assert "badge.textContent = '逃げ';" in source
     assert "badge.textContent = '事故';" in source
     assert "badge.textContent = 'M';" in source

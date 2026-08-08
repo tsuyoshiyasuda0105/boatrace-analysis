@@ -13,6 +13,8 @@ def test_daily_tag_prewarm_is_wired_into_signal_refresh_and_nightly_jobs():
     nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
     assert '"scripts/prewarm_race_detail_tags.py", "--date", today' in signal_refresh
     assert '"scripts/prewarm_race_detail_tags.py", "--date", tomorrow' in nightly
+    assert "run_entry_change_snapshot(tomorrow)" in nightly
+    assert nightly.index("run_entry_change_snapshot(tomorrow)") < nightly.index('"scripts/prewarm_race_detail_tags.py", "--date", tomorrow')
     assert "hour=6, minute=0" in source
 
 
@@ -26,7 +28,7 @@ def test_tag_prewarm_covers_every_race_and_forces_snapshot_refresh():
 def test_escape_tag_uses_monthly_frozen_boat1_profile():
     source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_TAG_CACHE_VERSION = "v5"' in source
+    assert 'RACE_DETAIL_TAG_CACHE_VERSION = "v6"' in source
     assert "def _boat1_monthly_escape_profile" in source
     assert "def _monthly_snapshot_window" in source
     assert "WHERE race_id = ? AND boat_number = 1" in source
@@ -35,3 +37,4 @@ def test_escape_tag_uses_monthly_frozen_boat1_profile():
     assert '"snapshot_month": str(boat1_escape.get("snapshot_month") or "")' in source
     assert "escape_context_tag" in source
     assert "preferred_course" in source
+    assert "entry_change_tag" in source

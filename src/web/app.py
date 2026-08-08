@@ -152,6 +152,94 @@ def _market_signals_compat_cache_keys(target_date: str) -> list[str]:
     return keys
 
 
+ENTRY_CHANGE_MIN_STARTS = 100
+ENTRY_CHANGE_WATCH_RATE = 0.15
+ENTRY_CHANGE_HIGH_RATE = 0.20
+ENTRY_CHANGE_INNER_MIN_RATE = 0.10
+
+
+def _load_entry_change_snapshot_stats(
+    target_date: str,
+    racer_numbers: list[int],
+) -> dict[int, dict[str, Any]]:
+    if not racer_numbers:
+        return {}
+    wanted = sorted({int(r) for r in racer_numbers if r is not None})
+    if not wanted:
+        return {}
+    placeholders = ",".join("?" for _ in wanted)
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT racer_number,
+                       starts_count,
+                       change_count,
+                       change_rate,
+                       inner_change_count,
+                       inner_change_rate,
+                       outer_change_count,
+                       outer_change_rate,
+                       level
+                  FROM racer_entry_change_snapshots
+                 WHERE snapshot_date = ?
+                   AND racer_number IN ({placeholders})
+                """,
+                (target_date, *wanted),
+            ).fetchall()
+    except Exception:
+        logger.warning("entry change snapshot load failed: %s", target_date, exc_info=True)
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        racer = _safe_int(row[0])
+        if racer is None:
+            continue
+        out[racer] = {
+            "starts": int(row[1] or 0),
+            "change_count": int(row[2] or 0),
+            "change_rate": float(row[3] or 0.0),
+            "inner_count": int(row[4] or 0),
+            "inner_rate": float(row[5] or 0.0),
+            "outer_count": int(row[6] or 0),
+            "outer_rate": float(row[7] or 0.0),
+            "level": str(row[8] or "").strip() or None,
+        }
+    return out
+
+
+def _is_entry_change_caution(stats: dict[str, Any] | None) -> bool:
+    if not isinstance(stats, dict):
+        return False
+    starts = int(stats.get("starts") or 0)
+    change_rate = float(stats.get("change_rate") or 0.0)
+    inner_rate = float(stats.get("inner_rate") or 0.0)
+    outer_rate = float(stats.get("outer_rate") or 0.0)
+    return bool(
+        starts >= ENTRY_CHANGE_MIN_STARTS
+        and change_rate >= ENTRY_CHANGE_HIGH_RATE
+        and inner_rate >= ENTRY_CHANGE_INNER_MIN_RATE
+        and inner_rate >= outer_rate
+    )
+
+
+def _entry_change_tag_payload(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
+    if not _is_entry_change_caution(stats):
+        return None
+    stats = dict(stats or {})
+    return {
+        "label": "進入注意",
+        "starts": int(stats.get("starts") or 0),
+        "change_count": int(stats.get("change_count") or 0),
+        "change_rate": round(float(stats.get("change_rate") or 0.0) * 100.0, 1),
+        "inner_count": int(stats.get("inner_count") or 0),
+        "inner_rate": round(float(stats.get("inner_rate") or 0.0) * 100.0, 1),
+        "outer_count": int(stats.get("outer_count") or 0),
+        "outer_rate": round(float(stats.get("outer_rate") or 0.0) * 100.0, 1),
+        "level": str(stats.get("level") or "high"),
+    }
+
+
 def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
     """Fill lightweight race-grid badges for cache-only market signal payloads."""
     if not isinstance(payload, dict):
@@ -177,7 +265,12 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
             and value.get("escape")
             for value in existing.values()
         )
-        if has_accident_badges and has_escape_badges:
+        has_entry_change_badges = any(
+            isinstance(value, dict)
+            and value.get("entry_change")
+            for value in existing.values()
+        )
+        if has_accident_badges and has_escape_badges and has_entry_change_badges:
             return payload
     payload = dict(payload)
     payload["race_badges"] = {}
@@ -302,6 +395,12 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                 "starts": starts_i,
             }
 
+    racer_numbers = [_safe_int(row[3]) for row in rows]
+    entry_change_by_racer = _load_entry_change_snapshot_stats(
+        payload_date,
+        [r for r in racer_numbers if r is not None],
+    )
+
     by_race: dict[str, dict[str, Any]] = {}
     for row in rows:
         rid = str(row[0])
@@ -315,14 +414,16 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                 "stadium": _safe_int(row[1]),
                 "accident_items": [],
                 "ace_items": [],
+                "entry_change_items": [],
             },
         )
+        racer_number = _safe_int(row[3])
         rate = _safe_float(row[6])
         if rate is not None and rate >= 0.5:
             info["accident_items"].append(
                 {
                     "boat": boat_no,
-                    "racer": _safe_int(row[3]),
+                    "racer": racer_number,
                     "class_number": _safe_int(row[4]),
                     "class_label": _class_label(row[4]),
                     "tone": _accident_rank_tone(row[4], rate),
@@ -338,6 +439,16 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                 {
                     "boat": boat_no,
                     "rate": round(float(motor_rate), 1),
+                }
+            )
+        entry_change_stats = entry_change_by_racer.get(racer_number) if racer_number is not None else None
+        entry_change_tag = _entry_change_tag_payload(entry_change_stats)
+        if entry_change_tag:
+            info["entry_change_items"].append(
+                {
+                    "boat": boat_no,
+                    "racer": racer_number,
+                    **entry_change_tag,
                 }
             )
 
@@ -401,6 +512,27 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                         "threshold": round(float(threshold), 1),
                         "label": " / ".join(f"{x['boat']}号M{x['rate']:.1f}" for x in ace_items[:3]),
                     }
+
+        entry_change_items = info.get("entry_change_items") or []
+        if entry_change_items:
+            entry_change_items.sort(
+                key=lambda x: (
+                    float(x.get("inner_rate") or 0.0),
+                    float(x.get("change_rate") or 0.0),
+                    int(x.get("starts") or 0),
+                ),
+                reverse=True,
+            )
+            top_items = entry_change_items[:3]
+            badge_info["entry_change"] = {
+                "items": top_items,
+                "boats": [x["boat"] for x in entry_change_items if x.get("boat") is not None],
+                "max_rate": max(float(x.get("change_rate") or 0.0) for x in entry_change_items),
+                "label": " / ".join(
+                    f"{x['boat']}号艇:内{x['inner_rate']:.1f}%/変{x['change_rate']:.1f}%"
+                    for x in top_items
+                ),
+            }
 
         detail_tags = _race_detail_tag_snapshot(rid, recompute=False)
         boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else None
@@ -571,6 +703,21 @@ def _normalize_race_badge_labels(race_badges: Any) -> dict[str, dict[str, Any]]:
                 ace["label"] = " / ".join(labels)
                 next_badges["ace_motor"] = ace
 
+        entry_change = next_badges.get("entry_change")
+        if isinstance(entry_change, dict):
+            items = [item for item in (entry_change.get("items") or []) if isinstance(item, dict)]
+            labels = []
+            for item in items[:3]:
+                boat = item.get("boat")
+                inner_rate = _safe_float(item.get("inner_rate"))
+                change_rate = _safe_float(item.get("change_rate"))
+                if boat is not None and inner_rate is not None and change_rate is not None:
+                    labels.append(f"{boat}号艇:内{inner_rate:.1f}%/変{change_rate:.1f}%")
+            if labels:
+                entry_change = dict(entry_change)
+                entry_change["label"] = " / ".join(labels)
+                next_badges["entry_change"] = entry_change
+
         kimarite = next_badges.get("kimarite")
         if isinstance(kimarite, dict):
             items = [item for item in (kimarite.get("items") or []) if isinstance(item, dict)]
@@ -648,7 +795,7 @@ def _race_grid_badges_payload(
     }
 
 
-TOP_PAGE_SNAPSHOT_VERSION = "v1"
+TOP_PAGE_SNAPSHOT_VERSION = "v2"
 
 
 def _top_page_snapshot_cache_key(target_date: str) -> str:
@@ -3877,7 +4024,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v5"
+RACE_DETAIL_TAG_CACHE_VERSION = "v6"
 RACE_DETAIL_PAGE_CACHE_VERSION = "v12"
 
 
@@ -3931,6 +4078,11 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         boat1_escape = None
         logger.warning("escape tag snapshot failed for %s", race_id, exc_info=True)
 
+    entry_change_by_racer = _load_entry_change_snapshot_stats(
+        race_date,
+        [int(row[1]) for row in entries if row[1] is not None],
+    )
+
     boats: dict[str, dict[str, Any]] = {}
     for boat_number, racer_number, motor_rate_raw in entries:
         boat: dict[str, Any] = {"escape_context_tag": None}
@@ -3968,6 +4120,10 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
                     "preferred_course": int(boat1_escape.get("preferred_course") or 1),
                 }
                 boat["escape_tag"]["label"] = "逃げ"
+        entry_change_stats = entry_change_by_racer.get(int(racer_number)) if racer_number is not None else None
+        entry_change_tag = _entry_change_tag_payload(entry_change_stats)
+        if entry_change_tag:
+            boat["entry_change_tag"] = entry_change_tag
         boats[str(int(boat_number))] = boat
 
     return {
@@ -14510,6 +14666,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "race_badges": race_badges,
             "signals": {s["race_id"]: s for s in signals},
         }
+        payload = _hydrate_market_race_badges(payload, target_date)
         # Zero candidates is also a valid computed result. Persist it so
         # browsers never trigger the expensive strategy scan themselves.
         _write_json_cache(cache_key, payload)

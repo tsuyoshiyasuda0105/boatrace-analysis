@@ -11,9 +11,10 @@ def test_run_morning_orders_accident_before_predictions_and_skips_tags():
     block = src[start:end]
 
     accident_idx = block.index('run_accident_self_heal(now)')
+    entry_change_idx = block.index("run_entry_change_snapshot(today)")
     prediction_idx = block.index('run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)')
 
-    assert accident_idx < prediction_idx
+    assert accident_idx < entry_change_idx < prediction_idx
     assert 'prewarm_race_detail_tags.py' not in block
 
 
