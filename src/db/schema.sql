@@ -302,6 +302,24 @@ CREATE TABLE IF NOT EXISTS odds_trifecta (
 CREATE INDEX IF NOT EXISTS idx_odds_combo_snap
   ON odds_trifecta(combination, snapshot_label, race_id);
 
+CREATE TABLE IF NOT EXISTS odds_fetch_status (
+  race_id           TEXT NOT NULL,
+  snapshot_label    TEXT NOT NULL,
+  state             TEXT NOT NULL,      -- fetched / missing / retry_waiting
+  detail_code       TEXT NOT NULL,      -- timeout / http_404 / parse_empty / partial_data など
+  http_status       INTEGER,
+  combination_count INTEGER NOT NULL DEFAULT 0,
+  retryable         INTEGER NOT NULL DEFAULT 0,
+  attempts          INTEGER NOT NULL DEFAULT 0,
+  checked_at        TEXT NOT NULL,
+  last_success_at   TEXT,
+  note              TEXT,
+  PRIMARY KEY (race_id, snapshot_label),
+  FOREIGN KEY (race_id) REFERENCES races(race_id)
+);
+CREATE INDEX IF NOT EXISTS idx_odds_fetch_status_state
+  ON odds_fetch_status(state, checked_at);
+
 -- ============================================================
 -- 予測 / バックテスト
 -- ============================================================
