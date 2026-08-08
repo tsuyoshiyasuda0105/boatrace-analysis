@@ -414,11 +414,28 @@ def run_morning(now: datetime) -> bool:
     ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
+    # Accident-based strategies and tags should be ready before the first
+    # morning prediction/signal materialization.
+    ok &= run_accident_self_heal(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
-    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
     ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
+    ok &= run_top_page_snapshot(now, lightweight=False)
     return ok
 
+
+
+def run_top_page_snapshot(now: datetime, *, lightweight: bool) -> bool:
+    today = now.date().isoformat()
+    args = ["scripts/build_top_page_snapshot.py", "--date", today]
+    if lightweight:
+        args.append("--lightweight")
+    ok = run_py(args, timeout=900)
+    record_task(
+        "render_top_snapshot_lightweight" if lightweight else "render_top_snapshot_full",
+        today,
+        "success" if ok else "failure",
+    )
+    return ok
 
 
 def tide_refresh_needed(run_date: str) -> bool:
@@ -809,13 +826,18 @@ def latest_accident_snapshot_state() -> tuple[str | None, str | None]:
         with db_connect() as conn:
             row = conn.execute(
                 """
-                SELECT MAX(snapshot_date), MAX(period_end)
+                SELECT source_kind, MAX(snapshot_date), MAX(period_end)
                   FROM racer_accident_rank_snapshots
-                 WHERE source_rule_version = ?
+                 WHERE source_kind IN ('official_external', 'reconstructed')
+                 GROUP BY source_kind
+                 ORDER BY CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END,
+                          MAX(period_end) DESC,
+                          MAX(snapshot_date) DESC
+                 LIMIT 1
                 """
-            , ("official_table_2025_05_reconstructed_v2",)).fetchone()
-        snapshot_date = str(row[0]) if row and row[0] else None
-        period_end = str(row[1]) if row and row[1] else None
+            ).fetchone()
+        snapshot_date = str(row[1]) if row and row[1] else None
+        period_end = str(row[2]) if row and row[2] else None
         return snapshot_date, period_end
     except Exception as exc:
         print(
@@ -848,6 +870,8 @@ def latest_completed_results_date() -> str | None:
 def run_accident_full_refresh(target_date: str) -> bool:
     target_dt = datetime.fromisoformat(target_date).replace(tzinfo=JST)
     ok = run_accident_rebuild(accident_period_start(target_dt), target_date)
+    if ok:
+        ok = run_accident_external_check(target_date)
     if ok:
         ok = run_accident_rank_snapshot(target_date)
     race_count = race_count_for_date(target_date) if ok else 0
@@ -1000,7 +1024,14 @@ def main() -> int:
     # keeps the dashboard snapshot close to the five-minute cron cadence.
     if 6 <= now.hour <= 23:
         run_tide_self_heal(now)
-        run_signal_refresh_slot(now)
+        signal_ok = run_signal_refresh_slot(now)
+        if signal_ok and not task_success_exists("render_detail_tags_today", today):
+            ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
+            record_task("render_detail_tags_today", today, "success" if ok else "failure")
+            if ok:
+                run_top_page_snapshot(now, lightweight=False)
+        elif signal_ok:
+            run_top_page_snapshot(now, lightweight=True)
 
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
@@ -1010,6 +1041,7 @@ def main() -> int:
             timeout=300,
         )
         run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
+        run_top_page_snapshot(now, lightweight=True)
 
     # Hourly summaries/health checks near the top of the hour.
     if now.minute < 5 and 9 <= now.hour <= 23:

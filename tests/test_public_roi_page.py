@@ -30,7 +30,10 @@ def test_public_roi_button_and_template_exist():
 
     assert "url_for('public_roi')" in base
     assert "account-btn-public-roi" in base
-    assert "PUBLIC ROI SIGNAL" in template
+    assert "PUBLIC ROI LIST" in template
+    assert "data-toggle-public-header" in template
+    assert "public-roi-table" in template
     assert "row.bet" in template
     assert "public-roi-page" in css
+    assert "public-roi-header-collapsed" in css
     assert "account-btn-public-roi" in css

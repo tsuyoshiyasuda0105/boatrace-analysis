@@ -34,9 +34,19 @@ if hasattr(time, "tzset"):
 JST = ZoneInfo("Asia/Tokyo")
 
 
+def _now_jst() -> datetime:
+    """Return current JST datetime, independent of OS/TZ quirks."""
+    return datetime.now(JST)
+
+
+def _today_jst_date() -> date:
+    """Return today's date in JST, independent of OS/TZ quirks."""
+    return _now_jst().date()
+
+
 def _today_jst_iso() -> str:
     """Return today's date in JST, independent of OS/TZ quirks."""
-    return datetime.now(JST).date().isoformat()
+    return _today_jst_date().isoformat()
 
 from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
 
@@ -579,7 +589,12 @@ def _normalize_race_badge_labels(race_badges: Any) -> dict[str, dict[str, Any]]:
     return normalized
 
 
-def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str, Any]:
+def _race_grid_badges_payload(
+    target_date: str,
+    race_ids: list[str],
+    *,
+    allow_expensive_fallback: bool = True,
+) -> dict[str, Any]:
     wanted = {str(rid) for rid in race_ids if rid}
     for cache_key in (
         _market_signals_last_good_cache_key(target_date),
@@ -588,7 +603,8 @@ def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str
         payload = _read_json_cache_stale(cache_key)
         if not isinstance(payload, dict) or payload.get("date") != target_date:
             continue
-        payload = _hydrate_market_race_badges(payload, target_date)
+        if allow_expensive_fallback:
+            payload = _hydrate_market_race_badges(payload, target_date)
         race_badges = payload.get("race_badges")
         if isinstance(race_badges, dict) and race_badges:
             race_badges = _normalize_race_badge_labels(race_badges)
@@ -602,6 +618,12 @@ def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str
                 "race_badges": filtered,
                 "accident_watch": {},
             }
+    if not allow_expensive_fallback:
+        return {
+            "date": target_date,
+            "race_badges": {},
+            "accident_watch": {},
+        }
     fallback_payload = _hydrate_market_race_badges(
         {"date": target_date, "signals": {}, "race_badges": {}},
         target_date,
@@ -624,6 +646,79 @@ def _race_grid_badges_payload(target_date: str, race_ids: list[str]) -> dict[str
         "race_badges": {},
         "accident_watch": {},
     }
+
+
+TOP_PAGE_SNAPSHOT_VERSION = "v1"
+
+
+def _top_page_snapshot_cache_key(target_date: str) -> str:
+    return f"top_page_snapshot:{TOP_PAGE_SNAPSHOT_VERSION}:{MARKET_SIGNALS_CACHE_VERSION}:{target_date}"
+
+
+def _build_top_page_snapshot_payload(
+    target_date: str,
+    *,
+    conn: Any = None,
+    allow_expensive_badges: bool = True,
+) -> dict[str, Any]:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
+    try:
+        races_list = _races_for_date(target_date, conn=conn)
+        venue_environment = _venue_environment_summaries_for_date(target_date, conn=conn)
+    finally:
+        if owns_connection:
+            conn.close()
+
+    stadium_groups: dict[int, dict[str, Any]] = {}
+    for race in races_list:
+        sn = race["stadium_number"]
+        if sn not in stadium_groups:
+            stadium_groups[sn] = {
+                "stadium_number": sn,
+                "stadium_name": race["stadium_name"],
+                "races": [],
+                "environment": venue_environment.get(sn, {}),
+            }
+        stadium_groups[sn]["races"].append(race)
+
+    race_ids = [str(r.get("race_id")) for r in races_list]
+    return {
+        "version": TOP_PAGE_SNAPSHOT_VERSION,
+        "date": target_date,
+        "generated_at": datetime.now(tz=JST).isoformat(timespec="seconds"),
+        "stadium_groups": sorted(
+            stadium_groups.values(),
+            key=lambda group: group["stadium_number"],
+        ),
+        "initial_market_signals": _race_grid_badges_payload(
+            target_date,
+            race_ids,
+            allow_expensive_fallback=allow_expensive_badges,
+        ),
+        "empty": not bool(races_list),
+    }
+
+
+def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    snapshot = payload or _build_top_page_snapshot_payload(target_date)
+    _write_json_cache(_top_page_snapshot_cache_key(target_date), snapshot)
+    return snapshot
+
+
+def _read_top_page_snapshot(target_date: str) -> Optional[dict[str, Any]]:
+    payload = _read_json_cache_stale(_top_page_snapshot_cache_key(target_date))
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("version") != TOP_PAGE_SNAPSHOT_VERSION:
+        return None
+    if payload.get("date") != target_date:
+        return None
+    groups = payload.get("stadium_groups")
+    if not isinstance(groups, list):
+        return None
+    return payload
 
 
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
@@ -691,7 +786,7 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
             # 過去日リクエストは長期キャッシュ
             effective_ttl = ttl
             try:
-                today_iso = date.today().isoformat()
+                today_iso = _today_jst_iso()
                 if request:
                     req_date = request.args.get("date", "")
                     if req_date and req_date < today_iso:
@@ -1553,6 +1648,70 @@ def _format_jst_minute(value: Any) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
+_STADIUM_TAILWIND_DEG: dict[int, float] = {
+    # NOTE:
+    # Relative wind labels depend on venue-specific course orientation.
+    # We keep the mapping explicit and easy to adjust venue by venue.
+    # Current values are verified / best-effort seeds for venues we have
+    # already analyzed in this project. Unmapped venues fall back to the
+    # previous generic "風 Xm" display so nothing breaks.
+    1: 112.5,  # 桐生: wd=6 が追い風
+    6: 0.0,    # 浜名湖: 北風が追い風寄り
+    18: 0.0,   # 徳山: 南風が向かい風寄り -> 北風が追い風寄り
+}
+
+
+def _wind_number_to_deg(wind_direction_number: Optional[int]) -> Optional[float]:
+    wd = _safe_int(wind_direction_number)
+    if wd is None or wd < 1 or wd > 16:
+        return None
+    return (wd - 1) * 22.5
+
+
+def _normalize_deg(value: float) -> float:
+    return value % 360.0
+
+
+def _relative_wind_label(
+    stadium_number: Optional[int],
+    wind_direction_number: Optional[int],
+) -> Optional[str]:
+    stadium = _safe_int(stadium_number)
+    if stadium is None:
+        return None
+    tailwind_deg = _STADIUM_TAILWIND_DEG.get(stadium)
+    wind_deg = _wind_number_to_deg(wind_direction_number)
+    if tailwind_deg is None or wind_deg is None:
+        return None
+
+    diff = _normalize_deg(wind_deg - tailwind_deg)
+    if diff < 45 or diff >= 315:
+        return "追い風"
+    if 45 <= diff < 135:
+        return "右横風"
+    if 135 <= diff < 225:
+        return "向かい風"
+    return "左横風"
+
+
+def _relative_wind_display(
+    stadium_number: Optional[int],
+    wind_direction_number: Optional[int],
+    wind_speed: Optional[float],
+    *,
+    prefix: str = "風",
+) -> str:
+    label = _relative_wind_label(stadium_number, wind_direction_number)
+    speed = _safe_float(wind_speed)
+    if label and speed is not None:
+        return f"{label} {speed:.0f}m"
+    if label:
+        return label
+    if speed is not None:
+        return f"{prefix} {speed:.0f}m"
+    return f"{prefix} -"
+
+
 def _jp_tide_phase_label(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -1644,6 +1803,7 @@ def _venue_environment_summaries_for_date_impl(
                        s.water,
                        pv.weather_number,
                        pv.wind_speed,
+                       pv.wind_direction_number,
                        pv.wave_height,
                        COALESCE(rt.tide_phase, '') AS tide_phase,
                        rt.tide_height_cm,
@@ -1671,7 +1831,7 @@ def _venue_environment_summaries_for_date_impl(
     grouped: dict[int, list[dict[str, Any]]] = {}
     keys = [
         "race_id", "stadium_number", "race_number", "race_closed_at", "water",
-        "weather_number", "wind_speed", "wave_height", "tide_phase",
+        "weather_number", "wind_speed", "wind_direction_number", "wave_height", "tide_phase",
         "tide_height_cm", "tide_delta_60m_cm", "tide_range_cm",
         "is_high_tide_zone", "is_low_tide_zone", "tide_fetched_at",
     ]
@@ -1679,8 +1839,8 @@ def _venue_environment_summaries_for_date_impl(
         d = dict(zip(keys, row))
         grouped.setdefault(int(d["stadium_number"]), []).append(d)
 
-    now_dt = datetime.now()
-    is_today = target_date == date.today().isoformat()
+    now_dt = _now_jst()
+    is_today = target_date == _today_jst_iso()
     out: dict[int, dict[str, Any]] = {}
 
     def _data_score(row: dict[str, Any]) -> int:
@@ -1733,7 +1893,11 @@ def _venue_environment_summaries_for_date_impl(
             "race_number": chosen.get("race_number"),
             "reference_label": f"次走 {chosen.get('race_number')}R 基準" if is_today else f"{chosen.get('race_number')}R 基準",
             "weather_label": _WEATHER_LABELS.get(_safe_int(chosen.get("weather_number")), "天候 -"),
-            "wind_label": f"風 {_safe_float(chosen.get('wind_speed')):.0f}m" if chosen.get("wind_speed") is not None else "風 -",
+            "wind_label": _relative_wind_display(
+                chosen.get("stadium_number"),
+                chosen.get("wind_direction_number"),
+                chosen.get("wind_speed"),
+            ),
             "wave_label": f"波 {_safe_float(chosen.get('wave_height')):.0f}cm" if chosen.get("wave_height") is not None else "波 -",
             "tide_label": tide_label,
             "trend_tone": tone,
@@ -2222,7 +2386,7 @@ def _kimarite_skill_tags_for_race_cached(
     info = _race_basic_info(race_id)
     if not info:
         return {}
-    today_iso = date.today().isoformat()
+    today_iso = _today_jst_iso()
     cache_key = f"race_kimarite_tags:v2:{race_id}"
     cache_ttl = 300 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -2987,7 +3151,7 @@ def _race_actual_result_cached(
     info = _race_basic_info(race_id)
     if not info:
         return None
-    today_iso = date.today().isoformat()
+    today_iso = _today_jst_iso()
     cache_key = f"race_actual_result:{race_id}"
     cache_ttl = 120 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -3073,7 +3237,7 @@ def _race_current_conditions_cached(
     info = _race_basic_info(race_id)
     if not info:
         return _race_current_conditions(race_id)
-    today_iso = date.today().isoformat()
+    today_iso = _today_jst_iso()
     cache_key = f"race_conditions:{race_id}"
     cache_ttl = 180 if info["race_date"] >= today_iso else 86400
     cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -3874,9 +4038,42 @@ def _attach_precomputed_race_detail_tags(race_id: str, preds: list[dict]) -> Non
                 pred[key] = value
 
 
+_RACE_DETAIL_DISPLAY_FACT_KEYS = (
+    "branch_number",
+    "branch_label",
+    "age",
+    "weight",
+    "flying_count",
+    "late_count",
+    "national_top_1_percent",
+    "national_top_2_percent",
+    "local_top_2_percent",
+    "tilt_adjustment",
+    "avg_start_timing",
+    "dash_time",
+    "turn_time",
+    "straight_time",
+    "current_course_number",
+    "venue_recent10_course_win_starts",
+    "venue_recent10_course_win_rate",
+    "national_course_win_starts",
+    "national_course_win_rate",
+    "national_course_second_rate",
+    "national_course_top3_rate",
+)
+
+
+def _preds_have_race_detail_display_facts(preds: list[dict]) -> bool:
+    if not preds:
+        return True
+    return all(all(key in pred for key in _RACE_DETAIL_DISPLAY_FACT_KEYS) for pred in preds)
+
+
 def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
     """Attach current entry/preview facts omitted by older prediction caches."""
     if not preds:
+        return
+    if _preds_have_race_detail_display_facts(preds):
         return
     with db_connect() as conn:
         info_row = conn.execute(
@@ -4695,7 +4892,12 @@ def _build_race_compat_analysis(race_id: str, info: dict[str, Any], preds: list[
         "matrix_rows": matrix_rows,
         "water": {
             "water_label": _WATER_LABELS.get(tide_row.get("water"), "-"),
-            "wind_label": f"{int((_safe_float(conditions.get('wind_speed')) or 0))}m" if conditions.get("wind_speed") is not None else "-",
+            "wind_label": _relative_wind_display(
+                info.get("stadium_number"),
+                conditions.get("wind_direction_number"),
+                conditions.get("wind_speed"),
+                prefix="風",
+            ),
             "wave_label": f"{int((_safe_float(conditions.get('wave_height')) or 0))}cm" if conditions.get("wave_height") is not None else "-",
             "weather_label": _WEATHER_LABELS.get(_safe_int(conditions.get("weather_number")), "-"),
             "tide_label": tide_row.get("tide_phase") or "-",
@@ -4881,7 +5083,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         response.headers["Expires"] = "0"
                         return response
                     req_date = request.args.get("date", "")
-                    if req_date and req_date < date.today().isoformat():
+                    if req_date and req_date < _today_jst_iso():
                         response.headers["Cache-Control"] = "private, max-age=600"
                     else:
                         response.headers["Cache-Control"] = "private, max-age=60"
@@ -4907,7 +5109,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     rid = path.split("/")[-1]
                     if len(rid) >= 8 and rid[:8].isdigit():
                         req_date = f"{rid[:4]}-{rid[4:6]}-{rid[6:8]}"
-                if req_date and req_date < date.today().isoformat():
+                if req_date and req_date < _today_jst_iso():
                     # 過去日 HTML: 5 分キャッシュ (L4 マーク更新を反映するため)
                     response.headers["Cache-Control"] = "public, max-age=300, must-revalidate"
                 else:
@@ -4972,6 +5174,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         ), 500
 
     # テンプレートから is_member() を呼べるように
+    @app.errorhandler(403)
+    def handle_403(err):
+        logger.warning(
+            "403 forbidden path=%s role=%s provider=%s",
+            request.path,
+            current_role(),
+            current_auth_provider(),
+        )
+        return render_template("forbidden.html"), 403
+
     app.jinja_env.globals["is_member"] = is_member
     app.jinja_env.globals["is_admin"] = is_admin
     app.jinja_env.globals["is_supabase_auth_enabled"] = is_supabase_auth_enabled
@@ -5042,7 +5254,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return {"system_warnings": cache["warnings"]}
         warnings_list: list[dict] = []
         try:
-            today_iso = date.today().isoformat()
+            today_iso = _today_jst_iso()
             with db_connect() as conn:
                 cur = conn.execute(
                     "SELECT check_name, status, message, checked_at "
@@ -5052,14 +5264,11 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     (today_iso,)
                 )
                 for cn, st, msg, at in cur.fetchall():
+                    if cn == "accident_external_compare":
+                        continue
                     display_status = st
                     display_name = cn
                     display_message = msg
-                    if cn == "accident_external_compare":
-                        display_status = "warning"
-                        display_name = "accident_external_audit"
-                        if msg:
-                            display_message = f"事故率監査: {msg}"
                     warnings_list.append({
                         "check_name": cn,
                         "status": st,
@@ -5143,7 +5352,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # データ品質 (今日の system_status 集計) は 200 のまま JSON のみ
         try:
-            today_iso = date.today().isoformat()
+            today_iso = _today_jst_iso()
             with db_connect() as conn:
                 cur = conn.execute(
                     "SELECT status, COUNT(*) FROM system_status "
@@ -5164,7 +5373,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
         # 当日投入件数の軽量サマリを返す。候補ゼロとデータ未投入を切り分けるための補助。
         try:
-            today_iso = date.today().isoformat()
+            today_iso = _today_jst_iso()
             with db_connect() as conn:
                 row = conn.execute(
                     """
@@ -5207,7 +5416,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return [], {}
 
         race_by_id = {str(r.get("race_id")): r for r in races_list}
-        today_iso = date.today().isoformat()
+        today_iso = _today_jst_iso()
         cache_ttl = 15 if target_date >= today_iso else 3600
         signal_payload, _signal_cache_state = _read_best_market_signals_snapshot(
             target_date,
@@ -5294,6 +5503,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     "adopted": is_display_confirmed,
                     "closed": is_closed,
                     "status": status,
+                    "settled": False,
+                    "is_hit": None,
+                    "stake": None,
+                    "payout": None,
+                    "profit": None,
+                    "actual_recovery": None,
                 }
             )
         rows.sort(key=lambda row: row.get("closed_at") or "")
@@ -5434,7 +5649,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @admin_required
     @cached(ttl=60, past_ttl=3600)
     def public_roi():
-        target_date = request.args.get("date") or date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
         try:
             with db_connect() as conn:
                 races_list = _races_for_date(target_date, conn=conn)
@@ -5464,7 +5679,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return render_template(
             "public_roi.html",
             target_date=target_date,
-            today_iso=date.today().isoformat(),
+            today_iso=_today_jst_iso(),
             date_form_action=url_for("public_roi"),
             rows=public_rows,
             summary=summary,
@@ -5491,6 +5706,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # CDN ヒット率が大幅向上し、ユーザ体感速度が改善する。
     def races():
         target_date = request.args.get("date") or _today_jst_iso()
+        snapshot = _read_top_page_snapshot(target_date)
+        if snapshot is not None:
+            resp = make_response(render_template(
+                "index.html",
+                target_date=target_date,
+                today_iso=_today_jst_iso(),
+                stadium_groups=snapshot.get("stadium_groups") or [],
+                market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
+                market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
+                market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
+                initial_market_signals=snapshot.get("initial_market_signals") or {
+                    "date": target_date,
+                    "race_badges": {},
+                    "accident_watch": {},
+                },
+                roi_picks_visible=False,
+                empty=bool(snapshot.get("empty")),
+            ))
+            resp.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=300"
+            return resp
+
         with db_connect() as conn:
             races_list = _races_for_date(target_date, conn=conn)
             venue_environment = _venue_environment_summaries_for_date(
@@ -5536,27 +5772,47 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             stadium_groups[sn]["races"].append(r)
 
+        initial_market_signals = _race_grid_badges_payload(
+            target_date,
+            [str(r.get("race_id")) for r in races_list],
+            allow_expensive_fallback=False,
+        )
+        sorted_stadium_groups = sorted(
+            stadium_groups.values(),
+            key=lambda g: g["stadium_number"],
+        )
+        try:
+            _write_top_page_snapshot(
+                target_date,
+                {
+                    "version": TOP_PAGE_SNAPSHOT_VERSION,
+                    "date": target_date,
+                    "generated_at": datetime.now(tz=JST).isoformat(timespec="seconds"),
+                    "stadium_groups": sorted_stadium_groups,
+                    "initial_market_signals": initial_market_signals,
+                    "empty": False,
+                    "source": "web-lightweight-fallback",
+                },
+            )
+        except Exception:
+            logger.exception("failed to write lightweight TOP snapshot: %s", target_date)
+
         resp = make_response(render_template(
             "index.html",
             target_date=target_date,
             today_iso=_today_jst_iso(),
-            stadium_groups=sorted(stadium_groups.values(),
-                                  key=lambda g: g["stadium_number"]),
+            stadium_groups=sorted_stadium_groups,
             market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
             market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
             market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
-            initial_market_signals=_race_grid_badges_payload(
-                target_date,
-                [str(r.get("race_id")) for r in races_list],
-            ),
+            initial_market_signals=initial_market_signals,
             roi_picks_visible=False,
             empty=False,
         ))
         # ROI candidates belong to /member/today-races.  The top race list does
         # not read or embed that cache, keeping DB capacity focused on races and
         # venue tags required for the first paint.
-        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=300"
         return resp
 
     @app.route("/member/today-races")
@@ -5801,10 +6057,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         actual_result = None
         closed_at_raw = info.get("race_closed_at")
         should_check_result = True
-        if info.get("race_date") >= date.today().isoformat() and closed_at_raw:
+        if info.get("race_date") >= _today_jst_iso() and closed_at_raw:
             try:
                 closed_at = datetime.fromisoformat(str(closed_at_raw).replace(" ", "T"))
-                if closed_at > datetime.now():
+                if closed_at > (_now_jst() if closed_at.tzinfo is None else datetime.now(closed_at.tzinfo)):
                     should_check_result = False
             except Exception:
                 should_check_result = True
@@ -6433,8 +6689,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
           理由: 旧設定では T-5 目標時刻から UI 表示まで中央値 56s/最悪 113s かかっていた。
           新設定: 中央値 ~12s, 最悪 ~50s。BAN リスクなし(自社 API のみ短縮)。
         """
-        target_date = request.args.get("date") or date.today().isoformat()
-        today_iso = date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
+        today_iso = _today_jst_iso()
         cache_ttl = 8 if target_date >= today_iso else 3600
         cache_key = f"odds_123_timeline:{target_date}"
         cached_payload = _read_json_cache(cache_key, cache_ttl)
@@ -6494,8 +6750,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
           2. final 払戻 MIN (上記オッズが無い過去日のフォールバック)
         各レースのトリフェクタ1番人気の払戻を見て +EV/-EV ゾーンを判定
         """
-        target_date = request.args.get("date") or date.today().isoformat()
-        today_iso = date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
+        today_iso = _today_jst_iso()
         cache_ttl = 15 if target_date >= today_iso else 3600
         force_recompute = _effective_force_recompute()
         # v6: avoid serving stale empty signals after race data catches up.
@@ -6795,7 +7051,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 logger.warning("cached start-prediction filter overlay failed: %s", e)
             return payload
 
-        recent_cache_floor = (date.today() - timedelta(days=2)).isoformat()
+        recent_cache_floor = (_today_jst_date() - timedelta(days=2)).isoformat()
 
         def _with_current_data_status(payload: Any) -> Any:
             """Overlay live source counts without rebuilding cached signals."""
@@ -6888,7 +7144,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             pending_payload = {
                 "date": target_date,
                 "cache_version": MARKET_SIGNALS_CACHE_VERSION,
-                "computed_at": datetime.now().isoformat(timespec="seconds"),
+                "computed_at": _now_jst().isoformat(timespec="seconds"),
                 "n_races": 0,
                 "n_positive_ev": 0,
                 "n_l4": 0,
@@ -8465,7 +8721,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 closed = datetime.fromisoformat(str(race_closed_at).replace(" ", "T"))
             except (TypeError, ValueError):
                 return False
-            now = datetime.now(closed.tzinfo) if closed.tzinfo else datetime.now()
+            now = datetime.now(closed.tzinfo) if closed.tzinfo else _now_jst()
             return now >= closed - timedelta(minutes=5)
 
         def _l4_rank(natl_1, local_1):
@@ -14165,7 +14421,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         payload = {
             "date": target_date,
             "cache_version": MARKET_SIGNALS_CACHE_VERSION,
-            "computed_at": datetime.now().isoformat(timespec="seconds"),
+                "computed_at": _now_jst().isoformat(timespec="seconds"),
             "n_races": len(signals),
             "n_positive_ev": sum(1 for s in signals if s["is_positive_ev"]),
             "n_l4": sum(1 for s in signals if s["l4"]),
@@ -19073,7 +19329,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         単勝 / 2連単1-2 / 3連単1-2-3 の通算 ROI を併記。
         A2 派生 は別戦略のため明細には表示せず、L4 [A1] のみ。
         """
-        target_date = request.args.get("date") or date.today().isoformat()
+        target_date = request.args.get("date") or _today_jst_iso()
         try:
             date.fromisoformat(target_date)
         except ValueError:
@@ -19108,7 +19364,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return render_template(
             "member_strategy_races.html",
             target_date=target_date,
-            today_iso=date.today().isoformat(),
+            today_iso=_today_jst_iso(),
             races=races,
             n_total=n_total,
             n_pp=n_pp, n_p=n_p,
@@ -19776,7 +20032,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def member_strategy():
         """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
         from datetime import timedelta
-        today = date.today()
+        today = _today_jst_date()
         to_d = request.args.get("to") or today.isoformat()
         # ROI 画面の既定表示は 1年6か月分に拡張
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
@@ -19995,7 +20251,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             health_results=[],
             from_date=from_d,
             to_date=to_d,
-            today_iso=date.today().isoformat(),
+            today_iso=_today_jst_iso(),
             recomputed=force_recompute,
         )
         _write_page_html_cache(page_cache_key, html)
@@ -20008,7 +20264,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """月別 ROI (長期推移) 専用ページ — テーブル + 推移グラフ。
         backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
         """
-        today = date.today()
+        today = _today_jst_date()
         monthly_from = "2024-06-01"
         monthly_to   = today.isoformat()
         # keep visible near the top for source-regression coverage:
@@ -20187,7 +20443,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         """
         from datetime import timedelta
         from src.evaluation.strategy_monitor import evaluate_all_strategies
-        today = date.today()
+        today = _today_jst_date()
         to_d = request.args.get("to") or today.isoformat()
         # backlog item 19: デフォルトは「今日から 1 ヶ月前」
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
@@ -20237,7 +20493,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     def member_accidents():
         """事故率の選手一覧。夜間集計済みスナップショットを表示する。"""
-        today_iso = date.today().isoformat()
+        today_iso = _today_jst_iso()
         selected_period = request.args.get("period") or _accident_period_start_for_date(today_iso)
         class_filter = (request.args.get("class") or "all").strip().lower()
         if class_filter not in {"all", "a", "a1", "a2", "b1", "b2"}:
@@ -20462,7 +20718,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     def api_l4_stats():
         """JSON 版 (グラフ用)"""
         from datetime import timedelta
-        today = date.today()
+        today = _today_jst_date()
         to_d = request.args.get("to") or today.isoformat()
         from_d = request.args.get("from") or (today - timedelta(days=30)).isoformat()
         rows = _candidate_134_daily_stats(from_d, to_d)

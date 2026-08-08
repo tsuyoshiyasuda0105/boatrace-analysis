@@ -10,16 +10,19 @@
 <body>
   <header class="site-header">
     <div class="container">
-      <h1><a href="{{ url_for('races', date=today_iso_global) }}" title="TOP・本日のレース一覧へ">BOATRACE WEB</a></h1>
+      <h1>
+        <a href="{{ url_for('races', date=today_iso_global) }}" title="TOP・本日のレース一覧へ">BOATRACE WEB</a>
+      </h1>
+
       <form method="get" action="{{ date_form_action|default(url_for('races')) }}" class="date-form">
-        <label for="date">日付</label>
+        <label for="date">日付:</label>
         <input type="date" id="date" name="date" value="{{ target_date | default('') }}">
         <button type="submit">表示</button>
       </form>
-      {% if is_member() %}
-      <nav class="nav-actions" aria-label="会員ダッシュボード">
-        {% if is_admin() %}
-        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="本日のROI候補レース">
+
+      {% if is_member() and is_admin() %}
+      <nav class="nav-actions" aria-label="管理者メニュー">
+        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="ROIが高いレース">
           <span class="nav-label">本日のレース</span>
         </a>
         <a href="{{ url_for('member_strategy') }}" class="nav-btn nav-btn-roi" title="ROIダッシュボード">
@@ -28,21 +31,21 @@
         <a href="{{ url_for('member_strategy_monthly') }}" class="nav-btn nav-btn-monthly" title="月別ROI推移">
           <span class="nav-icon">📈</span><span class="nav-label">月別推移</span>
         </a>
-        <a href="{{ url_for('member_health') }}" class="nav-btn nav-btn-health" title="手法の健全度確認">
+        <a href="{{ url_for('member_health') }}" class="nav-btn nav-btn-health" title="手法の健全度">
           <span class="nav-icon">🩺</span><span class="nav-label">健全度</span>
         </a>
-        <a href="{{ url_for('start_prediction.prediction_metrics_page') }}" class="nav-btn" title="スタート展開精度">
+        <a href="{{ url_for('member_accidents') }}" class="nav-btn nav-btn-accidents" title="事故率一覧">
+          <span class="nav-icon">⚠️</span><span class="nav-label">事故率</span>
+        </a>
+        <a href="{{ url_for('start_prediction.prediction_metrics_page') }}" class="nav-btn" title="ST展開精度">
           <span class="nav-icon">ST</span><span class="nav-label">展開精度</span>
         </a>
         <a href="{{ url_for('admin_memberships') }}" class="nav-btn nav-btn-health" title="会員権限とStripe連携状況">
-          <span class="nav-icon">⚙</span><span class="nav-label">管理</span>
-        </a>
-        {% endif %}
-        <a href="{{ url_for('member_accidents') }}" class="nav-btn nav-btn-accidents" title="事故率一覧">
-          <span class="nav-icon">⚠</span><span class="nav-label">事故率</span>
+          <span class="nav-icon">⚙️</span><span class="nav-label">管理</span>
         </a>
       </nav>
       {% endif %}
+
       <div class="auth-status">
         {% if is_member() %}
           <span class="auth-badge {% if is_admin() %}pro{% endif %}">
@@ -60,7 +63,7 @@
             <span class="nav-icon">🚪</span><span class="nav-label">ログアウト</span>
           </a>
         {% else %}
-          {% if is_supabase_auth_enabled|default(false) %}
+          {% if is_supabase_auth_enabled() %}
           <a href="{{ url_for('login_supabase') }}" class="account-btn account-btn-login">メールログイン</a>
           <a href="{{ url_for('login') }}" class="account-btn account-btn-public-roi">既存ログイン</a>
           {% else %}
@@ -70,6 +73,7 @@
       </div>
     </div>
   </header>
+
   <main class="container">
     {% if system_warnings %}
     <div class="system-banner {% if system_warnings|selectattr('display_status','equalto','error')|list %}system-banner-error{% else %}system-banner-warning{% endif %}">
@@ -78,7 +82,8 @@
         <strong>システム警告</strong> ({{ system_warnings|length }} 件)
         <ul>
           {% for w in system_warnings %}
-            <li><span class="sysbanner-tag sysbanner-{{ w.display_status|default(w.status) }}">{{ (w.display_status|default(w.status))|upper }}</span>
+            <li>
+              <span class="sysbanner-tag sysbanner-{{ w.display_status|default(w.status) }}">{{ (w.display_status|default(w.status))|upper }}</span>
               <span class="sysbanner-check">{{ w.display_check_name|default(w.check_name) }}</span>:
               {{ w.display_message|default(w.message) }}
               <small class="sysbanner-time">({{ w.checked_at[-8:-3] }})</small>
@@ -88,13 +93,16 @@
       </div>
     </div>
     {% endif %}
+
     {% block content %}{% endblock %}
   </main>
+
   <footer class="site-footer">
     <div class="container">
-      <small>LightGBM Ranker v0.8 (recency 180d + 選手/会場/コース 100特徴量 / Isotonic 補正 / PerWinner Cascade / 学習: 2022-04-01〜2026-03-31)</small>
+      <small>LightGBM Ranker v0.8 (recency 180d + 選手・会場/コース 100走長期 / Isotonic 補正 / PerWinner Cascade / 学習: 2022-04-01〜2026-03-31)</small>
     </div>
   </footer>
+
   <script>
     (() => {
       const hash = window.location.hash || "";
@@ -156,7 +164,7 @@
       document.addEventListener("click", (e) => {
         const a = findAnchor(e.target);
         if (!a || a.target || a.hasAttribute("download")) return;
-        if (a.origin !== location.origin || a.pathname === location.pathname && a.search === location.search) return;
+        if (a.origin !== location.origin || (a.pathname === location.pathname && a.search === location.search)) return;
         document.documentElement.classList.add("is-navigating");
         a.classList.add("is-loading-link");
       }, { capture: true });

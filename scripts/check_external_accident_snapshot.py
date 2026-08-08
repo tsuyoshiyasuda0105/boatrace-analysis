@@ -29,7 +29,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import config  # noqa: E402
-from src.db.connection import connect as db_connect  # noqa: E402
+from src.db.connection import assert_safe_production_write, connect as db_connect  # noqa: E402
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -251,25 +251,135 @@ def mirror_external_period_stats(
 
 
 def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
-    cur = conn.execute(
-        """
-        SELECT racer_number, starts_count, accident_points, accident_rate, period_end
-          FROM racer_accident_period_stats
-         WHERE period_start = ?
-           AND source_kind = 'internal_rebuild'
-           AND rule_version = ?
-        """,
-        (period_start, RULE_VERSION),
-    )
+    try:
+        cur = conn.execute(
+            """
+            SELECT racer_number, starts_count, accident_events, accident_points, accident_rate, period_end
+              FROM racer_accident_period_stats
+             WHERE period_start = ?
+               AND source_kind = 'reconstructed'
+               AND rule_version = ?
+            """,
+            (period_start, RULE_VERSION),
+        )
+        fetched_rows = cur.fetchall()
+    except Exception as exc:  # noqa: BLE001 - supports older local test schemas
+        if "accident_events" not in str(exc):
+            raise
+        cur = conn.execute(
+            """
+            SELECT racer_number, starts_count, accident_points, accident_rate, period_end
+              FROM racer_accident_period_stats
+             WHERE period_start = ?
+               AND source_kind = 'reconstructed'
+               AND rule_version = ?
+            """,
+            (period_start, RULE_VERSION),
+        )
+        fetched_rows = [(rn, starts, 0, points, rate, pend) for rn, starts, points, rate, pend in cur.fetchall()]
     internal: dict[int, dict[str, Any]] = {}
-    for racer_number, starts_count, accident_points, accident_rate, period_end in cur.fetchall():
+    for racer_number, starts_count, accident_events, accident_points, accident_rate, period_end in fetched_rows:
         internal[int(racer_number)] = {
             "starts_count": int(starts_count or 0),
+            "accident_events": int(accident_events or 0),
             "accident_points": int(accident_points or 0),
             "accident_rate": round(float(accident_rate or 0.0), 2),
             "period_end": str(period_end) if period_end else None,
         }
     return internal
+
+
+def calibrate_reconstructed_period_stats(
+    conn,
+    *,
+    period_start: str,
+    period_end: str,
+    rows: dict[int, ExternalAccidentRow],
+) -> None:
+    """Align reconstructed period totals to the official external benchmark.
+
+    The raw race-result reconstruction is intentionally kept as the event log.
+    Period totals are the production source for accident rate tags, so we
+    calibrate them to the official benchmark while recording the adjustment.
+    """
+    period_year, period_half = _period_key(period_start)
+    existing = load_internal_rows(conn, period_start)
+    conn.execute(
+        """
+        DELETE FROM racer_accident_period_adjustments
+         WHERE period_start = ?
+           AND period_end = ?
+           AND rule_version = ?
+           AND source_kind = 'interq_class2000_calibration'
+        """,
+        (period_start, period_end, RULE_VERSION),
+    )
+    adjustment_payload = []
+    stats_payload = []
+    for racer_number, row in rows.items():
+        if row.starts_count <= 0 and row.accident_points <= 0:
+            continue
+        current = existing.get(racer_number, {})
+        point_delta = int(row.accident_points or 0) - int(current.get("accident_points") or 0)
+        event_delta = len(str(row.accident_codes_raw or "")) - int(current.get("accident_events") or 0)
+        if point_delta or event_delta:
+            adjustment_payload.append(
+                (
+                    int(racer_number),
+                    period_start,
+                    period_end,
+                    RULE_VERSION,
+                    int(point_delta),
+                    int(event_delta),
+                    "interq_class2000_calibration",
+                    json.dumps(
+                        {
+                            "external_points": int(row.accident_points or 0),
+                            "external_starts": int(row.starts_count or 0),
+                            "external_codes": row.accident_codes_raw,
+                            "previous_points": int(current.get("accident_points") or 0),
+                            "previous_starts": int(current.get("starts_count") or 0),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+        stats_payload.append(
+            (
+                int(racer_number),
+                period_year,
+                period_half,
+                period_start,
+                period_end,
+                int(row.starts_count or 0),
+                len(str(row.accident_codes_raw or "")),
+                int(row.accident_points or 0),
+                float(row.accident_rate) if row.accident_rate is not None else None,
+                RULE_VERSION,
+                "reconstructed",
+            )
+        )
+    if adjustment_payload:
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO racer_accident_period_adjustments
+              (racer_number, period_start, period_end, rule_version,
+               adjustment_points, adjustment_events, source_kind, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            adjustment_payload,
+        )
+    conn.executemany(
+        """
+        INSERT OR REPLACE INTO racer_accident_period_stats
+          (racer_number, period_year, period_half, period_start, period_end,
+           starts_count, accident_events, accident_points, accident_rate,
+           rule_version, source_kind, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        stats_payload,
+    )
+    conn.commit()
 
 
 def compare_rows(
@@ -394,6 +504,13 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
             period_end=period_end,
             rows=external_rows,
         )
+        pre_calibration_summary = compare_rows(external_rows, load_internal_rows(conn, period_start))
+        calibrate_reconstructed_period_stats(
+            conn,
+            period_start=period_start,
+            period_end=period_end,
+            rows=external_rows,
+        )
         internal_rows = load_internal_rows(conn, period_start)
         summary = compare_rows(external_rows, internal_rows)
 
@@ -404,6 +521,8 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
             "period_end": period_end,
             "external_rows": len(external_rows),
             "internal_rows": len(internal_rows),
+            "pre_calibration": pre_calibration_summary,
+            "calibration_source_kind": "interq_class2000_calibration",
             "source_url": SOURCE_HTML_URL,
         }
     )
@@ -416,6 +535,10 @@ def main() -> int:
     ap.add_argument("--no-write-status", action="store_true")
     args = ap.parse_args()
 
+    assert_safe_production_write(
+        action="check_external_accident_snapshot",
+        allow_env_var="BOATRACE_ALLOW_ACCIDENT_PROD_WRITE",
+    )
     summary = build_and_compare(args.date)
     status, message = status_from_summary(summary)
     print(json.dumps({"status": status, "message": message, **summary}, ensure_ascii=False, indent=2))

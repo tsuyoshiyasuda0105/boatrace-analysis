@@ -108,6 +108,9 @@ def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
     assert "def check_accident_integrity" in source
     assert "assigned_motor_number IS NOT NULL" in source
     assert "motor_history_" in source
+    assert "invalid_motor_histories_count" in source
+    assert "position_boats" in source
+    assert "missing_current" in source
     assert "_race_detail_page_cache_key" in source
     assert "_race_detail_tag_cache_key" in source
     assert "racer_accident_period_stats" in source
@@ -150,7 +153,7 @@ def test_render_blueprint_separates_daily_and_exhibition_jobs():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
 
     assert "name: boatrace-race-detail-cron" in source
-    assert 'schedule: "0 22 * * *"' in source
+    assert 'schedule: "0 19 * * *"' in source
     assert "python scripts/prewarm_race_detail_data.py" in source
     assert "name: boatrace-exhibition-detail-cron" in source
     assert 'schedule: "*/2 * * * *"' in source
