@@ -15,34 +15,36 @@
       </h1>
 
       <form method="get" action="{{ date_form_action|default(url_for('races')) }}" class="date-form">
-        <label for="date">日付:</label>
+        <label for="date">日付</label>
         <input type="date" id="date" name="date" value="{{ target_date | default('') }}">
         <button type="submit">表示</button>
       </form>
 
-      {% if is_member() and is_admin() %}
-      <nav class="nav-actions" aria-label="管理者メニュー">
-        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="ROIが高いレース">
+      {% if is_member() %}
+      <nav class="nav-actions" aria-label="会員メニュー">
+        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="本日のROI候補一覧">
           <span class="nav-label">本日のレース</span>
         </a>
+        {% if is_admin() %}
         <a href="{{ url_for('member_strategy') }}" class="nav-btn nav-btn-roi" title="ROIダッシュボード">
-          <span class="nav-icon">📊</span><span class="nav-label">ROI</span>
+          <span class="nav-icon">ROI</span><span class="nav-label">ROI</span>
         </a>
         <a href="{{ url_for('member_strategy_monthly') }}" class="nav-btn nav-btn-monthly" title="月別ROI推移">
-          <span class="nav-icon">📈</span><span class="nav-label">月別推移</span>
+          <span class="nav-icon">月</span><span class="nav-label">月別推移</span>
         </a>
-        <a href="{{ url_for('member_health') }}" class="nav-btn nav-btn-health" title="手法の健全度">
-          <span class="nav-icon">🩺</span><span class="nav-label">健全度</span>
+        <a href="{{ url_for('member_health') }}" class="nav-btn nav-btn-health" title="健全度">
+          <span class="nav-icon">健</span><span class="nav-label">健全度</span>
         </a>
         <a href="{{ url_for('member_accidents') }}" class="nav-btn nav-btn-accidents" title="事故率一覧">
-          <span class="nav-icon">⚠️</span><span class="nav-label">事故率</span>
+          <span class="nav-icon">注</span><span class="nav-label">事故率</span>
         </a>
         <a href="{{ url_for('start_prediction.prediction_metrics_page') }}" class="nav-btn" title="ST展開精度">
           <span class="nav-icon">ST</span><span class="nav-label">展開精度</span>
         </a>
-        <a href="{{ url_for('admin_memberships') }}" class="nav-btn nav-btn-health" title="会員権限とStripe連携状況">
-          <span class="nav-icon">⚙️</span><span class="nav-label">管理</span>
+        <a href="{{ url_for('admin_memberships') }}" class="nav-btn nav-btn-health" title="会員管理">
+          <span class="nav-icon">管</span><span class="nav-label">管理</span>
         </a>
+        {% endif %}
       </nav>
       {% endif %}
 
@@ -53,14 +55,14 @@
           </span>
           {% if is_admin() %}
           <a href="{{ url_for('public_roi') }}" class="account-btn account-btn-public-roi" title="公開ROIデータ">
-            <span class="nav-icon">📊</span><span class="nav-label">公開ROI</span>
+            <span class="nav-icon">ROI</span><span class="nav-label">公開ROI</span>
           </a>
           <a href="/alerts/subscribe" class="account-btn account-btn-notify" title="通知登録">
-            <span class="nav-icon">📬</span><span class="nav-label">通知登録</span>
+            <span class="nav-icon">通</span><span class="nav-label">通知登録</span>
           </a>
           {% endif %}
           <a href="{{ url_for('logout') }}" class="account-btn account-btn-logout" title="ログアウト">
-            <span class="nav-icon">🚪</span><span class="nav-label">ログアウト</span>
+            <span class="nav-icon">出</span><span class="nav-label">ログアウト</span>
           </a>
         {% else %}
           {% if is_supabase_auth_enabled() %}
@@ -77,7 +79,7 @@
   <main class="container">
     {% if system_warnings %}
     <div class="system-banner {% if system_warnings|selectattr('display_status','equalto','error')|list %}system-banner-error{% else %}system-banner-warning{% endif %}">
-      <span class="system-banner-icon">{% if system_warnings|selectattr('display_status','equalto','error')|list %}🚨{% else %}⚠️{% endif %}</span>
+      <span class="system-banner-icon">{% if system_warnings|selectattr('display_status','equalto','error')|list %}ERROR{% else %}WARN{% endif %}</span>
       <div class="system-banner-body">
         <strong>システム警告</strong> ({{ system_warnings|length }} 件)
         <ul>
@@ -99,7 +101,7 @@
 
   <footer class="site-footer">
     <div class="container">
-      <small>LightGBM Ranker v0.8 (recency 180d + 選手・会場/コース 100走長期 / Isotonic 補正 / PerWinner Cascade / 学習: 2022-04-01〜2026-03-31)</small>
+      <small>LightGBM Ranker v0.8 (recency 180d / Isotonic / PerWinner Cascade)</small>
     </div>
   </footer>
 

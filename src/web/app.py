@@ -5103,6 +5103,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         elif path == "/races" or path.startswith("/race/"):
             # HTML ページ: 過去日は長く、今日は短く
             try:
+                existing_cache_control = str(response.headers.get("Cache-Control") or "")
+                if "stale-while-revalidate" in existing_cache_control:
+                    return response
                 req_date = request.args.get("date", "")
                 # /race/<id> は race_id から日付抽出 (path の数字 8 桁)
                 if not req_date and path.startswith("/race/"):
@@ -5816,7 +5819,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return resp
 
     @app.route("/member/today-races")
-    @admin_required
+    @login_required
     @cached(ttl=30, past_ttl=3600)
     def member_today_races():
         target_date = request.args.get("date") or _today_jst_iso()
@@ -5881,7 +5884,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
 
     @app.route("/member/today-races/history")
-    @admin_required
+    @login_required
     @cached(ttl=60, past_ttl=3600)
     def member_today_race_history():
         today_iso = _today_jst_iso()
