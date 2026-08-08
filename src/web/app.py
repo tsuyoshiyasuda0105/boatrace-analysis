@@ -3998,7 +3998,7 @@ def _boat1_monthly_escape_profile(race_id: str, race_date: str) -> Optional[dict
                  WHERE race_id = ? AND boat_number = 1
             )
             SELECT COUNT(*) AS starts,
-                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                   SUM(CASE WHEN rr1.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
               FROM current_boat1 c
               JOIN race_entries e1
                 ON e1.racer_number = c.racer_number

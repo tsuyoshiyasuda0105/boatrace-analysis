@@ -194,6 +194,21 @@ def refresh_market_signals_if_needed(target_date: str, collect_summary: dict, re
 
     task_name = f"render_signal_refresh_{now.hour:02d}_{now.minute // 5}_exhibition"
     _record_task(task_name, target_date, "running", detail=reason)
+    derived_ok = _run_py(
+        ["scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date],
+        timeout=1800,
+    )
+    if not derived_ok:
+        _record_task(task_name, target_date, "failure", detail=f"{reason}; derived_start_stats_failed")
+        summary = {
+            "target_date": target_date,
+            "triggered": True,
+            "ok": False,
+            "task_name": task_name,
+            "reason": "derived_start_stats_failed",
+        }
+        print(f"[signal-refresh] {summary}", flush=True)
+        return summary
     ok = _run_py(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date],
         timeout=1800,
