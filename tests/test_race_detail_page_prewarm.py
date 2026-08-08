@@ -11,15 +11,18 @@ APP_SOURCE = ROOT / "src" / "web" / "app.py"
 SCRIPT_SOURCE = ROOT / "scripts" / "prewarm_race_detail_pages.py"
 
 
-def test_race_detail_serves_complete_page_cache_before_db_detail_work():
+def test_race_detail_uses_fresh_page_cache_for_today_and_stale_for_past():
     source = APP_SOURCE.read_text(encoding="utf-8")
     start = source.index("def race_detail(race_id: str):")
     end = source.index("@app.route", start)
     route_source = source[start:end]
 
-    cache_read = route_source.index("_read_page_html_cache_stale(page_cache_key)")
     info_read = route_source.index("_race_basic_info(race_id)")
-    assert cache_read < info_read
+    fresh_cache_read = route_source.index("_read_page_html_cache(page_cache_key, 180)")
+    stale_cache_read = route_source.index("_read_page_html_cache_stale(page_cache_key)")
+    assert info_read < fresh_cache_read
+    assert info_read < stale_cache_read
+    assert "use_fresh_page_cache = race_date >= _today_jst_iso()" in route_source
     assert "_write_page_html_cache(page_cache_key, html)" in route_source
 
 

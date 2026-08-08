@@ -3878,7 +3878,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v5"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v11"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v12"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -6026,8 +6026,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         started_at = time.perf_counter()
         force_recompute = _effective_force_recompute()
         page_cache_key = _race_detail_page_cache_key(race_id)
+        info = _race_basic_info(race_id)
+        if not info:
+            abort(404)
+        race_date = str(info.get("race_date") or "")
+        use_fresh_page_cache = race_date >= _today_jst_iso()
         if not force_recompute:
-            cached_html = _read_page_html_cache_stale(page_cache_key)
+            cached_html = (
+                _read_page_html_cache(page_cache_key, 180)
+                if use_fresh_page_cache
+                else _read_page_html_cache_stale(page_cache_key)
+            )
             if cached_html:
                 logger.info(
                     "race_detail page-cache hit race_id=%s elapsed=%.3fs",
@@ -6039,11 +6048,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # cached ?????? request.args["date"] ?????/race/<id> ??
         # ???????? race_id ?????????? past_ttl ??????
         # (cached ??? effective_ttl ????????????????????)
-        info = _race_basic_info(race_id)
-        if not info:
-            abort(404)
         venue_environment = _venue_environment_summaries_for_date(
-            str(info.get("race_date") or "")
+            race_date
         ).get(int(info.get("stadium_number") or 0), {})
 
         fallback_notice = None

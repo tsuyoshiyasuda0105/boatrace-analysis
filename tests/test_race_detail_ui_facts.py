@@ -6,6 +6,8 @@ from jinja2 import Environment
 ROOT = Path(__file__).resolve().parents[1]
 APP_SOURCE = ROOT / "src" / "web" / "app.py"
 RACE_TEMPLATE = ROOT / "src" / "web" / "templates" / "race.html"
+BASE_TEMPLATE = ROOT / "src" / "web" / "templates" / "base.html"
+HEALTH_TEMPLATE = ROOT / "src" / "web" / "templates" / "member_health.html"
 RACE_DETAIL_JS = ROOT / "src" / "web" / "static" / "race_detail.js"
 STYLE_CSS = ROOT / "src" / "web" / "static" / "style.css"
 
@@ -59,6 +61,15 @@ def test_race_template_parses_and_contains_requested_fact_columns():
     assert "&amp;md=T" in source
     assert 'target="_blank"' in source
     assert 'rel="noopener noreferrer"' in source
+
+
+def test_system_warning_banner_is_only_defined_on_admin_health_page():
+    base_source = BASE_TEMPLATE.read_text(encoding="utf-8")
+    health_source = HEALTH_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "system-banner" not in base_source
+    assert "system-banner" in health_source
+    assert "system_warnings" in health_source
 
 
 def test_start_comparison_is_rendered_after_six_boat_details():
@@ -122,7 +133,7 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "original.dash_time" in source
     assert "original.turn_time" in source
     assert "original.straight_time" in source
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v11"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v12"' in source
 
 
 def test_cached_predictions_include_same_display_facts_as_fallback_rows():
@@ -150,7 +161,7 @@ def test_cached_predictions_include_same_display_facts_as_fallback_rows():
 def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v11"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v12"' in source
 
 
 def test_race_detail_video_links_are_styled():

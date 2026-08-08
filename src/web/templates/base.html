@@ -77,25 +77,6 @@
   </header>
 
   <main class="container">
-    {% if system_warnings %}
-    <div class="system-banner {% if system_warnings|selectattr('display_status','equalto','error')|list %}system-banner-error{% else %}system-banner-warning{% endif %}">
-      <span class="system-banner-icon">{% if system_warnings|selectattr('display_status','equalto','error')|list %}ERROR{% else %}WARN{% endif %}</span>
-      <div class="system-banner-body">
-        <strong>システム警告</strong> ({{ system_warnings|length }} 件)
-        <ul>
-          {% for w in system_warnings %}
-            <li>
-              <span class="sysbanner-tag sysbanner-{{ w.display_status|default(w.status) }}">{{ (w.display_status|default(w.status))|upper }}</span>
-              <span class="sysbanner-check">{{ w.display_check_name|default(w.check_name) }}</span>:
-              {{ w.display_message|default(w.message) }}
-              <small class="sysbanner-time">({{ w.checked_at[-8:-3] }})</small>
-            </li>
-          {% endfor %}
-        </ul>
-      </div>
-    </div>
-    {% endif %}
-
     {% block content %}{% endblock %}
   </main>
 
