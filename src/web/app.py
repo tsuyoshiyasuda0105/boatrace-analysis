@@ -5258,7 +5258,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             # HTML ページ: 過去日は長く、今日は短く
             try:
                 existing_cache_control = str(response.headers.get("Cache-Control") or "")
-                if "stale-while-revalidate" in existing_cache_control:
+                if False and "stale-while-revalidate" in existing_cache_control:
                     return response
                 req_date = request.args.get("date", "")
                 # /race/<id> は race_id から日付抽出 (path の数字 8 桁)
@@ -5268,12 +5268,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                         req_date = f"{rid[:4]}-{rid[4:6]}-{rid[6:8]}"
                 if req_date and req_date < _today_jst_iso():
                     # 過去日 HTML: 5 分キャッシュ (L4 マーク更新を反映するため)
-                    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=300"
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
                 else:
                     # 今日 HTML: 30 秒のみ
-                    response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=300"
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
             except Exception:
-                response.headers["Cache-Control"] = "public, max-age=60"
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         return response
 
     # robots.txt と sitemap.xml は最低限のレスポンスを返す
