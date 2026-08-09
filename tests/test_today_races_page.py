@@ -325,6 +325,42 @@ def test_write_top_page_snapshot_preserves_existing_daily_badges(monkeypatch):
     assert saved["accident_watch"]["202607300101"]["label"] == "事故率0.70+ 1号艇"
 
 
+def test_build_top_page_snapshot_payload_can_skip_market_signals(monkeypatch):
+    monkeypatch.setattr(
+        web_app,
+        "_races_for_date",
+        lambda *_args, **_kwargs: [
+            {
+                "race_id": "202607300101",
+                "stadium_number": 1,
+                "stadium_name": "Kiryu",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_venue_environment_summaries_for_date",
+        lambda *_args, **_kwargs: {1: {"weather": "sunny"}},
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_race_grid_badges_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("market signals should be skipped")
+        ),
+    )
+
+    payload = web_app._build_top_page_snapshot_payload(
+        "2026-07-30",
+        conn=object(),
+        include_market_signals=False,
+    )
+
+    assert payload["stadium_groups"][0]["environment"]["weather"] == "sunny"
+    assert payload["initial_market_signals"]["signals"] == {}
+    assert payload["initial_market_signals"]["race_badges"] == {}
+
+
 def test_races_page_does_not_self_heal_from_web_request_by_default(monkeypatch):
     monkeypatch.setenv("RENDER", "true")
     monkeypatch.delenv("BOATRACE_WEB_SELF_HEAL", raising=False)

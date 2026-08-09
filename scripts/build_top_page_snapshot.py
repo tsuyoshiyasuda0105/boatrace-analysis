@@ -19,11 +19,17 @@ def main() -> int:
         action="store_true",
         help="Skip expensive badge hydration; use already materialized badge caches only.",
     )
+    parser.add_argument(
+        "--environment-only",
+        action="store_true",
+        help="Refresh only race groups and venue environment while keeping prior market badges.",
+    )
     args = parser.parse_args()
 
     payload = web_app._build_top_page_snapshot_payload(
         args.date,
         allow_expensive_badges=not args.lightweight,
+        include_market_signals=not args.environment_only,
     )
     web_app._write_top_page_snapshot(args.date, payload)
     groups = payload.get("stadium_groups") or []

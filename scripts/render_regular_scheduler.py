@@ -476,14 +476,27 @@ def run_morning(now: datetime) -> bool:
 
 
 
-def run_top_page_snapshot(now: datetime, *, lightweight: bool) -> bool:
+def run_top_page_snapshot(
+    now: datetime,
+    *,
+    lightweight: bool,
+    environment_only: bool = False,
+) -> bool:
     today = now.date().isoformat()
     args = ["scripts/build_top_page_snapshot.py", "--date", today]
     if lightweight:
         args.append("--lightweight")
+    if environment_only:
+        args.append("--environment-only")
     ok = run_py(args, timeout=900)
     record_task(
-        "render_top_snapshot_lightweight" if lightweight else "render_top_snapshot_full",
+        (
+            "render_top_snapshot_environment"
+            if environment_only
+            else "render_top_snapshot_lightweight"
+            if lightweight
+            else "render_top_snapshot_full"
+        ),
         today,
         "success" if ok else "failure",
     )
@@ -1090,7 +1103,7 @@ def main() -> int:
                 record_task("render_detail_pages_today", today, "success" if pages_ok else "failure")
                 run_top_page_snapshot(now, lightweight=False)
         elif signal_ok:
-            run_top_page_snapshot(now, lightweight=True)
+            run_top_page_snapshot(now, lightweight=True, environment_only=True)
 
     # Lightweight result polling during race hours.
     if 8 <= now.hour <= 23:
@@ -1100,7 +1113,7 @@ def main() -> int:
             timeout=300,
         )
         run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
-        run_top_page_snapshot(now, lightweight=True)
+        run_top_page_snapshot(now, lightweight=True, environment_only=True)
 
     # Hourly summaries/health checks near the top of the hour.
     if not lite_mode and now.minute < 5 and 9 <= now.hour <= 23:

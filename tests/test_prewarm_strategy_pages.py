@@ -82,8 +82,8 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "startCommand: gunicorn" in blueprint
     assert "startCommand: python scripts/render_regular_scheduler.py" in blueprint
     assert "startCommand: python scripts/odds_scheduler_render.py --no-jitter" in blueprint
-    assert 'schedule: "* 23,0-13 * * *"' in blueprint
-    assert 'schedule: "*/5 23,0-13 * * *"' in blueprint
+    assert 'schedule: "* 23,0-13 * * *"' not in blueprint
+    assert blueprint.count('schedule: "*/5 23,0-13 * * *"') >= 3
     assert 'BOATRACE_RENDER_DAYTIME_LITE' in blueprint
     assert "startCommand: python scripts/prewarm_strategy_pages.py --mode signals" not in blueprint
 

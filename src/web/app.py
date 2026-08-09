@@ -898,6 +898,7 @@ def _build_top_page_snapshot_payload(
     *,
     conn: Any = None,
     allow_expensive_badges: bool = True,
+    include_market_signals: bool = True,
 ) -> dict[str, Any]:
     owns_connection = conn is None
     if owns_connection:
@@ -930,10 +931,19 @@ def _build_top_page_snapshot_payload(
             stadium_groups.values(),
             key=lambda group: group["stadium_number"],
         ),
-        "initial_market_signals": _race_grid_badges_payload(
-            target_date,
-            race_ids,
-            allow_expensive_fallback=allow_expensive_badges,
+        "initial_market_signals": (
+            _race_grid_badges_payload(
+                target_date,
+                race_ids,
+                allow_expensive_fallback=allow_expensive_badges,
+            )
+            if include_market_signals
+            else {
+                "date": target_date,
+                "signals": {},
+                "race_badges": {},
+                "accident_watch": {},
+            }
         ),
         "empty": not bool(races_list),
     }
