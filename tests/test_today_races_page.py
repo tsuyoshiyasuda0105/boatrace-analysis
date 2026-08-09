@@ -224,6 +224,14 @@ def test_top_page_template_uses_slower_refresh_and_hides_tile_countdown():
     assert "setInterval(refreshDashboard, 60000);" in source
 
 
+def test_top_page_template_shows_visible_vs_reference_counts():
+    source = Path("src/web/templates/index.html").read_text(encoding="utf-8")
+
+    assert 'id="todays-picks-count-note"' in source
+    assert "表示 ${visibleCount}件 / 元候補 ${totalSignalCount}件" in source
+    assert "参考非表示 ${hiddenReferenceCount}件" in source
+
+
 def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
     written = {}
 

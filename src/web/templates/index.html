@@ -157,6 +157,7 @@
       <h3>💰 {% if target_date == today_iso %}本日{% else %}{{ target_date }} の{% endif %}ROIが高いレース候補
         {% if target_date != today_iso %}<span class="past-tag">過去日 (全レース締切済)</span>{% endif %}
       </h3>
+      <p class="todays-picks-footer" id="todays-picks-count-note" hidden></p>
       <div class="todays-picks-groups">
         <section class="todays-picks-group" id="todays-picks-preconfirmed-panel">
           <table class="todays-picks-table">
@@ -1374,6 +1375,7 @@ function renderTodaysPicks() {
           const preconfirmedTbody = document.getElementById('todays-picks-preconfirmed-tbody');
           const waitingTbody = document.getElementById('todays-picks-waiting-tbody');
           const closedTbody = document.getElementById('todays-picks-closed-tbody');
+          const countNote = document.getElementById('todays-picks-count-note');
           const preconfirmedPanel = document.getElementById('todays-picks-preconfirmed-panel');
           const preconfirmedTitle = document.getElementById('todays-picks-preconfirmed-title');
           const preconfirmedSubhint = document.getElementById('todays-picks-preconfirmed-subhint');
@@ -1575,6 +1577,21 @@ function renderTodaysPicks() {
           const preconfirmedPicks = openPicks.filter(p => p.uiState.timingBucket === 'preconfirmed');
           const waitingPicks = openPicks.filter(p => p.uiState.timingBucket === 'waiting');
           const closedOnlyMode = preconfirmedPicks.length === 0 && waitingPicks.length === 0 && closedPicks.length > 0;
+          if (countNote) {
+            const totalSignalCount = Object.keys(marketSignalsCache || {}).length;
+            const visibleCount = activePicks.length;
+            if (totalSignalCount > 0) {
+              const parts = [`表示 ${visibleCount}件 / 元候補 ${totalSignalCount}件`];
+              if (hiddenReferenceCount > 0) {
+                parts.push(`参考非表示 ${hiddenReferenceCount}件`);
+              }
+              countNote.textContent = parts.join(' / ');
+              countNote.hidden = false;
+            } else {
+              countNote.textContent = '';
+              countNote.hidden = true;
+            }
+          }
 
           preconfirmedPanel.hidden = false;
           waitingPanel.hidden = waitingPicks.length === 0;
