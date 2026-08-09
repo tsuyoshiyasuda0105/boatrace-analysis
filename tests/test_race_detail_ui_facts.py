@@ -258,3 +258,7 @@ def test_only_motor_number_click_opens_detail_panel():
     assert "insertBefore(inspectorShell, startPredictionShell)" in script
     assert "const ensureInspectorShell = () => {" in script
     assert 'inspectorShell = document.createElement("section")' in script
+    assert "const validateHistoryPayload = (history, raceId, boatNumber) => {" in script
+    assert 'throw new Error(`race mismatch ${currentRaceId}`)' in script
+    assert 'throw new Error(`boat mismatch ${currentBoatNumber}`)' in script
+    assert script.count('inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });') >= 3
