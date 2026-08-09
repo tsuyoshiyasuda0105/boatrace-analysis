@@ -55,6 +55,8 @@ services:
         value: "1"
       - key: BOATRACE_HISTORY_DAYS
         value: "30"
+      - key: BOATRACE_RENDER_DAYTIME_LITE
+        value: "1"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
@@ -82,6 +84,8 @@ services:
         value: "1"
       - key: BOATRACE_HISTORY_DAYS
         value: "30"
+      - key: BOATRACE_RENDER_DAYTIME_LITE
+        value: "1"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
@@ -143,6 +147,35 @@ services:
         value: "1"
       - key: BOATRACE_TASK_TRIGGER
         value: "render-exhibition-detail-refresh"
+      - key: BOATRACE_USER_AGENT
+        value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+      - key: BOATRACE_DB_LIMIT_MB
+        value: "8192"
+
+  - type: cron
+    name: boatrace-accident-external-check-cron
+    runtime: python
+    plan: starter
+    branch: main
+    region: singapore
+    autoDeploy: true
+    # 20:10 UTC = 05:10 JST. Verify external accident benchmark once daily
+    # after the 04:00 JST race-detail preparation window.
+    schedule: "10 20 * * *"
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python scripts/check_external_accident_snapshot.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        fromService:
+          type: cron
+          name: boatrace-regular-cron
+          envVarKey: DATABASE_URL
+      - key: BOATRACE_SUPABASE_ONLY
+        value: "1"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB

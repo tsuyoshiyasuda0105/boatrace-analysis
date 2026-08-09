@@ -48,6 +48,15 @@ SIGNAL_REFRESH_MIN_GAP_MIN = 5
 EXHIBITION_REFRESH_MAX_ACTIVE_MIN = 15
 
 
+def _render_daytime_lite_mode() -> bool:
+    return os.getenv("BOATRACE_RENDER_DAYTIME_LITE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _run_py(args: list[str], timeout: int = 900) -> bool:
     cmd = [sys.executable, *args]
     print("$ " + " ".join(args), flush=True)
@@ -178,6 +187,11 @@ def _should_refresh_market_signals(target_date: str, collect_summary: dict, refr
 
 
 def refresh_market_signals_if_needed(target_date: str, collect_summary: dict, refresh_summary: dict) -> dict:
+    if _render_daytime_lite_mode():
+        summary = {"target_date": target_date, "triggered": False, "reason": "daytime-lite"}
+        print(f"[signal-refresh] {summary}", flush=True)
+        return summary
+
     should_refresh, reason = _should_refresh_market_signals(target_date, collect_summary, refresh_summary)
     if not should_refresh:
         summary = {"target_date": target_date, "triggered": False, "reason": reason}
@@ -422,9 +436,27 @@ def collect_live_exhibition(target_date: str, now: datetime | None = None) -> di
     flush_updates()
 
     if beforeinfo_summary["races"] > 0:
-        _run_py(["scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date], timeout=1800)
-        _run_py(["scripts/render_cache_predictions.py", "--date", target_date], timeout=1800)
-        _run_py(["scripts/generate_start_predictions.py", "--date", target_date], timeout=900)
+        from src.collectors import tide as tide_collector
+
+        try:
+            tide_summary = tide_collector.refresh_tides_for_races(
+                [race_id for race_id, _stadium, _race_no, _close in beforeinfo_due]
+            )
+            print(
+                "[exhibition-tides] "
+                f"target={tide_summary.get('target_races', 0)} "
+                f"rows={tide_summary.get('rows', 0)} "
+                f"stations={tide_summary.get('stations', 0)} "
+                f"failures={tide_summary.get('station_failures', 0)}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[exhibition-tides] failed: {type(exc).__name__}: {exc}", flush=True)
+
+        if not _render_daytime_lite_mode():
+            _run_py(["scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date], timeout=1800)
+            _run_py(["scripts/render_cache_predictions.py", "--date", target_date], timeout=1800)
+            _run_py(["scripts/generate_start_predictions.py", "--date", target_date], timeout=900)
 
     return {
         "target_date": target_date,

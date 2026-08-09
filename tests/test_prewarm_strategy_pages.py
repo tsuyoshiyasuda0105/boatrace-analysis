@@ -75,6 +75,7 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "type: cron" in blueprint
     assert "name: boatrace-regular-cron" in blueprint
     assert "name: boatrace-odds-cron" in blueprint
+    assert "name: boatrace-accident-external-check-cron" in blueprint
     assert "name: boatrace-roi-prewarm-cron" not in blueprint
     assert "name: boatrace-roi-history-cron" not in blueprint
     assert "name: boatrace-roi-finalize-cron" not in blueprint
@@ -83,6 +84,7 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "startCommand: python scripts/odds_scheduler_render.py --no-jitter" in blueprint
     assert 'schedule: "* 23,0-13 * * *"' in blueprint
     assert 'schedule: "*/5 23,0-13 * * *"' in blueprint
+    assert 'BOATRACE_RENDER_DAYTIME_LITE' in blueprint
     assert "startCommand: python scripts/prewarm_strategy_pages.py --mode signals" not in blueprint
 
 
@@ -103,6 +105,15 @@ def test_regular_scheduler_runs_roi_refreshes_in_the_existing_cron():
     assert "prewarm_strategy_pages.py" not in hourly_block
     assert '"--mode", "nightly"' not in nightly_block
     assert '"--mode", "signals", "--date", tomorrow' in nightly_block
+
+
+def test_regular_scheduler_can_run_in_daytime_lite_mode():
+    scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+
+    assert "def render_daytime_lite_mode()" in scheduler
+    assert "if not lite_mode and morning_start <= now < morning_end:" in scheduler
+    assert "if not lite_mode and 6 <= now.hour <= 23:" in scheduler
+    assert "if not lite_mode and now.hour == 23 and now.minute >= 30:" in scheduler
 
 
 class _Response:
@@ -195,7 +206,7 @@ def test_regular_scheduler_keeps_history_out_of_every_five_minute_loop():
     main_block = scheduler.split("def main() -> int:", 1)[1]
     history_block = main_block.split("# Historical ROI pages", 1)[1]
 
-    assert "if should_run_roi_history_slot(now):" in history_block
+    assert "if not lite_mode and should_run_roi_history_slot(now):" in history_block
     assert "run_roi_history_slot(now)" in history_block
     assert "return now.minute < 5 and now.hour in (0, 12)" in scheduler
 

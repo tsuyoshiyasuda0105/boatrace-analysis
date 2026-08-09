@@ -31,6 +31,15 @@ def jst_now() -> datetime:
     return datetime.now(tz=JST)
 
 
+def render_daytime_lite_mode() -> bool:
+    return os.getenv("BOATRACE_RENDER_DAYTIME_LITE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def run_py(args: list[str], timeout: int = 1800) -> bool:
     cmd = [sys.executable, *args]
     print("$ " + " ".join(args), flush=True)
@@ -1042,11 +1051,12 @@ def main() -> int:
     if not os.getenv("DATABASE_URL", "").strip():
         raise RuntimeError("DATABASE_URL is required for Render regular scheduler")
     ensure_task_runs_table()
+    lite_mode = render_daytime_lite_mode()
 
     # Morning data and predictions: run once per JST day.
     morning_start = now.replace(hour=6, minute=0, second=0, microsecond=0)
     morning_end = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    if morning_start <= now < morning_end:
+    if not lite_mode and morning_start <= now < morning_end:
         task = "render_morning"
         if not task_success_exists(task, today):
             ok = run_morning(now)
@@ -1057,7 +1067,10 @@ def main() -> int:
     # A narrow morning window must not leave the service empty all day. Render is
     # the source of truth, so verify actual rows and recover even when a PC was off
     # or a previous task_runs row incorrectly reported success.
-    if morning_end <= now < now.replace(hour=22, minute=0, second=0, microsecond=0):
+    if (
+        not lite_mode
+        and morning_end <= now < now.replace(hour=22, minute=0, second=0, microsecond=0)
+    ):
         run_morning_catchup_if_needed(now)
 
     # Live beforeinfo/original-exhibition collection and race-detail refresh are
@@ -1066,7 +1079,7 @@ def main() -> int:
 
     # Refresh source-dependent candidates before the slower result poll. This
     # keeps the dashboard snapshot close to the five-minute cron cadence.
-    if 6 <= now.hour <= 23:
+    if not lite_mode and 6 <= now.hour <= 23:
         run_tide_self_heal(now)
         signal_ok = run_signal_refresh_slot(now)
         if signal_ok and not task_success_exists("render_detail_tags_today", today):
@@ -1090,7 +1103,7 @@ def main() -> int:
         run_top_page_snapshot(now, lightweight=True)
 
     # Hourly summaries/health checks near the top of the hour.
-    if now.minute < 5 and 9 <= now.hour <= 23:
+    if not lite_mode and now.minute < 5 and 9 <= now.hour <= 23:
         task = f"render_hourly_{now.hour:02d}"
         if not task_success_exists(task, today):
             ok = run_hourly(now)
@@ -1099,11 +1112,11 @@ def main() -> int:
     # Accident rankings feed race tags and several adopted ROI strategies.
     # Refresh once daily at 07:30 JST, after the 07:00 race-detail prewarm starts,
     # so accident tags are available before most users open morning race details.
-    if now.hour == 7 and 30 <= now.minute < 35:
+    if not lite_mode and now.hour == 7 and 30 <= now.minute < 35:
         run_accident_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
-    if now.hour == 23 and now.minute >= 30:
+    if not lite_mode and now.hour == 23 and now.minute >= 30:
         task = "render_nightly"
         if not task_success_exists(task, today):
             ok = run_nightly(now)
@@ -1117,7 +1130,7 @@ def main() -> int:
     # Historical ROI pages are deliberately isolated from the live five-minute
     # loop. They may be expensive, and a failed 12-hour attempt must not keep
     # retrying every five minutes while today's races are running.
-    if should_run_roi_history_slot(now):
+    if not lite_mode and should_run_roi_history_slot(now):
         run_roi_history_slot(now)
 
     print("[render-regular] done", flush=True)
