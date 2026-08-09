@@ -186,6 +186,7 @@ def run_entry_change_snapshot(target_date: str) -> bool:
     race_count = race_count_for_date(target_date)
     if race_count <= 0:
         print(f"[entry-change] skip date={target_date} reason=no-races", flush=True)
+        record_task("render_entry_change_snapshot", target_date, "success", detail="skip:no-races")
         return True
     ok = run_py(["scripts/build_racer_entry_change_stats.py", "--date", target_date], timeout=900)
     row_count = entry_change_snapshot_row_count(target_date) if ok else 0
@@ -193,6 +194,12 @@ def run_entry_change_snapshot(target_date: str) -> bool:
     print(
         f"[entry-change] date={target_date} races={race_count} rows={row_count} verified={verified}",
         flush=True,
+    )
+    record_task(
+        "render_entry_change_snapshot",
+        target_date,
+        "success" if verified else "failure",
+        detail=f"races={race_count} rows={row_count} build_ok={ok}",
     )
     return verified
 
@@ -1066,6 +1073,8 @@ def main() -> int:
             ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
             record_task("render_detail_tags_today", today, "success" if ok else "failure")
             if ok:
+                pages_ok = run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)
+                record_task("render_detail_pages_today", today, "success" if pages_ok else "failure")
                 run_top_page_snapshot(now, lightweight=False)
         elif signal_ok:
             run_top_page_snapshot(now, lightweight=True)

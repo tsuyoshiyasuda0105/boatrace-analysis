@@ -2,6 +2,7 @@
 -r requirements.txt
 
 pytest>=7.0
+playwright>=1.55
 jupyter
 matplotlib
 seaborn

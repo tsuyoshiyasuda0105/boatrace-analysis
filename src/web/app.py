@@ -2115,36 +2115,78 @@ def _venue_environment_summaries_for_date_impl(
     is_today = target_date == _today_jst_iso()
     out: dict[int, dict[str, Any]] = {}
 
-    def _data_score(row: dict[str, Any]) -> int:
+    def _preview_score(row: dict[str, Any]) -> int:
         score = 0
-        for key in ("weather_number", "wind_speed", "wave_height", "tide_phase", "tide_delta_60m_cm", "tide_range_cm"):
+        for key in ("weather_number", "wind_speed", "wave_height"):
             val = row.get(key)
             if val not in (None, "", 0):
                 score += 1
         return score
 
+    def _tide_score(row: dict[str, Any]) -> int:
+        score = 0
+        for key in ("tide_phase", "tide_delta_60m_cm", "tide_range_cm"):
+            val = row.get(key)
+            if val not in (None, "", 0):
+                score += 1
+        return score
+
+    def _data_score(row: dict[str, Any]) -> tuple[int, int]:
+        return (_preview_score(row), _tide_score(row))
+
+    def _pick_best_environment_row(rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        if not rows:
+            return None
+        future_with_preview: list[tuple[float, int, int, float, dict[str, Any]]] = []
+        future_with_data: list[tuple[float, int, int, float, dict[str, Any]]] = []
+        future_any: list[tuple[float, int, int, dict[str, Any]]] = []
+        quality_any: list[tuple[int, int, float, dict[str, Any]]] = []
+        quality_with_data: list[tuple[int, int, float, dict[str, Any]]] = []
+        quality_with_preview: list[tuple[int, int, float, dict[str, Any]]] = []
+
+        for row in rows:
+            preview_score, tide_score = _data_score(row)
+            closed_at = _parse_local_datetime(row.get("race_closed_at"))
+            ts = closed_at.timestamp() if closed_at else 0.0
+            quality_any.append((preview_score, tide_score, ts, row))
+            if preview_score > 0 or tide_score > 0:
+                quality_with_data.append((preview_score, tide_score, ts, row))
+            if preview_score > 0:
+                quality_with_preview.append((preview_score, tide_score, ts, row))
+            if not is_today or not closed_at:
+                continue
+            diff_min = (closed_at - now_dt).total_seconds() / 60.0
+            if diff_min < -15:
+                continue
+            future_any.append((diff_min, -preview_score, -tide_score, row))
+            if preview_score > 0 or tide_score > 0:
+                future_with_data.append((diff_min, -preview_score, -tide_score, ts, row))
+            if preview_score > 0:
+                future_with_preview.append((diff_min, -preview_score, -tide_score, ts, row))
+
+        if future_with_preview:
+            future_with_preview.sort(key=lambda x: (x[0], x[1], x[2], -x[3]))
+            return future_with_preview[0][4]
+        if quality_with_preview:
+            quality_with_preview.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+            return quality_with_preview[0][3]
+        if future_with_data:
+            future_with_data.sort(key=lambda x: (x[0], x[1], x[2], -x[3]))
+            return future_with_data[0][4]
+        if future_any:
+            future_any.sort(key=lambda x: (x[0], x[1], x[2]))
+            chosen = future_any[0][3]
+            preview_score, tide_score = _data_score(chosen)
+            if preview_score > 0 or tide_score > 0:
+                return chosen
+        if quality_with_data:
+            quality_with_data.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+            return quality_with_data[0][3]
+        quality_any.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+        return quality_any[0][3] if quality_any else None
+
     for stadium_number, items in grouped.items():
-        chosen: Optional[dict[str, Any]] = None
-        if is_today:
-            future_rows = []
-            for row in items:
-                closed_at = _parse_local_datetime(row.get("race_closed_at"))
-                if not closed_at:
-                    continue
-                diff_min = (closed_at - now_dt).total_seconds() / 60.0
-                if diff_min >= -15:
-                    future_rows.append((diff_min, -_data_score(row), row))
-            if future_rows:
-                future_rows.sort(key=lambda x: (x[0], x[1]))
-                chosen = future_rows[0][2]
-        if chosen is None:
-            rows_by_quality = []
-            for row in items:
-                closed_at = _parse_local_datetime(row.get("race_closed_at"))
-                ts = closed_at.timestamp() if closed_at else 0.0
-                rows_by_quality.append((_data_score(row), ts, row))
-            rows_by_quality.sort(key=lambda x: (x[0], x[1]), reverse=True)
-            chosen = rows_by_quality[0][2] if rows_by_quality else None
+        chosen = _pick_best_environment_row(items)
         if not chosen:
             continue
 

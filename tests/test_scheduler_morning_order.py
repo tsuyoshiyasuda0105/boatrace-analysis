@@ -18,6 +18,16 @@ def test_run_morning_orders_accident_before_predictions_and_skips_tags():
     assert 'prewarm_race_detail_tags.py' not in block
 
 
+def test_signal_refresh_rebuilds_today_tags_before_today_pages():
+    src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    main = src.split("if 6 <= now.hour <= 23:", 1)[1].split("if 8 <= now.hour <= 23:", 1)[0]
+
+    tags_idx = main.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
+    pages_idx = main.index('run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)')
+
+    assert tags_idx < pages_idx
+
+
 def test_signal_refresh_runs_before_today_tag_materialization():
     src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
 

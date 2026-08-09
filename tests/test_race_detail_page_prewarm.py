@@ -121,6 +121,142 @@ def test_venue_environment_accepts_timezone_aware_race_closed_at(monkeypatch):
     assert result[2]["fetched_at_label"] == "2026-08-08 12:00"
 
 
+def test_venue_environment_falls_back_when_nearest_future_preview_is_empty(monkeypatch):
+    class FakeCursor:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+    class FakeConn:
+        def execute(self, *_args, **_kwargs):
+            rows = [
+                (
+                    "202608090211",
+                    2,
+                    11,
+                    "2026-08-09T15:36:00+09:00",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "",
+                    None,
+                    None,
+                    None,
+                    0,
+                    0,
+                    None,
+                ),
+                (
+                    "202608090212",
+                    2,
+                    12,
+                    "2026-08-09T16:30:00+09:00",
+                    "fresh",
+                    1,
+                    3.0,
+                    4,
+                    2.0,
+                    "mid",
+                    120.0,
+                    5.0,
+                    30.0,
+                    0,
+                    0,
+                    "2026-08-09T14:55:00+09:00",
+                ),
+            ]
+            return FakeCursor(rows)
+
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-09")
+    monkeypatch.setattr(
+        web_app,
+        "_now_jst",
+        lambda: datetime(2026, 8, 9, 15, 20, tzinfo=web_app.JST),
+    )
+
+    result = web_app._venue_environment_summaries_for_date_impl(
+        "2026-08-09",
+        conn=FakeConn(),
+    )
+
+    assert result[2]["race_number"] == 12
+    assert result[2]["weather_label"] != "天候 -"
+    assert result[2]["wind_label"] != "風 -"
+    assert result[2]["wave_label"] != "波 -"
+
+
+def test_venue_environment_prefers_future_preview_data_over_tide_only_rows(monkeypatch):
+    class FakeCursor:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+    class FakeConn:
+        def execute(self, *_args, **_kwargs):
+            rows = [
+                (
+                    "202608091503",
+                    15,
+                    3,
+                    "2026-08-09T16:13:00+09:00",
+                    "fresh",
+                    2,
+                    2.0,
+                    4,
+                    2.0,
+                    "rising",
+                    120.0,
+                    60.0,
+                    30.0,
+                    0,
+                    0,
+                    "2026-08-08T23:53:31+09:00",
+                ),
+                (
+                    "202608091504",
+                    15,
+                    4,
+                    "2026-08-09T16:43:00+09:00",
+                    "fresh",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "rising",
+                    120.0,
+                    60.0,
+                    30.0,
+                    0,
+                    0,
+                    "2026-08-08T23:53:31+09:00",
+                ),
+            ]
+            return FakeCursor(rows)
+
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-09")
+    monkeypatch.setattr(
+        web_app,
+        "_now_jst",
+        lambda: datetime(2026, 8, 9, 16, 0, tzinfo=web_app.JST),
+    )
+
+    result = web_app._venue_environment_summaries_for_date_impl(
+        "2026-08-09",
+        conn=FakeConn(),
+    )
+
+    assert result[15]["race_number"] == 3
+    assert result[15]["weather_label"] != "天候 -"
+    assert result[15]["wind_label"] != "風 -"
+    assert result[15]["wave_label"] != "波 -"
+
+
 def test_race_detail_datetime_checks_use_jst_normalizer():
     source = APP_SOURCE.read_text(encoding="utf-8")
 

@@ -19,7 +19,17 @@ import secrets
 import time
 from functools import wraps
 
-from flask import session, redirect, url_for, request, jsonify, render_template, render_template_string, abort
+from flask import (
+    abort,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    render_template_string,
+    request,
+    session,
+    url_for,
+)
 
 import config
 from src.web import supabase_auth_client
@@ -115,7 +125,7 @@ def _safe_redirect_url(next_url: str, default: str = "/") -> str:
     NG:
       - // で始まる (プロトコル相対 URL)
       - http:// https:// で始まる絶対 URL
-      - \ や @ などの細工
+      - \\ や @ などの細工
     """
     if not next_url:
         return default
@@ -165,6 +175,21 @@ def _set_supabase_session(user_id: str, email: str | None, role: str) -> None:
     session["role"] = role
     session["auth_provider"] = "supabase"
     session.permanent = True
+
+
+def _set_test_session_role(role: str) -> None:
+    session.clear()
+    session["is_member"] = role in {"free_member", "paid_member", "admin"}
+    session["role"] = role
+    session["auth_provider"] = "playwright_test"
+    session.permanent = True
+
+
+def _playwright_test_login_enabled() -> bool:
+    try:
+        return bool(current_app and current_app.config.get("TESTING"))
+    except Exception:
+        return False
 
 
 def _refresh_supabase_membership_session() -> None:
@@ -524,6 +549,23 @@ def register_auth_routes(app):
     def logout():
         session.clear()
         return redirect(url_for("index"))
+
+    @app.route("/test/login-as/<role>", methods=["GET"])
+    def test_login_as(role: str):
+        if not _playwright_test_login_enabled():
+            abort(404)
+        if role not in {"guest", "free_member", "paid_member", "admin"}:
+            abort(404)
+        _set_test_session_role(role)
+        next_url = _safe_redirect_url(request.args.get("next", ""), url_for("index"))
+        return redirect(next_url)
+
+    @app.route("/test/logout", methods=["GET"])
+    def test_logout():
+        if not _playwright_test_login_enabled():
+            abort(404)
+        session.clear()
+        return redirect(_safe_redirect_url(request.args.get("next", ""), url_for("index")))
 
     @app.route("/admin/memberships", methods=["GET"])
     @admin_required
