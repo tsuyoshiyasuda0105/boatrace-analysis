@@ -63,7 +63,7 @@ def test_dashboard_uses_one_read_only_refresh_clock():
 
     assert "setInterval(loadMarketSignals" not in template
     assert "setInterval(loadOdds123Timeline" not in template
-    assert "setInterval(refreshDashboard, 30000)" in template
+    assert "setInterval(refreshDashboard, 60000)" in template
     assert "recompute=1" not in template
 
 
@@ -80,7 +80,7 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "name: boatrace-roi-finalize-cron" not in blueprint
     assert "startCommand: gunicorn" in blueprint
     assert "startCommand: python scripts/render_regular_scheduler.py" in blueprint
-    assert "startCommand: python scripts/odds_scheduler.py --no-jitter" in blueprint
+    assert "startCommand: python scripts/odds_scheduler_render.py --no-jitter" in blueprint
     assert "startCommand: python scripts/prewarm_strategy_pages.py --mode signals" not in blueprint
 
 

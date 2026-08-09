@@ -53,7 +53,7 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
     assert '["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date]' in source
     assert "task_name LIKE 'render_signal_refresh_%'" in source
-    assert "SIGNAL_REFRESH_MIN_GAP_MIN = 2" in source
+    assert "SIGNAL_REFRESH_MIN_GAP_MIN = 5" in source
     assert "EXHIBITION_REFRESH_MAX_ACTIVE_MIN = 15" in source
     assert "_exhibition_refresh_recently_running(args.date, now)" in source
     assert 'task_name = \'render_exhibition_detail_refresh\'' in source
