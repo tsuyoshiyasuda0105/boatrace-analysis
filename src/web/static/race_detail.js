@@ -382,6 +382,18 @@
       ${renderRacerDetail(data)}
     </div>`;
 
+  const validateHistoryPayload = (history, raceId, boatNumber) => {
+    const currentRaceId = String(history?.current?.race_id || "");
+    if (currentRaceId && currentRaceId !== String(raceId)) {
+      throw new Error(`race mismatch ${currentRaceId}`);
+    }
+    const currentBoatNumber = String(history?.current?.boat_number || "");
+    if (currentBoatNumber && currentBoatNumber !== String(boatNumber)) {
+      throw new Error(`boat mismatch ${currentBoatNumber}`);
+    }
+    return history;
+  };
+
   const fetchHistory = (raceId, boatNumber) => {
     const key = `${raceId}:${boatNumber}`;
     if (!historyCache.has(key)) {
@@ -392,6 +404,8 @@
       }).then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
+      }).then((history) => {
+        return validateHistoryPayload(history, raceId, boatNumber);
       }).catch((err) => {
         historyCache.delete(key);
         throw err;
@@ -425,7 +439,10 @@
       activeRaceId === raceId
       && activeMotorBoatNumber === requestedBoatNumber
       && inspectorBody.querySelector(".motor-history-panel")
-    ) return;
+    ) {
+      inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
+      return;
+    }
 
     const keepCurrentHistoryVisible = !inspectorShell.hidden
       && Boolean(inspectorBody.querySelector(".motor-history-panel"));
@@ -443,9 +460,11 @@
       const history = await fetchHistory(raceId, requestedBoatNumber);
       if (requestId !== motorHistoryRequestId) return;
       inspectorBody.innerHTML = renderHistoryOnly(history);
+      inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
     } catch (err) {
       if (requestId !== motorHistoryRequestId) return;
       inspectorBody.innerHTML = `<div class="motor-history-empty">モーター履歴の取得に失敗しました: ${esc(err.message || "")}</div>`;
+      inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });
     } finally {
       if (requestId === motorHistoryRequestId) inspectorBody.removeAttribute("aria-busy");
     }
