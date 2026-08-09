@@ -1680,6 +1680,41 @@ def _merge_market_signals_adopted_payloads(
     return merged
 
 
+def _backfill_market_signal_display_flags(payload: Any) -> Any:
+    """Backfill adopted exacta-niche display flags in cached market snapshots."""
+    if not isinstance(payload, dict):
+        return payload
+    signals = payload.get("signals")
+    if not isinstance(signals, dict):
+        return payload
+
+    changed = False
+    normalized: dict[str, Any] = {}
+    for race_id, signal in signals.items():
+        if not isinstance(signal, dict):
+            normalized[str(race_id)] = signal
+            continue
+        l4 = signal.get("l4")
+        if (
+            isinstance(l4, dict)
+            and l4.get("is_exacta_niche")
+            and not l4.get("is_reference")
+            and "is_display_confirmed" not in l4
+        ):
+            signal = dict(signal)
+            l4 = dict(l4)
+            l4["is_display_confirmed"] = True
+            signal["l4"] = l4
+            changed = True
+        normalized[str(race_id)] = signal
+
+    if not changed:
+        return payload
+    merged = dict(payload)
+    merged["signals"] = normalized
+    return merged
+
+
 def _read_best_market_signals_snapshot(
     target_date: str,
     *,
@@ -1722,22 +1757,22 @@ def _read_best_market_signals_snapshot(
         and isinstance(best_payload, dict)
         and not best_payload.get("cache_recovered_adopted_races")
     ):
-        return best_payload, "snapshot"
+        return _backfill_market_signal_display_flags(best_payload), "snapshot"
     if isinstance(best_payload, dict) and best_payload.get("cache_recovered_adopted_races"):
-        return best_payload, "merged-compat"
+        return _backfill_market_signal_display_flags(best_payload), "merged-compat"
     if _is_usable_market_signals_payload(best_payload, target_date):
         source_key = str(best_payload.get("source_cache_key") or "")
         if source_key == _market_signals_last_good_cache_key(target_date):
             best_payload = dict(best_payload)
             best_payload["source_cache_version"] = best_payload.get("cache_version")
             best_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
-            return best_payload, "last-good"
+            return _backfill_market_signal_display_flags(best_payload), "last-good"
         if source_key:
             best_payload = dict(best_payload)
             best_payload["source_cache_version"] = best_payload.get("cache_version")
             best_payload["cache_version"] = MARKET_SIGNALS_CACHE_VERSION
-            return best_payload, "compat-stale"
-    return best_payload, "missing"
+            return _backfill_market_signal_display_flags(best_payload), "compat-stale"
+    return _backfill_market_signal_display_flags(best_payload), "missing"
 
 
 def _parse_market_signal_bets_for_roi(l4: dict) -> list[tuple[str, str]]:
@@ -12589,6 +12624,20 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             return None
 
+        def _ensure_exacta_niche_display_confirmed(signal: dict | None) -> dict | None:
+            """Backfill adopted exacta-niche rows that predate the display flag."""
+            if not isinstance(signal, dict):
+                return signal
+            if not signal.get("is_exacta_niche"):
+                return signal
+            if signal.get("is_reference"):
+                return signal
+            if "is_display_confirmed" in signal:
+                return signal
+            merged = dict(signal)
+            merged["is_display_confirmed"] = True
+            return merged
+
         def _evaluate_ashiya_boat4_lift(ctx: dict | None):
             """Evaluate verified Ashiya exacta 4-1 exhibition lift strategy."""
             if not ctx:
@@ -14020,6 +14069,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pair_affinity=exacta_pair_affinity.get(rid),
                     grade=grade, weather=weather,
                 )
+                exacta_niche = _ensure_exacta_niche_display_confirmed(exacta_niche)
                 tokoname_12_late_a = _safe_signal_eval("tokoname_12_late_a", _evaluate_tokoname_12_late_a_exacta, tokoname_12_signal_ctx.get(rid))
                 tokoname_14_winter = _safe_signal_eval("tokoname_14_winter", _evaluate_tokoname_14_winter_exacta, tokoname_12_signal_ctx.get(rid))
                 tokoname_123_exst = _safe_signal_eval("tokoname_123_exst", _evaluate_tokoname_123_late_exst, tokoname_12_signal_ctx.get(rid))
@@ -14422,6 +14472,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     pair_affinity=exacta_pair_affinity.get(rid),
                     grade=grade, weather=weather,
                 )
+                exacta_niche = _ensure_exacta_niche_display_confirmed(exacta_niche)
                 tokoname_12_late_a_watch = _safe_signal_eval("tokoname_12_late_a_watch_no_data", _evaluate_tokoname_12_late_a_exacta, tokoname_12_signal_ctx.get(rid))
                 tokoname_14_winter_watch = _safe_signal_eval("tokoname_14_winter_watch_no_data", _evaluate_tokoname_14_winter_exacta, tokoname_12_signal_ctx.get(rid))
                 tokoname_123_watch = _safe_signal_eval("tokoname_123_watch_no_data", _evaluate_tokoname_123_late_exst_watch, tokoname_12_signal_ctx.get(rid))
