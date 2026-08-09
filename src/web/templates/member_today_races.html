@@ -28,7 +28,7 @@
         </thead>
         <tbody>
           {% for p in rows %}
-          <tr class="todays-pick-row {% if p.settled and p.is_hit %}is-history-hit is-adopted-row{% elif p.settled %}is-history-miss is-adopted-row{% elif p.status == 'confirmed' %}is-pick-confirmed is-adopted-row{% elif p.closed %}is-closed{% endif %} {% if p.closed %}is-today-settled{% endif %}">
+          <tr class="todays-pick-row {% if p.settled and p.is_hit %}is-history-hit is-adopted-row{% elif p.settled %}is-history-miss is-adopted-row{% elif p.status == 'confirmed' %}is-pick-confirmed is-adopted-row{% elif p.closed and p.adopted %}is-closed is-adopted-row is-adopted-closed{% elif p.closed %}is-closed{% endif %} {% if p.closed %}is-today-settled{% endif %}">
             <td class="pick-time" data-label="締切">{{ p.time or "-" }}</td>
             <td class="pick-place" data-label="会場 R"><strong>{{ p.place }}</strong></td>
             <td class="pick-type" data-label="候補">
@@ -51,6 +51,8 @@
                 <span class="pick-result-badge is-confirmed">採用確定</span>
               {% elif p.status == "waiting" %}
                 <span class="pick-result-badge is-waiting">条件待ち</span>
+              {% elif p.closed and p.adopted %}
+                <span class="pick-result-badge is-adopted-closed">採用済</span>
               {% else %}
                 -
               {% endif %}

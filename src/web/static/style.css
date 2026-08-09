@@ -3412,6 +3412,10 @@ main h2 {
   background: linear-gradient(90deg, rgba(34, 197, 94, 0.12), rgba(34, 197, 94, 0.03));
   box-shadow: inset 3px 0 0 rgba(82, 255, 170, 0.72);
 }
+.todays-picks-table tbody tr.is-adopted-closed {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.12), rgba(34, 197, 94, 0.05));
+  box-shadow: inset 3px 0 0 rgba(96, 165, 250, 0.68);
+}
 .pick-result-badge {
   display: inline-flex;
   align-items: center;
@@ -3442,6 +3446,11 @@ main h2 {
   background: rgba(250, 204, 21, 0.12);
   border: 1px solid rgba(250, 204, 21, 0.3);
   color: #ffe48d;
+}
+.pick-result-badge.is-adopted-closed {
+  background: rgba(14, 165, 233, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.36);
+  color: #bdeaff;
 }
 .pick-profit strong.pos {
   color: #7dffb2;
