@@ -156,7 +156,7 @@ def test_render_blueprint_separates_daily_and_exhibition_jobs():
     assert 'schedule: "0 19 * * *"' in source
     assert "python scripts/prewarm_race_detail_data.py" in source
     assert "name: boatrace-exhibition-detail-cron" in source
-    assert 'schedule: "*/2 * * * *"' in source
+    assert 'schedule: "*/5 23,0-13 * * *"' in source
     assert "python scripts/refresh_race_detail_after_exhibition.py" in source
 
 
