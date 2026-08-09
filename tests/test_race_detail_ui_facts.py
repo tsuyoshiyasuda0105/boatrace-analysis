@@ -122,7 +122,7 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "original.dash_time" in source
     assert "original.turn_time" in source
     assert "original.straight_time" in source
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v10"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v11"' in source
 
 
 def test_cached_predictions_include_same_display_facts_as_fallback_rows():
@@ -150,7 +150,7 @@ def test_cached_predictions_include_same_display_facts_as_fallback_rows():
 def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v10"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v11"' in source
 
 
 def test_race_detail_video_links_are_styled():
@@ -256,3 +256,5 @@ def test_only_motor_number_click_opens_detail_panel():
     assert 'event.stopPropagation()' in script
     assert 'document.querySelector("[data-start-prediction]")' in script
     assert "insertBefore(inspectorShell, startPredictionShell)" in script
+    assert "const ensureInspectorShell = () => {" in script
+    assert 'inspectorShell = document.createElement("section")' in script
