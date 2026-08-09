@@ -342,6 +342,27 @@ def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch)
     assert badge["escape"]["label"] == "1号:逃げ 72.5%"
 
 
+def test_race_grid_badges_payload_includes_cached_signals(monkeypatch):
+    monkeypatch.setattr(
+        web_app,
+        "_read_json_cache_stale",
+        lambda *_args: {
+            "date": "2026-07-30",
+            "signals": {
+                "202607300101": {"race_id": "202607300101", "l4": {"level": "general"}},
+                "202607300102": {"race_id": "202607300102", "l4": {"level": "general"}},
+            },
+            "race_badges": {},
+        },
+    )
+    monkeypatch.setattr(web_app, "_hydrate_market_race_badges", lambda payload, _date: payload)
+
+    payload = web_app._race_grid_badges_payload("2026-07-30", ["202607300101"])
+
+    assert set(payload["signals"]) == {"202607300101"}
+    assert payload["signals"]["202607300101"]["l4"]["level"] == "general"
+
+
 def test_today_navigation_opens_dedicated_candidate_page(monkeypatch):
     response = _member_client(monkeypatch).get("/races?date=2026-07-30")
     html = response.get_data(as_text=True)

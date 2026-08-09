@@ -134,6 +134,60 @@ def test_admin_data_status_snapshot_counts_expected_caches(monkeypatch):
     assert items["racer_detail"]["status"] == "healthy"
 
 
+def test_admin_data_status_race_detail_partial_html_cache_is_warning_when_rows_are_ok(monkeypatch):
+    conn = _prepare_db()
+    target_date = "2026-08-04"
+    races = [("202608041001", target_date, 10, 1), ("202608041002", target_date, 10, 2)]
+    conn.executemany("INSERT INTO races VALUES (?, ?, ?, ?)", races)
+
+    conn.execute(
+        "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+        (web_app._race_detail_page_cache_key("202608041001"),),
+    )
+    for key in [f"motor_history_v9:202608041001:{boat}" for boat in range(1, 7)]:
+        conn.execute(
+            "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+            (key,),
+        )
+    for key in [f"racer_detail:202608041001:{boat}" for boat in range(1, 7)]:
+        conn.execute(
+            "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+            (key,),
+        )
+    conn.execute(
+        """
+        INSERT INTO task_runs(task_name, run_date, status, run_count, started_at, finished_at, success_at, trigger, detail)
+        VALUES (?, ?, 'success', 1, '2026-08-04T07:00:00', '2026-08-04T07:05:00', '2026-08-04T07:05:00', 'render-detail-prewarm', ?)
+        """,
+        ("render_race_detail_all", target_date, '{"races":2,"failed":0}'),
+    )
+    conn.execute(
+        """
+        INSERT INTO system_status(check_name, check_date, status, message, detail_json, checked_at)
+        VALUES (?, ?, 'ok', 'detail cache ok', '{}', '2026-08-04T07:06:00')
+        """,
+        ("post_run_detail_cache", target_date),
+    )
+    conn.execute(
+        """
+        INSERT INTO system_status(check_name, check_date, status, message, detail_json, checked_at)
+        VALUES (?, ?, 'ok', 'detail rows ok', '{}', '2026-08-04T07:06:00')
+        """,
+        ("post_run_detail_rows", target_date),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(web_app, "db_connect", lambda: _ConnCtx(conn))
+
+    snapshot = web_app._admin_data_status_snapshot(target_date)
+    items = {item["slug"]: item for item in snapshot["items"]}
+
+    assert items["race_detail"]["present_count"] == 1
+    assert items["race_detail"]["missing_count"] == 1
+    assert items["race_detail"]["status"] == "warning"
+    assert "HTML" in items["race_detail"]["status_hint"]
+
+
 def test_admin_data_status_page_renders_for_admin(monkeypatch):
     conn = _prepare_db()
     monkeypatch.setattr(web_app, "db_connect", lambda: _ConnCtx(conn))

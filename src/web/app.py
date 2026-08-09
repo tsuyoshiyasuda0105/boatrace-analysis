@@ -750,6 +750,14 @@ def _race_grid_badges_payload(
         payload = _read_json_cache_stale(cache_key)
         if not isinstance(payload, dict) or payload.get("date") != target_date:
             continue
+        signals = payload.get("signals")
+        filtered_signals = {}
+        if isinstance(signals, dict) and signals:
+            filtered_signals = {
+                str(rid): sig
+                for rid, sig in signals.items()
+                if not wanted or str(rid) in wanted
+            }
         if allow_expensive_fallback:
             payload = _hydrate_market_race_badges(payload, target_date)
         race_badges = payload.get("race_badges")
@@ -762,12 +770,21 @@ def _race_grid_badges_payload(
             }
             return {
                 "date": target_date,
+                "signals": filtered_signals,
                 "race_badges": filtered,
+                "accident_watch": {},
+            }
+        if filtered_signals:
+            return {
+                "date": target_date,
+                "signals": filtered_signals,
+                "race_badges": {},
                 "accident_watch": {},
             }
     if not allow_expensive_fallback:
         return {
             "date": target_date,
+            "signals": {},
             "race_badges": {},
             "accident_watch": {},
         }
@@ -785,11 +802,13 @@ def _race_grid_badges_payload(
         }
         return {
             "date": target_date,
+            "signals": {},
             "race_badges": filtered,
             "accident_watch": {},
         }
     return {
         "date": target_date,
+        "signals": {},
         "race_badges": {},
         "accident_watch": {},
     }
@@ -1374,6 +1393,7 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
                 "check_detail": (check_row or {}).get("detail_json") or {},
                 "task_detail": (task_run or {}).get("detail_json") or {},
                 "examples": examples or [],
+                "status_hint": None,
             }
         )
 
@@ -1389,6 +1409,23 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "race detail 完成ページの事前生成結果。ここが揃えば初回表示が速くなります。",
         [race_id for race_id in race_ids[:3]],
     )
+    for item in items:
+        if item.get("slug") != "race_detail":
+            continue
+        detail_rows_ok = bool(detail_rows_check and detail_rows_check.get("status") == "ok")
+        detail_cache_ok = bool(detail_cache_check and detail_cache_check.get("status") == "ok")
+        page_missing = (
+            item.get("expected_count") is not None
+            and item.get("present_count") is not None
+            and int(item.get("present_count") or 0) < int(item.get("expected_count") or 0)
+        )
+        if detail_rows_ok and detail_cache_ok and page_missing:
+            item["status"] = "warning"
+            item["status_label"] = _format_status_label("warning")
+            item["status_hint"] = (
+                "詳細データ本体は取得済みです。現在は race detail HTML の事前キャッシュが一部未生成です。"
+            )
+        break
     append_item(
         "motor_history",
         "モーター履歴",

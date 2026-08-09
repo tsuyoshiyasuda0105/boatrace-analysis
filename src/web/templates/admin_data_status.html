@@ -99,6 +99,12 @@
         </div>
         {% endif %}
 
+        {% if item.status_hint %}
+        <div class="health-recommendation status-warning">
+          <strong>補足</strong>: {{ item.status_hint }}
+        </div>
+        {% endif %}
+
         {% if item.task_detail %}
         <div class="health-reasons">
           <span class="reasons-label">task detail:</span>
