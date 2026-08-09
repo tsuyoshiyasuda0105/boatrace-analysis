@@ -162,6 +162,7 @@ def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
     assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v12"' in source
+    assert "def _race_date_from_race_id(race_id: str) -> str:" in source
 
 
 def test_race_detail_video_links_are_styled():
@@ -275,3 +276,22 @@ def test_only_motor_number_click_opens_detail_panel():
     assert 'throw new Error(`race mismatch ${currentRaceId}`)' in script
     assert 'throw new Error(`boat mismatch ${currentBoatNumber}`)' in script
     assert script.count('inspectorShell.scrollIntoView({ behavior: "auto", block: "start" });') >= 3
+
+
+def test_race_detail_checks_page_cache_before_loading_basic_info():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    route_start = source.index("def race_detail(race_id: str):")
+    route_end = source.index("@app.route", route_start + 1)
+    route_source = source[route_start:route_end]
+
+    assert "race_date = _race_date_from_race_id(race_id)" in route_source
+    assert route_source.index("race_date = _race_date_from_race_id(race_id)") < route_source.index("info = _race_basic_info(race_id)")
+    assert route_source.index("if cached_html:") < route_source.index("info = _race_basic_info(race_id)")
+
+
+def test_race_date_from_race_id_extracts_jst_date_without_db_lookup():
+    import src.web.app as web_app
+
+    assert web_app._race_date_from_race_id("20260809-05-07") == "2026-08-09"
+    assert web_app._race_date_from_race_id("202608090507") == "2026-08-09"
+    assert web_app._race_date_from_race_id("invalid") == ""

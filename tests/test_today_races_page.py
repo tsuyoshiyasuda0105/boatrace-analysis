@@ -229,6 +229,8 @@ def test_top_page_template_uses_slower_refresh_and_hides_tile_countdown():
     assert "if (tilEl && showRaceTileCountdown && minutesUntil <= 60)" in source
     assert "if (!roiPicksVisible) return;" in source
     assert "setInterval(refreshDashboard, 60000);" in source
+    assert "let raceBadgesCache =" in source
+    assert "raceBadgesCache = raceBadges;" in source
 
 
 def test_top_page_template_shows_visible_vs_reference_counts():
@@ -242,6 +244,14 @@ def test_market_signals_api_uses_short_server_cache():
     source = Path("src/web/app.py").read_text(encoding="utf-8")
 
     assert '@cached(ttl=8, past_ttl=3600)' in source
+
+
+def test_render_web_worker_restarts_are_not_too_frequent():
+    source = Path("render.yaml").read_text(encoding="utf-8")
+
+    assert "--graceful-timeout 30" in source
+    assert "--max-requests 1000" in source
+    assert "--max-requests 200 " not in source
 
 
 def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
@@ -261,6 +271,44 @@ def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
     assert written["target_date"] == "2026-07-30"
     assert written["payload"]["source"] == "web-lightweight-fallback"
     assert written["payload"]["stadium_groups"]
+    assert "signals" not in (written["payload"]["initial_market_signals"] or {})
+
+
+def test_races_page_does_not_self_heal_from_web_request_by_default(monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.delenv("BOATRACE_WEB_SELF_HEAL", raising=False)
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-07-30")
+    monkeypatch.setattr(web_app, "db_connect", _fake_connection)
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
+    monkeypatch.setattr(
+        web_app,
+        "_races_for_date",
+        lambda _target_date, conn=None: [],
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_venue_environment_summaries_for_date",
+        lambda _target_date, conn=None: {},
+    )
+    monkeypatch.setattr(
+        web_app.openapi,
+        "collect_all",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("web request must not run external data collection")
+        ),
+    )
+    web_app.invalidate_cache()
+
+    app = web_app.create_app()
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["is_member"] = True
+        session["role"] = "admin"
+
+    response = client.get("/races?date=2026-07-30")
+
+    assert response.status_code == 200
 
 
 def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch):

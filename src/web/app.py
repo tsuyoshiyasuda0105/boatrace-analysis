@@ -14,6 +14,7 @@ import json
 import hashlib
 import logging
 import os
+import re
 import time
 from datetime import date, datetime
 from functools import lru_cache
@@ -868,7 +869,24 @@ def _race_grid_badges_payload(
     }
 
 
-TOP_PAGE_SNAPSHOT_VERSION = "v2"
+def _lightweight_top_page_market_payload(
+    payload: Any,
+    target_date: str,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "date": target_date,
+            "race_badges": {},
+            "accident_watch": {},
+        }
+    return {
+        "date": str(payload.get("date") or target_date),
+        "race_badges": payload.get("race_badges") or {},
+        "accident_watch": payload.get("accident_watch") or {},
+    }
+
+
+TOP_PAGE_SNAPSHOT_VERSION = "v3"
 
 
 def _top_page_snapshot_cache_key(target_date: str) -> str:
@@ -1835,6 +1853,14 @@ def _canonicalize_race_id(race_id: str) -> str:
     if len(rid) == 12 and rid.isdigit():
         return f"{rid[:8]}-{rid[8:10]}-{rid[10:12]}"
     return rid
+
+
+def _race_date_from_race_id(race_id: str) -> str:
+    rid = _canonicalize_race_id(race_id)
+    match = re.match(r"^(\d{4})(\d{2})(\d{2})-\d{1,2}-\d{1,2}$", rid)
+    if not match:
+        return ""
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
 
 
 # stadiums テーブルは静的データ (24 競艇場、変動なし) なのでプロセス
@@ -5799,6 +5825,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "checks": {},
         }
         http_status = 200
+        if request.args.get("full") != "1":
+            status_info["checks"]["app"] = "ok"
+            status_info["checks"]["db"] = "skipped"
+            return status_info, http_status
         # DB ping (サービス完全停止と区別)
 
         try:
@@ -5809,12 +5839,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             status_info["checks"]["db"] = f"error: {e}"
             status_info["status"] = "error"
             http_status = 503
-            return status_info, http_status
-
-        # Keep Render's health check cheap. The heavier diagnostic counts below
-        # are useful for humans, but they add several DB reads to every health
-        # probe and can make transient Supabase latency look like an app outage.
-        if request.args.get("full") != "1":
             return status_info, http_status
 
         # データ品質 (今日の system_status 集計) は 200 のまま JSON のみ
@@ -6175,6 +6199,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or _today_jst_iso()
         snapshot = _read_top_page_snapshot(target_date)
         if snapshot is not None:
+            initial_market_signals = _lightweight_top_page_market_payload(
+                snapshot.get("initial_market_signals"),
+                target_date,
+            )
             resp = make_response(render_template(
                 "index.html",
                 target_date=target_date,
@@ -6183,11 +6211,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
                 market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
                 market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
-                initial_market_signals=snapshot.get("initial_market_signals") or {
-                    "date": target_date,
-                    "race_badges": {},
-                    "accident_watch": {},
-                },
+                initial_market_signals=initial_market_signals,
                 roi_picks_visible=False,
                 empty=bool(snapshot.get("empty")),
             ))
@@ -6203,7 +6227,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         if not races_list:
             today_iso = _today_jst_iso()
             should_self_heal = (
-                os.environ.get("RENDER")
+                os.environ.get("BOATRACE_WEB_SELF_HEAL") == "1"
+                and os.environ.get("RENDER")
                 and target_date == today_iso
                 and request.headers.get("X-Purpose") != "prefetch"
             )
@@ -6239,10 +6264,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 }
             stadium_groups[sn]["races"].append(r)
 
-        initial_market_signals = _race_grid_badges_payload(
+        initial_market_signals = _lightweight_top_page_market_payload(
+            _race_grid_badges_payload(
+                target_date,
+                [str(r.get("race_id")) for r in races_list],
+                allow_expensive_fallback=False,
+            ),
             target_date,
-            [str(r.get("race_id")) for r in races_list],
-            allow_expensive_fallback=False,
         )
         sorted_stadium_groups = sorted(
             stadium_groups.values(),
@@ -6422,10 +6450,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         started_at = time.perf_counter()
         force_recompute = _effective_force_recompute()
         page_cache_key = _race_detail_page_cache_key(race_id)
-        info = _race_basic_info(race_id)
-        if not info:
-            abort(404)
-        race_date = str(info.get("race_date") or "")
+        race_date = _race_date_from_race_id(race_id)
         use_fresh_page_cache = race_date >= _today_jst_iso()
         if not force_recompute:
             cached_html = (
@@ -6440,6 +6465,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     time.perf_counter() - started_at,
                 )
                 return cached_html
+        info = _race_basic_info(race_id)
+        if not info:
+            abort(404)
+        race_date = str(info.get("race_date") or race_date or "")
         # ????? (race_date ??????) ? 1??????????? 60?
         # cached ?????? request.args["date"] ?????/race/<id> ??
         # ???????? race_id ?????????? past_ttl ??????

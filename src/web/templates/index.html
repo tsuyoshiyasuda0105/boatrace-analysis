@@ -332,28 +332,8 @@
         const marketSignalsEnabled = {{ show_today_picks_panel|default(false)|tojson }};
         const showRaceTileCountdown = roiPicksVisible;
         const initialMarketSignalsPayload = {{ initial_market_signals|default({})|tojson }};
-        let marketSignalsLoading = false;
-        let marketSignalsLoaded = Boolean(initialMarketSignalsPayload && initialMarketSignalsPayload.signals);
-        let marketSignalsPending = Boolean(
-          initialMarketSignalsPayload?.data_status?.cache_miss
-          || initialMarketSignalsPayload?.data_status?.cache_only
-        );
-        let marketSignalsRetryTimer = null;
-        let marketSignalsCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.signals) || {};
+        let renderTodaysPicks = () => {};
         let raceBadgesCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.race_badges) || {};
-        let marketSignalsDigest = '';
-        let odds123Digest = '';
-        let lastRenderedSignalsDigest = '';
-        let lastTodaysPicksRenderKey = '';
-        let lastNextRaceRenderKey = '';
-        let marketDataStatusCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.data_status) || {};
-        let raceItemsCache = null;
-        let raceItemMapCache = null;
-        marketSignalsDigest = buildSignalsDigest(
-          marketSignalsCache,
-          (initialMarketSignalsPayload && initialMarketSignalsPayload.accident_watch) || {},
-          raceBadgesCache
-        );
         const SHOW_STRATEGY_RACE_CHIPS = false;
         const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .entry-change-watch-badge';
         const STRATEGY_BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
@@ -376,6 +356,22 @@
           window.clearTimeout(warmup.timer);
           raceDetailWarmups.delete(href);
         };
+        let marketSignalsLoading = false;
+        let marketSignalsLoaded = Boolean(initialMarketSignalsPayload && initialMarketSignalsPayload.signals);
+        let marketSignalsPending = Boolean(
+          initialMarketSignalsPayload?.data_status?.cache_miss
+          || initialMarketSignalsPayload?.data_status?.cache_only
+        );
+        let marketSignalsRetryTimer = null;
+        let marketSignalsCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.signals) || {};
+        let marketSignalsDigest = '';
+        let odds123Digest = '';
+        let lastRenderedSignalsDigest = '';
+        let lastTodaysPicksRenderKey = '';
+        let lastNextRaceRenderKey = '';
+        let marketDataStatusCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.data_status) || {};
+        let raceItemsCache = null;
+        let raceItemMapCache = null;
         document.addEventListener('pointerover', (event) => {
           const anchor = event.target.closest?.('a[href^="/race/"]');
           if (anchor) warmRaceDetailOnIntent(anchor);
@@ -1134,6 +1130,13 @@
           const basicCount = Number(status?.race_basic?.count || 0);
           if (raceTotal <= 0) return false;
           return basicCount < raceTotal;
+        }
+        if (marketSignalsLoaded) {
+          marketSignalsDigest = buildSignalsDigest(
+            marketSignalsCache,
+            (initialMarketSignalsPayload && initialMarketSignalsPayload.accident_watch) || {},
+            raceBadgesCache
+          );
         }
 
         // ============================================================

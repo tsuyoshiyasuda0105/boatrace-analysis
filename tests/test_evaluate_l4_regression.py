@@ -33,6 +33,15 @@ def test_app_creates_with_l4_eval_helpers(app):
     )
 
 
+def test_healthz_default_is_process_only_for_render_probe(app):
+    client = app.test_client()
+    body = client.get("/healthz").get_json()
+
+    assert body["status"] == "ok"
+    assert body["checks"]["app"] == "ok"
+    assert body["checks"]["db"] == "skipped"
+
+
 def test_healthz_returns_200_even_on_data_quality_error(app):
     """/healthz は DB 接続 OK なら 200 を返すこと。
 
