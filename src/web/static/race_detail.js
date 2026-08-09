@@ -1,11 +1,47 @@
 (() => {
   const shell = document.getElementById("race-signal-shell");
-  const inspectorShell = document.getElementById("motor-inspector-shell");
-  const inspectorBody = inspectorShell?.querySelector("[data-motor-inspector-body]");
+  let inspectorShell = document.getElementById("motor-inspector-shell");
+  let inspectorBody = inspectorShell?.querySelector("[data-motor-inspector-body]");
   const staticVersion = shell?.dataset?.staticVersion || "v1";
   const startPredictionShell = document.querySelector("[data-start-prediction]");
   const startPredictionDetails = document.querySelector("[data-start-prediction-details]");
   let startPredictionScriptPromise;
+
+  const ensureInspectorShell = () => {
+    if (!inspectorShell) {
+      inspectorShell = document.createElement("section");
+      inspectorShell.className = "motor-inspector-shell";
+      inspectorShell.id = "motor-inspector-shell";
+      inspectorShell.hidden = true;
+      inspectorShell.innerHTML = `
+        <div class="motor-inspector-head">
+          <div>
+            <h3>モーター・選手詳細</h3>
+            <p>モーター2連対率の推移を軸にモーター履歴、必要に応じて選手詳細を表示します。</p>
+          </div>
+        </div>
+        <div class="motor-inspector-body" data-motor-inspector-body>
+          <div class="motor-history-loading">モーター履歴を読み込み中...</div>
+        </div>`;
+      const anchor = startPredictionShell;
+      if (anchor?.parentNode) {
+        anchor.parentNode.insertBefore(inspectorShell, anchor);
+      } else {
+        (document.querySelector("main.container") || document.body).appendChild(inspectorShell);
+      }
+    }
+    if (!inspectorBody) {
+      inspectorBody = inspectorShell.querySelector("[data-motor-inspector-body]");
+      if (!inspectorBody) {
+        inspectorBody = document.createElement("div");
+        inspectorBody.className = "motor-inspector-body";
+        inspectorBody.dataset.motorInspectorBody = "";
+        inspectorBody.innerHTML = '<div class="motor-history-loading">モーター履歴を読み込み中...</div>';
+        inspectorShell.appendChild(inspectorBody);
+      }
+    }
+    return inspectorShell && inspectorBody;
+  };
 
   const ensureStartPredictionScript = () => {
     if (!startPredictionShell) return Promise.resolve(false);
@@ -383,7 +419,7 @@
   };
 
   const openMotorHistory = async (raceId, boatNumber, sourceButton = null) => {
-    if (!inspectorShell || !inspectorBody || !raceId || !boatNumber) return;
+    if (!raceId || !boatNumber || !ensureInspectorShell()) return;
     const requestedBoatNumber = String(boatNumber);
     if (
       activeRaceId === raceId
@@ -416,7 +452,7 @@
   };
 
   const openRacerDetail = async (raceId, boatNumber, sourceButton = null) => {
-    if (!inspectorShell || !inspectorBody || !raceId || !boatNumber) return;
+    if (!raceId || !boatNumber || !ensureInspectorShell()) return;
     document.querySelectorAll(".racer-detail-btn[aria-expanded='true']").forEach((el) => el.setAttribute("aria-expanded", "false"));
     sourceButton?.setAttribute("aria-expanded", "true");
     inspectorShell.hidden = false;

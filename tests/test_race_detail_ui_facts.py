@@ -269,3 +269,5 @@ def test_only_motor_number_click_opens_detail_panel():
     assert 'event.stopPropagation()' in script
     assert 'document.querySelector("[data-start-prediction]")' in script
     assert "insertBefore(inspectorShell, startPredictionShell)" in script
+    assert "const ensureInspectorShell = () => {" in script
+    assert 'inspectorShell = document.createElement("section")' in script
