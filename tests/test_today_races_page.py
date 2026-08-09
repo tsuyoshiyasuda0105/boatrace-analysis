@@ -215,6 +215,13 @@ def test_races_page_excludes_roi_list_and_does_not_read_snapshot(monkeypatch):
     assert "const marketSignalsEnabled = false" in html
 
 
+def test_races_page_disables_browser_cache_for_member_html(monkeypatch):
+    response = _member_client(monkeypatch).get("/races?date=2026-07-30")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, private"
+
+
 def test_top_page_template_uses_slower_refresh_and_hides_tile_countdown():
     source = Path("src/web/templates/index.html").read_text(encoding="utf-8")
 
@@ -230,6 +237,11 @@ def test_top_page_template_shows_visible_vs_reference_counts():
     assert 'id="todays-picks-count-note"' in source
     assert "表示 ${visibleCount}件 / 元候補 ${totalSignalCount}件" in source
     assert "参考非表示 ${hiddenReferenceCount}件" in source
+
+def test_market_signals_api_uses_short_server_cache():
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+
+    assert '@cached(ttl=8, past_ttl=3600)' in source
 
 
 def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
@@ -307,7 +319,7 @@ def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch)
 
     assert response.status_code == 200
     assert "Kiryu" in response.get_data(as_text=True)
-    assert "stale-while-revalidate=300" in response.headers["Cache-Control"]
+    assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, private"
 
 
 def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
