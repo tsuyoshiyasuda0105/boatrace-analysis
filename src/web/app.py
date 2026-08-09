@@ -941,6 +941,40 @@ def _build_top_page_snapshot_payload(
 
 def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     snapshot = payload or _build_top_page_snapshot_payload(target_date)
+    if isinstance(snapshot, dict):
+        incoming_market = snapshot.get("initial_market_signals")
+        incoming_market = (
+            dict(incoming_market) if isinstance(incoming_market, dict) else {}
+        )
+        incoming_badges = incoming_market.get("race_badges")
+        incoming_watch = incoming_market.get("accident_watch")
+        needs_badge_preserve = not incoming_badges or not isinstance(incoming_badges, dict)
+        needs_watch_preserve = not incoming_watch or not isinstance(incoming_watch, dict)
+        if needs_badge_preserve or needs_watch_preserve:
+            previous = _read_top_page_snapshot(target_date)
+            previous_market = (
+                previous.get("initial_market_signals")
+                if isinstance(previous, dict)
+                else {}
+            )
+            previous_market = (
+                dict(previous_market) if isinstance(previous_market, dict) else {}
+            )
+            previous_badges = previous_market.get("race_badges")
+            previous_watch = previous_market.get("accident_watch")
+            if needs_badge_preserve and isinstance(previous_badges, dict) and previous_badges:
+                incoming_market["race_badges"] = dict(previous_badges)
+            elif isinstance(incoming_badges, dict) and isinstance(previous_badges, dict):
+                merged_badges = dict(previous_badges)
+                merged_badges.update(incoming_badges)
+                incoming_market["race_badges"] = merged_badges
+            if needs_watch_preserve and isinstance(previous_watch, dict) and previous_watch:
+                incoming_market["accident_watch"] = dict(previous_watch)
+            elif isinstance(incoming_watch, dict) and isinstance(previous_watch, dict):
+                merged_watch = dict(previous_watch)
+                merged_watch.update(incoming_watch)
+                incoming_market["accident_watch"] = merged_watch
+            snapshot["initial_market_signals"] = incoming_market
     _write_json_cache(_top_page_snapshot_cache_key(target_date), snapshot)
     return snapshot
 

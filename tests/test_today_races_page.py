@@ -274,6 +274,57 @@ def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
     assert "signals" not in (written["payload"]["initial_market_signals"] or {})
 
 
+def test_write_top_page_snapshot_preserves_existing_daily_badges(monkeypatch):
+    written = {}
+    existing_snapshot = {
+        "version": web_app.TOP_PAGE_SNAPSHOT_VERSION,
+        "date": "2026-07-30",
+        "stadium_groups": [],
+        "initial_market_signals": {
+            "date": "2026-07-30",
+            "race_badges": {
+                "202607300101": {
+                    "accident": {"label": "事故率0.50+ 1号艇"},
+                    "ace_motor": {"label": "エースモーター 1号艇"},
+                    "entry_change": {"label": "騎乗注意"},
+                }
+            },
+            "accident_watch": {
+                "202607300101": {"label": "事故率0.70+ 1号艇"}
+            },
+        },
+        "empty": False,
+    }
+
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: existing_snapshot)
+    monkeypatch.setattr(
+        web_app,
+        "_write_json_cache",
+        lambda key, payload: written.update({"key": key, "payload": payload}),
+    )
+
+    payload = {
+        "version": web_app.TOP_PAGE_SNAPSHOT_VERSION,
+        "date": "2026-07-30",
+        "stadium_groups": [{"stadium_number": 1, "stadium_name": "桐生", "races": []}],
+        "initial_market_signals": {
+            "date": "2026-07-30",
+            "race_badges": {},
+            "accident_watch": {},
+        },
+        "empty": False,
+        "source": "web-lightweight-fallback",
+    }
+
+    web_app._write_top_page_snapshot("2026-07-30", payload)
+
+    saved = written["payload"]["initial_market_signals"]
+    assert saved["race_badges"]["202607300101"]["accident"]["label"] == "事故率0.50+ 1号艇"
+    assert saved["race_badges"]["202607300101"]["ace_motor"]["label"] == "エースモーター 1号艇"
+    assert saved["race_badges"]["202607300101"]["entry_change"]["label"] == "騎乗注意"
+    assert saved["accident_watch"]["202607300101"]["label"] == "事故率0.70+ 1号艇"
+
+
 def test_races_page_does_not_self_heal_from_web_request_by_default(monkeypatch):
     monkeypatch.setenv("RENDER", "true")
     monkeypatch.delenv("BOATRACE_WEB_SELF_HEAL", raising=False)
