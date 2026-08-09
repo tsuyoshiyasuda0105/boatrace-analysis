@@ -48,11 +48,11 @@ def _today_jst_iso() -> str:
     """Return today's date in JST, independent of OS/TZ quirks."""
     return _today_jst_date().isoformat()
 
-from flask import Flask, abort, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Flask, abort, g, has_request_context, jsonify, make_response, redirect, render_template, request, session, url_for
 
 import config
 from src.collectors import openapi
-from src.db.connection import connect as db_connect
+from src.db.connection import connect as _raw_db_connect
 from src.roi_contract import (
     MARKET_SIGNALS_CACHE_VERSION,
     ROI_DAILY_CACHE_VERSION,
@@ -90,6 +90,60 @@ except ModuleNotFoundError:
     start_prediction_bp = None
 
 logger = logging.getLogger(__name__)
+
+
+def _is_response_profiling_enabled() -> bool:
+    return str(os.environ.get("BOATRACE_PROFILE_HTTP", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _record_sql_profile(duration_ms: float) -> None:
+    if not has_request_context() or not _is_response_profiling_enabled():
+        return
+    g._boatrace_sql_query_count = int(getattr(g, "_boatrace_sql_query_count", 0)) + 1
+    g._boatrace_sql_time_ms = float(getattr(g, "_boatrace_sql_time_ms", 0.0)) + duration_ms
+
+
+class _ProfiledConnection:
+    def __init__(self, conn: Any):
+        self._conn = conn
+
+    def _timed(self, method_name: str, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return getattr(self._conn, method_name)(*args, **kwargs)
+        finally:
+            _record_sql_profile((time.perf_counter() - started) * 1000.0)
+
+    def execute(self, *args, **kwargs):
+        return self._timed("execute", *args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        return self._timed("executemany", *args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        return self._timed("executescript", *args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._conn.__exit__(exc_type, exc, tb)
+
+
+def db_connect(*args, **kwargs):
+    conn = _raw_db_connect(*args, **kwargs)
+    if has_request_context() and _is_response_profiling_enabled():
+        return _ProfiledConnection(conn)
+    return conn
 
 
 # ============================================================
@@ -1739,6 +1793,13 @@ def _format_race_id(race_id: str) -> tuple[str, int, int]:
     """'YYYYMMDD-SS-RR' → (date_str, stadium, race_no)"""
     parts = race_id.split("-")
     return parts[0], int(parts[1]), int(parts[2])
+
+
+def _canonicalize_race_id(race_id: str) -> str:
+    rid = str(race_id or "").strip()
+    if len(rid) == 12 and rid.isdigit():
+        return f"{rid[:8]}-{rid[8:10]}-{rid[10:12]}"
+    return rid
 
 
 # stadiums テーブルは静的データ (24 競艇場、変動なし) なのでプロセス
@@ -5292,6 +5353,13 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
             "Set this env var to a strong password (16+ chars)."
         )
+    @app.before_request
+    def start_response_profile():
+        if not _is_response_profiling_enabled():
+            return
+        g._boatrace_request_started_at = time.perf_counter()
+        g._boatrace_sql_query_count = 0
+        g._boatrace_sql_time_ms = 0.0
 
     # ===== gzip 圧縮 (速度改善: HTML を 70-80% 圧縮) =====
     @app.after_request
@@ -5325,6 +5393,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         vary = response.headers.get("Vary", "")
         if "Accept-Encoding" not in vary:
             response.headers["Vary"] = (vary + ", Accept-Encoding").lstrip(", ")
+        return response
+    @app.after_request
+    def add_profile_headers(response):
+        if not _is_response_profiling_enabled():
+            return response
+        started = getattr(g, "_boatrace_request_started_at", None)
+        if started is None:
+            return response
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        sql_count = int(getattr(g, "_boatrace_sql_query_count", 0))
+        sql_time_ms = float(getattr(g, "_boatrace_sql_time_ms", 0.0))
+        response_bytes = response.calculate_content_length()
+        if response_bytes is None:
+            try:
+                response_bytes = len(response.get_data())
+            except Exception:
+                response_bytes = -1
+        response.headers["X-Boatrace-Profile"] = "1"
+        response.headers["X-Boatrace-Elapsed-Ms"] = f"{elapsed_ms:.1f}"
+        response.headers["X-Boatrace-Db-Query-Count"] = str(sql_count)
+        response.headers["X-Boatrace-Db-Time-Ms"] = f"{sql_time_ms:.1f}"
+        response.headers["X-Boatrace-Response-Bytes"] = str(int(response_bytes))
+        response.headers["Server-Timing"] = (
+            f"app;dur={elapsed_ms:.1f}, db;dur={sql_time_ms:.1f};desc=\"queries={sql_count}\""
+        )
         return response
 
     # ===== セキュリティ HTTP ヘッダ =====
@@ -6244,6 +6337,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @login_required
     @cached(ttl=300, past_ttl=21600)
     def race_detail(race_id: str):
+        canonical_race_id = _canonicalize_race_id(race_id)
+        if canonical_race_id != race_id:
+            return redirect(url_for("race_detail", race_id=canonical_race_id, **request.args))
+        race_id = canonical_race_id
         started_at = time.perf_counter()
         force_recompute = _effective_force_recompute()
         page_cache_key = _race_detail_page_cache_key(race_id)
@@ -6508,6 +6605,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @member_only_api
     @cached(ttl=300)  # 5分キャッシュ
     def race_api(race_id: str):
+        race_id = _canonicalize_race_id(race_id)
         info = _race_basic_info(race_id)
         if not info:
             return jsonify({"error": "not found"}), 404
@@ -6526,6 +6624,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @member_only_api
     @cached(ttl=300, past_ttl=21600)
     def race_signals_api(race_id: str):
+        race_id = _canonicalize_race_id(race_id)
         info = _race_basic_info(race_id)
         if not info:
             return jsonify({"error": "not found"}), 404
@@ -6564,6 +6663,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @member_only_api
     @cached(ttl=60, past_ttl=86400)
     def race_motor_history(race_id: str, boat_number: int):
+        race_id = _canonicalize_race_id(race_id)
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
         info = _race_basic_info(race_id)
@@ -6602,6 +6702,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @member_only_api
     @cached(ttl=86400, past_ttl=86400)
     def race_racer_detail(race_id: str, boat_number: int):
+        race_id = _canonicalize_race_id(race_id)
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
         info = _race_basic_info(race_id)
@@ -7038,6 +7139,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/market-signals")
     @member_only_api
+    @cached(ttl=8, past_ttl=3600)
     # 2026-05-30: キャッシュ強化
     #   ttl=60: 当日のリアルタイム性 (旧 300秒 → 60秒に短縮、同時アクセス時の
     #           負荷集中を防ぎつつ、 オッズ更新 (T-5min/T-1min snapshot 等) も反映)
