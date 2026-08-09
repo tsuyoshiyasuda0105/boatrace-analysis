@@ -2,8 +2,8 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\install_pc_nightly_prepare_task.ps1
 
-$repo = "C:\Users\tsuyo\OneDrive\ドキュメント\New project 2\boatrace-main-deploy"
-$batPath = Join-Path $repo "scripts\run_pc_nightly_prepare.bat"
+$repo = Split-Path -Parent $PSScriptRoot
+$batPath = Join-Path $PSScriptRoot "run_pc_nightly_prepare.bat"
 $taskName = "BoatracePcNightlyPrepare"
 
 if (-not (Test-Path -LiteralPath $batPath)) {
