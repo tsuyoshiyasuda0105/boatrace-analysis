@@ -248,7 +248,7 @@ def test_only_motor_number_click_opens_detail_panel():
     assert "data-motor-position-boat" in script
     assert "openMotorHistory" in script
     assert "openRacerDetail" in script
-    assert 'document.querySelectorAll(".motor-history-btn")' in script
+    assert 'event.target.closest?.(".motor-history-btn")' in script
     assert 'document.querySelectorAll(".racer-detail-btn")' not in script
     assert 'activeMotorBoatNumber === requestedBoatNumber' in script
     assert 'keepCurrentHistoryVisible' in script

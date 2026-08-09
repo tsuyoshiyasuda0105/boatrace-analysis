@@ -465,12 +465,12 @@
     }
   };
 
-  document.querySelectorAll(".motor-history-btn").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      openMotorHistory(button.dataset.raceId, button.dataset.boatNumber, button);
-    });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.(".motor-history-btn");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openMotorHistory(button.dataset.raceId, button.dataset.boatNumber, button);
   });
 
   inspectorBody?.addEventListener("click", (event) => {
