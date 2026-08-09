@@ -38,9 +38,11 @@
         <a href="{{ url_for('member_accidents') }}" class="nav-btn nav-btn-accidents" title="事故率一覧">
           <span class="nav-icon">注</span><span class="nav-label">事故率</span>
         </a>
+        {% if has_view('start_prediction.prediction_metrics_page') %}
         <a href="{{ url_for('start_prediction.prediction_metrics_page') }}" class="nav-btn" title="ST展開精度">
           <span class="nav-icon">ST</span><span class="nav-label">展開精度</span>
         </a>
+        {% endif %}
         <a href="{{ url_for('admin_memberships') }}" class="nav-btn nav-btn-health" title="会員管理">
           <span class="nav-icon">管</span><span class="nav-label">管理</span>
         </a>

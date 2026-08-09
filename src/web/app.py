@@ -5620,6 +5620,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     app.jinja_env.globals["is_supabase_auth_enabled"] = is_supabase_auth_enabled
     app.jinja_env.globals["current_role"] = current_role
     app.jinja_env.globals["current_auth_provider"] = current_auth_provider
+    app.jinja_env.globals["has_view"] = lambda endpoint: endpoint in app.view_functions
 
     # 静的ファイル cache busting 用バージョン
     # CSS/JS が変更されたら自動的に新規取得されるよう、
