@@ -1,4 +1,23 @@
 (() => {
+  const publishNavigationDiagnostics = (phase) => {
+    const navigation = window.performance?.getEntriesByType?.("navigation")?.[0];
+    if (!navigation) return;
+    document.documentElement.dataset.raceDiagnostics = JSON.stringify({
+      phase,
+      responseEndMs: Math.round(navigation.responseEnd),
+      domContentLoadedMs: Math.round(navigation.domContentLoadedEventEnd),
+      loadMs: Math.round(navigation.loadEventEnd),
+      transferSize: navigation.transferSize || 0,
+      decodedBodySize: navigation.decodedBodySize || 0,
+    });
+  };
+  document.addEventListener(
+    "DOMContentLoaded",
+    () => publishNavigationDiagnostics("domcontentloaded"),
+    { once: true },
+  );
+  window.addEventListener("load", () => publishNavigationDiagnostics("load"), { once: true });
+
   const shell = document.getElementById("race-signal-shell");
   let inspectorShell = document.getElementById("motor-inspector-shell");
   let inspectorBody = inspectorShell?.querySelector("[data-motor-inspector-body]");

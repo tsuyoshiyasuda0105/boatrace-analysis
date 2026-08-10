@@ -12,6 +12,13 @@ RACE_DETAIL_JS = ROOT / "src" / "web" / "static" / "race_detail.js"
 STYLE_CSS = ROOT / "src" / "web" / "static" / "style.css"
 
 
+def test_race_detail_records_navigation_diagnostics():
+    source = RACE_DETAIL_JS.read_text(encoding="utf-8")
+    assert 'dataset.raceDiagnostics = JSON.stringify' in source
+    assert 'getEntriesByType?.("navigation")' in source
+    assert "domContentLoadedMs" in source
+
+
 def test_race_template_parses_and_contains_requested_fact_columns():
     source = RACE_TEMPLATE.read_text(encoding="utf-8")
     Environment().parse(source)

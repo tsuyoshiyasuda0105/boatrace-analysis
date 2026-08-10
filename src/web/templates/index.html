@@ -338,10 +338,24 @@
           renderTodaysPicks: { calls: 0, result: 'not_loaded_top_only' },
           marketSignalsRequests: 0,
           runtimeErrors: [],
+          navigation: null,
         };
         window.__boatraceTopDiagnostics = diagnostics;
         const publishDiagnostics = () => {
           document.documentElement.dataset.topDiagnostics = JSON.stringify(diagnostics);
+        };
+        const recordNavigation = (phase) => {
+          const navigation = window.performance?.getEntriesByType?.('navigation')?.[0];
+          if (!navigation) return;
+          diagnostics.navigation = {
+            phase,
+            responseEndMs: Math.round(navigation.responseEnd),
+            domContentLoadedMs: Math.round(navigation.domContentLoadedEventEnd),
+            loadMs: Math.round(navigation.loadEventEnd),
+            transferSize: navigation.transferSize || 0,
+            decodedBodySize: navigation.decodedBodySize || 0,
+          };
+          publishDiagnostics();
         };
         window.addEventListener('error', (event) => {
           diagnostics.runtimeErrors.push(String(event.message || 'window error'));
@@ -352,6 +366,8 @@
           publishDiagnostics();
         });
         publishDiagnostics();
+        document.addEventListener('DOMContentLoaded', () => recordNavigation('domcontentloaded'), { once: true });
+        window.addEventListener('load', () => recordNavigation('load'), { once: true });
 
         const ensureBadgeRow = (anchor) => {
           let row = anchor.querySelector('.race-badge-row');
