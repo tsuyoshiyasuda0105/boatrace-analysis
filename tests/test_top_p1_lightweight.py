@@ -8,6 +8,8 @@ def test_top_uses_lightweight_script_without_roi_runtime():
     assert "mode: 'top-lightweight'" in lightweight
     assert "renderTodaysPicks: { calls: 0, result: 'not_loaded_top_only' }" in lightweight
     assert "marketSignalsRequests: 0" in lightweight
+    assert "runtimeErrors: []" in lightweight
+    assert "dataset.topDiagnostics = JSON.stringify(diagnostics)" in lightweight
     assert "window.setInterval(updateRaceState, 60000);" in lightweight
     assert "async function loadMarketSignals()" not in lightweight
     assert "renderTodaysPicks = function()" not in lightweight

@@ -333,11 +333,25 @@
         const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .entry-change-watch-badge';
         const raceItems = Array.from(document.querySelectorAll('.race-item[data-race-id]'));
         const raceItemMap = new Map(raceItems.map((item) => [item.dataset.raceId, item]));
-        window.__boatraceTopDiagnostics = {
+        const diagnostics = {
           mode: 'top-lightweight',
           renderTodaysPicks: { calls: 0, result: 'not_loaded_top_only' },
           marketSignalsRequests: 0,
+          runtimeErrors: [],
         };
+        window.__boatraceTopDiagnostics = diagnostics;
+        const publishDiagnostics = () => {
+          document.documentElement.dataset.topDiagnostics = JSON.stringify(diagnostics);
+        };
+        window.addEventListener('error', (event) => {
+          diagnostics.runtimeErrors.push(String(event.message || 'window error'));
+          publishDiagnostics();
+        });
+        window.addEventListener('unhandledrejection', (event) => {
+          diagnostics.runtimeErrors.push(String(event.reason || 'unhandled rejection'));
+          publishDiagnostics();
+        });
+        publishDiagnostics();
 
         const ensureBadgeRow = (anchor) => {
           let row = anchor.querySelector('.race-badge-row');
@@ -454,6 +468,7 @@
 
         renderBadges();
         updateRaceState();
+        publishDiagnostics();
         window.setInterval(updateRaceState, 60000);
       })();
     </script>
