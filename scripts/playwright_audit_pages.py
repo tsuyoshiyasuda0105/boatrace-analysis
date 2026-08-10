@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 from pathlib import Path
 
 
@@ -17,6 +19,10 @@ def main() -> int:
     parser.add_argument("--out-dir", default="playwright_audit")
     parser.add_argument("--scan-all-races", action="store_true")
     parser.add_argument("--skip-login", action="store_true")
+    parser.add_argument("--auth-mode", choices=["testing", "password"], default="testing")
+    parser.add_argument("--password-env", default="BOATRACE_PLAYWRIGHT_PASSWORD")
+    parser.add_argument("--prompt-password", action="store_true")
+    parser.add_argument("--storage-state", default="")
     args = parser.parse_args()
 
     try:
@@ -32,16 +38,49 @@ def main() -> int:
         "base_url": args.base_url,
         "date": args.date,
         "role": args.role,
+        "auth_mode": args.auth_mode,
         "skip_login": args.skip_login,
         "pages": {},
     }
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={"width": 1600, "height": 1400})
+        context_kwargs: dict[str, object] = {"viewport": {"width": 1600, "height": 1400}}
+        storage_state = Path(args.storage_state) if args.storage_state else None
+        if storage_state and storage_state.exists():
+            context_kwargs["storage_state"] = str(storage_state)
+        context = browser.new_context(**context_kwargs)
         page = context.new_page()
         if args.skip_login:
             page.goto(f"{args.base_url}/races?date={args.date}", wait_until="domcontentloaded")
+        elif args.auth_mode == "password":
+            if storage_state and storage_state.exists():
+                page.goto(
+                    f"{args.base_url}/member/today-races?date={args.date}",
+                    wait_until="domcontentloaded",
+                )
+                if "/login" in page.url:
+                    raise RuntimeError("Saved Playwright authentication has expired")
+            else:
+                password = os.environ.get(args.password_env, "")
+                if not password and args.prompt_password:
+                    password = getpass.getpass("Playwright test password: ")
+                if not password:
+                    print(f"Required environment variable is not set: {args.password_env}", flush=True)
+                    browser.close()
+                    return 2
+                page.goto(
+                    f"{args.base_url}/login?next=/member/today-races?date={args.date}",
+                    wait_until="domcontentloaded",
+                )
+                page.locator('input[name="password"]').fill(password)
+                page.locator('.login-form button[type="submit"]').click()
+                page.wait_for_load_state("networkidle")
+                if "/login" in page.url:
+                    raise RuntimeError("Playwright password login failed")
+                if storage_state:
+                    storage_state.parent.mkdir(parents=True, exist_ok=True)
+                    context.storage_state(path=str(storage_state))
         else:
             login_url = (
                 f"{args.base_url}/test/login-as/{args.role}"
@@ -74,7 +113,7 @@ def main() -> int:
         def audit_top_page() -> tuple[dict[str, object], str | None, list[str]]:
             url = f"{args.base_url}/races?date={args.date}"
             page.goto(url, wait_until="domcontentloaded")
-            page.wait_for_selector(".stadium-grid")
+            page.wait_for_selector("body")
             page.wait_for_timeout(500)
             shot = out_dir / "top_races.png"
             page.screenshot(path=str(shot), full_page=True)
@@ -105,6 +144,7 @@ def main() -> int:
                 "title": page.title(),
                 "count_note": count_note,
                 "system_warning_visible": page.get_by_text("システム警告").count() > 0,
+                "stadium_grid_visible": page.locator(".stadium-grid").count() > 0,
                 "stadium_env_count": env_count,
                 "first_stadium_env": first_env,
                 "first_race_link": first_race_link,
@@ -198,7 +238,23 @@ def main() -> int:
             member_result, member_detail_link = audit_member_today()
             report["pages"]["member_today_races"] = member_result
             detail_link = member_detail_link or top_detail_link
-            report["pages"]["admin_data_status"] = audit_admin_data_status()
+            if args.auth_mode == "password":
+                report["pages"]["admin_data_status"] = {
+                    "skipped": True,
+                    "reason": "test-viewer-read-only",
+                }
+                report["pages"]["test_viewer_authorization"] = page.evaluate(
+                    """async () => {
+                        const adminResponse = await fetch('/admin/data-status');
+                        const writeResponse = await fetch('/admin/cache-clear', {method: 'POST'});
+                        return {
+                            admin_status_get: adminResponse.status,
+                            cache_clear_post: writeResponse.status
+                        };
+                    }"""
+                )
+            else:
+                report["pages"]["admin_data_status"] = audit_admin_data_status()
         report["pages"]["race_detail"] = audit_race_detail(detail_link)
         if args.scan_all_races:
             report["pages"]["all_race_details_scan"] = scan_all_race_details(race_links)

@@ -94,6 +94,8 @@ SQLITE_CONNECT_TIMEOUT_SECONDS = 30  # connect() 自身のタイムアウト
 WEB_SESSION_SECRET = os.getenv("BOATRACE_WEB_SECRET", "dev-only-do-not-use-in-prod")
 # 会員パスワード (環境変数 BOATRACE_MEMBER_PASSWORD で設定。本番では .env で必ず変更)
 WEB_MEMBER_PASSWORD = os.getenv("BOATRACE_MEMBER_PASSWORD", "dev-member")
+# Optional password for read-only Playwright checks against deployed pages.
+WEB_PLAYWRIGHT_PASSWORD = os.getenv("BOATRACE_PLAYWRIGHT_PASSWORD", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = (
     os.getenv("SUPABASE_PUBLISHABLE_KEY")

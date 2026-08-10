@@ -43,8 +43,8 @@ def test_security_policy_allows_supabase_auth_fetch():
 
 def test_legacy_password_login_is_not_admin():
     source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
-    assert 'session["auth_provider"] = "legacy_password"' in source
-    assert 'session["role"] = "paid_member"' in source
+    assert '"legacy_password" if member_match else "playwright_password"' in source
+    assert '"paid_member" if member_match else "test_viewer"' in source
     assert 'session["role"] = "admin"' not in source
 
 

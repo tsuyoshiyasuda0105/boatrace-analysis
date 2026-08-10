@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import secrets
@@ -119,7 +120,7 @@ def _verify_csrf_token() -> bool:
 
 
 def _safe_redirect_url(next_url: str, default: str = "/") -> str:
-    """オープンリダイレクト対策。
+    r"""オープンリダイレクト対策。
     next が以下のいずれかなら安全、それ以外は default に。
       - / で始まる相対パス (例: /races?date=2026-05-12)
     NG:
@@ -164,7 +165,31 @@ def is_admin() -> bool:
 
 
 def is_paid_member() -> bool:
-    return role_allows(current_role(), "paid_member")
+    return current_role() == "test_viewer" or role_allows(current_role(), "paid_member")
+
+
+def is_playwright_test_viewer() -> bool:
+    return (
+        current_role() == "test_viewer"
+        and current_auth_provider() == "playwright_password"
+    )
+
+
+def _playwright_password_is_safe() -> bool:
+    password = getattr(config, "WEB_PLAYWRIGHT_PASSWORD", "")
+    if len(password) < 16:
+        return False
+    return not _safe_password_check(password, config.WEB_MEMBER_PASSWORD)
+
+
+def _playwright_password_version() -> str:
+    if not _playwright_password_is_safe():
+        return ""
+    return hmac.new(
+        config.WEB_SESSION_SECRET.encode("utf-8"),
+        config.WEB_PLAYWRIGHT_PASSWORD.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def _set_supabase_session(user_id: str, email: str | None, role: str) -> None:
@@ -435,6 +460,33 @@ def register_auth_routes(app):
     def _sync_supabase_auth_role():
         _refresh_supabase_membership_session()
 
+    @app.before_request
+    def _expire_rotated_playwright_session():
+        if session.get("auth_provider") != "playwright_password":
+            return None
+        expected_version = _playwright_password_version()
+        session_version = str(session.get("playwright_password_version") or "")
+        if expected_version and hmac.compare_digest(session_version, expected_version):
+            return None
+        session.clear()
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "unauthorized", "message": "Playwright test session expired"}), 401
+        return redirect(url_for("login", next=request.path))
+
+    @app.before_request
+    def _enforce_playwright_read_only():
+        if is_playwright_test_viewer() and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return jsonify({"error": "forbidden", "message": "Playwright test viewer is read-only"}), 403
+
+    if (
+        getattr(config, "WEB_PLAYWRIGHT_PASSWORD", "")
+        and not _playwright_password_is_safe()
+    ):
+        logger.critical(
+            "SECURITY: BOATRACE_PLAYWRIGHT_PASSWORD must be 16+ characters and "
+            "differ from BOATRACE_MEMBER_PASSWORD; dedicated test login is disabled."
+        )
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         ip = _client_ip()
@@ -455,12 +507,21 @@ def register_auth_routes(app):
                     error=f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
                 ), 429
             pw = request.form.get("password", "")
-            if _safe_password_check(pw, config.WEB_MEMBER_PASSWORD):
+            member_match = _safe_password_check(pw, config.WEB_MEMBER_PASSWORD)
+            playwright_match = (
+                _playwright_password_is_safe()
+                and _safe_password_check(pw, config.WEB_PLAYWRIGHT_PASSWORD)
+            )
+            if member_match or playwright_match:
                 _record_attempt(ip, True)
                 session.clear()  # セッション固定攻撃対策
                 session["is_member"] = True
-                session["role"] = "paid_member"
-                session["auth_provider"] = "legacy_password"
+                session["role"] = "paid_member" if member_match else "test_viewer"
+                session["auth_provider"] = (
+                    "legacy_password" if member_match else "playwright_password"
+                )
+                if playwright_match:
+                    session["playwright_password_version"] = _playwright_password_version()
                 session.permanent = True
                 # オープンリダイレクト対策: next が外部 URL なら index へ
                 next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))

@@ -95,6 +95,7 @@ notebooks/.ipynb_checkpoints/
 .coverage
 htmlcov/
 test_run_output/
+playwright/.auth/
 
 # ============================================================
 # 大きい LZH/CSV 等 (データバックフィル用、再ダウンロード可能)
