@@ -119,6 +119,10 @@ def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
     assert recorded[-1][0][:3] == ("render_signal_refresh_10_7", "2026-07-21", "success")
     assert run_calls == [
         (
+            ["scripts/build_derived_start_stats.py", "--from", "2026-07-21", "--to", "2026-07-21"],
+            1800,
+        ),
+        (
             ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", "2026-07-21"],
             1800,
         )
@@ -161,6 +165,46 @@ def test_signal_refresh_lock_reads_recent_running_task(monkeypatch):
     monkeypatch.setattr(scheduler, "db_connect", lambda: _Connection())
     now = scheduler.datetime(2026, 7, 21, 10, 40, tzinfo=scheduler.JST)
     assert scheduler.signal_refresh_recently_running(now)
+
+
+def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        scheduler,
+        "task_success_exists",
+        lambda task, _run_date: False if task in {"render_lite_daytime_bootstrap", "render_detail_tags_today"} else True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_signal_refresh_slot",
+        lambda _now: calls.append("signal_refresh") or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: calls.append((tuple(args), timeout)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_top_page_snapshot",
+        lambda _now, *, lightweight, environment_only=False: calls.append(
+            ("snapshot", lightweight, environment_only)
+        ) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, _run_date, status, detail=None: calls.append(("record", task, status, detail)),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
+    assert scheduler.run_lite_daytime_bootstrap(now)
+    assert "signal_refresh" in calls
+    assert (("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21"), 900) in calls
+    assert (("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21"), 1800) in calls
+    assert ("snapshot", False, False) in calls
+    assert any(item[:3] == ("record", "render_lite_daytime_bootstrap", "success") for item in calls if isinstance(item, tuple))
 
 
 def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):
@@ -532,6 +576,7 @@ def test_roi_cache_self_heal_repairs_and_verifies(monkeypatch):
     assert scheduler.run_roi_daily_self_heal(now)
     assert calls == [
         (["scripts/prewarm_strategy_pages.py", "--mode", "daily-reconcile", "--date", "2026-07-21"], 1800),
+        (["scripts/build_derived_start_stats.py", "--from", "2026-07-20", "--to", "2026-07-20"], 1800),
         (["scripts/backfill_accident_dent_daily_cache.py", "--from", "2026-07-20", "--to", "2026-07-20"], 900),
     ]
     assert records[0][0][:3] == (

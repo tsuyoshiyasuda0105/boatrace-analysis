@@ -503,6 +503,35 @@ def run_top_page_snapshot(
     return ok
 
 
+def run_lite_daytime_bootstrap(now: datetime) -> bool:
+    """Restore one full daytime snapshot even when Render lite mode is enabled.
+
+    Lite mode keeps the steady-state five-minute loop small, but the TOP page
+    still needs one daily full snapshot so race badges and prewarmed detail
+    pages exist for the current JST date.
+    """
+
+    today = now.date().isoformat()
+    task = "render_lite_daytime_bootstrap"
+    if task_success_exists(task, today):
+        return True
+
+    ok = run_signal_refresh_slot(now)
+    if not task_success_exists("render_detail_tags_today", today):
+        tags_ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
+        record_task("render_detail_tags_today", today, "success" if tags_ok else "failure")
+        ok &= tags_ok
+        if tags_ok:
+            pages_ok = run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)
+            record_task("render_detail_pages_today", today, "success" if pages_ok else "failure")
+            ok &= pages_ok
+
+    snapshot_ok = run_top_page_snapshot(now, lightweight=False)
+    ok &= snapshot_ok
+    record_task(task, today, "success" if ok else "failure")
+    return ok
+
+
 def tide_refresh_needed(run_date: str) -> bool:
     from src.collectors.tide import load_tide_station_map
 
@@ -1089,6 +1118,9 @@ def main() -> int:
     # Live beforeinfo/original-exhibition collection and race-detail refresh are
     # owned by boatrace-exhibition-detail-cron. Keeping them out of the regular
     # five-minute scheduler prevents duplicate exhibition fetches.
+
+    if lite_mode and 8 <= now.hour <= 23:
+        run_lite_daytime_bootstrap(now)
 
     # Refresh source-dependent candidates before the slower result poll. This
     # keeps the dashboard snapshot close to the five-minute cron cadence.
