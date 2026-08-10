@@ -325,6 +325,139 @@
       {% endfor %}
     </div>
 
+    {% if not show_today_picks_panel|default(false) %}
+    <script>
+      (() => {
+        const marketSignalsEnabled = false;
+        const payload = {{ initial_market_signals|default({})|tojson }};
+        const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .entry-change-watch-badge';
+        const raceItems = Array.from(document.querySelectorAll('.race-item[data-race-id]'));
+        const raceItemMap = new Map(raceItems.map((item) => [item.dataset.raceId, item]));
+        window.__boatraceTopDiagnostics = {
+          mode: 'top-lightweight',
+          renderTodaysPicks: { calls: 0, result: 'not_loaded_top_only' },
+          marketSignalsRequests: 0,
+        };
+
+        const ensureBadgeRow = (anchor) => {
+          let row = anchor.querySelector('.race-badge-row');
+          if (!row) {
+            row = document.createElement('span');
+            row.className = 'race-badge-row';
+            anchor.appendChild(row);
+          }
+          return row;
+        };
+
+        const addBadge = (row, className, text, title) => {
+          const badge = document.createElement('span');
+          badge.className = className;
+          badge.textContent = text;
+          badge.title = title || text;
+          row.appendChild(badge);
+        };
+
+        const renderBadges = () => {
+          raceItems.forEach((item) => {
+            item.querySelectorAll(badgeSelector).forEach((badge) => badge.remove());
+            item.querySelectorAll('.race-badge-row').forEach((row) => {
+              if (!row.querySelector(badgeSelector)) row.remove();
+            });
+          });
+          const merged = { ...(payload.race_badges || {}) };
+          Object.entries(payload.accident_watch || {}).forEach(([raceId, accident]) => {
+            merged[raceId] = { ...(merged[raceId] || {}), accident };
+          });
+          Object.entries(merged).forEach(([raceId, badges]) => {
+            const item = raceItemMap.get(raceId);
+            if (!item) return;
+            const anchor = item.querySelector('a') || item;
+            const row = ensureBadgeRow(anchor);
+            const accident = badges?.accident;
+            if (accident) {
+              const tone = Array.isArray(accident.items) && accident.items[0]?.tone
+                ? accident.items[0].tone
+                : 'unknown';
+              addBadge(row, `accident-watch-badge accident-risk-${tone}`, '事故', accident.label);
+            }
+            const ace = badges?.ace_motor;
+            if (ace) addBadge(row, 'ace-motor-watch-badge', 'M', ace.label || 'エースモーター');
+            const escape = badges?.escape;
+            if (escape) addBadge(row, 'escape-watch-badge', '逃げ', escape.label || '1号艇逃げ注目');
+            const entryChange = badges?.entry_change;
+            if (entryChange) addBadge(row, 'entry-change-watch-badge', '!', entryChange.label || '進入注意');
+            if (!row.children.length) row.remove();
+          });
+        };
+
+        const parseClosedAt = (value) => {
+          if (!value) return null;
+          const parsed = new Date(value.replace(' ', 'T'));
+          return Number.isNaN(parsed.getTime()) ? null : parsed;
+        };
+
+        const formatRemaining = (minutes) => {
+          if (minutes < 1) return 'まもなく';
+          if (minutes < 60) return `あと${Math.floor(minutes)}分`;
+          const hours = Math.floor(minutes / 60);
+          return `あと${hours}h${Math.floor(minutes % 60)}m`;
+        };
+
+        let lastNextRaceKey = '';
+        const updateRaceState = () => {
+          const now = new Date();
+          const upcoming = [];
+          raceItems.forEach((item) => {
+            item.classList.remove('next-race', 'imminent', 'soon');
+            const closedAt = parseClosedAt(item.dataset.closedAt);
+            if (!closedAt) return;
+            const minutesUntil = (closedAt - now) / 60000;
+            const isDone = Number.parseInt(item.dataset.resultsCount || '0', 10) > 0;
+            item.classList.toggle('is-closed', closedAt < now);
+            if (!isDone && minutesUntil >= -1 && minutesUntil <= 180) {
+              upcoming.push({ item, closedAt, minutesUntil });
+              if (minutesUntil <= 5) item.classList.add('imminent');
+              else if (minutesUntil <= 15) item.classList.add('soon');
+            }
+          });
+          upcoming.sort((a, b) => a.minutesUntil - b.minutesUntil);
+          const top = upcoming.slice(0, 3);
+          if (top[0]) top[0].item.classList.add('next-race');
+
+          const panel = document.getElementById('next-race-panel');
+          const cards = document.getElementById('next-race-cards');
+          if (!panel || !cards) return;
+          if (!top.length) {
+            panel.hidden = true;
+            lastNextRaceKey = '';
+            return;
+          }
+          const key = top.map(({ item }) => item.dataset.raceId || '').join('|');
+          if (key === lastNextRaceKey && !panel.hidden) return;
+          lastNextRaceKey = key;
+          panel.hidden = false;
+          cards.innerHTML = '';
+          top.forEach(({ item, closedAt, minutesUntil }, index) => {
+            const card = document.createElement('a');
+            card.href = `/race/${item.dataset.raceId || ''}`;
+            card.className = `next-race-card ${index === 0 ? 'is-top' : ''}`;
+            const hh = String(closedAt.getHours()).padStart(2, '0');
+            const mm = String(closedAt.getMinutes()).padStart(2, '0');
+            card.innerHTML = `
+              <div class="next-card-time">${hh}:${mm}</div>
+              <div class="next-card-til">${formatRemaining(minutesUntil)}</div>
+              <div class="next-card-stadium">${item.dataset.stadiumName || ''} ${item.dataset.raceNumber || ''}R</div>
+            `;
+            cards.appendChild(card);
+          });
+        };
+
+        renderBadges();
+        updateRaceState();
+        window.setInterval(updateRaceState, 60000);
+      })();
+    </script>
+    {% else %}
     <script>
       (function() {
         const targetDate = "{{ target_date }}";
@@ -1373,7 +1506,7 @@
         
         
         
-function renderTodaysPicks() {
+renderTodaysPicks = function() {
           const panel = document.getElementById('todays-picks-panel');
           const preconfirmedTbody = document.getElementById('todays-picks-preconfirmed-tbody');
           const waitingTbody = document.getElementById('todays-picks-waiting-tbody');
@@ -1779,7 +1912,7 @@ function renderTodaysPicks() {
           } else {
             closedTbody.innerHTML = '';
           }
-        }
+        };
 
 
         updateNextRaces();
@@ -1877,5 +2010,6 @@ function updateClosedRaceTiles() {
         });
       })();
     </script>
+    {% endif %}
   {% endif %}
 {% endblock %}
