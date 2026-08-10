@@ -12,6 +12,10 @@ def test_top_uses_lightweight_script_without_roi_runtime():
     assert "dataset.topDiagnostics = JSON.stringify(diagnostics)" in lightweight
     assert "getEntriesByType?.('navigation')" in lightweight
     assert "domContentLoadedMs" in lightweight
+    assert "downloadMs" in lightweight
+    style = Path("src/web/static/style.css").read_text(encoding="utf-8")
+    assert "content-visibility: auto" in style
+    assert "contain-intrinsic-size: auto 520px" in style
     assert "window.setInterval(updateRaceState, 60000);" in lightweight
     assert "async function loadMarketSignals()" not in lightweight
     assert "renderTodaysPicks = function()" not in lightweight

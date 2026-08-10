@@ -4,7 +4,10 @@
     if (!navigation) return;
     document.documentElement.dataset.raceDiagnostics = JSON.stringify({
       phase,
+      requestStartMs: Math.round(navigation.requestStart),
+      responseStartMs: Math.round(navigation.responseStart),
       responseEndMs: Math.round(navigation.responseEnd),
+      downloadMs: Math.round(navigation.responseEnd - navigation.responseStart),
       domContentLoadedMs: Math.round(navigation.domContentLoadedEventEnd),
       loadMs: Math.round(navigation.loadEventEnd),
       transferSize: navigation.transferSize || 0,
@@ -16,7 +19,11 @@
     () => publishNavigationDiagnostics("domcontentloaded"),
     { once: true },
   );
-  window.addEventListener("load", () => publishNavigationDiagnostics("load"), { once: true });
+  window.addEventListener(
+    "load",
+    () => window.setTimeout(() => publishNavigationDiagnostics("load"), 0),
+    { once: true },
+  );
 
   const shell = document.getElementById("race-signal-shell");
   let inspectorShell = document.getElementById("motor-inspector-shell");

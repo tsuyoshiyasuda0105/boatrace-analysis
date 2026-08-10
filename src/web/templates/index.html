@@ -349,7 +349,10 @@
           if (!navigation) return;
           diagnostics.navigation = {
             phase,
+            requestStartMs: Math.round(navigation.requestStart),
+            responseStartMs: Math.round(navigation.responseStart),
             responseEndMs: Math.round(navigation.responseEnd),
+            downloadMs: Math.round(navigation.responseEnd - navigation.responseStart),
             domContentLoadedMs: Math.round(navigation.domContentLoadedEventEnd),
             loadMs: Math.round(navigation.loadEventEnd),
             transferSize: navigation.transferSize || 0,
@@ -367,7 +370,7 @@
         });
         publishDiagnostics();
         document.addEventListener('DOMContentLoaded', () => recordNavigation('domcontentloaded'), { once: true });
-        window.addEventListener('load', () => recordNavigation('load'), { once: true });
+        window.addEventListener('load', () => window.setTimeout(() => recordNavigation('load'), 0), { once: true });
 
         const ensureBadgeRow = (anchor) => {
           let row = anchor.querySelector('.race-badge-row');
