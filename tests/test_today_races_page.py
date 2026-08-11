@@ -309,7 +309,9 @@ def test_write_top_page_snapshot_preserves_existing_daily_badges(monkeypatch):
         "stadium_groups": [{"stadium_number": 1, "stadium_name": "桐生", "races": []}],
         "initial_market_signals": {
             "date": "2026-07-30",
-            "race_badges": {},
+            "race_badges": {
+                "202607300101": {"accident": {"label": "ACCIDENT BADGE"}}
+            },
             "accident_watch": {},
         },
         "empty": False,
@@ -456,6 +458,77 @@ def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch)
     assert "Kiryu" in response.get_data(as_text=True)
     assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, private"
 
+
+
+def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
+    race = {
+        "race_id": "202607300101",
+        "race_date": "2026-07-30",
+        "race_number": 1,
+        "race_closed_at": "2026-07-30 08:32:00",
+        "stadium_number": 1,
+        "stadium_name": "Kiryu",
+        "results_count": 0,
+    }
+    snapshot = {
+        "version": web_app.TOP_PAGE_SNAPSHOT_VERSION,
+        "date": "2026-07-30",
+        "stadium_groups": [
+            {
+                "stadium_number": 1,
+                "stadium_name": "Kiryu",
+                "environment": {},
+                "races": [race],
+            }
+        ],
+        "initial_market_signals": {
+            "date": "2026-07-30",
+            "race_badges": {},
+            "accident_watch": {},
+        },
+        "empty": False,
+    }
+    written = {}
+    monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: snapshot)
+    monkeypatch.setattr(
+        web_app,
+        "_race_grid_badges_payload",
+        lambda *_args, **_kwargs: {
+            "date": "2026-07-30",
+            "signals": {},
+            "race_badges": {
+                "202607300101": {"accident": {"label": "ACCIDENT BADGE"}}
+            },
+            "accident_watch": {},
+        },
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_write_top_page_snapshot",
+        lambda target_date, payload=None: written.update({"target_date": target_date, "payload": payload}) or payload,
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_races_for_date",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("TOP snapshot repair must not read races")
+        ),
+    )
+    web_app.invalidate_cache()
+
+    app = web_app.create_app()
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["is_member"] = True
+        session["role"] = "admin"
+
+    response = client.get("/races?date=2026-07-30")
+
+    assert response.status_code == 200
+    assert written["target_date"] == "2026-07-30"
+    saved = written["payload"]["initial_market_signals"]["race_badges"]
+    assert saved["202607300101"]["accident"]["label"] == "ACCIDENT BADGE"
 
 def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
     monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
