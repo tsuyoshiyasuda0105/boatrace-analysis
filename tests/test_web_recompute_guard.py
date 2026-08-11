@@ -119,6 +119,7 @@ def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
         "run_py",
         lambda args, timeout: run_calls.append((args, timeout)) or True,
     )
+    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: True)
 
     now = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
     assert scheduler.run_signal_refresh_slot(now)

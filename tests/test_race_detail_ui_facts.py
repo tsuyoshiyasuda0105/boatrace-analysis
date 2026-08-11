@@ -102,6 +102,13 @@ def test_start_comparison_is_rendered_after_six_boat_details():
     assert 'filename=\'start_prediction.js\'' not in source.split('filename=\'race_detail.js\'', 1)[1]
 
 
+def test_motor_inspector_is_kept_outside_collapsed_start_comparison():
+    script = RACE_DETAIL_JS.read_text(encoding="utf-8")
+
+    assert "const anchor = startPredictionDetails || startPredictionShell;" in script
+    assert "startPredictionShell.parentNode.insertBefore(inspectorShell, startPredictionShell)" not in script
+
+
 def test_race_detail_removes_top_candidate_and_top_pick_cards():
     source = RACE_TEMPLATE.read_text(encoding="utf-8")
     script = RACE_DETAIL_JS.read_text(encoding="utf-8")
@@ -121,7 +128,8 @@ def test_motor_inspector_is_moved_above_start_comparison():
     script = RACE_DETAIL_JS.read_text(encoding="utf-8")
 
     assert 'document.querySelector("[data-start-prediction]")' in script
-    assert "insertBefore(inspectorShell, startPredictionShell)" in script
+    assert "const anchor = startPredictionDetails || startPredictionShell;" in script
+    assert "anchor.parentNode.insertBefore(inspectorShell, anchor)" in script
     assert "ensureStartPredictionScript" in script
     assert 'script.dataset.startPredictionScript = "1"' in script
 
@@ -299,7 +307,8 @@ def test_only_motor_number_click_opens_detail_panel():
     assert 'event.preventDefault()' in script
     assert 'event.stopPropagation()' in script
     assert 'document.querySelector("[data-start-prediction]")' in script
-    assert "insertBefore(inspectorShell, startPredictionShell)" in script
+    assert "const anchor = startPredictionDetails || startPredictionShell;" in script
+    assert "anchor.parentNode.insertBefore(inspectorShell, anchor)" in script
     assert "const ensureInspectorShell = () => {" in script
     assert 'inspectorShell = document.createElement("section")' in script
     assert "const validateHistoryPayload = (history, raceId, boatNumber) => {" in script

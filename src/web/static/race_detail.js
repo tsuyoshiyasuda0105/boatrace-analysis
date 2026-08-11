@@ -49,7 +49,7 @@
         <div class="motor-inspector-body" data-motor-inspector-body>
           <div class="motor-history-loading">モーター履歴を読み込み中...</div>
         </div>`;
-      const anchor = startPredictionShell;
+      const anchor = startPredictionDetails || startPredictionShell;
       if (anchor?.parentNode) {
         anchor.parentNode.insertBefore(inspectorShell, anchor);
       } else {
@@ -111,10 +111,11 @@
     if (legacySignalShell && !legacySignalShell.textContent.trim()) legacySignalShell.remove();
     if (
       inspectorShell
-      && startPredictionShell
-      && inspectorShell.nextElementSibling !== startPredictionShell
+      && (startPredictionDetails || startPredictionShell)
+      && inspectorShell.nextElementSibling !== (startPredictionDetails || startPredictionShell)
     ) {
-      startPredictionShell.parentNode.insertBefore(inspectorShell, startPredictionShell);
+      const anchor = startPredictionDetails || startPredictionShell;
+      anchor.parentNode.insertBefore(inspectorShell, anchor);
     }
     document.querySelectorAll("details.collapsible-section").forEach((details) => {
       const summaryText = details.querySelector("summary")?.textContent || "";

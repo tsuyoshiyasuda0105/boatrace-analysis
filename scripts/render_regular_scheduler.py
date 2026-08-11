@@ -50,6 +50,13 @@ def run_py(args: list[str], timeout: int = 1800) -> bool:
     return proc.returncode == 0
 
 
+def run_program_source_gate(run_date: str) -> bool:
+    return run_py(
+        ["scripts/check_program_source_gate.py", "--date", run_date],
+        timeout=120,
+    )
+
+
 def _parse_race_close_jst(closed_at, race_date: str) -> datetime | None:
     if isinstance(closed_at, datetime):
         return closed_at.replace(tzinfo=JST) if closed_at.tzinfo is None else closed_at
@@ -460,9 +467,16 @@ def run_beforeinfo(now: datetime) -> bool:
 
 def run_morning(now: datetime) -> bool:
     today = now.date().isoformat()
+    official_ok = run_py(
+        ["scripts/backfill_official.py", "--start", today, "--end", today],
+        timeout=1800,
+    )
+    openapi_ok = run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
+    if not official_ok or not openapi_ok or not run_program_source_gate(today):
+        print("[morning] source gate not ready -> skip downstream generation", flush=True)
+        return False
+
     ok = True
-    ok &= run_py(["scripts/backfill_official.py", "--start", today, "--end", today], timeout=1800)
-    ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
     # Tide rows depend on races already existing, so import after daily race data is written.
     ok &= run_tides(now)
     # Accident-based strategies and tags should be ready before the first
@@ -772,6 +786,9 @@ def run_signal_refresh_slot(now: datetime) -> bool:
         return True
 
     record_task(task, today, "running")
+    if not run_program_source_gate(today):
+        record_task(task, today, "failure", detail="program_source_gate_not_ready")
+        return False
     ok = run_derived_start_stats(today, today)
     if not ok:
         record_task(task, today, "failure", detail="derived_start_stats_failed")
@@ -1071,6 +1088,9 @@ def run_nightly(now: datetime) -> bool:
     ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "5"], timeout=1800)
     ok &= run_py(["scripts/backfill_official.py", "--start", tomorrow, "--end", tomorrow], timeout=1800)
     ok &= run_py(["scripts/daily_collect.py", "--date", tomorrow], timeout=1800)
+    if not run_program_source_gate(tomorrow):
+        print("[nightly] tomorrow source gate not ready -> retry next cron", flush=True)
+        return False
     # Preload tomorrow after its races exist as well.
     ok &= run_tides(now)
     ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
