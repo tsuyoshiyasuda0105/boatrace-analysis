@@ -10,7 +10,7 @@
   - A PostgreSQL advisory lock prevents overlapping bootstrap runs.
   - 06:30: one final forced recovery attempt.
   - 07:30: unresolved source state is written to `system_status` for the admin warning.
-- `boatrace-race-detail-cron`: 06:45 JST. It exits before cache generation unless the source gate is ready.
+- `boatrace-race-detail-cron`: 07:00-09:59 JST every 15 minutes. It exits before cache generation unless the source gate is ready, and skips after the first successful daily generation.
 - `boatrace-odds-cron`, `boatrace-regular-cron`, and `boatrace-exhibition-detail-cron`: every five minutes from 08:00 through 22:59 JST.
 - The dedicated bootstrap owns program acquisition. The regular cron only consumes the persisted source-gate success before tags, pages, TOP snapshots, or ROI signals are generated.
 - Blueprint schedules are part of the deployment. A code-only service deploy does not prove schedule synchronization.

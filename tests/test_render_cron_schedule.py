@@ -30,7 +30,7 @@ def test_race_detail_runs_after_final_source_recovery():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
     start = source.index("\n    name: boatrace-race-detail-cron")
     end = source.index("\n    name: boatrace-exhibition-detail-cron", start)
-    assert 'schedule: "45 21 * * *"' in source[start:end]
+    assert 'schedule: "*/15 0,22-23 * * *"' in source[start:end]
 
 
 def test_odds_uses_two_snapshot_render_scheduler():

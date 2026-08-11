@@ -12,7 +12,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -35,6 +35,33 @@ from src.web import app as web_app  # noqa: E402
 
 JST = ZoneInfo("Asia/Tokyo")
 MOTOR_CACHE_VERSION = "v9"
+RECENT_RUNNING_MINUTES = 30
+
+
+def _existing_run_state(task_name: str, target_date: str) -> str | None:
+    """Return a completed or active state so recovery cron runs stay idempotent."""
+    recent_since = (
+        datetime.now(JST).replace(tzinfo=None) - timedelta(minutes=RECENT_RUNNING_MINUTES)
+    ).isoformat(timespec="seconds")
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT status, started_at
+              FROM task_runs
+             WHERE task_name = ?
+               AND run_date = ?
+             LIMIT 1
+            """,
+            (task_name, target_date),
+        ).fetchone()
+    if not row:
+        return None
+    status = str(row[0] or "")
+    if status == "success":
+        return "success"
+    if status == "running" and str(row[1] or "") >= recent_since:
+        return "running"
+    return None
 
 
 def _race_ids(target_date: str) -> list[str]:
@@ -210,6 +237,13 @@ def main() -> int:
     )
     args = parser.parse_args()
     task_name = f"render_race_detail_{args.phase}"
+    existing_state = _existing_run_state(task_name, args.date)
+    if existing_state:
+        print(
+            f"[race-detail-daily] skip state={existing_state} date={args.date}",
+            flush=True,
+        )
+        return 0
     if args.phase == "all":
         gate = check_program_source_gate(datetime.fromisoformat(args.date).date())
         gate_status = str(gate.get("gate_status") or "blocked")

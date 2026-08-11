@@ -186,11 +186,6 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
     )
     monkeypatch.setattr(
         scheduler,
-        "run_morning_catchup_if_needed",
-        lambda _now: calls.append("source_recovery") or True,
-    )
-    monkeypatch.setattr(
-        scheduler,
         "daily_source_counts",
         lambda _run_date: {"races": 10, "entries": 60, "predictions": 10},
     )
@@ -219,8 +214,8 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
 
     now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
     assert scheduler.run_lite_daytime_bootstrap(now)
-    assert calls.index("source_recovery") < calls.index("signal_refresh")
     assert "signal_refresh" in calls
+    assert "source_recovery" not in calls
     assert (("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21"), 900) in calls
     assert (("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21"), 1800) in calls
     assert ("snapshot", False, False) in calls
@@ -260,8 +255,11 @@ def test_lite_daytime_bootstrap_stops_when_sources_remain_incomplete(monkeypatch
 
 def test_lite_daytime_bootstrap_stops_when_signal_gate_fails(monkeypatch):
     calls = []
-    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
-    monkeypatch.setattr(scheduler, "run_morning_catchup_if_needed", lambda _now: True)
+    monkeypatch.setattr(
+        scheduler,
+        "task_success_exists",
+        lambda task, _run_date: task == "render_program_source_gate_v1",
+    )
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",
@@ -587,11 +585,19 @@ def test_scheduler_runs_accident_refresh_only_in_0730_window():
 
 def test_accident_watch_map_uses_latest_period_end_before_target(monkeypatch):
     web_app._accident_watch_map.cache_clear()
+    web_app._preferred_accident_source.cache_clear()
     calls = []
 
     class _Cursor:
+        def __init__(self, *, one=None, all_rows=None):
+            self.one = one
+            self.all_rows = all_rows or []
+
+        def fetchone(self):
+            return self.one
+
         def fetchall(self):
-            return [(1234, 0.62, 14, 22)]
+            return self.all_rows
 
     class _Connection:
         def __enter__(self):
@@ -602,16 +608,26 @@ def test_accident_watch_map_uses_latest_period_end_before_target(monkeypatch):
 
         def execute(self, sql, params=()):
             calls.append((sql, params))
-            return _Cursor()
+            if "racer_accident_external_snapshots" in sql:
+                return _Cursor(one=None)
+            if "SELECT MAX(period_end)" in sql:
+                return _Cursor(one=("2026-08-01",))
+            return _Cursor(all_rows=[(1234, 0.62, 14, 22, None)])
 
     monkeypatch.setattr(web_app, "db_connect", lambda: _Connection())
     got = web_app._accident_watch_map("2026-05-01", "2026-08-02", (1234,))
 
-    assert got[1234] == {"rate": 0.62, "points": 14, "starts": 22}
-    sql, params = calls[0]
-    assert "period_end < ?" in sql
+    assert got[1234] == {
+        "rate": 0.62,
+        "points": 14,
+        "starts": 22,
+        "flying_count": None,
+        "late_count": None,
+    }
+    sql, params = calls[-1]
+    assert "period_end = ?" in sql
     assert "MAX(accident_rate)" not in sql
-    assert params == ("2026-05-01", "2026-05-01", "2026-08-02", 1234)
+    assert params == ("2026-05-01", "2026-08-01", 1234)
 
 
 def test_accident_rate_queries_do_not_mix_period_rows_with_max_rate():
@@ -624,16 +640,16 @@ def test_accident_rate_queries_do_not_mix_period_rows_with_max_rate():
 
 def test_accident_rebuild_updates_period_even_without_new_accident_events():
     source = Path("scripts/rebuild_racer_accident_stats.py").read_text(encoding="utf-8")
-    assert "periods = {class_period(date_from), class_period(date_to)}" in source
-    assert "periods.update(class_period(ev.race_date) for ev in events)" in source
+    assert "periods = affected_class_periods(date_from, date_to)" in source
+    assert "effective_period_end = min(period_end, date_to)" in source
 
 
 def test_accident_rank_snapshot_uses_only_latest_period_end_rows():
     source = Path("scripts/cache_racer_accident_rank_snapshot.py").read_text(encoding="utf-8")
     build_source = source.split("def build_snapshot", 1)[1].split("def main", 1)[0]
-    assert "period_end = str(period_row[1])" in build_source
+    assert "period_end = str(period_row[2])" in build_source
     assert "AND s.period_end = ?" in build_source
-    assert "(class_as_of, period_start, period_end, RULE_VERSION)" in build_source
+    assert "(class_as_of, period_start, period_end, source_kind, RULE_VERSION)" in build_source
 
 
 def test_roi_cache_self_heal_skips_current_cache(monkeypatch):

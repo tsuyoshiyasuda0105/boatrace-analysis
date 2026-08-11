@@ -7341,13 +7341,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/api/market-signals")
     @member_only_api
-    @cached(ttl=8, past_ttl=3600)
-    # 2026-05-30: キャッシュ強化
-    #   ttl=60: 当日のリアルタイム性 (旧 300秒 → 60秒に短縮、同時アクセス時の
-    #           負荷集中を防ぎつつ、 オッズ更新 (T-5min/T-1min snapshot 等) も反映)
-    #   past_ttl=3600: 過去日リクエストは確定済データなので 1 時間キャッシュ
-    #   bulk fetch (top-pick/exhibition) との組合せで、 当日ピーク時の処理時間が
-    #   さらに削減される (44.8x 高速化 with bulk + キャッシュ命中時はほぼ 0ms).
     def market_signals_for_date():
         """指定日のレース一覧で「市場非効率ベース +EV」シグナルを返す。
         判定優先度 (L4 戦略の定義に合わせ T-X 1-2-3 オッズを最優先):

@@ -111,10 +111,10 @@ def test_regular_scheduler_can_run_in_daytime_lite_mode():
     scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
 
     assert "def render_daytime_lite_mode()" in scheduler
-    assert "if not lite_mode and morning_start <= now < morning_end:" in scheduler
+    assert "if not dedicated_bootstrap and not lite_mode and morning_start <= now < morning_end:" in scheduler
     assert "run_lite_daytime_bootstrap(now)" in scheduler
     assert "if not lite_mode and 6 <= now.hour <= 23:" in scheduler
-    assert "if not lite_mode and now.hour == 23 and now.minute >= 30:" in scheduler
+    assert "if not dedicated_bootstrap and not lite_mode and now.hour == 23 and now.minute >= 30:" in scheduler
 
 
 class _Response:
