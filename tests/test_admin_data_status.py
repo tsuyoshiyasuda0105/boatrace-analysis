@@ -188,6 +188,46 @@ def test_admin_data_status_race_detail_partial_html_cache_is_warning_when_rows_a
     assert "HTML" in items["race_detail"]["status_hint"]
 
 
+def test_admin_data_status_partial_counts_are_warning_while_morning_build_is_running(monkeypatch):
+    conn = _prepare_db()
+    target_date = "2026-08-11"
+    races = [("202608111001", target_date, 10, 1), ("202608111002", target_date, 10, 2)]
+    conn.executemany("INSERT INTO races VALUES (?, ?, ?, ?)", races)
+
+    conn.execute(
+        "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+        (web_app._race_detail_page_cache_key("202608111001"),),
+    )
+    for key in [f"motor_history_v9:202608111001:{boat}" for boat in range(1, 4)]:
+        conn.execute(
+            "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+            (key,),
+        )
+    for key in [f"racer_detail:202608111001:{boat}" for boat in range(1, 4)]:
+        conn.execute(
+            "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+            (key,),
+        )
+    conn.execute(
+        """
+        INSERT INTO task_runs(task_name, run_date, status, run_count, started_at, finished_at, success_at, trigger, detail)
+        VALUES (?, ?, 'running', 1, '2026-08-11T07:00:00', NULL, NULL, 'render-detail-prewarm', ?)
+        """,
+        ("render_race_detail_all", target_date, '{"races":2,"pages":1,"motor":3,"racer":3,"failed":0}'),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(web_app, "db_connect", lambda: _ConnCtx(conn))
+
+    snapshot = web_app._admin_data_status_snapshot(target_date)
+    items = {item["slug"]: item for item in snapshot["items"]}
+
+    assert items["race_detail"]["status"] == "warning"
+    assert items["race_detail"]["status_hint"]
+    assert items["motor_history"]["status"] == "warning"
+    assert items["racer_detail"]["status"] == "warning"
+
+
 def test_admin_data_status_page_renders_for_admin(monkeypatch):
     conn = _prepare_db()
     monkeypatch.setattr(web_app, "db_connect", lambda: _ConnCtx(conn))

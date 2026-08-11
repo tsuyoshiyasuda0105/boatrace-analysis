@@ -1431,6 +1431,32 @@ def _compose_admin_status(
             return "healthy"
     return "warning" if treat_missing_task_as_warning else "unknown"
 
+def _mark_admin_item_running_partial_warning(item: dict[str, Any]) -> None:
+    task_detail = item.get("task_detail") or {}
+    if str(item.get("runtime_status") or "") != "running":
+        return
+    if str(item.get("check_status") or "") == "error":
+        return
+    expected_count = item.get("expected_count")
+    present_count = item.get("present_count")
+    if expected_count is None or present_count is None:
+        return
+    if int(present_count or 0) >= int(expected_count or 0):
+        return
+    item["status"] = "warning"
+    item["status_label"] = _format_status_label("warning")
+    progress_bits: list[str] = []
+    for key in ("races", "pages", "motor", "racer", "tags", "failed"):
+        if key not in task_detail:
+            continue
+        progress_bits.append(f"{key}={task_detail.get(key)}")
+    detail = f" ({', '.join(progress_bits)})" if progress_bits else ""
+    item["status_hint"] = (
+        "朝の生成処理がまだ実行中です。件数は完了まで増えます。"
+        f"{detail}"
+    )
+
+
 
 def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
     today_iso = _today_jst_iso()
@@ -1588,6 +1614,17 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         None,
         "展示取得後の詳細再生成とシグナル更新の実行状況。",
     )
+
+    for item in items:
+        if item.get("slug") not in {
+            "race_detail_tags_today",
+            "race_detail_pages_today",
+            "race_detail",
+            "motor_history",
+            "racer_detail",
+        }:
+            continue
+        _mark_admin_item_running_partial_warning(item)
 
     summary = {
         "healthy": sum(1 for item in items if item["status"] == "healthy"),
