@@ -254,7 +254,9 @@ def main() -> int:
             )
             record_cron_run(task_name, args.date, "failure", detail=detail)
             print(f"[race-detail-daily] source gate blocked status={gate_status}", flush=True)
-            return 3 if gate_status == "retry_wait" else 1
+            # retry_wait is a healthy publication delay. Keep the persisted
+            # failure for data-status visibility, but do not mark the cron as crashed.
+            return 0 if gate_status == "retry_wait" else 1
     record_cron_run(task_name, args.date, "running")
     try:
         summary = prewarm(args.date, phase=args.phase, motor_workers=args.motor_workers)

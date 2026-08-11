@@ -206,6 +206,7 @@ def test_daily_detail_generation_fails_closed_before_writes():
     prewarm = main.index("summary = prewarm")
     assert gate < running < prewarm
     assert 'gate_status not in {"ready", "ready_with_warning"}' in main
+    assert 'return 0 if gate_status == "retry_wait" else 1' in main
 
 
 def test_regular_scheduler_no_longer_collects_exhibition_data():
