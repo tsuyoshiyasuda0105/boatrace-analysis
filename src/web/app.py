@@ -4348,7 +4348,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v6"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v13"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v14"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
