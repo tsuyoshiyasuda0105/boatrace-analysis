@@ -15089,6 +15089,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         _write_json_cache(cache_key, payload)
         _write_json_cache(_market_signals_last_good_cache_key(target_date), payload)
         try:
+            _write_top_page_snapshot(target_date)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("top snapshot refresh after market signals failed date=%s: %s", target_date, exc)
+        try:
             with db_connect() as history_conn:
                 replace_roi_history_snapshot(
                     history_conn,
