@@ -38,7 +38,7 @@
 
 ## Next actions
 
-- After deploying PostgreSQL pooling, repeat a logged-in TOP request after the 60-second role boundary and confirm it remains below 1.5 seconds; also verify detail/motor history and Render health.
+- Monitor the next normal cron cycle and Render pool metrics; no further P1 code change is required unless latency regresses.
 - Monitor the normal five-minute Render cycle; failed/not-yet-published result pages remain retryable.
 
 ## Open decisions
@@ -55,7 +55,9 @@
 - Auth regression suite: 23 passed (`test_auth_phase_migration.py`, `test_playwright_password_login.py`, `test_supabase_auth_stripe_migration.py`).
 - Related cache/auth/UI/DB regression bundle after the `v14` cache-generation, read-only role refresh, and PostgreSQL pool changes: 87 passed, including `test_db_connection_pool.py` and `test_smoke.py`. Local verification used `psycopg_pool 3.3.1`.
 - Production `v14` verification: cached race detail loaded in 0.432s/0.213s/0.221s, rendered six racers, displayed generic `会員`, exposed zero admin links, and showed no server error. Motor M35 expanded (`aria-expanded=true`) and rendered history racer rows without an acquisition error.
-- Final TOP verification before the one-hour TTL deploy: warm loads were 0.315s/0.304s with 183 race links, zero runtime errors, zero market-signal requests, and `renderTodaysPicks.calls=0`; the reproduced 3.153s expired-role request motivated the final TTL change.
+- TOP verification before PostgreSQL pooling: warm loads were 0.315s/0.304s with 183 race links, zero runtime errors, zero market-signal requests, and `renderTodaysPicks.calls=0`; expired-role requests measured 3.153s and 2.112s and motivated connection reuse without changing the 60-second TTL.
+- Production `89be1d6` verification: the TOP request after the 60-second role boundary loaded in 0.899s (previously 2.112s), with zero runtime errors, zero market-signal requests, and `renderTodaysPicks.calls=0`.
+- Final race-detail runs loaded in 3.059s/0.211s/0.229s (median 0.229s); the first was a transient server outlier, while the 1.5-second median target remained met. All runs showed six racers, generic `会員`, zero admin links, and no server error. Motor history expanded and rendered 11 history rows without an acquisition error.
 - Render production run at 16:31 JST: 22 targets, 20 fetched, 119 result rows upserted; the two initially unpublished races were filled by the next cycle.
 - Supabase: 20 result races and 20 payout races immediately after recovery; active ROI ledger settled ended candidates.
 - Public ROI page at 16:40 JST: 3 valid rows (Kiryu 12R active, Amagasaki 12R ended, Ashiya 12R ended).
