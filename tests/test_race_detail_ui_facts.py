@@ -20,6 +20,15 @@ def test_race_detail_records_navigation_diagnostics():
     assert "downloadMs" in source
 
 
+def test_race_detail_shared_html_uses_cache_neutral_auth_header():
+    source = BASE_TEMPLATE.read_text(encoding="utf-8")
+    Environment().parse(source)
+
+    assert "request.endpoint == 'race_detail'" in source
+    assert source.count("is_admin() and not cache_neutral_auth") >= 3
+    assert "{% if cache_neutral_auth %}会員{% else %}" in source
+
+
 def test_race_template_parses_and_contains_requested_fact_columns():
     source = RACE_TEMPLATE.read_text(encoding="utf-8")
     Environment().parse(source)

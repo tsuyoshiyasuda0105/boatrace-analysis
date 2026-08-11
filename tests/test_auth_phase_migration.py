@@ -78,7 +78,7 @@ def test_admin_membership_route_is_protected_and_rendered():
 
 def test_base_template_shows_admin_menu_and_auth_badge():
     base = (ROOT / "src" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
-    assert "{% if is_admin() %}" in base
+    assert "{% if is_admin() and not cache_neutral_auth %}" in base
     assert "url_for('admin_memberships')" in base
     assert "{{ current_role() }} / {{ current_auth_provider() }}" in base
     assert "url_for('login_supabase')" in base
