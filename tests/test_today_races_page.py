@@ -678,8 +678,10 @@ def test_race_grid_badges_payload_includes_cached_signals(monkeypatch):
 
 
 def test_today_navigation_opens_dedicated_candidate_page(monkeypatch):
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-07-31")
     response = _member_client(monkeypatch).get("/races?date=2026-07-30")
     html = response.get_data(as_text=True)
 
-    assert 'href="/member/today-races?date=2026-07-30"' in html
+    assert 'href="/member/today-races?date=2026-07-31"' in html
+    assert 'href="/member/today-races?date=2026-07-30"' not in html
     assert 'title="本日のROI候補一覧"' in html

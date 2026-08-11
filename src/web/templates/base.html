@@ -23,7 +23,7 @@
 
       {% if is_member() %}
       <nav class="nav-actions" aria-label="会員メニュー">
-        <a href="{{ url_for('member_today_races', date=target_date|default(today_iso_global)) }}" class="nav-btn nav-btn-today" title="本日のROI候補一覧">
+        <a href="{{ url_for('member_today_races', date=today_iso_global) }}" class="nav-btn nav-btn-today" title="本日のROI候補一覧">
           <span class="nav-label">本日のレース</span>
         </a>
         {% if is_admin() and not cache_neutral_auth %}

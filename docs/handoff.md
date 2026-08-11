@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Restore the empty "today races" UX. Production audit confirmed 2026-08-12 has 155 races and one ROI candidate, while selecting unpublished 2026-08-13 makes the shared navigation carry that future date into "today races" and show zero. Keep future-date source safety unchanged; fix only the navigation date and verify in a real browser.
 - 2026-08-12: Rin cron defense redesign. Reconcile the agreed 23:30 official / 00:10 Open API / adaptive retry / 06:30 final recovery / 07:30 alert flow with Render production, then implement a dedicated fail-closed bootstrap scheduler, full-run exclusion, pre-generation validation, tests, deployment, and production verification.
 - 2026-08-12 completion: P0 source-consistency guard is delivered. Code is on `main`, web is live, regular-cron has the same built artifact, production gates fail closed, and logged-in browser regression passed.
 - 2026-08-12: Rin P0 source-consistency guard delivery. Render ephemeral cron recovery, versioned daily gate reuse, fail-closed downstream stopping, non-zero scheduler exit propagation, deployment, and production browser/cron verification.
@@ -12,6 +13,9 @@
 
 ## Expected files
 
+- `src/web/templates/base.html`
+- `tests/test_today_races_page.py`
+- `docs/handoff.md`
 - `scripts/render_program_bootstrap_scheduler.py` (new)
 - `scripts/prewarm_race_detail_data.py`
 - `scripts/backfill_official.py` (only if missing-venue filtering is required)
@@ -67,6 +71,7 @@
 
 ## Failures
 
+- The 26-test today-races bundle passed 23 and failed three pre-existing stale cache/badge assertions already recorded by the cron-defense work. The exact navigation regression and JST default tests pass. Prevention: do not change unrelated cache or badge behavior for a one-line navigation fix.
 - The cron-defense commit first failed because the linked-worktree Git metadata under `C:\boat_project\boatrace-analysis\.git\worktrees` is outside the writable workspace and could not create `index.lock`. Prevention: retain the explicit reviewed file list and rerun only add/commit with approved Git metadata access.
 - The first 44-test cron-defense retry had one failure because `test_render_cron_schedule.py` matched a `fromService` reference to `boatrace-regular-cron` instead of the service definition. Prevention: schedule tests now anchor on the four-space service-name indentation.
 - The first 132-test related run had one stale assertion expecting regular-cron to call `run_morning_catchup_if_needed()`. The dedicated bootstrap intentionally owns acquisition now. Prevention: the test asserts persisted source-gate success precedes tag/page generation and separately asserts the 06:30 recovery milestone.
@@ -107,6 +112,7 @@
 
 ## Next actions
 
+- Deploy the today-navigation fix and verify that selecting unpublished 2026-08-13 no longer makes the "today races" button show zero; the button must return to the current JST date. Continue waiting for the official 2026-08-13 B file before generating future race rows.
 - Deploy the cron-defense commit, sync the Render Blueprint only after reviewing its plan for unintended service deletion, set/verify the new bootstrap service database binding, and confirm the live schedules/commands match `render.yaml`.
 - Production completion for the cron redesign requires: no five-minute full B-file retry loop; `task_runs` shows adaptive next-attempt times; DB remains 180/1080/1080; the 07:00-09:59 detail recovery window fails closed until sources are ready and then generates 180 complete pages exactly once; and the admin warning is correct at/after 07:30.
 - No P0 delivery blocker remains. At the first 08:00 JST regular-cron run, confirm the already-deployed guard changes from `retry_wait` to `ready`/`ready_with_warning` after Open API publication; if it remains unavailable, downstream generation must remain stopped and the next five-minute cycle must retry.
