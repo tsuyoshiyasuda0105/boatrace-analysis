@@ -2,7 +2,7 @@
 
 ## Active task
 
-- 2026-08-11: Rin continuation: keep TOP and race detail fast when daily source/tag caches are missing, and make the daytime cron recover source data before rebuilding tags and detail caches.
+- 2026-08-11: Rin monitoring: verify the next normal cron after deploy `45e45a9`, especially source completeness, latency, and result retry health. Apply no code change unless production evidence confirms a regression.
 - Skills: project-ops-guard, cron-watchdog, bug-resistant-programming.
 
 ## Expected files
@@ -45,9 +45,9 @@
 
 ## Next actions
 
-- After deployment, verify `/healthz`, logged-in TOP, one race-detail page, and one cached motor-history expansion. On the next JST daytime cron, confirm `render_lite_daytime_bootstrap` either succeeds with complete source counts or records `source_incomplete` without running downstream tag/page prewarm.
-- Monitor the next normal cron cycle and Render pool metrics; no further P1 code change is required unless latency regresses.
-- Monitor the normal five-minute Render cycle; failed/not-yet-published result pages remain retryable.
+- Confirm the next JST daytime cron records complete source counts and lets `render_lite_daytime_bootstrap` finish, or records `source_incomplete` without running downstream tag/page prewarm.
+- Monitor Render pool health and TOP/race-detail latency; investigate only if repeated measurements regress beyond the 1.5-second target.
+- Confirm failed or not-yet-published result pages are recovered by a later five-minute cycle and that ROI settlement remains consistent.
 
 ## Open decisions
 
