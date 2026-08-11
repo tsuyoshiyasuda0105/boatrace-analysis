@@ -1,5 +1,9 @@
 from pathlib import Path
 
+from flask import Flask, session
+
+from src.web import auth
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -9,6 +13,59 @@ def test_supabase_session_role_is_refreshed_from_membership_table():
     assert 'role = get_effective_role(str(user_id))' in source
     assert 'session["role"] = role' in source
     assert "@app.before_request" in source
+
+
+def test_supabase_role_refresh_uses_session_ttl(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    calls = []
+    clock = [1_000.0]
+    monkeypatch.setattr(auth.time, "time", lambda: clock[0])
+    monkeypatch.setattr(
+        auth,
+        "ensure_profile",
+        lambda user_id, email: calls.append(("profile", user_id, email)),
+    )
+    monkeypatch.setattr(
+        auth,
+        "get_effective_role",
+        lambda user_id: calls.append(("role", user_id)) or "admin",
+    )
+
+    with app.test_request_context("/"):
+        session.update({
+            "auth_provider": "supabase",
+            "user_id": "user-1",
+            "email": "member@example.com",
+            "role": "free_member",
+            "is_member": True,
+            "supabase_role_checked_at": 950.0,
+        })
+        auth._refresh_supabase_membership_session()
+        assert calls == []
+
+        clock[0] = 1_011.0
+        auth._refresh_supabase_membership_session()
+        auth._refresh_supabase_membership_session()
+
+        assert calls == [
+            ("profile", "user-1", "member@example.com"),
+            ("role", "user-1"),
+        ]
+        assert session["role"] == "admin"
+        assert session["supabase_role_checked_at"] == 1_011.0
+
+
+def test_supabase_login_session_starts_with_fresh_role_timestamp(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    monkeypatch.setattr(auth.time, "time", lambda: 2_000.0)
+
+    with app.test_request_context("/"):
+        auth._set_supabase_session("user-2", "member@example.com", "paid_member")
+
+        assert session["supabase_role_checked_at"] == 2_000.0
+        assert session["role"] == "paid_member"
 
 
 def test_admin_membership_route_is_protected_and_rendered():

@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 # ===== ブルートフォース対策: IP 別の試行カウンタ (in-memory) =====
 # {ip: [(timestamp, success_bool), ...]} 直近 15 分のみ保持
 _LOGIN_ATTEMPTS: dict[str, list[tuple[float, bool]]] = {}
+_SUPABASE_ROLE_REFRESH_TTL_SEC = 60
+_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY = "supabase_role_checked_at"
 _LOCKOUT_THRESHOLD = 10      # 15分以内に失敗10回でロック
 _LOCKOUT_WINDOW_SEC = 900    # 15 分
 _LOCKOUT_DURATION_SEC = 1800  # ロック後30分はログイン不可
@@ -199,6 +201,7 @@ def _set_supabase_session(user_id: str, email: str | None, role: str) -> None:
     session["email"] = email
     session["role"] = role
     session["auth_provider"] = "supabase"
+    session[_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY] = time.time()
     session.permanent = True
 
 
@@ -224,10 +227,18 @@ def _refresh_supabase_membership_session() -> None:
     if not user_id:
         session.clear()
         return
+    now = time.time()
+    try:
+        checked_at = float(session.get(_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY) or 0)
+    except (TypeError, ValueError):
+        checked_at = 0
+    if 0 <= now - checked_at < _SUPABASE_ROLE_REFRESH_TTL_SEC:
+        return
     ensure_profile(str(user_id), session.get("email"))
     role = get_effective_role(str(user_id))
     session["role"] = role
     session["is_member"] = role in {"free_member", "paid_member", "admin"}
+    session[_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY] = now
 
 
 def login_required(view):
