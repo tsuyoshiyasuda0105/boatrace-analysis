@@ -27,6 +27,7 @@
 
 ## Failures
 
+- During the production motor click audit, the browser locator wait timed out even though its own diagnostics reported the inspector visible. A direct DOM read confirmed `aria-expanded=true`, a visible panel, 11 history rows, and no application error, so the action was not repeated. Prevention: after a contradictory locator timeout, inspect current DOM state before retrying an interaction.
 - The first commit attempt could not create the linked-worktree `index.lock` under `C:\boat_project\boatrace-analysis\.git\worktrees` because that Git metadata is outside the writable workspace. Prevention: keep the same explicit file list and rerun only the Git add/commit operation with approved elevated filesystem access.
 - The first focused regression bundle passed 68 tests and failed 8. One new motor-history test invalidated an LRU cache after monkeypatching the cached function, causing `cache_clear` to be unavailable; prevention: invalidate shared caches before replacing cached functions. The other failures are existing cross-test cache leakage, blocked external-network access, and stale source assertions outside this scoped change; they are being separated from the exact changed-path rerun.
 - The related regression bundle initially had two source-assertion failures: one expected `_race_basic_info()` before the already-established page-cache-first path, and one expected the old unrestricted `{% if is_admin() %}` template condition. Prevention: assertions now preserve cache-first performance and require the cache-neutral admin guard.
@@ -54,6 +55,8 @@
 
 ## Verification
 
+- Production deploy `45e45a9` is live. `/healthz` returned HTTP 200. Logged-in TOP loaded in 0.902s with 183 race links, visible accident/escape tags, zero application runtime errors, and zero market-signals requests.
+- Production race detail `/race/20260811-19-10` had one post-deploy cold load of 2.725s, then three reloads of 0.177s/0.206s/0.198s. It rendered six racers and six motor buttons with no application console error. The first motor opened from precomputed cache with 11 history rows and no pending/error message.
 - 2026-08-11 missing-data guard: TOP snapshot reads no longer run expensive badge hydration; motor-history cache misses return HTTP 202 with `Retry-After: 300` instead of synchronously rebuilding; complete motor caches still return HTTP 200 without a race-info query.
 - Lite daytime bootstrap now rechecks races, all six entries, six tag-ready entry rows (racer, motor number, motor top-2 rate), and prediction coverage after morning recovery. Incomplete source data stops signal/tag/page prewarm and records `source_incomplete` for the next hourly recovery attempt.
 - Missing-data and nearby TOP/race-detail/cron regression bundle: 63 passed. ROI/market-signal regression bundle: 28 passed. Python compile, JavaScript syntax, and `git diff --check` passed.
