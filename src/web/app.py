@@ -886,6 +886,16 @@ def _lightweight_top_page_market_payload(
     }
 
 
+def _lightweight_top_page_market_payload_has_badges(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    race_badges = payload.get("race_badges")
+    if isinstance(race_badges, dict) and race_badges:
+        return True
+    accident_watch = payload.get("accident_watch")
+    return isinstance(accident_watch, dict) and bool(accident_watch)
+
+
 TOP_PAGE_SNAPSHOT_VERSION = "v3"
 
 
@@ -6284,6 +6294,32 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 snapshot.get("initial_market_signals"),
                 target_date,
             )
+            if (
+                not bool(snapshot.get("empty"))
+                and not _lightweight_top_page_market_payload_has_badges(initial_market_signals)
+            ):
+                race_ids = [
+                    str(r.get("race_id") or "")
+                    for group in (snapshot.get("stadium_groups") or [])
+                    for r in (group.get("races") or [])
+                    if str(r.get("race_id") or "")
+                ]
+                repaired_market = _lightweight_top_page_market_payload(
+                    _race_grid_badges_payload(
+                        target_date,
+                        race_ids,
+                        allow_expensive_fallback=True,
+                    ),
+                    target_date,
+                )
+                if _lightweight_top_page_market_payload_has_badges(repaired_market):
+                    initial_market_signals = repaired_market
+                    try:
+                        repaired_snapshot = dict(snapshot)
+                        repaired_snapshot["initial_market_signals"] = repaired_market
+                        _write_top_page_snapshot(target_date, repaired_snapshot)
+                    except Exception:
+                        logger.exception("failed to repair lightweight TOP badges: %s", target_date)
             resp = make_response(render_template(
                 "index.html",
                 target_date=target_date,
