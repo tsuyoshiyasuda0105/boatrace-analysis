@@ -48,10 +48,7 @@ def test_supabase_role_refresh_uses_session_ttl(monkeypatch):
         auth._refresh_supabase_membership_session()
         auth._refresh_supabase_membership_session()
 
-        assert calls == [
-            ("profile", "user-1", "member@example.com"),
-            ("role", "user-1"),
-        ]
+        assert calls == [("role", "user-1")]
         assert session["role"] == "admin"
         assert session["supabase_role_checked_at"] == 1_011.0
 

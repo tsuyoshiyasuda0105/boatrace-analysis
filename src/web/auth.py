@@ -234,7 +234,6 @@ def _refresh_supabase_membership_session() -> None:
         checked_at = 0
     if 0 <= now - checked_at < _SUPABASE_ROLE_REFRESH_TTL_SEC:
         return
-    ensure_profile(str(user_id), session.get("email"))
     role = get_effective_role(str(user_id))
     session["role"] = role
     session["is_member"] = role in {"free_member", "paid_member", "admin"}
