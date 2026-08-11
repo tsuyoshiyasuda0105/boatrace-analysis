@@ -34,7 +34,10 @@ def _get_session() -> requests.Session:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
                      "image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
-            "Accept-Encoding": "gzip, deflate, br",
+            # Do not advertise Brotli unconditionally.  requests can only
+            # decode `br` when an optional Brotli package is installed; the
+            # Render cron image does not include one.
+            "Accept-Encoding": "gzip, deflate",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
         })

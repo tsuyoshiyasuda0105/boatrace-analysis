@@ -113,6 +113,12 @@ def main():
         try:
             scraped = scrape_results_for_pending_races(target_date, conn)
             n_scraped = len(scraped["results"])
+            print(
+                f"[{target_date}] Layer3 targets={scraped.get('target_count', 0)} "
+                f"fetched={n_scraped} failed={scraped.get('failed_count', 0)}"
+            )
+            if scraped.get("failed_race_ids"):
+                print(f"  failed_race_ids={','.join(scraped['failed_race_ids'])}")
             if n_scraped > 0:
                 print(f"[{target_date}] Layer3 scrape: {n_scraped} races from boatrace.jp")
                 n_added = upsert_results(conn, scraped)

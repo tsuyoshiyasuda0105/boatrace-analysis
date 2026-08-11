@@ -283,6 +283,7 @@ def scrape_results_for_pending_races(target_date: date, conn,
         seen.add(race_id)
 
     results = []
+    failed: list[str] = []
     for race_id in pending:
         try:
             payload = scrape_race_result(race_id)
@@ -290,7 +291,15 @@ def scrape_results_for_pending_races(target_date: date, conn,
                 results.append(payload)
                 logger.info("scraped %s (trifecta=%d items)",
                             race_id, len(payload["payouts"].get("trifecta", [])))
+            else:
+                failed.append(race_id)
         except Exception as e:
+            failed.append(race_id)
             logger.warning("scrape failed for %s: %s", race_id, e)
 
-    return {"results": results}
+    return {
+        "results": results,
+        "target_count": len(pending),
+        "failed_count": len(failed),
+        "failed_race_ids": failed[:10],
+    }
