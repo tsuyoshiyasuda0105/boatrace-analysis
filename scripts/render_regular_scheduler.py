@@ -1119,6 +1119,17 @@ def main() -> int:
     # owned by boatrace-exhibition-detail-cron. Keeping them out of the regular
     # five-minute scheduler prevents duplicate exhibition fetches.
 
+    # Results settle live ROI rows and must run before signal/detail prewarming.
+    # A first daytime bootstrap can take many minutes for 180 detail pages; it
+    # must never delay payouts from races that have already closed.
+    if 8 <= now.hour <= 23:
+        run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
+        run_py(
+            ["scripts/check_post_run_integrity.py", "--date", today, "--stage", "post-result"],
+            timeout=300,
+        )
+        run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
+
     if lite_mode and 8 <= now.hour <= 23:
         run_lite_daytime_bootstrap(now)
 
@@ -1137,14 +1148,8 @@ def main() -> int:
         elif signal_ok:
             run_top_page_snapshot(now, lightweight=True, environment_only=True)
 
-    # Lightweight result polling during race hours.
+    # Refresh the top snapshot after result polling and any signal rebuild.
     if 8 <= now.hour <= 23:
-        run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
-        run_py(
-            ["scripts/check_post_run_integrity.py", "--date", today, "--stage", "post-result"],
-            timeout=300,
-        )
-        run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
         run_top_page_snapshot(now, lightweight=True, environment_only=True)
 
     # Hourly summaries/health checks near the top of the hour.
