@@ -1,6 +1,6 @@
 """Fail-closed overnight program bootstrap for Render cron.
 
-The Render trigger runs every five minutes from 23:00 through 07:59 JST. This
+The Render trigger runs every five minutes from 23:00 through 09:59 JST. This
 module persists its own retry state, so a failed source is retried after 15,
 30, then 60 minutes instead of on every trigger.
 """
@@ -574,10 +574,8 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.fromisoformat(args.now).replace(tzinfo=JST) if args.now else jst_now()
     result = run_tick(now)
     print("[program-bootstrap] " + json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
-    if result.get("final_recovery") and not result.get("gate_ready"):
-        return 1
-    if result.get("alert_due") and not result.get("gate_ready"):
-        return 1
+    # Publication delays are an expected waiting state. Persisted status and
+    # the admin warning report them without marking a healthy cron tick failed.
     return 0
 
 

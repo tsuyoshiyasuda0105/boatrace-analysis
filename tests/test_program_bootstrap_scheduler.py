@@ -162,6 +162,21 @@ def test_0730_records_unresolved_admin_error(monkeypatch, in_memory_state):
     assert len(statuses) == 1
 
 
+def test_expected_source_waiting_is_a_successful_scheduler_tick(monkeypatch):
+    monkeypatch.setattr(
+        bootstrap,
+        "run_tick",
+        lambda _now: {
+            "status": "waiting",
+            "final_recovery": True,
+            "alert_due": True,
+            "gate_ready": False,
+        },
+    )
+
+    assert bootstrap.main(["--now", "2026-08-12T07:30:00"]) == 0
+
+
 def test_overlap_is_safe_noop(monkeypatch):
     monkeypatch.setattr(bootstrap, "assert_safe_production_write", lambda **_kwargs: None)
     monkeypatch.setattr(bootstrap, "_ensure_tables", lambda: None)
