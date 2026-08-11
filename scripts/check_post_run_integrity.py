@@ -488,7 +488,11 @@ def run_checks(target_date: str, scopes: list[str], race_ids: list[str] | None =
                 status = "error"
                 message = f"{scope} check failed: {type(exc).__name__}: {exc}"
                 detail = {"error": str(exc)}
-            check_name = f"post_run_{scope}"
+            check_name = (
+                f"post_run_{scope}_targeted"
+                if race_ids is not None
+                else f"post_run_{scope}"
+            )
             if persist:
                 _upsert_status(conn, check_name, target_date, status, message, detail)
             worst = max(worst, status, key=lambda s: STATUS_ORDER[s])

@@ -2,19 +2,18 @@
 
 ## Active task
 
-- 2026-08-11: Rin monitoring: verify the next normal cron after deploy `45e45a9`, especially source completeness, latency, and result retry health. Apply no code change unless production evidence confirms a regression.
+- 2026-08-11: Rin P0 investigation: eliminate the race-detail HTML cache discrepancy (`78/180` present while the daily cron reports `pages=180`, `failed=0`). Identify the production root cause before changing or regenerating data.
 - Skills: project-ops-guard, cron-watchdog, bug-resistant-programming.
 
 ## Expected files
 
 - `src/web/app.py`
-- `src/web/static/race_detail.js`
-- `scripts/render_regular_scheduler.py`
-- `tests/test_today_races_page.py`
-- `tests/test_web_recompute_guard.py`
-- `tests/test_race_detail_ui_facts.py`
-- `tests/test_scheduler_morning_order.py`
-- `tests/test_prewarm_race_detail_tags.py`
+- `scripts/prewarm_race_detail_pages.py`
+- `scripts/prewarm_race_detail_data.py`
+- `scripts/check_post_run_integrity.py`
+- `tests/test_admin_data_status.py`
+- `tests/test_race_detail_page_prewarm.py`
+- `tests/test_race_detail_data_schedule.py`
 - `docs/handoff.md`
 
 ## Conflict avoidance
@@ -27,6 +26,8 @@
 
 ## Failures
 
+- The first read-only Render Shell cache-count query used a literal SQL `LIKE` percent pattern, which the PostgreSQL adapter parsed as an invalid placeholder. Prevention: use `split_part`/`substring` for shell diagnostics or escape literal percent signs; the corrected read-only query completed without changing data.
+- The first P0 race-detail cache regression command referenced a nonexistent `.venv` in the push-sync worktree. Prevention: use the verified shared runtime at `C:\boat_project\boatrace-analysis\.venv\Scripts\python.exe` for this worktree and keep the working directory on the code under test.
 - During the production motor click audit, the browser locator wait timed out even though its own diagnostics reported the inspector visible. A direct DOM read confirmed `aria-expanded=true`, a visible panel, 11 history rows, and no application error, so the action was not repeated. Prevention: after a contradictory locator timeout, inspect current DOM state before retrying an interaction.
 - The first commit attempt could not create the linked-worktree `index.lock` under `C:\boat_project\boatrace-analysis\.git\worktrees` because that Git metadata is outside the writable workspace. Prevention: keep the same explicit file list and rerun only the Git add/commit operation with approved elevated filesystem access.
 - The first focused regression bundle passed 68 tests and failed 8. One new motor-history test invalidated an LRU cache after monkeypatching the cached function, causing `cache_clear` to be unavailable; prevention: invalidate shared caches before replacing cached functions. The other failures are existing cross-test cache leakage, blocked external-network access, and stale source assertions outside this scoped change; they are being separated from the exact changed-path rerun.
@@ -45,6 +46,8 @@
 
 ## Next actions
 
+- Deploy the race-detail and exhibition-detail cron services from the same commit as the web service; both were still seven days behind while the web service had deployed current code.
+- Run the current-version page prewarm with `--missing-only`, then require the production current-version count and the full-day `post_run_detail_cache` check to reach `180/180` before closing this P0.
 - Confirm the next JST daytime cron records complete source counts and lets `render_lite_daytime_bootstrap` finish, or records `source_incomplete` without running downstream tag/page prewarm.
 - Monitor Render pool health and TOP/race-detail latency; investigate only if repeated measurements regress beyond the 1.5-second target.
 - Confirm failed or not-yet-published result pages are recovered by a later five-minute cycle and that ROI settlement remains consistent.
@@ -55,6 +58,10 @@
 
 ## Verification
 
+- 2026-08-11 P0 root cause confirmed read-only in production: race-detail page counts were `v10=180`, `v13=173`, and current `v14=80`. `v13` was generated from 15:53-17:29 JST, `v14` from 18:29-21:50, while obsolete `v10` was still updated at 22:00. The current web cache generation therefore changed after the daily run, seven persistent `v13` writes were missed despite a successful summary, and an old cron deployment continued writing obsolete keys.
+- Render service inventory confirmed deployment skew: `boatrace-web` updated 16 minutes earlier and `boatrace-regular-cron` five hours earlier, but `boatrace-exhibition-detail-cron` and `boatrace-race-detail-cron` had not updated for seven days. Blueprint `autoDeploy: true` did not keep these cron instances aligned in practice.
+- P0 prevention now verifies every generated HTML key in PostgreSQL, retries only unpersisted pages once, fails the cron if any persistent key remains missing, supports bounded `--missing-only` repair, and isolates targeted exhibition checks from full-day `system_status` keys.
+- Focused P0 regression suite: 29 passed (`test_race_detail_page_prewarm.py`, `test_race_detail_data_schedule.py`, `test_admin_data_status.py`). Python compile and `git diff --check` passed.
 - Production deploy `45e45a9` is live. `/healthz` returned HTTP 200. Logged-in TOP loaded in 0.902s with 183 race links, visible accident/escape tags, zero application runtime errors, and zero market-signals requests.
 - Production race detail `/race/20260811-19-10` had one post-deploy cold load of 2.725s, then three reloads of 0.177s/0.206s/0.198s. It rendered six racers and six motor buttons with no application console error. The first motor opened from precomputed cache with 11 history rows and no pending/error message.
 - 2026-08-11 missing-data guard: TOP snapshot reads no longer run expensive badge hydration; motor-history cache misses return HTTP 202 with `Retry-After: 300` instead of synchronously rebuilding; complete motor caches still return HTTP 200 without a race-info query.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from scripts import prewarm_race_detail_pages as page_prewarm
 from src.web import app as web_app
 
 
@@ -33,6 +34,57 @@ def test_manual_prewarm_uses_guarded_recompute_and_member_session():
     assert 'sess["is_member"] = True' in source
     assert 'client.get(f"/race/{rid}?recompute=1")' in source
     assert "elapsed_seconds" in source
+
+
+def test_manual_prewarm_verifies_every_persistent_page_and_can_repair_only_missing():
+    source = SCRIPT_SOURCE.read_text(encoding="utf-8")
+
+    assert "def _missing_persistent_page_ids" in source
+    assert "persistent_cache_missing" in source
+    assert 'parser.add_argument("--missing-only", action="store_true")' in source
+    assert 'parser.add_argument("--retry-missing", type=int, default=1)' in source
+    assert 'summary["requested_races"] > 0' in source
+
+
+def test_prewarm_fails_when_http_200_page_is_not_persisted(monkeypatch):
+    class Session:
+        def __enter__(self):
+            return {}
+
+        def __exit__(self, *_args):
+            return False
+
+    class Response:
+        status_code = 200
+        data = b"ok"
+
+    class Client:
+        def session_transaction(self):
+            return Session()
+
+        def get(self, _url):
+            return Response()
+
+    class App:
+        testing = False
+
+        def test_client(self):
+            return Client()
+
+    checks = iter([["race-2"], ["race-2"]])
+    monkeypatch.setattr(page_prewarm, "_require_postgres", lambda: None)
+    monkeypatch.setattr(page_prewarm, "_race_ids", lambda *_args: ["race-1", "race-2"])
+    monkeypatch.setattr(page_prewarm, "_missing_persistent_page_ids", lambda _ids: next(checks))
+    monkeypatch.setattr(page_prewarm.web_app, "create_app", lambda **_kwargs: App())
+
+    summary = page_prewarm.prewarm("2026-08-11")
+
+    assert summary["succeeded"] == 1
+    assert summary["failed"] == 1
+    assert summary["persistent_missing"] == 1
+    assert summary["failures"] == [
+        {"race_id": "race-2", "status": "persistent_cache_missing"}
+    ]
 
 
 def test_race_detail_venue_environment_uses_date_cache_wrapper():

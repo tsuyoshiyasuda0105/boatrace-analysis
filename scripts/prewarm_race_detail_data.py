@@ -175,7 +175,12 @@ def prewarm(target_date: str, *, phase: str = "all", motor_workers: int = 4) -> 
 
     page_summary = prewarm_pages(target_date) if phase == "all" else {"generated": 0, "failed": 0}
     validation_scopes = scopes_for_stage("morning") if phase == "all" else ["detail_rows", "motor_cache"]
-    validation = run_post_run_checks(target_date, validation_scopes, race_ids, persist=True)
+    validation = run_post_run_checks(
+        target_date,
+        validation_scopes,
+        None if phase == "all" else race_ids,
+        persist=True,
+    )
     print("[race-detail-daily] validation=" + json.dumps(validation, ensure_ascii=False), flush=True)
     summary = {
         "target_date": target_date,

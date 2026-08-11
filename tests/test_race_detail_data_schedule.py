@@ -121,6 +121,17 @@ def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
     assert '"nightly": ["accident"]' in source
     assert "--stage" in source
     assert "system_status" in source
+    assert 'f"post_run_{scope}_targeted"' in source
+
+
+def test_daily_validation_is_full_day_while_exhibition_validation_is_targeted():
+    daily = (ROOT / "scripts" / "prewarm_race_detail_data.py").read_text(encoding="utf-8")
+    exhibition = (ROOT / "scripts" / "refresh_race_detail_after_exhibition.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'None if phase == "all" else race_ids' in daily
+    assert 'list(summary["race_ids"])' in exhibition
 
 
 def test_accident_refresh_rebuilds_tags_pages_and_validates_after_stats():

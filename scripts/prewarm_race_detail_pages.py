@@ -52,14 +52,44 @@ def _race_ids(target_date: str, race_id: str | None, limit: int | None) -> list[
     return ids[:limit] if limit else ids
 
 
+def _missing_persistent_page_ids(race_ids: list[str]) -> list[str]:
+    if not race_ids:
+        return []
+    keyed_ids = {
+        web_app._race_detail_page_cache_key(race_id): race_id
+        for race_id in race_ids
+    }
+    found: set[str] = set()
+    cache_keys = list(keyed_ids)
+    with db_connect() as conn:
+        for start in range(0, len(cache_keys), 900):
+            chunk = cache_keys[start : start + 900]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT cache_key FROM page_html_cache WHERE cache_key IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            found.update(str(row[0]) for row in rows)
+    return [keyed_ids[key] for key in cache_keys if key not in found]
+
+
 def prewarm(
     target_date: str,
     *,
     race_id: str | None = None,
     limit: int | None = None,
+    missing_only: bool = False,
+    retry_missing: int = 1,
 ) -> dict:
     _require_postgres()
-    ids = _race_ids(target_date, race_id, limit)
+    requested_ids = _race_ids(target_date, race_id, None)
+    ids = (
+        _missing_persistent_page_ids(requested_ids)
+        if missing_only
+        else requested_ids
+    )
+    if limit:
+        ids = ids[:limit]
     app = web_app.create_app(version=config.DEFAULT_MODEL_VERSION)
     app.testing = True
     client = app.test_client()
@@ -68,22 +98,48 @@ def prewarm(
 
     started = time.perf_counter()
     durations: list[float] = []
-    failures: list[dict[str, object]] = []
-    for index, rid in enumerate(ids, 1):
+    failures_by_race: dict[str, dict[str, object]] = {}
+
+    def generate(rid: str, index_label: str) -> None:
         race_started = time.perf_counter()
         response = client.get(f"/race/{rid}?recompute=1")
         elapsed = time.perf_counter() - race_started
         durations.append(elapsed)
         if response.status_code != 200:
-            failures.append({"race_id": rid, "status": response.status_code})
+            failures_by_race[rid] = {"race_id": rid, "status": response.status_code}
         print(
-            f"[race-detail-page] {index}/{len(ids)} race_id={rid} "
+            f"[race-detail-page] {index_label} race_id={rid} "
             f"status={response.status_code} elapsed={elapsed:.3f}s "
             f"bytes={len(response.data)}",
             flush=True,
         )
 
+    for index, rid in enumerate(ids, 1):
+        generate(rid, f"{index}/{len(ids)}")
+
+    persistent_missing = _missing_persistent_page_ids(ids)
+    for retry in range(1, max(0, retry_missing) + 1):
+        if not persistent_missing:
+            break
+        print(
+            f"[race-detail-page] persistent cache retry={retry} "
+            f"missing={len(persistent_missing)}",
+            flush=True,
+        )
+        for index, rid in enumerate(persistent_missing, 1):
+            web_app._CACHE.clear()
+            web_app._PAGE_HTML_MEM_CACHE.clear()
+            generate(rid, f"retry-{retry}:{index}/{len(persistent_missing)}")
+        persistent_missing = _missing_persistent_page_ids(persistent_missing)
+
+    for rid in persistent_missing:
+        failures_by_race[rid] = {
+            "race_id": rid,
+            "status": "persistent_cache_missing",
+        }
+
     total = time.perf_counter() - started
+    failures = list(failures_by_race.values())
     success_count = len(ids) - len(failures)
     cache_read_samples: list[dict[str, object]] = []
     sample_ids = list(dict.fromkeys(
@@ -107,9 +163,12 @@ def prewarm(
     summary = {
         "target_date": target_date,
         "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
+        "requested_races": len(requested_ids),
+        "skipped_existing": len(requested_ids) - len(ids) if missing_only else 0,
         "races": len(ids),
         "succeeded": success_count,
         "failed": len(failures),
+        "persistent_missing": len(persistent_missing),
         "elapsed_seconds": round(total, 3),
         "average_seconds": round(statistics.mean(durations), 3) if durations else 0.0,
         "median_seconds": round(statistics.median(durations), 3) if durations else 0.0,
@@ -127,9 +186,17 @@ def main() -> int:
     parser.add_argument("--date", default=datetime.now(JST).date().isoformat())
     parser.add_argument("--race-id")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--missing-only", action="store_true")
+    parser.add_argument("--retry-missing", type=int, default=1)
     parser.add_argument("--report")
     args = parser.parse_args()
-    summary = prewarm(args.date, race_id=args.race_id, limit=args.limit)
+    summary = prewarm(
+        args.date,
+        race_id=args.race_id,
+        limit=args.limit,
+        missing_only=args.missing_only,
+        retry_missing=args.retry_missing,
+    )
     if args.report:
         report_path = Path(args.report)
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +204,7 @@ def main() -> int:
             json.dumps(summary, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    return 0 if summary["races"] > 0 and summary["failed"] == 0 else 1
+    return 0 if summary["requested_races"] > 0 and summary["failed"] == 0 else 1
 
 
 if __name__ == "__main__":
