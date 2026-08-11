@@ -5,6 +5,7 @@ from src.roi_history import (
     load_roi_history_daily,
     load_roi_history_races,
     replace_roi_history_snapshot,
+    settle_roi_history_for_date,
 )
 from src.web.app import _parse_market_signal_bets_for_roi
 
@@ -62,6 +63,35 @@ def test_snapshot_becomes_settled_race_history_and_daily_totals():
     assert row[2:] == (100, 540, 1, 1)
     daily = load_roi_history_daily(conn, "2026-07-01", "2026-07-31", ("kiryu_13",))
     assert daily["2026-07-31"]["kiryu_13"] == {"bets": 1, "hits": 1, "pay": 540, "stake": 100}
+
+
+def test_existing_roi_row_settles_after_result_arrives():
+    conn = _conn()
+    ensure_payload = {
+        "date": "2026-08-11",
+        "signals": {
+            "20260811-13-12": {
+                "race_id": "20260811-13-12",
+                "l4": {"level": "amagasaki", "bet": "単勝 3"},
+            }
+        },
+    }
+    replace_roi_history_snapshot(
+        conn,
+        ensure_payload,
+        source_cache_key="market_signals:last-good:2026-08-11",
+        capture_quality="exact_last_good",
+        adopted_keys=("amagasaki",),
+        bet_unit_map={},
+        parse_bets=_parse_market_signal_bets_for_roi,
+        strategy_signature="sig",
+    )
+    conn.execute("INSERT INTO race_results VALUES ('20260811-13-12', 1)")
+    conn.execute("INSERT INTO race_payouts VALUES ('20260811-13-12', 'win', '3', 420)")
+    assert settle_roi_history_for_date(conn, "2026-08-11") == 1
+    assert conn.execute(
+        "SELECT payout_amount, is_hit, is_settled FROM roi_race_history"
+    ).fetchone() == (420, 1, 1)
 
 
 def test_reference_and_female_excluded_signals_do_not_enter_roi_history():

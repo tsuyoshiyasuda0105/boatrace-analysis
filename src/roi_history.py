@@ -209,6 +209,52 @@ def replace_roi_history_snapshot(
     return len(rows)
 
 
+def settle_roi_history_for_date(conn: Any, race_date: str) -> int:
+    """Settle existing active ROI rows immediately after result upsert."""
+    ensure_roi_race_history_table(conn)
+    rows = conn.execute(
+        "SELECT race_id, strategy_key, bet_json FROM roi_race_history "
+        "WHERE race_date = ? AND is_active = 1 AND is_settled = 0",
+        (race_date,),
+    ).fetchall()
+    updates: list[tuple[int, int, str, str, str]] = []
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    for race_id, strategy_key, bet_json in rows:
+        settled = conn.execute(
+            "SELECT 1 FROM race_results WHERE race_id = ? AND finishing_position = 1 LIMIT 1",
+            (race_id,),
+        ).fetchone()
+        if not settled:
+            settled = conn.execute(
+                "SELECT 1 FROM race_payouts WHERE race_id = ? LIMIT 1", (race_id,)
+            ).fetchone()
+        if not settled:
+            continue
+        try:
+            bets = json.loads(bet_json or "[]")
+        except (TypeError, ValueError):
+            bets = []
+        payout = 0
+        for bet in bets if isinstance(bets, list) else []:
+            if not isinstance(bet, dict):
+                continue
+            row = conn.execute(
+                "SELECT payout FROM race_payouts "
+                "WHERE race_id = ? AND bet_type = ? AND combination = ? "
+                "ORDER BY payout DESC LIMIT 1",
+                (race_id, str(bet.get("bet_type") or ""), str(bet.get("combination") or "")),
+            ).fetchone()
+            payout += int(row[0] or 0) if row else 0
+        updates.append((payout, 1 if payout > 0 else 0, now_iso, race_id, strategy_key))
+    if updates:
+        conn.executemany(
+            "UPDATE roi_race_history SET payout_amount = ?, is_hit = ?, "
+            "is_settled = 1, updated_at = ? WHERE race_id = ? AND strategy_key = ?",
+            updates,
+        )
+    return len(updates)
+
+
 def load_roi_history_daily(
     conn: Any, from_date: str, to_date: str, adopted_keys: Iterable[str]
 ) -> dict[str, dict[str, dict[str, int]]]:

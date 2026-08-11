@@ -46,6 +46,7 @@ from src.collectors.result_scraper import (
     scrape_results_for_pending_races,
 )
 from src.db.connection import connect as db_connect
+from src.roi_history import settle_roi_history_for_date
 
 
 def _parse_closed_at(value) -> datetime | None:
@@ -142,6 +143,11 @@ def main():
                 print(f"  Open API ERROR: {e}")
         else:
             print(f"[{target_date}] Open API: no response")
+
+        settled = settle_roi_history_for_date(conn, target_date.isoformat())
+        if settled:
+            conn.commit()
+            print(f"[{target_date}] ROI history settled: {settled} races")
 
         shell_races = _count_openapi_shell_races(conn, target_date)
 
