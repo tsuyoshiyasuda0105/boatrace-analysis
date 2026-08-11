@@ -85,6 +85,14 @@ def test_daily_source_complete_requires_all_races_entries_and_predictions():
     assert not scheduler.daily_source_complete(
         {"races": 0, "entries": 0, "predictions": 0}
     )
+    assert not scheduler.daily_source_complete(
+        {
+            "races": 144,
+            "entries": 864,
+            "detail_entries": 858,
+            "predictions": 144,
+        }
+    )
 
 
 def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
@@ -177,6 +185,16 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
     )
     monkeypatch.setattr(
         scheduler,
+        "run_morning_catchup_if_needed",
+        lambda _now: calls.append("source_recovery") or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "daily_source_counts",
+        lambda _run_date: {"races": 10, "entries": 60, "predictions": 10},
+    )
+    monkeypatch.setattr(
+        scheduler,
         "run_signal_refresh_slot",
         lambda _now: calls.append("signal_refresh") or True,
     )
@@ -200,11 +218,43 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
 
     now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
     assert scheduler.run_lite_daytime_bootstrap(now)
+    assert calls.index("source_recovery") < calls.index("signal_refresh")
     assert "signal_refresh" in calls
     assert (("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21"), 900) in calls
     assert (("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21"), 1800) in calls
     assert ("snapshot", False, False) in calls
     assert any(item[:3] == ("record", "render_lite_daytime_bootstrap", "success") for item in calls if isinstance(item, tuple))
+
+
+def test_lite_daytime_bootstrap_stops_when_sources_remain_incomplete(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "run_morning_catchup_if_needed", lambda _now: False)
+    monkeypatch.setattr(
+        scheduler,
+        "daily_source_counts",
+        lambda _run_date: {"races": 10, "entries": 54, "predictions": 9},
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_signal_refresh_slot",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not build from partial data")),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, _run_date, status, detail=None: calls.append((task, status, detail)),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 10, tzinfo=scheduler.JST)
+    assert scheduler.run_lite_daytime_bootstrap(now) is False
+    assert calls == [
+        (
+            "render_lite_daytime_bootstrap",
+            "failure",
+            "source_incomplete={'races': 10, 'entries': 54, 'predictions': 9}",
+        )
+    ]
 
 
 def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):

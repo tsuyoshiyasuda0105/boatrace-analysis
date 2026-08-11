@@ -230,6 +230,19 @@ def test_motor_history_current_row_includes_result_and_new_cache_version():
     assert 'cache_key = f"motor_history_v9:{race_id}:{boat_number}"' in source
 
 
+def test_motor_history_cache_miss_is_reported_as_pending_to_the_browser():
+    app_source = APP_SOURCE.read_text(encoding="utf-8")
+    script = RACE_DETAIL_JS.read_text(encoding="utf-8")
+    route_start = app_source.index("def race_motor_history")
+    route_end = app_source.index("@app.route", route_start)
+    route_source = app_source[route_start:route_end]
+
+    assert "_motor_history_payload(" not in route_source
+    assert '"error": "motor_history_pending"' in route_source
+    assert 'response.headers["Retry-After"] = "300"' in route_source
+    assert 'res.status === 202 && payload?.error === "motor_history_pending"' in script
+
+
 def test_race_detail_request_uses_only_precomputed_display_tags():
     source = APP_SOURCE.read_text(encoding="utf-8")
     start = source.index("def race_detail(race_id: str):")

@@ -427,9 +427,13 @@
         credentials: "same-origin",
         headers: { Accept: "application/json" },
         cache: "no-store",
-      }).then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
+      }).then(async (res) => {
+        const payload = await res.json().catch(() => ({}));
+        if (res.status === 202 && payload?.error === "motor_history_pending") {
+          throw new Error(payload.message || "モーター履歴を準備中です。しばらくしてから再度お試しください。");
+        }
+        if (!res.ok) throw new Error(payload?.message || `HTTP ${res.status}`);
+        return payload;
       }).then((history) => {
         return validateHistoryPayload(history, raceId, boatNumber);
       }).catch((err) => {

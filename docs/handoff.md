@@ -2,15 +2,19 @@
 
 ## Active task
 
-- 2026-08-11: Rin continuation: verify production cron health and measure TOP/race-detail P1 performance against the 1.5-second target, then apply only a confirmed minimal fix.
-- Skills: project-ops-guard, cron-watchdog, webapp-testing.
+- 2026-08-11: Rin continuation: keep TOP and race detail fast when daily source/tag caches are missing, and make the daytime cron recover source data before rebuilding tags and detail caches.
+- Skills: project-ops-guard, cron-watchdog, bug-resistant-programming.
 
 ## Expected files
 
-- `src/web/auth.py`
-- `tests/test_auth_phase_migration.py`
-- `src/web/templates/base.html`
+- `src/web/app.py`
+- `src/web/static/race_detail.js`
+- `scripts/render_regular_scheduler.py`
+- `tests/test_today_races_page.py`
+- `tests/test_web_recompute_guard.py`
 - `tests/test_race_detail_ui_facts.py`
+- `tests/test_scheduler_morning_order.py`
+- `tests/test_prewarm_race_detail_tags.py`
 - `docs/handoff.md`
 
 ## Conflict avoidance
@@ -23,6 +27,8 @@
 
 ## Failures
 
+- The first commit attempt could not create the linked-worktree `index.lock` under `C:\boat_project\boatrace-analysis\.git\worktrees` because that Git metadata is outside the writable workspace. Prevention: keep the same explicit file list and rerun only the Git add/commit operation with approved elevated filesystem access.
+- The first focused regression bundle passed 68 tests and failed 8. One new motor-history test invalidated an LRU cache after monkeypatching the cached function, causing `cache_clear` to be unavailable; prevention: invalidate shared caches before replacing cached functions. The other failures are existing cross-test cache leakage, blocked external-network access, and stale source assertions outside this scoped change; they are being separated from the exact changed-path rerun.
 - The related regression bundle initially had two source-assertion failures: one expected `_race_basic_info()` before the already-established page-cache-first path, and one expected the old unrestricted `{% if is_admin() %}` template condition. Prevention: assertions now preserve cache-first performance and require the cache-neutral admin guard.
 - Production verification exposed a pre-existing shared-cache display bug: race-detail HTML included the prewarm session badge (`paid_member / none`) instead of the current viewer. Authorization remained server-enforced, but shared HTML must not contain viewer-specific role/provider or admin navigation. Prevention: render a cache-neutral member header for the race-detail endpoint and cover it with a regression test.
 - The first cache-neutral header deploy still served persistent `v13` HTML generated before the template change. Prevention: bump the race-detail page cache generation whenever shared HTML structure changes; `v14` makes old HTML unreachable without deleting data.
@@ -38,6 +44,7 @@
 
 ## Next actions
 
+- After deployment, verify `/healthz`, logged-in TOP, one race-detail page, and one cached motor-history expansion. On the next JST daytime cron, confirm `render_lite_daytime_bootstrap` either succeeds with complete source counts or records `source_incomplete` without running downstream tag/page prewarm.
 - Monitor the next normal cron cycle and Render pool metrics; no further P1 code change is required unless latency regresses.
 - Monitor the normal five-minute Render cycle; failed/not-yet-published result pages remain retryable.
 
@@ -47,6 +54,9 @@
 
 ## Verification
 
+- 2026-08-11 missing-data guard: TOP snapshot reads no longer run expensive badge hydration; motor-history cache misses return HTTP 202 with `Retry-After: 300` instead of synchronously rebuilding; complete motor caches still return HTTP 200 without a race-info query.
+- Lite daytime bootstrap now rechecks races, all six entries, six tag-ready entry rows (racer, motor number, motor top-2 rate), and prediction coverage after morning recovery. Incomplete source data stops signal/tag/page prewarm and records `source_incomplete` for the next hourly recovery attempt.
+- Missing-data and nearby TOP/race-detail/cron regression bundle: 63 passed. ROI/market-signal regression bundle: 28 passed. Python compile, JavaScript syntax, and `git diff --check` passed.
 - 2026-08-11 P1 baseline, logged-in Chrome (`admin / supabase`): TOP initial median load 4.617s, reload median 1.908s; race detail initial median 4.240s, reload median 1.831s. Both pages had zero application console/runtime errors and no extra TOP market-signals request.
 - Unauthenticated fixed-cost baseline: `/healthz` 105-255ms and static CSS 192-366ms. The shared HTML delay is therefore not a general Render network delay.
 - Root cause: `_refresh_supabase_membership_session()` called `ensure_profile()` and `get_effective_role()` before every authenticated request. The scoped fix caches the confirmed role in the signed Flask session for 60 seconds; no DB/RLS/schema change.

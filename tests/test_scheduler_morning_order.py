@@ -7,7 +7,7 @@ REPO = Path(__file__).resolve().parents[1]
 def test_run_morning_orders_accident_before_predictions_and_skips_tags():
     src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
     start = src.index("def run_morning(")
-    end = src.index("def tide_refresh_needed(", start)
+    end = src.index("def run_top_page_snapshot(", start)
     block = src[start:end]
 
     accident_idx = block.index('run_accident_self_heal(now)')
@@ -20,21 +20,27 @@ def test_run_morning_orders_accident_before_predictions_and_skips_tags():
 
 def test_signal_refresh_rebuilds_today_tags_before_today_pages():
     src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
-    main = src.split("if 6 <= now.hour <= 23:", 1)[1].split("if 8 <= now.hour <= 23:", 1)[0]
+    start = src.index("def run_lite_daytime_bootstrap(")
+    end = src.index("def tide_refresh_needed(", start)
+    bootstrap = src[start:end]
 
-    tags_idx = main.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
-    pages_idx = main.index('run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)')
+    tags_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
+    pages_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)')
 
     assert tags_idx < pages_idx
 
 
 def test_signal_refresh_runs_before_today_tag_materialization():
     src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    start = src.index("def run_lite_daytime_bootstrap(")
+    end = src.index("def tide_refresh_needed(", start)
+    bootstrap = src[start:end]
 
-    signal_idx = src.index("signal_ok = run_signal_refresh_slot(now)")
-    tags_idx = src.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
+    source_idx = bootstrap.index("source_recovery_ok = run_morning_catchup_if_needed(now)")
+    signal_idx = bootstrap.index("ok = run_signal_refresh_slot(now)")
+    tags_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
 
-    assert signal_idx < tags_idx
+    assert source_idx < signal_idx < tags_idx
 
 
 def test_race_detail_cron_schedule_moves_after_morning_refresh():

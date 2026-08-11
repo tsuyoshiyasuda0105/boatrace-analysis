@@ -460,7 +460,7 @@ def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch)
 
 
 
-def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
+def test_races_page_keeps_empty_snapshot_badges_without_expensive_repair(monkeypatch):
     race = {
         "race_id": "202607300101",
         "race_date": "2026-07-30",
@@ -488,24 +488,20 @@ def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
         },
         "empty": False,
     }
-    written = {}
     monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: snapshot)
     monkeypatch.setattr(
         web_app,
         "_race_grid_badges_payload",
-        lambda *_args, **_kwargs: {
-            "date": "2026-07-30",
-            "signals": {},
-            "race_badges": {
-                "202607300101": {"accident": {"label": "ACCIDENT BADGE"}}
-            },
-            "accident_watch": {},
-        },
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("TOP request must not repair missing badges")
+        ),
     )
     monkeypatch.setattr(
         web_app,
         "_write_top_page_snapshot",
-        lambda target_date, payload=None: written.update({"target_date": target_date, "payload": payload}) or payload,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("TOP request must not rewrite the snapshot")
+        ),
     )
     monkeypatch.setattr(
         web_app,
@@ -526,9 +522,62 @@ def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
     response = client.get("/races?date=2026-07-30")
 
     assert response.status_code == 200
-    assert written["target_date"] == "2026-07-30"
-    saved = written["payload"]["initial_market_signals"]["race_badges"]
-    assert saved["202607300101"]["accident"]["label"] == "ACCIDENT BADGE"
+
+
+def test_motor_history_cache_miss_returns_pending_without_sync_build(monkeypatch):
+    race_id = "202607300501"
+    web_app.invalidate_cache()
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
+    monkeypatch.setattr(web_app, "_race_basic_info", lambda *_args: {"race_id": race_id})
+    monkeypatch.setattr(
+        web_app,
+        "_motor_history_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("web request must not build motor history")
+        ),
+    )
+    app = web_app.create_app()
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["is_member"] = True
+        session["role"] = "admin"
+
+    response = client.get(f"/api/race/{race_id}/motor-history/1")
+
+    assert response.status_code == 202
+    assert response.get_json()["error"] == "motor_history_pending"
+    assert response.headers["Retry-After"] == "300"
+
+
+def test_motor_history_complete_cache_returns_without_race_lookup(monkeypatch):
+    race_id = "202607300502"
+    payload = {
+        "current": {"race_id": race_id, "boat_number": 2},
+        "position_rows": [{"boat_number": boat} for boat in range(1, 7)],
+        "history": [],
+    }
+    web_app.invalidate_cache()
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: payload)
+    monkeypatch.setattr(
+        web_app,
+        "_race_basic_info",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("complete cache must not query race info")
+        ),
+    )
+
+    app = web_app.create_app()
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["is_member"] = True
+        session["role"] = "admin"
+
+    response = client.get(f"/api/race/{race_id}/motor-history/2")
+
+    assert response.status_code == 200
+    assert response.get_json()["current"]["boat_number"] == 2
 
 
 def test_race_grid_badges_payload_hydrates_cache_only_payload(monkeypatch):

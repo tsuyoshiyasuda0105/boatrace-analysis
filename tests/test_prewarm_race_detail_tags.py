@@ -9,14 +9,14 @@ SCHEDULER = ROOT / "scripts" / "render_regular_scheduler.py"
 def test_daily_tag_prewarm_is_wired_into_signal_refresh_and_nightly_jobs():
     source = SCHEDULER.read_text(encoding="utf-8")
 
-    signal_refresh = source.split("def run_signal_refresh_slot", 1)[1].split("def run_beforeinfo_refresh_slot", 1)[0]
-    main = source.split("if 6 <= now.hour <= 23:", 1)[1].split("if 8 <= now.hour <= 23:", 1)[0]
+    bootstrap = source.split("def run_lite_daytime_bootstrap", 1)[1].split("def tide_refresh_needed", 1)[0]
     nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
-    assert '"scripts/prewarm_race_detail_tags.py", "--date", today' in signal_refresh
+    assert '"scripts/prewarm_race_detail_tags.py", "--date", today' in bootstrap
     assert '"scripts/prewarm_race_detail_tags.py", "--date", tomorrow' in nightly
     assert "run_entry_change_snapshot(tomorrow)" in nightly
     assert nightly.index("run_entry_change_snapshot(tomorrow)") < nightly.index('"scripts/prewarm_race_detail_tags.py", "--date", tomorrow')
-    assert '"scripts/prewarm_race_detail_pages.py", "--date", today' in main
+    assert '"scripts/prewarm_race_detail_pages.py", "--date", today' in bootstrap
+    assert bootstrap.index("run_morning_catchup_if_needed(now)") < bootstrap.index('"scripts/prewarm_race_detail_tags.py", "--date", today')
     assert "hour=6, minute=0" in source
 
 

@@ -516,6 +516,18 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
     if task_success_exists(task, today):
         return True
 
+    source_recovery_ok = run_morning_catchup_if_needed(now)
+    try:
+        source_counts = daily_source_counts(today)
+    except Exception as exc:
+        print(f"[lite-bootstrap] source recheck failed: {type(exc).__name__}: {exc}", flush=True)
+        record_task(task, today, "failure", detail="source_recheck_failed")
+        return False
+    if not source_recovery_ok or not daily_source_complete(source_counts):
+        print(f"[lite-bootstrap] source incomplete -> skip downstream prewarm: {source_counts}", flush=True)
+        record_task(task, today, "failure", detail=f"source_incomplete={source_counts}")
+        return False
+
     ok = run_signal_refresh_slot(now)
     if not task_success_exists("render_detail_tags_today", today):
         tags_ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
@@ -683,25 +695,39 @@ def daily_source_counts(run_date: str) -> dict[str, int]:
                  FROM race_entries e
                  JOIN races r ON r.race_id = e.race_id
                 WHERE r.race_date = ?) AS entries,
+              (SELECT COUNT(*)
+                 FROM race_entries e
+                 JOIN races r ON r.race_id = e.race_id
+                WHERE r.race_date = ?
+                  AND e.racer_number IS NOT NULL
+                  AND e.assigned_motor_number IS NOT NULL
+                  AND e.assigned_motor_top_2_percent IS NOT NULL) AS detail_entries,
               (SELECT COUNT(DISTINCT p.race_id)
                  FROM predictions p
                  JOIN races r ON r.race_id = p.race_id
                 WHERE r.race_date = ?) AS predictions
             """,
-            (run_date, run_date, run_date),
+            (run_date, run_date, run_date, run_date),
         ).fetchone()
     return {
         "races": int(row[0] or 0),
         "entries": int(row[1] or 0),
-        "predictions": int(row[2] or 0),
+        "detail_entries": int(row[2] or 0),
+        "predictions": int(row[3] or 0),
     }
 
 
 def daily_source_complete(counts: dict[str, int]) -> bool:
     races = int(counts.get("races", 0) or 0)
     entries = int(counts.get("entries", 0) or 0)
+    detail_entries = int(counts.get("detail_entries", entries) or 0)
     predictions = int(counts.get("predictions", 0) or 0)
-    return races > 0 and entries >= races * 6 and predictions >= races
+    return (
+        races > 0
+        and entries >= races * 6
+        and detail_entries >= races * 6
+        and predictions >= races
+    )
 
 
 def run_morning_catchup_if_needed(now: datetime) -> bool:

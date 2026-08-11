@@ -6297,32 +6297,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 snapshot.get("initial_market_signals"),
                 target_date,
             )
-            if (
-                not bool(snapshot.get("empty"))
-                and not _lightweight_top_page_market_payload_has_badges(initial_market_signals)
-            ):
-                race_ids = [
-                    str(r.get("race_id") or "")
-                    for group in (snapshot.get("stadium_groups") or [])
-                    for r in (group.get("races") or [])
-                    if str(r.get("race_id") or "")
-                ]
-                repaired_market = _lightweight_top_page_market_payload(
-                    _race_grid_badges_payload(
-                        target_date,
-                        race_ids,
-                        allow_expensive_fallback=True,
-                    ),
-                    target_date,
-                )
-                if _lightweight_top_page_market_payload_has_badges(repaired_market):
-                    initial_market_signals = repaired_market
-                    try:
-                        repaired_snapshot = dict(snapshot)
-                        repaired_snapshot["initial_market_signals"] = repaired_market
-                        _write_top_page_snapshot(target_date, repaired_snapshot)
-                    except Exception:
-                        logger.exception("failed to repair lightweight TOP badges: %s", target_date)
             resp = make_response(render_template(
                 "index.html",
                 target_date=target_date,
@@ -6893,9 +6867,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         race_id = _canonicalize_race_id(race_id)
         if boat_number < 1 or boat_number > 6:
             return jsonify({"error": "invalid boat_number"}), 400
-        info = _race_basic_info(race_id)
-        if not info:
-            return jsonify({"error": "entry not found"}), 404
         cache_key = f"motor_history_v9:{race_id}:{boat_number}"
         cached_payload = _read_json_cache_stale(cache_key)
         if cached_payload is not None:
@@ -6919,11 +6890,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 boat_number,
                 len(position_boats),
             )
-        payload = _motor_history_payload(race_id, boat_number, info=info)
-        if payload is None:
+        if not _race_basic_info(race_id):
             return jsonify({"error": "entry not found"}), 404
-        _write_json_cache(cache_key, payload)
-        return jsonify(payload)
+        response = jsonify({
+            "status": "pending",
+            "error": "motor_history_pending",
+            "message": "モーター履歴を準備中です。次回のcron更新後に再度お試しください。",
+        })
+        response.headers["Retry-After"] = "300"
+        return response, 202
 
     @app.route("/api/race/<race_id>/racer-detail/<int:boat_number>")
     @member_only_api
