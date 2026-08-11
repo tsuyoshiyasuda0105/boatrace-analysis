@@ -34,6 +34,37 @@ services:
         value: "8192"
 
   - type: cron
+    name: boatrace-program-bootstrap-cron
+    runtime: python
+    plan: starter
+    branch: main
+    region: singapore
+    autoDeploy: true
+    # 23:00-09:59 JST = 14:00-23:59 and 00:00-00:59 UTC. The scheduler itself
+    # performs the 23:30/00:10/06:30/07:30 milestones and late-source recovery.
+    schedule: "*/5 0,14-23 * * *"
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python scripts/render_program_bootstrap_scheduler.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        fromService:
+          type: cron
+          name: boatrace-regular-cron
+          envVarKey: DATABASE_URL
+      - key: BOATRACE_SUPABASE_ONLY
+        value: "1"
+      - key: BOATRACE_TASK_TRIGGER
+        value: "render-program-bootstrap"
+      - key: BOATRACE_USER_AGENT
+        value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
+      - key: BOATRACE_DB_LIMIT_MB
+        value: "8192"
+
+  - type: cron
     name: boatrace-odds-cron
     runtime: python
     plan: starter
@@ -98,9 +129,9 @@ services:
     branch: main
     region: singapore
     autoDeploy: true
-    # 19:00 UTC = 04:00 JST. Build stable race-detail data well before the
-    # morning flow; live exhibition updates still arrive via the dedicated cron.
-    schedule: "0 19 * * *"
+    # 21:45 UTC = 06:45 JST. Run after the 06:30 final source recovery. The
+    # script also checks the source gate before generating any detail cache.
+    schedule: "45 21 * * *"
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt

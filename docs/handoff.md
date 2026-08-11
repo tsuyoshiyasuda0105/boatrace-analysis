@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Rin cron defense redesign. Reconcile the agreed 23:30 official / 00:10 Open API / adaptive retry / 06:30 final recovery / 07:30 alert flow with Render production, then implement a dedicated fail-closed bootstrap scheduler, full-run exclusion, pre-generation validation, tests, deployment, and production verification.
 - 2026-08-12 completion: P0 source-consistency guard is delivered. Code is on `main`, web is live, regular-cron has the same built artifact, production gates fail closed, and logged-in browser regression passed.
 - 2026-08-12: Rin P0 source-consistency guard delivery. Render ephemeral cron recovery, versioned daily gate reuse, fail-closed downstream stopping, non-zero scheduler exit propagation, deployment, and production browser/cron verification.
 - 2026-08-11: Rin P0 source-consistency guard phase 2. Run a read-only 2026-08-12 real-data audit and add an optional independent expected-race manifest. Keep all production writers and cron integrations disabled.
@@ -11,6 +12,15 @@
 
 ## Expected files
 
+- `scripts/render_program_bootstrap_scheduler.py` (new)
+- `scripts/prewarm_race_detail_data.py`
+- `scripts/backfill_official.py` (only if missing-venue filtering is required)
+- `render.yaml`
+- `tests/test_program_bootstrap_scheduler.py` (new)
+- `tests/test_race_detail_data_schedule.py`
+- `tests/test_render_cron_schedule.py` (new)
+- `docs/render-cron-overview.md`
+- `docs/handoff.md`
 - `scripts/audit_program_source_consistency.py` (new)
 - `tests/test_program_source_consistency.py` (new)
 - `src/parsers/official_b.py`
@@ -27,16 +37,19 @@
 
 ## Conflict avoidance
 
+- The cron-defense task will not change DB schema, ROI strategy rules, odds selection rules, or delete existing Render services. It will reuse the canonical source gate and existing collectors, keep new orchestration isolated, and inspect `git status` before each commit.
 - New audit files are isolated from existing collectors. The current phase will not edit `src/collectors/openapi.py`, `scripts/backfill_official.py`, scheduler code, or database schema until the audit output and tests are reviewed.
 - Preserve unrelated user changes and inspect `git status` before editing.
 
 ## Running processes
 
+- 2026-08-12 cron-defense redesign used no local scheduler, production writer, test server, or background process. Only finite pytest/compile commands were run.
 - 2026-08-12 P0 gate Playwright server on port 5015 is stopped; no listener remains. The manifest subagent is closed. No local scheduler or production writer was started.
 - Both source-consistency subagents are closed. `scripts/with_server.py` stopped the temporary Flask server and Chromium after the Playwright audit. No local process or scheduler is running.
 
 ## Cleanup targets
 
+- `.tmp_cron_defense_unit/`, `.tmp_cron_defense_retry/`, `.tmp_cron_defense_related/`, `.tmp_cron_defense_final/`, `.tmp_cron_defense_persistence/`, `.tmp_cron_defense_delivery/` (repository-local pytest basetemp directories created by this task)
 - `.gate_input/` (temporary isolated real-source gate inputs; no DB or production writes)
 - `.tmp_manifest_gate/`, `.tmp_gate_core/`, `.tmp_gate_db/`, `.tmp_gate_integration/` (generated pytest temporary data)
 - `.tmp_final_p0_gate/` (generated final pytest temporary data)
@@ -54,6 +67,9 @@
 
 ## Failures
 
+- The cron-defense commit first failed because the linked-worktree Git metadata under `C:\boat_project\boatrace-analysis\.git\worktrees` is outside the writable workspace and could not create `index.lock`. Prevention: retain the explicit reviewed file list and rerun only add/commit with approved Git metadata access.
+- The first 44-test cron-defense retry had one failure because `test_render_cron_schedule.py` matched a `fromService` reference to `boatrace-regular-cron` instead of the service definition. Prevention: schedule tests now anchor on the four-space service-name indentation.
+- The first 132-test related run had one stale assertion expecting regular-cron to call `run_morning_catchup_if_needed()`. The dedicated bootstrap intentionally owns acquisition now. Prevention: the test asserts persisted source-gate success precedes tag/page generation and separately asserts the 06:30 recovery milestone.
 - The full 69-test guard bundle has four pre-existing failures: one stale market-signal cache source assertion and three stale accident aggregation assertions/mocks. All 38 exact changed-path tests and the 94-test related delivery suite pass. Prevention: do not rewrite unrelated production behavior to satisfy stale source assertions; keep the four upstream drifts visible for their own task.
 - A repeated focused test run hit `PermissionError` under the shared Windows `pytest-of-tsuyo` directory. Prevention: use a repository-local `--basetemp`; the exact 38 tests then passed.
 - The local real-data gate has no production `DATABASE_URL`, so 2026-08-11 correctly stopped as `db_program_incomplete` despite both raw sources having 180 races. The 2026-08-12 Open API response was still unavailable and correctly returned `retry_wait`. Prevention: production completion must inspect the Render task result, not infer DB readiness from a local environment without credentials.
@@ -91,6 +107,8 @@
 
 ## Next actions
 
+- Deploy the cron-defense commit, sync the Render Blueprint only after reviewing its plan for unintended service deletion, set/verify the new bootstrap service database binding, and confirm the live schedules/commands match `render.yaml`.
+- Production completion for the cron redesign requires: no five-minute full B-file retry loop; `task_runs` shows adaptive next-attempt times; DB remains 180/1080/1080; the 06:45 detail job fails closed or generates 180 complete pages; and the admin warning is correct at/after 07:30.
 - No P0 delivery blocker remains. At the first 08:00 JST regular-cron run, confirm the already-deployed guard changes from `retry_wait` to `ready`/`ready_with_warning` after Open API publication; if it remains unavailable, downstream generation must remain stopped and the next five-minute cycle must retry.
 - Completed delivery record: source guard, Render web/cron artifacts, production gate behavior, TOP/detail timing, tags, and motor expansion are all verified below.
 - Delivery completion criteria: deployed `main` contains the gate commit; `/healthz` is HTTP 200; source gate is `ready`/`ready_with_warning` or a correctly classified temporary `retry_wait`; incomplete data does not reach prediction/ROI/tag/page generation; TOP/detail median targets remain at or below 1.5 seconds; browser runtime errors are zero; no local scheduler or production writer is left running.
@@ -107,6 +125,7 @@
 
 ## Verification
 
+- 2026-08-12 cron-defense pre-deploy verification: 134 related scheduler/source/parser/detail/admin/smoke tests passed. Python compilation, `render.yaml` parsing, and `git diff --check` passed. SQLite persistence covered task state and admin warning writes; source retry coverage verified only missing stadiums are written.
 - Production delivery: `main` contains `220cdb3` and hardening commit `305047b`. Render web deploy `dep-d9tk4gijobas73d715g0` is live on `305047b`; `boatrace-regular-cron` manual build succeeded on the same commit without triggering an out-of-hours scheduler run. `/healthz` returned HTTP 200 and Render health checks remained HTTP 200 through cutover.
 - Production source gate on 2026-08-11 returned `ready_with_warning`: official 180, Open API 180, manifest expected 180, DB races 180, entries 1080, detail entries 1080, zero omissions/incomplete boats/required-field gaps. The 23 warnings are the previously verified deadline revisions. On 2026-08-12 at 00:44 JST, official and manifest each had 180 while Open API was unavailable, so the gate correctly returned `retry_wait` and did not allow downstream materialization.
 - Logged-in production browser regression on 2026-08-12: TOP warm reloads were 389/342/314 ms (median 342 ms); race detail reloads were 310/244/299 ms (median 299 ms); motor inspector opened in 291 ms with `aria-expanded=true`, a visible panel, and 11 history rows. TOP diagnostics reported TTFB 174 ms/load 348 ms; race-detail diagnostics reported TTFB 105 ms/load 220 ms. Browser console errors were zero.

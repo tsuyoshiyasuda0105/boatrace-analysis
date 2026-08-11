@@ -164,7 +164,7 @@ def test_render_blueprint_separates_daily_and_exhibition_jobs():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
 
     assert "name: boatrace-race-detail-cron" in source
-    assert 'schedule: "0 19 * * *"' in source
+    assert 'schedule: "45 21 * * *"' in source
     assert "python scripts/prewarm_race_detail_data.py" in source
     assert "name: boatrace-exhibition-detail-cron" in source
     assert 'schedule: "*/5 23,0-13 * * *"' in source
@@ -184,6 +184,16 @@ def test_dedicated_detail_crons_persist_health_records():
     assert '"signal_refresh_triggered"' in exhibition
     assert '"signal_refresh_ok"' in exhibition
     assert '_record_task(task_name, args.date, "running")' in exhibition
+
+
+def test_daily_detail_generation_fails_closed_before_writes():
+    source = (ROOT / "scripts" / "prewarm_race_detail_data.py").read_text(encoding="utf-8")
+    main = source.split("def main() -> int:", 1)[1]
+    gate = main.index("check_program_source_gate")
+    running = main.index('record_cron_run(task_name, args.date, "running")')
+    prewarm = main.index("summary = prewarm")
+    assert gate < running < prewarm
+    assert 'gate_status not in {"ready", "ready_with_warning"}' in main
 
 
 def test_regular_scheduler_no_longer_collects_exhibition_data():

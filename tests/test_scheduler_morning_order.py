@@ -36,17 +36,17 @@ def test_signal_refresh_runs_before_today_tag_materialization():
     end = src.index("def tide_refresh_needed(", start)
     bootstrap = src[start:end]
 
-    source_idx = bootstrap.index("source_recovery_ok = run_morning_catchup_if_needed(now)")
+    source_idx = bootstrap.index('source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)')
     signal_idx = bootstrap.index("ok = run_signal_refresh_slot(now)")
     tags_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
 
     assert source_idx < signal_idx < tags_idx
 
 
-def test_race_detail_cron_schedule_moves_after_morning_refresh():
+def test_race_detail_cron_schedule_moves_after_final_source_recovery():
     src = (REPO / "render.yaml").read_text(encoding="utf-8")
 
     cron_idx = src.index("name: boatrace-race-detail-cron")
-    schedule_idx = src.index('schedule: "0 19 * * *"', cron_idx)
+    schedule_idx = src.index('schedule: "45 21 * * *"', cron_idx)
 
     assert schedule_idx > cron_idx

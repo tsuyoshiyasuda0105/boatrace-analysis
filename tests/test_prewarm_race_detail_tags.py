@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "prewarm_race_detail_tags.py"
 SCHEDULER = ROOT / "scripts" / "render_regular_scheduler.py"
+PROGRAM_BOOTSTRAP = ROOT / "scripts" / "render_program_bootstrap_scheduler.py"
 
 
 def test_daily_tag_prewarm_is_wired_into_signal_refresh_and_nightly_jobs():
@@ -16,8 +17,8 @@ def test_daily_tag_prewarm_is_wired_into_signal_refresh_and_nightly_jobs():
     assert "run_entry_change_snapshot(tomorrow)" in nightly
     assert nightly.index("run_entry_change_snapshot(tomorrow)") < nightly.index('"scripts/prewarm_race_detail_tags.py", "--date", tomorrow')
     assert '"scripts/prewarm_race_detail_pages.py", "--date", today' in bootstrap
-    assert bootstrap.index("run_morning_catchup_if_needed(now)") < bootstrap.index('"scripts/prewarm_race_detail_tags.py", "--date", today')
-    assert "hour=6, minute=0" in source
+    assert bootstrap.index('task_success_exists("render_program_source_gate_v1", today)') < bootstrap.index('"scripts/prewarm_race_detail_tags.py", "--date", today')
+    assert "_at_or_after(now, 6, 30)" in PROGRAM_BOOTSTRAP.read_text(encoding="utf-8")
 
 
 def test_entry_change_snapshot_records_task_runs():

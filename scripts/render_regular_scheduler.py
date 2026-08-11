@@ -535,7 +535,7 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
     if task_success_exists(task, today):
         return True
 
-    source_recovery_ok = run_morning_catchup_if_needed(now)
+    source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)
     try:
         source_counts = daily_source_counts(today)
     except Exception as exc:
@@ -1148,12 +1148,13 @@ def main() -> int:
         raise RuntimeError("DATABASE_URL is required for Render regular scheduler")
     ensure_task_runs_table()
     lite_mode = render_daytime_lite_mode()
+    dedicated_bootstrap = os.getenv("BOATRACE_DEDICATED_PROGRAM_BOOTSTRAP", "1") == "1"
     exit_code = 0
 
     # Morning data and predictions: run once per JST day.
     morning_start = now.replace(hour=6, minute=0, second=0, microsecond=0)
     morning_end = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    if not lite_mode and morning_start <= now < morning_end:
+    if not dedicated_bootstrap and not lite_mode and morning_start <= now < morning_end:
         task = "render_morning"
         if not task_success_exists(task, today):
             ok = run_morning(now)
@@ -1167,7 +1168,8 @@ def main() -> int:
     # the source of truth, so verify actual rows and recover even when a PC was off
     # or a previous task_runs row incorrectly reported success.
     if (
-        not lite_mode
+        not dedicated_bootstrap
+        and not lite_mode
         and morning_end <= now < now.replace(hour=22, minute=0, second=0, microsecond=0)
     ):
         if not run_morning_catchup_if_needed(now):
@@ -1227,7 +1229,7 @@ def main() -> int:
         run_accident_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
-    if not lite_mode and now.hour == 23 and now.minute >= 30:
+    if not dedicated_bootstrap and not lite_mode and now.hour == 23 and now.minute >= 30:
         task = "render_nightly"
         if not task_success_exists(task, today):
             ok = run_nightly(now)

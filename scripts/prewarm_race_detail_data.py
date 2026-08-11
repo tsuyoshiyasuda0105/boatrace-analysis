@@ -23,6 +23,7 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-detail-daily")
 os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 
 from scripts.prewarm_race_detail_pages import prewarm as prewarm_pages  # noqa: E402
+from scripts.check_program_source_gate import check_program_source_gate  # noqa: E402
 from scripts.check_post_run_integrity import (  # noqa: E402
     run_checks as run_post_run_checks,
     scopes_for_stage,
@@ -209,6 +210,17 @@ def main() -> int:
     )
     args = parser.parse_args()
     task_name = f"render_race_detail_{args.phase}"
+    if args.phase == "all":
+        gate = check_program_source_gate(datetime.fromisoformat(args.date).date())
+        gate_status = str(gate.get("gate_status") or "blocked")
+        if gate_status not in {"ready", "ready_with_warning"}:
+            detail = json.dumps(
+                {"source_gate": gate_status, "reason": gate.get("reason")},
+                ensure_ascii=True,
+            )
+            record_cron_run(task_name, args.date, "failure", detail=detail)
+            print(f"[race-detail-daily] source gate blocked status={gate_status}", flush=True)
+            return 3 if gate_status == "retry_wait" else 1
     record_cron_run(task_name, args.date, "running")
     try:
         summary = prewarm(args.date, phase=args.phase, motor_workers=args.motor_workers)
