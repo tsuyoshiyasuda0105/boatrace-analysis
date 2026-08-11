@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Rin P0 source-consistency guard delivery. Render ephemeral cron recovery, versioned daily gate reuse, fail-closed downstream stopping, non-zero scheduler exit propagation, deployment, and production browser/cron verification.
 - 2026-08-11: Rin P0 source-consistency guard phase 2. Run a read-only 2026-08-12 real-data audit and add an optional independent expected-race manifest. Keep all production writers and cron integrations disabled.
 - 2026-08-11: Rin P0 source-consistency guard phase 1. Add a read-only audit that compares official B program data with Open API program data before any production integration. No DB/schema change, deletion, production write, cron launch, or deploy in this phase.
 - 2026-08-11: Rin P0 race-detail HTML cache discrepancy resolved at `180/180`; finish accurate admin schedule labels and preserve the newly exposed motor-history issue as the next separate investigation.
@@ -52,6 +53,9 @@
 
 ## Failures
 
+- The full 69-test guard bundle has four pre-existing failures: one stale market-signal cache source assertion and three stale accident aggregation assertions/mocks. All 38 exact changed-path tests and the 94-test related delivery suite pass. Prevention: do not rewrite unrelated production behavior to satisfy stale source assertions; keep the four upstream drifts visible for their own task.
+- A repeated focused test run hit `PermissionError` under the shared Windows `pytest-of-tsuyo` directory. Prevention: use a repository-local `--basetemp`; the exact 38 tests then passed.
+- The local real-data gate has no production `DATABASE_URL`, so 2026-08-11 correctly stopped as `db_program_incomplete` despite both raw sources having 180 races. The 2026-08-12 Open API response was still unavailable and correctly returned `retry_wait`. Prevention: production completion must inspect the Render task result, not infer DB readiness from a local environment without credentials.
 - Initial cleanup could not remove `.gate_input/ui-gate.db` because two Playwright `run_web.py --port 5015 --testing` children still held it after the wrapper ended. Prevention: identify exact command lines before stopping processes; only verified PIDs 36792 and 22568 were stopped, then every recorded temporary target was removed.
 - The first handoff completion patch did not apply because the active-task lines changed its expected context. Root cause: one large patch mixed several distant sections. Prevention: locate headings with `rg` and apply small section-specific updates; no code or data was affected.
 - The broad 93-test integration run passed 87 and failed six. One scoped failure was an old signal-refresh call-list expectation and was updated to mock the new gate; the other five are pre-existing stale cache/accident assertions or a sandbox-blocked external accident request. Prevention: rerun changed-path scheduler tests separately; all three passed without altering unrelated accident behavior.
@@ -86,6 +90,9 @@
 
 ## Next actions
 
+- Active delivery 2026-08-12: merge verified commit `220cdb3` into `main`, push to trigger Render, verify web/cron deployment versions, inspect the first source-gate result and current-day integrity read-only, then run logged-in Playwright checks for TOP, race detail, and motor expansion. Expected file edit is this handoff only unless production verification reveals a scoped defect.
+- Delivery completion criteria: deployed `main` contains the gate commit; `/healthz` is HTTP 200; source gate is `ready`/`ready_with_warning` or a correctly classified temporary `retry_wait`; incomplete data does not reach prediction/ROI/tag/page generation; TOP/detail median targets remain at or below 1.5 seconds; browser runtime errors are zero; no local scheduler or production writer is left running.
+- Deployment-blocking review finding: Render cron instances cannot rely on raw files created by a previous execution. Before main deployment, update `scripts/check_program_source_gate.py` to recover missing official/Open API inputs read-only and `scripts/render_regular_scheduler.py` to persist/reuse one versioned daily gate success through `task_runs`; extend `tests/test_program_source_gate.py` and scheduler tests. Do not deploy commit `220cdb3` alone.
 - P0 source guard implementation is complete locally. Before deployment, review and commit the combined diff intentionally; after deployment, confirm the first cron reports `ready` or `ready_with_warning`, and that an unpublished next-day Open API reports retry without downstream generation.
 - Investigate nine `motor_history_v9` payloads for Edogawa (stadium 7) that exist but have an empty `history` array. Do not delete or regenerate them until source availability and expected fallback behavior are confirmed.
 - Confirm the next JST daytime cron records complete source counts and lets `render_lite_daytime_bootstrap` finish, or records `source_incomplete` without running downstream tag/page prewarm.
@@ -98,6 +105,7 @@
 
 ## Verification
 
+- Pre-deploy delivery verification: 38/38 exact gate/scheduler tests passed; the broader related parser/audit/gate/race-detail/scheduler suite passed 94/94; Python compilation and `git diff --check` passed. The guard recovers missing ephemeral official/Open API inputs, records one versioned daily success, stops tags/pages/ROI when the gate fails, and propagates scheduler failure through its exit code.
 - 2026-08-12 pre-publication audit at 23:16 JST: official index expected 15 venues/180 races; the original B parser returned 13 venues/155 races because 145 fixed-width boat rows were rejected. Root cause was missing spaces where a 100.00 rate or three-digit boat number touched the neighboring column. The scoped parser fix now returns 15 venues, 180 races, 1080 boats, zero incomplete rows, and zero required racer/motor gaps.
 - Published 2026-08-11 comparison: official B and Open API both contained the same 15 venues, 180 races, 1080 boats, racer numbers, and motor numbers. All 23 differences were deadlines: venue 3 had 12 revised times and venue 8 had 11 one-to-two-minute revisions. Direct official racelist pages matched Open API, so deadlines must use the newer Open API/official-web value while B remains the preliminary source.
 - P0 source-consistency phase 1 added a read-only CLI that reports empty sources, venue/race omissions, incomplete or duplicate boat slots, required racer/motor gaps, target-date errors, natural-key/race-id errors, and cross-source racer/motor/deadline mismatches. It performs no network, DB, cache, cron, or production write.

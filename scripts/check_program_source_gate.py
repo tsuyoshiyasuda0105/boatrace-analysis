@@ -17,6 +17,7 @@ from scripts.audit_program_source_consistency import (
     audit_program_source_consistency,
     classify_program_source_gate,
 )
+from src.collectors import official_dl, openapi
 from src.collectors.official_manifest import fetch_official_race_manifest
 from src.db.connection import connect as db_connect
 from src.parsers.official_b import parse_b_text
@@ -93,6 +94,10 @@ def check_program_source_gate(target_date: date) -> dict[str, Any]:
     official_path = _official_program_path(target_date)
     openapi_path = _openapi_program_path(target_date)
 
+    if not official_path.exists():
+        fetched_official = official_dl.fetch_one("B", target_date)
+        if fetched_official is not None:
+            official_path = fetched_official
     try:
         official_payload = parse_b_text(
             official_path.read_bytes().decode("cp932", errors="replace"),
@@ -111,8 +116,12 @@ def check_program_source_gate(target_date: date) -> dict[str, Any]:
     try:
         openapi_payload = _read_json(openapi_path)
     except FileNotFoundError:
-        openapi_payload = {"programs": []}
-        openapi_state = "unavailable"
+        fetched_openapi = openapi.fetch_programs(target_date)
+        if fetched_openapi is None:
+            openapi_payload = {"programs": []}
+            openapi_state = "unavailable"
+        else:
+            openapi_payload = fetched_openapi
     except (OSError, json.JSONDecodeError) as exc:
         return {
             "gate_status": "blocked",

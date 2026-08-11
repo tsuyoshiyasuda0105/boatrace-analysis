@@ -90,6 +90,7 @@ def test_gate_is_ready_with_three_complete_sources(monkeypatch, tmp_path):
 
 def test_gate_waits_when_openapi_raw_is_not_available(monkeypatch, tmp_path):
     _configure_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(gate.openapi, "fetch_programs", lambda _date: None)
     monkeypatch.setattr(
         gate,
         "fetch_official_race_manifest",
@@ -106,6 +107,42 @@ def test_gate_waits_when_openapi_raw_is_not_available(monkeypatch, tmp_path):
 
     assert result["gate_status"] == "retry_wait"
     assert result["openapi_state"] == "unavailable"
+
+
+def test_gate_recovers_missing_ephemeral_raw_files(monkeypatch, tmp_path):
+    openapi, _raw = _configure_paths(monkeypatch, tmp_path)
+    official_path = gate.config.OFFICIAL_PROGRAMS_DIR / "B260812.TXT"
+    official_path.unlink()
+    calls = []
+
+    def fetch_official(_kind, _date):
+        calls.append("official")
+        official_path.write_bytes(b"official")
+        return official_path
+
+    monkeypatch.setattr(gate.official_dl, "fetch_one", fetch_official)
+    monkeypatch.setattr(
+        gate.openapi,
+        "fetch_programs",
+        lambda _date: calls.append("openapi") or {"programs": [_openapi_race()]},
+    )
+    monkeypatch.setattr(
+        gate,
+        "fetch_official_race_manifest",
+        lambda _date: {
+            "status": "available",
+            "target_date": "2026-08-12",
+            "expected_payload": {
+                "stadiums": [{"stadium_number": 1, "race_numbers": [1]}]
+            },
+        },
+    )
+
+    result = gate.check_program_source_gate(TARGET)
+
+    assert result["gate_status"] == "ready"
+    assert calls == ["official", "openapi"]
+    assert not (openapi / "2026-08-12_programs.json").exists()
 
 
 def test_gate_blocks_malformed_openapi_raw(monkeypatch, tmp_path):
@@ -198,6 +235,37 @@ def test_cli_exit_codes(monkeypatch, capsys):
 
     assert gate.main(["--date", "2026-08-12"]) == 3
     assert json.loads(capsys.readouterr().out)["gate_status"] == "retry_wait"
+
+
+def test_scheduler_gate_reuses_daily_success(monkeypatch):
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: True)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must reuse daily success")
+        ),
+    )
+
+    assert scheduler.run_program_source_gate("2026-08-12") is True
+
+
+def test_scheduler_gate_records_failure(monkeypatch):
+    records = []
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, run_date, status, detail=None: records.append(
+            (task, run_date, status, detail)
+        ),
+    )
+
+    assert scheduler.run_program_source_gate("2026-08-12") is False
+    assert records == [
+        ("render_program_source_gate_v1", "2026-08-12", "failure", None)
+    ]
 
 
 def test_morning_stops_before_downstream_generation_when_gate_is_not_ready(monkeypatch):

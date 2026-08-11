@@ -258,6 +258,64 @@ def test_lite_daytime_bootstrap_stops_when_sources_remain_incomplete(monkeypatch
     ]
 
 
+def test_lite_daytime_bootstrap_stops_when_signal_gate_fails(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "run_morning_catchup_if_needed", lambda _now: True)
+    monkeypatch.setattr(
+        scheduler,
+        "daily_source_counts",
+        lambda _run_date: {"races": 10, "entries": 60, "predictions": 10},
+    )
+    monkeypatch.setattr(scheduler, "run_signal_refresh_slot", lambda _now: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must not generate from an unverified source")
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_top_page_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must not publish a full snapshot")
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, _run_date, status, detail=None: calls.append(
+            (task, status, detail)
+        ),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 10, tzinfo=scheduler.JST)
+    assert scheduler.run_lite_daytime_bootstrap(now) is False
+    assert calls[-1] == (
+        "render_lite_daytime_bootstrap",
+        "failure",
+        "signal_refresh_failed",
+    )
+
+
+def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
+    now = scheduler.datetime(2026, 7, 21, 10, 10, tzinfo=scheduler.JST)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(scheduler, "jst_now", lambda: now)
+    monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
+    monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: True)
+    monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler, "run_lite_daytime_bootstrap", lambda _now: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_top_page_snapshot",
+        lambda *_args, **_kwargs: True,
+    )
+
+    assert scheduler.main() == 1
+
+
 def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):
     attempted = []
     monkeypatch.setattr(
@@ -651,6 +709,7 @@ def test_nightly_prewarms_tomorrow_market_signals(monkeypatch):
         lambda args, timeout: calls.append((args, timeout)) or True,
     )
     monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
+    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: True)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",
@@ -681,6 +740,7 @@ def test_nightly_retries_when_tomorrow_source_is_not_ready(monkeypatch):
         lambda args, timeout: calls.append((args, timeout)) or True,
     )
     monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
+    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: True)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",

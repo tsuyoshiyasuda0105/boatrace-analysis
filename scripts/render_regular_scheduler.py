@@ -51,10 +51,15 @@ def run_py(args: list[str], timeout: int = 1800) -> bool:
 
 
 def run_program_source_gate(run_date: str) -> bool:
-    return run_py(
+    task = "render_program_source_gate_v1"
+    if task_success_exists(task, run_date):
+        return True
+    ok = run_py(
         ["scripts/check_program_source_gate.py", "--date", run_date],
         timeout=120,
     )
+    record_task(task, run_date, "success" if ok else "failure")
+    return ok
 
 
 def _parse_race_close_jst(closed_at, race_date: str) -> datetime | None:
@@ -543,6 +548,9 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
         return False
 
     ok = run_signal_refresh_slot(now)
+    if not ok:
+        record_task(task, today, "failure", detail="signal_refresh_failed")
+        return False
     if not task_success_exists("render_detail_tags_today", today):
         tags_ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
         record_task("render_detail_tags_today", today, "success" if tags_ok else "failure")
@@ -1140,6 +1148,7 @@ def main() -> int:
         raise RuntimeError("DATABASE_URL is required for Render regular scheduler")
     ensure_task_runs_table()
     lite_mode = render_daytime_lite_mode()
+    exit_code = 0
 
     # Morning data and predictions: run once per JST day.
     morning_start = now.replace(hour=6, minute=0, second=0, microsecond=0)
@@ -1149,6 +1158,8 @@ def main() -> int:
         if not task_success_exists(task, today):
             ok = run_morning(now)
             record_task(task, today, "success" if ok else "failure")
+            if not ok:
+                exit_code = 1
         else:
             print("[morning] already successful today", flush=True)
 
@@ -1159,7 +1170,8 @@ def main() -> int:
         not lite_mode
         and morning_end <= now < now.replace(hour=22, minute=0, second=0, microsecond=0)
     ):
-        run_morning_catchup_if_needed(now)
+        if not run_morning_catchup_if_needed(now):
+            exit_code = 1
 
     # Live beforeinfo/original-exhibition collection and race-detail refresh are
     # owned by boatrace-exhibition-detail-cron. Keeping them out of the regular
@@ -1177,13 +1189,16 @@ def main() -> int:
         run_py(["scripts/evaluate_start_predictions.py", "--date", today], timeout=900)
 
     if lite_mode and 8 <= now.hour <= 23:
-        run_lite_daytime_bootstrap(now)
+        if not run_lite_daytime_bootstrap(now):
+            exit_code = 1
 
     # Refresh source-dependent candidates before the slower result poll. This
     # keeps the dashboard snapshot close to the five-minute cron cadence.
     if not lite_mode and 6 <= now.hour <= 23:
         run_tide_self_heal(now)
         signal_ok = run_signal_refresh_slot(now)
+        if not signal_ok:
+            exit_code = 1
         if signal_ok and not task_success_exists("render_detail_tags_today", today):
             ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
             record_task("render_detail_tags_today", today, "success" if ok else "failure")
@@ -1217,6 +1232,8 @@ def main() -> int:
         if not task_success_exists(task, today):
             ok = run_nightly(now)
             record_task(task, today, "success" if ok else "failure")
+            if not ok:
+                exit_code = 1
         else:
             print("[nightly] already successful today", flush=True)
         finalized_date = (now.date() - timedelta(days=1)).isoformat()
@@ -1230,7 +1247,7 @@ def main() -> int:
         run_roi_history_slot(now)
 
     print("[render-regular] done", flush=True)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

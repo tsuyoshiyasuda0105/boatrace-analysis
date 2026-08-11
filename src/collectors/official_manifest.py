@@ -108,10 +108,6 @@ def parse_official_race_manifest(html: str, target_date: date | str) -> dict[str
         if not 1 <= race <= 12:
             raise ManifestParseError("official race link has an out-of-range race")
 
-        if venue in venues:
-            raise ManifestParseError(
-                f"official race index contains duplicate venue {venue:02d}"
-            )
         venues.add(venue)
 
     if not venues:

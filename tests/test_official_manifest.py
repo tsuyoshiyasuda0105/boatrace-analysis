@@ -98,15 +98,19 @@ def test_parser_rejects_invalid_natural_keys(href):
         )
 
 
-def test_parser_rejects_duplicate_or_conflicting_venue_identity():
+def test_parser_deduplicates_repeated_venue_links():
     first_href = _link(1, 1)
-    conflicting_href = _link(1, 2)
-    with pytest.raises(official_manifest.ManifestParseError, match="duplicate"):
-        official_manifest.parse_official_race_manifest(
-            f'<a href="{first_href}">one</a>'
-            f'<a href="{conflicting_href}">conflict</a>',
-            "2026-08-12",
-        )
+    repeated_href = _link(1, 2)
+
+    assert official_manifest.parse_official_race_manifest(
+        f'<a href="{first_href}">desktop</a>'
+        f'<a href="{repeated_href}">mobile</a>',
+        "2026-08-12",
+    ) == {
+        "stadiums": [
+            {"stadium_number": 1, "race_numbers": list(range(1, 13))}
+        ]
+    }
 
 
 def test_parser_rejects_empty_output():
@@ -180,10 +184,10 @@ def test_fetch_classifies_request_error_without_exposing_exception():
 
 
 def test_fetch_classifies_parse_error():
-    duplicate = f'<a href="{_link(1, 1)}">one</a><a href="{_link(1, 2)}">two</a>'
+    malformed = '<a href="/owpc/pc/race/racelist?rno=1&jcd=x&hd=20260812">bad</a>'
 
     result = official_manifest.fetch_official_race_manifest(
-        "2026-08-12", session=_Session(_Response(200, duplicate))
+        "2026-08-12", session=_Session(_Response(200, malformed))
     )
 
     assert result["status"] == "parse_error"
