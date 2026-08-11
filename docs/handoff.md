@@ -2,7 +2,7 @@
 
 ## Active task
 
-- 2026-08-11: Rin P0 investigation: eliminate the race-detail HTML cache discrepancy (`78/180` present while the daily cron reports `pages=180`, `failed=0`). Identify the production root cause before changing or regenerating data.
+- 2026-08-11: Rin P0 race-detail HTML cache discrepancy resolved at `180/180`; finish accurate admin schedule labels and preserve the newly exposed motor-history issue as the next separate investigation.
 - Skills: project-ops-guard, cron-watchdog, bug-resistant-programming.
 
 ## Expected files
@@ -46,8 +46,7 @@
 
 ## Next actions
 
-- Deploy the race-detail and exhibition-detail cron services from the same commit as the web service; both were still seven days behind while the web service had deployed current code.
-- Run the current-version page prewarm with `--missing-only`, then require the production current-version count and the full-day `post_run_detail_cache` check to reach `180/180` before closing this P0.
+- Investigate nine `motor_history_v9` payloads for Edogawa (stadium 7) that exist but have an empty `history` array. Do not delete or regenerate them until source availability and expected fallback behavior are confirmed.
 - Confirm the next JST daytime cron records complete source counts and lets `render_lite_daytime_bootstrap` finish, or records `source_incomplete` without running downstream tag/page prewarm.
 - Monitor Render pool health and TOP/race-detail latency; investigate only if repeated measurements regress beyond the 1.5-second target.
 - Confirm failed or not-yet-published result pages are recovered by a later five-minute cycle and that ROI settlement remains consistent.
@@ -58,6 +57,11 @@
 
 ## Verification
 
+- P0 production repair completed at 22:14 JST: the latest race-detail cron generated only the 100 missing `v14` pages in 135.056 seconds; `succeeded=100`, `failed=0`, `persistent_missing=0`, and persistent cache reads were 0.288-0.435 seconds. The ordinary cron command was restored immediately after launch.
+- Read-only and persisted integrity checks both report race-detail pages `180/180`, tags `180/180`, missing pages `0`, and missing tags `0`. The admin data-status page changed Race Detail HTML from abnormal to healthy with present `180` and missing `0`.
+- `boatrace-web`, `boatrace-race-detail-cron`, and `boatrace-exhibition-detail-cron` now use commit `d726739`. Render schedules were corrected directly to `0 19 * * *` (04:00 JST daily) and `*/5 23,0-13 * * *` (08:00-22:59 JST every five minutes); the broad Blueprint sync was intentionally not used because it would also remove the existing temporary cron and create another service.
+- The full morning integrity run exposed a separate issue after the HTML repair: nine Edogawa motor caches have `empty_history` although all 1080 keys exist. Detail rows and detail caches are healthy; this motor-content defect remains isolated for the next task.
+- Final focused regression suite after admin schedule-label correction: 30 passed. Python compile and `git diff --check` passed.
 - 2026-08-11 P0 root cause confirmed read-only in production: race-detail page counts were `v10=180`, `v13=173`, and current `v14=80`. `v13` was generated from 15:53-17:29 JST, `v14` from 18:29-21:50, while obsolete `v10` was still updated at 22:00. The current web cache generation therefore changed after the daily run, seven persistent `v13` writes were missed despite a successful summary, and an old cron deployment continued writing obsolete keys.
 - Render service inventory confirmed deployment skew: `boatrace-web` updated 16 minutes earlier and `boatrace-regular-cron` five hours earlier, but `boatrace-exhibition-detail-cron` and `boatrace-race-detail-cron` had not updated for seven days. Blueprint `autoDeploy: true` did not keep these cron instances aligned in practice.
 - P0 prevention now verifies every generated HTML key in PostgreSQL, retries only unpersisted pages once, fails the cron if any persistent key remains missing, supports bounded `--missing-only` repair, and isolates targeted exhibition checks from full-day `system_status` keys.

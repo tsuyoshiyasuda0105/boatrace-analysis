@@ -1,9 +1,17 @@
 import os
 import sqlite3
+from pathlib import Path
 
 os.environ["DATABASE_URL"] = ""
 
 from src.web import app as web_app
+
+
+def test_admin_data_status_labels_match_render_schedules():
+    source = Path(web_app.__file__).read_text(encoding="utf-8")
+
+    assert '"毎日 04:00 JST"' in source
+    assert '"08:00〜22:59 JST・5分ごと"' in source
 
 
 class _ConnCtx:
