@@ -20,9 +20,14 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import threading
 from typing import Optional, Union
 
 import config
+
+
+_PG_POOL = None
+_PG_POOL_LOCK = threading.Lock()
 
 
 def _is_postgres_url(url: str) -> bool:
@@ -171,25 +176,47 @@ def _rewrite_sqlite_specific(sql: str) -> str:
     return rewritten
 
 
+def _configure_pg_connection(conn) -> None:
+    # Configure each physical connection once before the pool serves it.
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET max_parallel_workers_per_gather = 0")
+            cur.execute("SET work_mem = '64MB'")
+            cur.execute("SET enable_hashjoin = on")
+            cur.execute("SET enable_mergejoin = off")
+    except Exception:
+        pass
+
+
+def _get_pg_pool(dsn: str):
+    global _PG_POOL
+    if _PG_POOL is not None:
+        return _PG_POOL
+    with _PG_POOL_LOCK:
+        if _PG_POOL is None:
+            from psycopg_pool import ConnectionPool
+
+            _PG_POOL = ConnectionPool(
+                conninfo=dsn,
+                min_size=1,
+                max_size=max(1, int(os.getenv("BOATRACE_DB_POOL_SIZE", "4"))),
+                timeout=10,
+                configure=_configure_pg_connection,
+                open=True,
+            )
+    return _PG_POOL
+
+
 class _PgConnection:
     """psycopg3 connection を sqlite3 風に薄くラップ。
     `execute(sql, params)` で `?` を `%s` に変換しつつ ON CONFLICT を補完。"""
 
     def __init__(self, dsn: str):
-        import psycopg
-        self._conn = psycopg.connect(dsn, autocommit=True)
+        self._pool = _get_pg_pool(dsn)
+        self._conn = self._pool.getconn()
+        self._conn.autocommit = True
         self._kind = "postgres"
-        # Supabase Free (Nano) の tmp 領域不足対策:
-        # 並列ワーカー無効化 + work_mem 増 (メモリ内処理でtmp書出を減らす)
-        try:
-            cur = self._conn.cursor()
-            cur.execute("SET max_parallel_workers_per_gather = 0")
-            cur.execute("SET work_mem = '64MB'")
-            cur.execute("SET enable_hashjoin = on")
-            cur.execute("SET enable_mergejoin = off")
-            cur.close()
-        except Exception:
-            pass
 
     def execute(self, sql: str, params: Optional[tuple] = None):
         sql2 = _placeholder_pg(_rewrite_sqlite_specific(sql))
@@ -228,7 +255,9 @@ class _PgConnection:
         self._conn.rollback()
 
     def close(self):
-        self._conn.close()
+        if self._conn is not None:
+            self._pool.putconn(self._conn)
+            self._conn = None
 
     def __enter__(self):
         return self
