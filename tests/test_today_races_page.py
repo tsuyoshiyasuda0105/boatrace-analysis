@@ -530,6 +530,43 @@ def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
     saved = written["payload"]["initial_market_signals"]["race_badges"]
     assert saved["202607300101"]["accident"]["label"] == "ACCIDENT BADGE"
 
+
+def test_race_grid_badges_payload_hydrates_cache_only_payload(monkeypatch):
+    monkeypatch.setattr(
+        web_app,
+        "_read_json_cache_stale",
+        lambda cache_key: {
+            "date": "2026-07-30",
+            "signals": {},
+            "race_badges": {},
+            "data_status": {"cache_only": True},
+        }
+        if "2026-07-30" in cache_key
+        else None,
+    )
+
+    def fake_hydrate(payload, target_date):
+        assert target_date == "2026-07-30"
+        assert "data_status" not in payload
+        return {
+            "date": target_date,
+            "signals": {},
+            "race_badges": {
+                "202607300101": {"accident": {"label": "ACCIDENT BADGE"}}
+            },
+            "accident_watch": {},
+        }
+
+    monkeypatch.setattr(web_app, "_hydrate_market_race_badges", fake_hydrate)
+
+    payload = web_app._race_grid_badges_payload(
+        "2026-07-30",
+        ["202607300101"],
+        allow_expensive_fallback=True,
+    )
+
+    assert payload["race_badges"]["202607300101"]["accident"]["label"] == "ACCIDENT BADGE"
+
 def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
     monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
 

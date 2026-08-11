@@ -814,7 +814,10 @@ def _race_grid_badges_payload(
                 if not wanted or str(rid) in wanted
             }
         if allow_expensive_fallback:
-            payload = _hydrate_market_race_badges(payload, target_date)
+            payload_for_badges = dict(payload)
+            if isinstance(payload_for_badges.get("data_status"), dict):
+                payload_for_badges.pop("data_status", None)
+            payload = _hydrate_market_race_badges(payload_for_badges, target_date)
         race_badges = payload.get("race_badges")
         if isinstance(race_badges, dict) and race_badges:
             race_badges = _normalize_race_badge_labels(race_badges)
