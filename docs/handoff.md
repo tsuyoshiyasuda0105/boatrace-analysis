@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12 completion: P0 source-consistency guard is delivered. Code is on `main`, web is live, regular-cron has the same built artifact, production gates fail closed, and logged-in browser regression passed.
 - 2026-08-12: Rin P0 source-consistency guard delivery. Render ephemeral cron recovery, versioned daily gate reuse, fail-closed downstream stopping, non-zero scheduler exit propagation, deployment, and production browser/cron verification.
 - 2026-08-11: Rin P0 source-consistency guard phase 2. Run a read-only 2026-08-12 real-data audit and add an optional independent expected-race manifest. Keep all production writers and cron integrations disabled.
 - 2026-08-11: Rin P0 source-consistency guard phase 1. Add a read-only audit that compares official B program data with Open API program data before any production integration. No DB/schema change, deletion, production write, cron launch, or deploy in this phase.
@@ -90,10 +91,11 @@
 
 ## Next actions
 
-- Active delivery 2026-08-12: merge verified commit `220cdb3` into `main`, push to trigger Render, verify web/cron deployment versions, inspect the first source-gate result and current-day integrity read-only, then run logged-in Playwright checks for TOP, race detail, and motor expansion. Expected file edit is this handoff only unless production verification reveals a scoped defect.
+- No P0 delivery blocker remains. At the first 08:00 JST regular-cron run, confirm the already-deployed guard changes from `retry_wait` to `ready`/`ready_with_warning` after Open API publication; if it remains unavailable, downstream generation must remain stopped and the next five-minute cycle must retry.
+- Completed delivery record: source guard, Render web/cron artifacts, production gate behavior, TOP/detail timing, tags, and motor expansion are all verified below.
 - Delivery completion criteria: deployed `main` contains the gate commit; `/healthz` is HTTP 200; source gate is `ready`/`ready_with_warning` or a correctly classified temporary `retry_wait`; incomplete data does not reach prediction/ROI/tag/page generation; TOP/detail median targets remain at or below 1.5 seconds; browser runtime errors are zero; no local scheduler or production writer is left running.
-- Deployment-blocking review finding: Render cron instances cannot rely on raw files created by a previous execution. Before main deployment, update `scripts/check_program_source_gate.py` to recover missing official/Open API inputs read-only and `scripts/render_regular_scheduler.py` to persist/reuse one versioned daily gate success through `task_runs`; extend `tests/test_program_source_gate.py` and scheduler tests. Do not deploy commit `220cdb3` alone.
-- P0 source guard implementation is complete locally. Before deployment, review and commit the combined diff intentionally; after deployment, confirm the first cron reports `ready` or `ready_with_warning`, and that an unpublished next-day Open API reports retry without downstream generation.
+- Resolved deployment blocker: Render ephemeral raw inputs are now recovered inside the gate, one versioned daily success is persisted through `task_runs`, and gate failure stops downstream work with a non-zero scheduler exit.
+- P0 source guard is delivered. Production confirmed both a complete `ready_with_warning` day and an unpublished-day `retry_wait` without downstream generation.
 - Investigate nine `motor_history_v9` payloads for Edogawa (stadium 7) that exist but have an empty `history` array. Do not delete or regenerate them until source availability and expected fallback behavior are confirmed.
 - Confirm the next JST daytime cron records complete source counts and lets `render_lite_daytime_bootstrap` finish, or records `source_incomplete` without running downstream tag/page prewarm.
 - Monitor Render pool health and TOP/race-detail latency; investigate only if repeated measurements regress beyond the 1.5-second target.
@@ -105,6 +107,10 @@
 
 ## Verification
 
+- Production delivery: `main` contains `220cdb3` and hardening commit `305047b`. Render web deploy `dep-d9tk4gijobas73d715g0` is live on `305047b`; `boatrace-regular-cron` manual build succeeded on the same commit without triggering an out-of-hours scheduler run. `/healthz` returned HTTP 200 and Render health checks remained HTTP 200 through cutover.
+- Production source gate on 2026-08-11 returned `ready_with_warning`: official 180, Open API 180, manifest expected 180, DB races 180, entries 1080, detail entries 1080, zero omissions/incomplete boats/required-field gaps. The 23 warnings are the previously verified deadline revisions. On 2026-08-12 at 00:44 JST, official and manifest each had 180 while Open API was unavailable, so the gate correctly returned `retry_wait` and did not allow downstream materialization.
+- Logged-in production browser regression on 2026-08-12: TOP warm reloads were 389/342/314 ms (median 342 ms); race detail reloads were 310/244/299 ms (median 299 ms); motor inspector opened in 291 ms with `aria-expanded=true`, a visible panel, and 11 history rows. TOP diagnostics reported TTFB 174 ms/load 348 ms; race-detail diagnostics reported TTFB 105 ms/load 220 ms. Browser console errors were zero.
+- TOP badge verification for 2026-08-11 found 64 accident badges, eight ace-motor badges, and 65 escape badges. Entry-change badges were zero for that finalized snapshot; no placeholder badge was manufactured.
 - Pre-deploy delivery verification: 38/38 exact gate/scheduler tests passed; the broader related parser/audit/gate/race-detail/scheduler suite passed 94/94; Python compilation and `git diff --check` passed. The guard recovers missing ephemeral official/Open API inputs, records one versioned daily success, stops tags/pages/ROI when the gate fails, and propagates scheduler failure through its exit code.
 - 2026-08-12 pre-publication audit at 23:16 JST: official index expected 15 venues/180 races; the original B parser returned 13 venues/155 races because 145 fixed-width boat rows were rejected. Root cause was missing spaces where a 100.00 rate or three-digit boat number touched the neighboring column. The scoped parser fix now returns 15 venues, 180 races, 1080 boats, zero incomplete rows, and zero required racer/motor gaps.
 - Published 2026-08-11 comparison: official B and Open API both contained the same 15 venues, 180 races, 1080 boats, racer numbers, and motor numbers. All 23 differences were deadlines: venue 3 had 12 revised times and venue 8 had 11 one-to-two-minute revisions. Direct official racelist pages matched Open API, so deadlines must use the newer Open API/official-web value while B remains the preliminary source.
