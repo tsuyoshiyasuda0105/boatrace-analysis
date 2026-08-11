@@ -12,14 +12,37 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import config
 from src.collectors._http import fetch_html
 from src.parsers.result_html import parse_result_html
 
 logger = logging.getLogger(__name__)
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _jst_now_naive() -> datetime:
+    """Return current JST without tzinfo for DB timestamps stored as JST-naive."""
+    return datetime.now(JST).replace(tzinfo=None)
+
+
+def _coerce_jst_naive(value) -> datetime | None:
+    """Normalize DB/API timestamps to the JST-naive convention used by races."""
+    if value in (None, "", "-"):
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(JST).replace(tzinfo=None)
+    return parsed
 
 
 # boatrace.jp 結果ページ URL
@@ -162,8 +185,6 @@ def scrape_results_for_pending_races(target_date: date, conn,
         {"results": [race_dict, ...]} の dict (upsert_results に渡せる形)。
         該当無しなら {"results": []}.
     """
-    from datetime import datetime, timedelta
-
     # === L4 候補レース ID 集合 (採用 + 観察を全て含む、predictions ベース) ===
     # backlog item 19/20 修正: grade フィルタを撤廃し、A1 + B除外 + prob 0.65-0.85
     # の全レースを対象 = SG/G1/G2/G3 採用、F1 採用、一般戦観察 (gen_tri)、
@@ -208,19 +229,15 @@ def scrape_results_for_pending_races(target_date: date, conn,
         (target_date.isoformat(),),
     )
     pending: list[str] = []
-    now = datetime.now()
+    now = _jst_now_naive()
     for race_id, closed_at in cur.fetchall():
         # L4 フィルタ
         if l4_only and race_id not in l4_candidate_ids:
             continue
         # closed_at は datetime (psycopg) or 文字列 (SQLite)
-        if isinstance(closed_at, datetime):
-            close_dt = closed_at
-        else:
-            try:
-                close_dt = datetime.fromisoformat(str(closed_at))
-            except (ValueError, TypeError):
-                continue
+        close_dt = _coerce_jst_naive(closed_at)
+        if close_dt is None:
+            continue
         # 締切から 5 分以内はスキップ (まだレース直後で結果ページに反映されてない)
         if now < close_dt + timedelta(minutes=5):
             continue
@@ -255,13 +272,9 @@ def scrape_results_for_pending_races(target_date: date, conn,
             continue
         if l4_only and race_id not in l4_candidate_ids:
             continue
-        if isinstance(closed_at, datetime):
-            close_dt = closed_at
-        else:
-            try:
-                close_dt = datetime.fromisoformat(str(closed_at))
-            except (ValueError, TypeError):
-                continue
+        close_dt = _coerce_jst_naive(closed_at)
+        if close_dt is None:
+            continue
         if now < close_dt + timedelta(minutes=5):
             continue
         if now > close_dt + timedelta(hours=24):

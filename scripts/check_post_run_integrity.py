@@ -12,6 +12,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -25,6 +26,11 @@ from src.web import app as web_app  # noqa: E402
 
 MOTOR_CACHE_VERSION = "v9"
 STATUS_ORDER = {"ok": 0, "warning": 1, "error": 2}
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _jst_now_naive() -> datetime:
+    return datetime.now(JST).replace(tzinfo=None)
 
 
 def _placeholders(values: Iterable[object]) -> str:
@@ -395,7 +401,7 @@ def check_result_after_close(conn, target_date: str, race_ids: list[str] | None 
     target_races = _select_race_ids(conn, target_date, race_ids)
     if not target_races:
         return "ok", "no target races for result check", {"race_count": 0}
-    cutoff = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (_jst_now_naive() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
     placeholders = _placeholders(target_races)
     closed_rows = conn.execute(
         f"""
