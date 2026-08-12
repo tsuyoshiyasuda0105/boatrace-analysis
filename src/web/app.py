@@ -1424,19 +1424,26 @@ def _compose_admin_status(
     present_count: Optional[int] = None,
     treat_missing_task_as_warning: bool = True,
 ) -> str:
-    if task_run and task_run.get("status") == "failure":
-        return "error"
     if check_row:
         check_status = str(check_row.get("status") or "")
         if check_status == "error":
             return "error"
-        if check_status == "warning":
-            return "warning"
     if expected_count is not None and present_count is not None:
         if expected_count <= 0:
             return "warning"
         if present_count < expected_count:
             return "error"
+    if task_run and task_run.get("status") == "failure":
+        if (
+            expected_count is not None
+            and present_count is not None
+            and expected_count > 0
+            and present_count >= expected_count
+        ):
+            return "warning"
+        return "error"
+    if check_row and str(check_row.get("status") or "") == "warning":
+        return "warning"
     if task_run:
         if task_run.get("status") == "running":
             return "warning"

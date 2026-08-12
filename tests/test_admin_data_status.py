@@ -142,6 +142,28 @@ def test_admin_data_status_snapshot_counts_expected_caches(monkeypatch):
     assert items["racer_detail"]["status"] == "healthy"
 
 
+def test_admin_status_uses_current_complete_data_over_old_task_failure():
+    status = web_app._compose_admin_status(
+        task_run={"status": "failure"},
+        check_row={"status": "warning"},
+        expected_count=1080,
+        present_count=1080,
+    )
+
+    assert status == "warning"
+
+
+def test_admin_status_keeps_task_failure_error_without_counted_recovery():
+    status = web_app._compose_admin_status(
+        task_run={"status": "failure"},
+        check_row=None,
+        expected_count=None,
+        present_count=None,
+    )
+
+    assert status == "error"
+
+
 def test_admin_data_status_race_detail_partial_html_cache_is_warning_when_rows_are_ok(monkeypatch):
     conn = _prepare_db()
     target_date = "2026-08-04"

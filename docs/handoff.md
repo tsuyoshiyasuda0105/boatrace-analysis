@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Admin recovery precedence. A stale failed morning task kept complete 1080/1080 motor and racer caches red after successful repair. Current integrity errors and current missing counts must outrank task history; a failed task with currently complete counted data is warning, while uncounted failures such as accident jobs remain errors.
 - 2026-08-12: Missing-only motor repair. After all 180 races became available, the morning cache still covered the earlier 155-race source set, leaving 114 real missing keys: Ashiya 42 and Fukuoka 72. Add a bounded `--phase motor --missing-only` repair path that preserves all existing motor caches and writes only absent keys.
 - 2026-08-12: Motor-history integrity classification. The latest persisted check has five empty histories at Toda (stadium 2), not nine at stadium 7. Three motors have no prior entry after the May replacement and two have an earlier same-day entry whose result was unavailable when the morning cache was built. Treat an empty history list as warning; missing/malformed history, current data, cache keys, or six-boat positions remain errors.
 - 2026-08-12: Result completeness recovery. Production integrity checks covered every closed race, but the official Layer3 repair selected only ROI/high-signal candidates, leaving old non-candidate Open API shells unresolved. Keep ROI candidates immediate, add a 60-minute delayed repair for other races, cap each run at 12 official requests, and prioritize candidates ahead of the repair backlog.
@@ -160,6 +161,7 @@
 
 ## Verification
 
+- 2026-08-12 admin recovery-precedence regression: 14 selected admin/motor/data-status tests passed. Current complete counted data downgrades an old task failure to warning; failures without counted recovery remain errors. Python compilation and `git diff --check` passed.
 - 2026-08-12 missing-only motor repair regression: 23 detail-data/motor-integrity/admin tests passed. The unit test seeds one existing motor key and proves the repair generates only the other five boats. Python compilation and `git diff --check` passed.
 - 2026-08-12 motor-history source audit: the latest production status had five `empty_history` payloads at Toda. Motors 45, 65, and 48 had zero prior result-bearing runs before the relevant race; three had no prior entry and two had one same-day entry with no result at morning generation. The monitoring-only correction passed 22 motor/detail/admin tests plus Python compilation and `git diff --check`.
 - 2026-08-12 result-repair production verification: regular cron built and ran `bb6b1ff`. At 10:01 JST it fetched four official races and inserted 24 result rows; persistent Ashiya 1R was repaired, reducing integrity gaps from three to two. The two remaining races were only 37 and 51 minutes past close and correctly remained inside the 60-minute Open API grace period. Result/ROI regression passed 25 tests plus compilation and `git diff --check`.
