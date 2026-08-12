@@ -375,10 +375,17 @@ def test_lite_daytime_bootstrap_stops_when_signal_gate_fails(monkeypatch):
 
 
 def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def unlocked():
+        yield True
+
     now = scheduler.datetime(2026, 7, 21, 10, 10, tzinfo=scheduler.JST)
     monkeypatch.setenv("DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(scheduler, "jst_now", lambda: now)
     monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
+    monkeypatch.setattr(scheduler, "_regular_run_lock", unlocked)
     monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: True)
     monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler, "run_lite_daytime_bootstrap", lambda _now: False)
@@ -389,6 +396,51 @@ def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
     )
 
     assert scheduler.main() == 1
+
+
+def test_main_skips_safely_when_previous_regular_run_is_active(monkeypatch):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def locked():
+        yield False
+
+    monkeypatch.setattr(scheduler, "_regular_run_lock", locked)
+    monkeypatch.setattr(
+        scheduler,
+        "jst_now",
+        lambda: (_ for _ in ()).throw(AssertionError("locked run must do no work")),
+    )
+
+    assert scheduler.main() == 0
+
+
+def test_regular_run_lock_uses_postgres_advisory_lock(monkeypatch):
+    calls = []
+
+    class _Cursor:
+        def fetchone(self):
+            return (True,)
+
+    class _Connection:
+        _kind = "postgres"
+
+        def execute(self, sql, params):
+            calls.append((sql, params))
+            return _Cursor()
+
+        def close(self):
+            calls.append("close")
+
+    monkeypatch.setattr(scheduler, "db_connect", lambda: _Connection())
+
+    with scheduler._regular_run_lock() as locked:
+        assert locked is True
+
+    assert "pg_try_advisory_lock" in calls[0][0]
+    assert calls[0][1] == (scheduler.REGULAR_RUN_LOCK_NAME,)
+    assert "pg_advisory_unlock" in calls[1][0]
+    assert calls[-1] == "close"
 
 
 def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):

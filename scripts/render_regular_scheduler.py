@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from functools import wraps
 import os
 import json
 import subprocess
@@ -7,6 +9,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -27,6 +30,9 @@ ORIGINAL_EXHIBITION_RECOVERY_LIMIT = 48
 ORIGINAL_EXHIBITION_CATCHUP_PAST_MIN = 36 * 60
 ORIGINAL_EXHIBITION_CATCHUP_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_CATCHUP_LIMIT = 96
+REGULAR_RUN_LOCK_NAME = "boatrace-regular-scheduler-v1"
+
+
 def jst_now() -> datetime:
     return datetime.now(tz=JST)
 
@@ -38,6 +44,40 @@ def render_daytime_lite_mode() -> bool:
         "yes",
         "on",
     }
+
+
+@contextmanager
+def _regular_run_lock() -> Iterator[bool]:
+    conn = db_connect()
+    locked = True
+    is_postgres = getattr(conn, "_kind", "sqlite") == "postgres"
+    try:
+        if is_postgres:
+            row = conn.execute(
+                "SELECT pg_try_advisory_lock(hashtext(?))",
+                (REGULAR_RUN_LOCK_NAME,),
+            ).fetchone()
+            locked = bool(row and row[0])
+        yield locked
+    finally:
+        if is_postgres and locked:
+            conn.execute(
+                "SELECT pg_advisory_unlock(hashtext(?))",
+                (REGULAR_RUN_LOCK_NAME,),
+            )
+        conn.close()
+
+
+def _with_regular_run_lock(func: Callable[[], int]) -> Callable[[], int]:
+    @wraps(func)
+    def wrapped() -> int:
+        with _regular_run_lock() as locked:
+            if not locked:
+                print("[render-regular] skip: previous run active", flush=True)
+                return 0
+            return func()
+
+    return wrapped
 
 
 def run_py(args: list[str], timeout: int = 1800) -> bool:
@@ -1158,6 +1198,7 @@ def run_nightly(now: datetime) -> bool:
     return ok
 
 
+@_with_regular_run_lock
 def main() -> int:
     os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-cron")
     now = jst_now()
