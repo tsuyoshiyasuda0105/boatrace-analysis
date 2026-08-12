@@ -125,3 +125,20 @@ def test_market_signal_result_is_prioritized_before_repair_backlog(monkeypatch):
 
     assert got["target_count"] == 12
     assert any(race["race_number"] == 13 for race in got["results"])
+
+
+def test_result_repair_rotates_past_persistently_failing_old_races(monkeypatch):
+    conn, now = _result_conn(race_count=30)
+    monkeypatch.setattr(result_scraper, "_market_signal_candidate_ids", lambda *_: set())
+    monkeypatch.setattr(result_scraper, "scrape_race_result", _result_payload)
+
+    monkeypatch.setattr(result_scraper, "_jst_now_naive", lambda: now)
+    first = result_scraper.scrape_results_for_pending_races(date(2026, 8, 12), conn)
+    monkeypatch.setattr(result_scraper, "_jst_now_naive", lambda: now + timedelta(minutes=5))
+    second = result_scraper.scrape_results_for_pending_races(date(2026, 8, 12), conn)
+
+    first_races = {row["race_number"] for row in first["results"]}
+    second_races = {row["race_number"] for row in second["results"]}
+    assert len(first_races) == 12
+    assert len(second_races) == 12
+    assert first_races != second_races

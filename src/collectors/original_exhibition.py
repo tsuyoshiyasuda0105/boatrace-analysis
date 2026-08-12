@@ -183,6 +183,18 @@ def _execute_ddl(conn, sql: str) -> None:
         logger.debug("DDL skipped/failed: %s", exc)
 
 
+def _existing_columns(conn, table_name: str) -> set[str]:
+    if getattr(conn, "_kind", "sqlite") == "postgres":
+        rows = conn.execute(
+            """SELECT column_name FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = ?""",
+            (table_name,),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row[1]) for row in rows}
+
+
 def ensure_schema(conn) -> None:
     _execute_ddl(
         conn,
@@ -209,10 +221,19 @@ def ensure_schema(conn) -> None:
         )
         """,
     )
-    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN dash_mark TEXT")
-    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN turn_mark TEXT")
-    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN straight_mark TEXT")
-    _execute_ddl(conn, "ALTER TABLE race_original_exhibitions ADD COLUMN motor_eval_points INTEGER")
+    columns = _existing_columns(conn, "race_original_exhibitions")
+    optional_columns = {
+        "dash_mark": "TEXT",
+        "turn_mark": "TEXT",
+        "straight_mark": "TEXT",
+        "motor_eval_points": "INTEGER",
+    }
+    for column, column_type in optional_columns.items():
+        if column not in columns:
+            _execute_ddl(
+                conn,
+                f"ALTER TABLE race_original_exhibitions ADD COLUMN {column} {column_type}",
+            )
     _execute_ddl(
         conn,
         "CREATE INDEX IF NOT EXISTS idx_original_exhibitions_race ON race_original_exhibitions(race_id)",

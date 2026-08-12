@@ -6,6 +6,18 @@ from src.collectors.original_exhibition import SOURCE_PATTERNS
 from src.parsers.original_exhibition import parse_original_exhibition
 
 
+def test_ensure_schema_does_not_repeat_existing_column_alters():
+    conn = sqlite3.connect(":memory:")
+    statements = []
+    conn.set_trace_callback(statements.append)
+
+    original_exhibition.ensure_schema(conn)
+    original_exhibition.ensure_schema(conn)
+
+    alters = [sql for sql in statements if sql.upper().startswith("ALTER TABLE")]
+    assert alters == []
+
+
 def daterange(start: date, end: date, *, newest_first: bool = False):
     days = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
     if newest_first:

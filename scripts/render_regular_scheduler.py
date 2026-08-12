@@ -1284,9 +1284,9 @@ def main() -> int:
             record_task(task, today, "success" if ok else "failure")
 
     # Accident rankings feed race tags and several adopted ROI strategies.
-    # Refresh once daily at 07:30 JST, after the 07:00 race-detail prewarm starts,
-    # so accident tags are available before most users open morning race details.
-    if not lite_mode and now.hour == 7 and 30 <= now.minute < 35:
+    # Refresh once daily in the first live scheduler slot. The Render regular
+    # cron starts at 08:00 JST, so an earlier window can never be reached.
+    if now.hour == 8 and now.minute < 5:
         run_accident_self_heal(now)
 
     # End-of-day refresh and tomorrow preload: run once per JST day.

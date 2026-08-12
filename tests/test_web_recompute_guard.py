@@ -398,6 +398,29 @@ def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
     assert scheduler.main() == 1
 
 
+def test_main_runs_daily_accident_refresh_in_lite_mode(monkeypatch):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def unlocked():
+        yield True
+
+    calls = []
+    now = scheduler.datetime(2026, 8, 12, 8, 1, tzinfo=scheduler.JST)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(scheduler, "jst_now", lambda: now)
+    monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
+    monkeypatch.setattr(scheduler, "_regular_run_lock", unlocked)
+    monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: True)
+    monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler, "run_lite_daytime_bootstrap", lambda _now: True)
+    monkeypatch.setattr(scheduler, "run_top_page_snapshot", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler, "run_accident_self_heal", lambda _now: calls.append("accident") or True)
+
+    assert scheduler.main() == 0
+    assert calls == ["accident"]
+
+
 def test_main_skips_safely_when_previous_regular_run_is_active(monkeypatch):
     from contextlib import contextmanager
 
@@ -701,14 +724,14 @@ def test_scheduler_never_rebuilds_accident_stats_from_one_day_only():
     assert "run_accident_rebuild(today, today)" not in source
 
 
-def test_scheduler_runs_accident_refresh_only_in_0730_window():
+def test_scheduler_runs_accident_refresh_in_first_reachable_live_window():
     source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     main_source = source.split("def main() -> int:", 1)[1]
     live_loop = main_source.split("# End-of-day refresh", 1)[0]
     nightly_source = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
 
-    assert "now.hour == 7 and 30 <= now.minute < 35" in live_loop
     assert live_loop.count("run_accident_self_heal(now)") == 1
+    assert "if now.hour == 8 and now.minute < 5:" in live_loop
     assert "run_accident_full_refresh(today)" in nightly_source
 
 

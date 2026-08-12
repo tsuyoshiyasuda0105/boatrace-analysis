@@ -296,9 +296,33 @@ def scrape_results_for_pending_races(
         seen.add(race_id)
 
     if l4_only:
-        pending.sort(key=lambda race_id: race_id not in l4_candidate_ids)
-    if max_races > 0:
-        pending = pending[:max_races]
+        candidates = [race_id for race_id in pending if race_id in l4_candidate_ids]
+        backlog = [race_id for race_id in pending if race_id not in l4_candidate_ids]
+    else:
+        candidates = []
+        backlog = pending
+
+    if max_races > 0 and len(pending) > max_races:
+        # Reserve capacity for both signal races and the general backlog. Rotating
+        # each group prevents permanently failing old races from starving later ones.
+        candidate_limit = min(len(candidates), max(1, max_races // 2))
+        backlog_limit = max_races - candidate_limit
+        slot = (now.hour * 12) + (now.minute // 5)
+
+        def rotating_slice(items: list[str], limit: int) -> list[str]:
+            if limit <= 0 or not items:
+                return []
+            if len(items) <= limit:
+                return items
+            start = (slot * limit) % len(items)
+            return (items + items)[start:start + limit]
+
+        pending = rotating_slice(candidates, candidate_limit) + rotating_slice(
+            backlog,
+            backlog_limit,
+        )
+    elif l4_only:
+        pending = candidates + backlog
 
     results = []
     failed: list[str] = []
