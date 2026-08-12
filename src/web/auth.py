@@ -468,6 +468,12 @@ def register_auth_routes(app):
 
     @app.before_request
     def _sync_supabase_auth_role():
+        if (
+            request.endpoint == "static"
+            or request.path.startswith("/static/")
+            or request.path in {"/favicon.ico", "/healthz"}
+        ):
+            return None
         _refresh_supabase_membership_session()
 
     @app.before_request

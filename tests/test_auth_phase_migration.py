@@ -65,6 +65,41 @@ def test_supabase_login_session_starts_with_fresh_role_timestamp(monkeypatch):
         assert session["role"] == "paid_member"
 
 
+def test_static_and_health_requests_skip_supabase_role_refresh(monkeypatch):
+    app = Flask(__name__, static_folder="static")
+    app.secret_key = "test-secret"
+    calls = []
+    monkeypatch.setattr(
+        auth,
+        "_refresh_supabase_membership_session",
+        lambda: calls.append("refresh"),
+    )
+    auth.register_auth_routes(app)
+
+    for path in ("/static/app.css", "/favicon.ico", "/healthz"):
+        with app.test_request_context(path):
+            app.preprocess_request()
+
+    assert calls == []
+
+
+def test_html_request_still_refreshes_supabase_role(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    calls = []
+    monkeypatch.setattr(
+        auth,
+        "_refresh_supabase_membership_session",
+        lambda: calls.append("refresh"),
+    )
+    auth.register_auth_routes(app)
+
+    with app.test_request_context("/races"):
+        app.preprocess_request()
+
+    assert calls == ["refresh"]
+
+
 def test_admin_membership_route_is_protected_and_rendered():
     source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
     assert '@app.route("/admin/memberships", methods=["GET"])' in source

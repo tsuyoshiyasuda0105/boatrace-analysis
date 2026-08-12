@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Web DB-pool exhaustion recovery. Logged-in TOP requests triggered eight `PoolTimeout` errors at 09:44 while static CSS/JS requests unnecessarily ran the Supabase role-refresh hook. Exclude static assets, favicon, and health checks from membership DB refresh, then deploy and rerun logged-in browser verification.
 - 2026-08-12: Regular-cron overlap prevention. Production logged two scheduler processes starting ten seconds apart at 09:25 while the service runs every five minutes. Add a PostgreSQL advisory lock around the complete regular scheduler; a second trigger must exit successfully without polling, recomputing, or prewarming.
 - 2026-08-12: Daytime source recovery hardening. Open API programs can remain unavailable after official B, the independent official manifest, and persisted DB rows are complete. Permit only the daytime lite bootstrap to use a fully verified official-only fallback; keep morning/nightly/cross-source gates strict and isolate fallback success under its own task name.
 - 2026-08-12: Rin sequential recovery task. Production has complete `180/1080/1080/180` source rows, but lite bootstrap remains blocked because the persisted source-gate task is stale while bootstrap backoff waits. Revalidate the canonical gate immediately only after structural counts are complete, then verify tags/pages and result follow-up without bypassing safety checks.
@@ -20,6 +21,8 @@
 - `scripts/check_program_source_gate.py`
 - `tests/test_program_source_gate.py`
 - `tests/test_web_recompute_guard.py`
+- `src/web/auth.py`
+- `tests/test_auth_phase_migration.py`
 - `tests/test_scheduler_morning_order.py`
 - `docs/handoff.md`
 - `src/web/templates/base.html`
@@ -81,6 +84,7 @@
 
 ## Failures
 
+- 2026-08-12 09:44 JST logged-in TOP and static assets returned HTTP 500 with `psycopg_pool.PoolTimeout` after ten seconds; `/healthz` remained 200 because it skipped DB. Root cause: the global Supabase role-refresh hook also ran for parallel static CSS/JS requests carrying the same stale session cookie, exhausting the four-connection web pool. Prevention: static/favicon/health requests bypass membership refresh; the HTML request still performs the 60-second role check.
 - 2026-08-12 09:25 JST Render accepted a scheduled and manual regular-cron run about ten seconds apart, and both started result polling. Root cause: only signal refresh had a task-level overlap check; the regular scheduler had no process-wide lock. Prevention: guard the complete scheduler with a PostgreSQL advisory lock and treat lock contention as a successful no-op.
 - 2026-08-12 09:26 JST production proved the new official-only gate returned `ready_with_warning` with exact DB `180/1080/1080`, but `run_signal_refresh_slot()` immediately invoked the strict gate again and stopped downstream generation. Prevention: pass an in-process `source_gate_verified=True` only from the already-validated daytime bootstrap; ordinary signal refresh calls still run the strict gate, and a regression test forbids the duplicate call.
 - 2026-08-12 09:17 JST canonical revalidation still returned `retry_wait` after DB rows reached `180/1080/1080/180`, because the Open API programs endpoint remained unavailable. Prevention: daytime recovery may continue only when official B race count equals the independent official manifest, official rows have six unique complete boats and the correct date, and DB races/entries/detail entries exactly match; this warning path is persisted separately and cannot satisfy the strict source-gate task.
@@ -146,6 +150,8 @@
 
 ## Verification
 
+- 2026-08-12 static-auth DB guard regression: 27 auth/Playwright/Supabase/pool tests passed. Static assets, favicon, and health checks skip Supabase role refresh; a normal `/races` request still refreshes. Python compilation and `git diff --check` passed.
+- 2026-08-12 production recovery: official-only fallback generated eight market signals from `180/180`; detail tags completed `180/180` with zero failures; detail HTML completed `180/180`, persistent missing `0`, median generation 1.011s, and cached read samples 0.074-0.146s. Regular-cron advisory lock was then verified live: a second run started during result polling and logged `skip: previous run active` before any collector work, then exited successfully.
 - 2026-08-12 regular-cron process lock regression: 89 related scheduler/gate/bootstrap tests passed. One existing accident-refresh test failed only because its external HTTP request is blocked by the local sandbox; it does not exercise the lock. The new tests verify lock contention exits 0 before `jst_now()` or any job work and verify PostgreSQL advisory lock/unlock use the dedicated regular-scheduler key.
 - 2026-08-12 verified-gate reuse regression: 81 targeted gate/scheduler/bootstrap/detail tests passed. The additional source/prewarm bundle passed 38 and failed seven previously recorded stale source-string assertions for removed TOP JavaScript, old market-signal self-heal behavior, the old monthly ROI window, and cache `v11`; none exercises the changed control path. Python compilation and `git diff --check` passed.
 - 2026-08-12 official-only daytime fallback regression: 56 gate/web guard tests and 24 scheduler/bootstrap/detail-tag/Render-schedule tests passed. Python compilation and `git diff --check` passed. Tests prove complete official+manifest+DB data yields `ready_with_warning`, missing motor data is rejected, the CLI flag is explicit, and fallback success uses a task name that strict morning/nightly gates do not reuse.
