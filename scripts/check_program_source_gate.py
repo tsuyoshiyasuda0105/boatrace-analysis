@@ -90,7 +90,40 @@ def _load_or_fetch_manifest(target_date: date) -> dict[str, Any]:
     return fetched
 
 
-def check_program_source_gate(target_date: date) -> dict[str, Any]:
+def _official_only_fallback_is_safe(
+    report: dict[str, Any],
+    *,
+    openapi_state: str,
+    manifest_state: str,
+) -> bool:
+    if openapi_state == "available" or manifest_state != "available":
+        return False
+    summary = report.get("summary") or {}
+    official_races = int(summary.get("official_race_count", 0) or 0)
+    expected_races = int(summary.get("expected_race_count", 0) or 0)
+    if official_races <= 0 or official_races != expected_races:
+        return False
+
+    issues = report.get("issues") or {}
+    if issues.get("expected_missing"):
+        return False
+    for name in (
+        "source_empty",
+        "incomplete_boats",
+        "duplicate_boat_numbers",
+        "missing_required_fields",
+        "invalid_dates",
+    ):
+        if any(item.get("source") == "official_b" for item in issues.get(name, [])):
+            return False
+    return True
+
+
+def check_program_source_gate(
+    target_date: date,
+    *,
+    allow_official_fallback: bool = False,
+) -> dict[str, Any]:
     official_path = _official_program_path(target_date)
     openapi_path = _openapi_program_path(target_date)
 
@@ -155,6 +188,12 @@ def check_program_source_gate(target_date: date) -> dict[str, Any]:
         gate_status = "blocked"
     elif manifest_state != "available" and gate_status != "blocked":
         gate_status = "retry_wait"
+    elif allow_official_fallback and _official_only_fallback_is_safe(
+        report,
+        openapi_state=openapi_state,
+        manifest_state=manifest_state,
+    ):
+        gate_status = "ready_with_warning"
 
     summary = report["summary"]
     result = {
@@ -167,6 +206,8 @@ def check_program_source_gate(target_date: date) -> dict[str, Any]:
         "openapi_state": openapi_state,
         "manifest_state": manifest_state,
     }
+    if gate_status == "ready_with_warning" and openapi_state != "available":
+        result["reason"] = "official_only_fallback"
     if gate_status in {"ready", "ready_with_warning"}:
         try:
             db_counts = _db_program_counts(target_date)
@@ -190,6 +231,11 @@ def check_program_source_gate(target_date: date) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", required=True, help="target date in YYYY-MM-DD format")
+    parser.add_argument(
+        "--allow-official-fallback",
+        action="store_true",
+        help="allow complete official B + manifest + DB data when Open API programs are unavailable",
+    )
     args = parser.parse_args(argv)
     try:
         target_date = date.fromisoformat(args.date)
@@ -197,7 +243,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps({"gate_status": "input_error", "reason": "invalid_date"}))
         return 2
 
-    result = check_program_source_gate(target_date)
+    result = check_program_source_gate(
+        target_date,
+        allow_official_fallback=args.allow_official_fallback,
+    )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     if result["gate_status"] in {"ready", "ready_with_warning"}:
         return 0

@@ -119,7 +119,7 @@ def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
         "run_py",
         lambda args, timeout: run_calls.append((args, timeout)) or True,
     )
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: True)
+    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date, **_kwargs: True)
 
     now = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
     assert scheduler.run_signal_refresh_slot(now)
@@ -240,7 +240,7 @@ def test_lite_daytime_bootstrap_revalidates_stale_gate_after_rows_complete(monke
     monkeypatch.setattr(
         scheduler,
         "run_program_source_gate",
-        lambda run_date: calls.append(("source_gate", run_date)) or True,
+        lambda run_date, **kwargs: calls.append(("source_gate", run_date, kwargs)) or True,
     )
     monkeypatch.setattr(
         scheduler,
@@ -252,7 +252,14 @@ def test_lite_daytime_bootstrap_revalidates_stale_gate_after_rows_complete(monke
 
     now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
     assert scheduler.run_lite_daytime_bootstrap(now)
-    assert calls[:2] == [("source_gate", "2026-07-21"), "signal_refresh"]
+    assert calls[:2] == [
+        (
+            "source_gate",
+            "2026-07-21",
+            {"allow_official_fallback": True},
+        ),
+        "signal_refresh",
+    ]
 
 
 def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeypatch):
@@ -263,7 +270,11 @@ def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeyp
         "daily_source_counts",
         lambda _run_date: {"races": 10, "entries": 60, "predictions": 10},
     )
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _run_date: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_program_source_gate",
+        lambda _run_date, **_kwargs: False,
+    )
     monkeypatch.setattr(
         scheduler,
         "run_signal_refresh_slot",
@@ -787,7 +798,7 @@ def test_nightly_prewarms_tomorrow_market_signals(monkeypatch):
         lambda args, timeout: calls.append((args, timeout)) or True,
     )
     monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: True)
+    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date, **_kwargs: True)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",
@@ -818,7 +829,7 @@ def test_nightly_retries_when_tomorrow_source_is_not_ready(monkeypatch):
         lambda args, timeout: calls.append((args, timeout)) or True,
     )
     monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: True)
+    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date, **_kwargs: True)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",

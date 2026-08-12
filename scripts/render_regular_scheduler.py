@@ -50,14 +50,18 @@ def run_py(args: list[str], timeout: int = 1800) -> bool:
     return proc.returncode == 0
 
 
-def run_program_source_gate(run_date: str) -> bool:
-    task = "render_program_source_gate_v1"
+def run_program_source_gate(run_date: str, *, allow_official_fallback: bool = False) -> bool:
+    task = (
+        "render_program_source_gate_official_fallback_v1"
+        if allow_official_fallback
+        else "render_program_source_gate_v1"
+    )
     if task_success_exists(task, run_date):
         return True
-    ok = run_py(
-        ["scripts/check_program_source_gate.py", "--date", run_date],
-        timeout=120,
-    )
+    args = ["scripts/check_program_source_gate.py", "--date", run_date]
+    if allow_official_fallback:
+        args.append("--allow-official-fallback")
+    ok = run_py(args, timeout=120)
     record_task(task, run_date, "success" if ok else "failure")
     return ok
 
@@ -550,7 +554,10 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
     if not source_recovery_ok:
         # The dedicated collector may still be inside its source backoff even
         # after another canonical collector has completed today's rows.
-        source_recovery_ok = run_program_source_gate(today)
+        source_recovery_ok = run_program_source_gate(
+            today,
+            allow_official_fallback=True,
+        )
     if not source_recovery_ok:
         print("[lite-bootstrap] source gate not ready -> skip downstream prewarm", flush=True)
         record_task(task, today, "failure", detail="source_gate_not_ready")

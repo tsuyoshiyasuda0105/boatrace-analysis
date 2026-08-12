@@ -109,6 +109,52 @@ def test_gate_waits_when_openapi_raw_is_not_available(monkeypatch, tmp_path):
     assert result["openapi_state"] == "unavailable"
 
 
+def test_gate_allows_complete_official_daytime_fallback(monkeypatch, tmp_path):
+    _configure_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(gate.openapi, "fetch_programs", lambda _date: None)
+    monkeypatch.setattr(
+        gate,
+        "fetch_official_race_manifest",
+        lambda _date: {
+            "status": "available",
+            "target_date": "2026-08-12",
+            "expected_payload": {
+                "stadiums": [{"stadium_number": 1, "race_numbers": [1]}]
+            },
+        },
+    )
+
+    result = gate.check_program_source_gate(TARGET, allow_official_fallback=True)
+
+    assert result["gate_status"] == "ready_with_warning"
+    assert result["reason"] == "official_only_fallback"
+    assert result["db_counts"] == {"races": 1, "entries": 6, "detail_entries": 6}
+
+
+def test_gate_rejects_incomplete_official_daytime_fallback(monkeypatch, tmp_path):
+    _configure_paths(monkeypatch, tmp_path)
+    incomplete = _official_race()
+    incomplete["boats"][-1]["assigned_motor_number"] = None
+    monkeypatch.setattr(gate, "parse_b_text", lambda *_args: [incomplete])
+    monkeypatch.setattr(gate.openapi, "fetch_programs", lambda _date: None)
+    monkeypatch.setattr(
+        gate,
+        "fetch_official_race_manifest",
+        lambda _date: {
+            "status": "available",
+            "target_date": "2026-08-12",
+            "expected_payload": {
+                "stadiums": [{"stadium_number": 1, "race_numbers": [1]}]
+            },
+        },
+    )
+
+    result = gate.check_program_source_gate(TARGET, allow_official_fallback=True)
+
+    assert result["gate_status"] == "retry_wait"
+    assert "reason" not in result
+
+
 def test_gate_recovers_missing_ephemeral_raw_files(monkeypatch, tmp_path):
     openapi, _raw = _configure_paths(monkeypatch, tmp_path)
     official_path = gate.config.OFFICIAL_PROGRAMS_DIR / "B260812.TXT"
@@ -230,11 +276,25 @@ def test_cli_exit_codes(monkeypatch, capsys):
     monkeypatch.setattr(
         gate,
         "check_program_source_gate",
-        lambda _date: {"gate_status": "retry_wait"},
+        lambda _date, **_kwargs: {"gate_status": "retry_wait"},
     )
 
     assert gate.main(["--date", "2026-08-12"]) == 3
     assert json.loads(capsys.readouterr().out)["gate_status"] == "retry_wait"
+
+
+def test_cli_forwards_official_fallback_flag(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        gate,
+        "check_program_source_gate",
+        lambda target_date, **kwargs: calls.append((target_date, kwargs))
+        or {"gate_status": "ready_with_warning"},
+    )
+
+    assert gate.main(["--date", "2026-08-12", "--allow-official-fallback"]) == 0
+    assert calls == [(TARGET, {"allow_official_fallback": True})]
+    assert json.loads(capsys.readouterr().out)["gate_status"] == "ready_with_warning"
 
 
 def test_scheduler_gate_reuses_daily_success(monkeypatch):
@@ -265,6 +325,47 @@ def test_scheduler_gate_records_failure(monkeypatch):
     assert scheduler.run_program_source_gate("2026-08-12") is False
     assert records == [
         ("render_program_source_gate_v1", "2026-08-12", "failure", None)
+    ]
+
+
+def test_scheduler_daytime_fallback_uses_isolated_task_and_cli_flag(monkeypatch):
+    calls = []
+    records = []
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: calls.append((args, timeout)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, run_date, status, detail=None: records.append(
+            (task, run_date, status, detail)
+        ),
+    )
+
+    assert scheduler.run_program_source_gate(
+        "2026-08-12", allow_official_fallback=True
+    ) is True
+    assert calls == [
+        (
+            [
+                "scripts/check_program_source_gate.py",
+                "--date",
+                "2026-08-12",
+                "--allow-official-fallback",
+            ],
+            120,
+        )
+    ]
+    assert records == [
+        (
+            "render_program_source_gate_official_fallback_v1",
+            "2026-08-12",
+            "success",
+            None,
+        )
     ]
 
 

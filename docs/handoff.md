@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Daytime source recovery hardening. Open API programs can remain unavailable after official B, the independent official manifest, and persisted DB rows are complete. Permit only the daytime lite bootstrap to use a fully verified official-only fallback; keep morning/nightly/cross-source gates strict and isolate fallback success under its own task name.
 - 2026-08-12: Rin sequential recovery task. Production has complete `180/1080/1080/180` source rows, but lite bootstrap remains blocked because the persisted source-gate task is stale while bootstrap backoff waits. Revalidate the canonical gate immediately only after structural counts are complete, then verify tags/pages and result follow-up without bypassing safety checks.
 - 2026-08-12: Restore the empty "today races" UX. Production audit confirmed 2026-08-12 has 155 races and one ROI candidate, while selecting unpublished 2026-08-13 makes the shared navigation carry that future date into "today races" and show zero. Keep future-date source safety unchanged; fix only the navigation date and verify in a real browser.
 - 2026-08-12: Rin cron defense redesign. Reconcile the agreed 23:30 official / 00:10 Open API / adaptive retry / 06:30 final recovery / 07:30 alert flow with Render production, then implement a dedicated fail-closed bootstrap scheduler, full-run exclusion, pre-generation validation, tests, deployment, and production verification.
@@ -15,6 +16,8 @@
 ## Expected files
 
 - `scripts/render_regular_scheduler.py`
+- `scripts/check_program_source_gate.py`
+- `tests/test_program_source_gate.py`
 - `tests/test_web_recompute_guard.py`
 - `tests/test_scheduler_morning_order.py`
 - `docs/handoff.md`
@@ -77,6 +80,7 @@
 
 ## Failures
 
+- 2026-08-12 09:17 JST canonical revalidation still returned `retry_wait` after DB rows reached `180/1080/1080/180`, because the Open API programs endpoint remained unavailable. Prevention: daytime recovery may continue only when official B race count equals the independent official manifest, official rows have six unique complete boats and the correct date, and DB races/entries/detail entries exactly match; this warning path is persisted separately and cannot satisfy the strict source-gate task.
 - 2026-08-12 09:10 JST production had complete structural counts (`races=180`, `entries=1080`, `detail_entries=1080`, `predictions=180`) but lite bootstrap still recorded `source incomplete`. Root cause: it only read the stale persisted gate task while the dedicated bootstrap respected a 60-minute source backoff, even though the regular collector had already obtained Open API data. Prevention: once structural counts are complete, lite bootstrap reruns the canonical source gate immediately; it still stops all downstream work when that validation fails.
 - The 26-test today-races bundle passed 23 and failed three pre-existing stale cache/badge assertions already recorded by the cron-defense work. The exact navigation regression and JST default tests pass. Prevention: do not change unrelated cache or badge behavior for a one-line navigation fix.
 - The cron-defense commit first failed because the linked-worktree Git metadata under `C:\boat_project\boatrace-analysis\.git\worktrees` is outside the writable workspace and could not create `index.lock`. Prevention: retain the explicit reviewed file list and rerun only add/commit with approved Git metadata access.
@@ -119,6 +123,7 @@
 
 ## Next actions
 
+- Deploy the isolated daytime official-only fallback, trigger one regular-cron run, and verify `render_program_source_gate_official_fallback_v1` succeeds with reason `official_only_fallback` before signals/tags/pages run. Then confirm detail tags/pages reach `180/180`; strict `render_program_source_gate_v1` must remain unsuccessful while Open API programs are unavailable.
 - Deploy the today-navigation fix and verify that selecting unpublished 2026-08-13 no longer makes the "today races" button show zero; the button must return to the current JST date. Continue waiting for the official 2026-08-13 B file before generating future race rows.
 - Deploy the cron-defense commit, sync the Render Blueprint only after reviewing its plan for unintended service deletion, set/verify the new bootstrap service database binding, and confirm the live schedules/commands match `render.yaml`.
 - Production completion for the cron redesign requires: no five-minute full B-file retry loop; `task_runs` shows adaptive next-attempt times; DB remains 180/1080/1080; the 07:00-09:59 detail recovery window fails closed until sources are ready and then generates 180 complete pages exactly once; and the admin warning is correct at/after 07:30.
@@ -138,6 +143,7 @@
 
 ## Verification
 
+- 2026-08-12 official-only daytime fallback regression: 56 gate/web guard tests and 24 scheduler/bootstrap/detail-tag/Render-schedule tests passed. Python compilation and `git diff --check` passed. Tests prove complete official+manifest+DB data yields `ready_with_warning`, missing motor data is rejected, the CLI flag is explicit, and fallback success uses a task name that strict morning/nightly gates do not reuse.
 - 2026-08-12 stale-gate recovery regression: 39 web/gate guard tests and 37 scheduler/source/bootstrap/cron tests passed. The new tests prove complete rows trigger canonical gate revalidation, incomplete rows do not, and a failed revalidation cannot reach signals/tags/pages.
 - 2026-08-12 cron-defense pre-deploy verification: 134 related scheduler/source/parser/detail/admin/smoke tests passed. Python compilation, `render.yaml` parsing, and `git diff --check` passed. SQLite persistence covered task state and admin warning writes; source retry coverage verified only missing stadiums are written.
 - Production delivery: `main` contains `220cdb3` and hardening commit `305047b`. Render web deploy `dep-d9tk4gijobas73d715g0` is live on `305047b`; `boatrace-regular-cron` manual build succeeded on the same commit without triggering an out-of-hours scheduler run. `/healthz` returned HTTP 200 and Render health checks remained HTTP 200 through cutover.
