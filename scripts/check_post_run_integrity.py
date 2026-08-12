@@ -108,7 +108,8 @@ def check_race_detail_rows(conn, target_date: str, race_ids: list[str] | None = 
                COUNT(e.boat_number) AS entry_rows,
                SUM(CASE WHEN e.racer_number IS NOT NULL THEN 1 ELSE 0 END) AS racer_rows,
                SUM(CASE WHEN e.assigned_motor_number IS NOT NULL THEN 1 ELSE 0 END) AS motor_rows,
-               SUM(CASE WHEN e.assigned_motor_top_2_percent IS NOT NULL THEN 1 ELSE 0 END) AS motor_rate_rows
+               SUM(CASE WHEN e.assigned_motor_top_2_percent IS NOT NULL THEN 1 ELSE 0 END) AS motor_rate_rows,
+               SUM(CASE WHEN e.assigned_motor_top_2_percent > 0 THEN 1 ELSE 0 END) AS positive_motor_rate_rows
           FROM races r
           LEFT JOIN race_entries e ON e.race_id = r.race_id
          WHERE r.race_id IN ({placeholders})
@@ -118,8 +119,14 @@ def check_race_detail_rows(conn, target_date: str, race_ids: list[str] | None = 
         tuple(target_races),
     ).fetchall()
     missing = []
-    for race_id, entry_rows, racer_rows, motor_rows, motor_rate_rows in rows:
-        if int(entry_rows or 0) < 6 or int(racer_rows or 0) < 6 or int(motor_rows or 0) < 6:
+    all_zero_motor_rates = []
+    for race_id, entry_rows, racer_rows, motor_rows, motor_rate_rows, positive_motor_rate_rows in rows:
+        if (
+            int(entry_rows or 0) < 6
+            or int(racer_rows or 0) < 6
+            or int(motor_rows or 0) < 6
+            or int(motor_rate_rows or 0) < 6
+        ):
             missing.append(
                 {
                     "race_id": str(race_id),
@@ -127,14 +134,21 @@ def check_race_detail_rows(conn, target_date: str, race_ids: list[str] | None = 
                     "racer_rows": int(racer_rows or 0),
                     "motor_rows": int(motor_rows or 0),
                     "motor_rate_rows": int(motor_rate_rows or 0),
+                    "positive_motor_rate_rows": int(positive_motor_rate_rows or 0),
                 }
             )
+        elif int(positive_motor_rate_rows or 0) == 0:
+            all_zero_motor_rates.append(str(race_id))
     detail = {
         "target_races": len(target_races),
         "checked_races": len(rows),
         "missing": missing[:20],
         "missing_count": len(missing),
+        "all_zero_motor_rates": all_zero_motor_rates[:20],
+        "all_zero_motor_rates_count": len(all_zero_motor_rates),
     }
+    if all_zero_motor_rates and len(rows) == len(target_races) and not missing:
+        return "warning", f"motor rate all-zero {len(all_zero_motor_rates)} races", detail
     if len(rows) != len(target_races):
         return "error", f"race_id照合に欠落があります {len(rows)}/{len(target_races)}", detail
     if missing:

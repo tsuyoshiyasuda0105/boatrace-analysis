@@ -497,7 +497,7 @@
                 </div>
               </td>
               <td class="motor-summary-cell">
-                {% if p.assigned_motor_top_2_percent is not none %}
+                {% if (p.assigned_motor_number is defined and p.assigned_motor_number is not none) or p.assigned_motor_top_2_percent is not none %}
                   <div class="motor-history-cell motor-history-cell-inline">
                     <button
                       type="button"
@@ -507,7 +507,8 @@
                       aria-expanded="false"
                       title="このモーターの直近履歴を表示"
                     >
-                      <span class="motor-rate">{{ '%.2f' | format(p.assigned_motor_top_2_percent) }}</span>
+                      <span class="motor-rate">{% if not p.motor_rate_unavailable and p.assigned_motor_top_2_percent is not none %}{{ '%.2f' | format(p.assigned_motor_top_2_percent) }}{% else %}-{% endif %}</span>
+                      {% if p.motor_rate_estimated is defined and p.motor_rate_estimated %}<span class="motor-rate-note">参考</span>{% endif %}
                       {% if p.assigned_motor_number is defined and p.assigned_motor_number is not none %}
                         <span class="motor-no">M{{ p.assigned_motor_number }}</span>
                       {% endif %}

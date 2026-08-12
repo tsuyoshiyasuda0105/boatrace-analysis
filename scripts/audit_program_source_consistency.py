@@ -39,6 +39,15 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_deadline(value: Any) -> str | None:
     if value is None or str(value).strip() == "":
         return None
@@ -192,7 +201,7 @@ def _normalize_races(
             raise AuditInputError(
                 f"{source} race {stadium:02d}-{race_number:02d} boats must be a list"
             )
-        boats: list[dict[str, int | None]] = []
+        boats: list[dict[str, int | float | None]] = []
         for boat in boats_raw:
             if not isinstance(boat, Mapping):
                 raise AuditInputError(
@@ -210,6 +219,14 @@ def _normalize_races(
                             "assigned_motor_number",
                             "racer_assigned_motor_number",
                             "motor_number",
+                        )
+                    ),
+                    "motor_top_2_percent": _optional_float(
+                        _first_value(
+                            boat,
+                            "assigned_motor_top_2_percent",
+                            "racer_assigned_motor_top_2_percent",
+                            "motor_top_2_percent",
                         )
                     ),
                 }
@@ -349,6 +366,7 @@ def audit_program_source_consistency(
     incomplete_boats: list[dict[str, Any]] = []
     duplicate_boat_numbers: list[dict[str, Any]] = []
     missing_required_fields: list[dict[str, Any]] = []
+    all_zero_motor_rates: list[dict[str, Any]] = []
     invalid_dates: list[dict[str, Any]] = []
     for source, races in (("official_b", official), ("openapi", openapi)):
         for key, race in sorted(races.items()):
@@ -378,6 +396,14 @@ def audit_program_source_consistency(
                                 "field": field,
                             }
                         )
+            motor_rates = [boat.get("motor_top_2_percent") for boat in race["boats"]]
+            if len(motor_rates) == 6 and all(
+                isinstance(value, (int, float)) and float(value) <= 0
+                for value in motor_rates
+            ):
+                all_zero_motor_rates.append(
+                    {**_race_ref(key, race), "source": source}
+                )
 
     mismatches: list[dict[str, Any]] = []
     for key in sorted(set(official) & set(openapi)):
@@ -406,7 +432,7 @@ def audit_program_source_consistency(
         official_boats = _boats_by_number(official_race)
         openapi_boats = _boats_by_number(openapi_race)
         for boat_number in sorted(set(official_boats) & set(openapi_boats)):
-            for field in ("racer_number", "motor_number"):
+            for field in ("racer_number", "motor_number", "motor_top_2_percent"):
                 official_value = official_boats[boat_number].get(field)
                 openapi_value = openapi_boats[boat_number].get(field)
                 if official_value != openapi_value:
@@ -428,6 +454,7 @@ def audit_program_source_consistency(
         "incomplete_boats": incomplete_boats,
         "duplicate_boat_numbers": duplicate_boat_numbers,
         "missing_required_fields": missing_required_fields,
+        "all_zero_motor_rates": all_zero_motor_rates,
         "invalid_dates": invalid_dates,
         "mismatches": mismatches,
     }
@@ -488,6 +515,8 @@ def classify_program_source_gate(
     if any(item.get("field") != "race_closed_at" for item in mismatches):
         return "blocked"
     if mismatches:
+        return "ready_with_warning"
+    if issues.get("all_zero_motor_rates"):
         return "ready_with_warning"
     return "ready"
 

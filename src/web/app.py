@@ -2583,6 +2583,57 @@ def _motor_fact_grade_from_original_mark(mark: Optional[str], rank: Optional[int
     return {"label": str(mark), "tone": tone, "score": rank}
 
 
+def _recover_all_zero_motor_rates(
+    preds: list[dict], info: Optional[dict[str, Any]]
+) -> None:
+    rates = [_safe_float(p.get("assigned_motor_top_2_percent")) for p in preds]
+    if not info or len(rates) != 6 or not all(rate is not None and rate <= 0 for rate in rates):
+        return
+    motor_numbers = sorted(
+        {int(p["assigned_motor_number"]) for p in preds if p.get("assigned_motor_number") is not None}
+    )
+    if not motor_numbers:
+        return
+    cycle_start = _motor_cycle_start(str(info["race_date"]), int(info["stadium_number"]))
+    placeholders = ",".join("?" for _ in motor_numbers)
+    params: list[Any] = [int(info["stadium_number"]), *motor_numbers, str(info["race_date"])]
+    cycle_sql = ""
+    if cycle_start:
+        cycle_sql = "AND r.race_date >= ?"
+        params.append(cycle_start)
+    with db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT e.assigned_motor_number,
+                   COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position <= 2 THEN 1 ELSE 0 END) AS top2
+              FROM races r
+              JOIN race_entries e ON e.race_id = r.race_id
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+             WHERE r.stadium_number = ?
+               AND e.assigned_motor_number IN ({placeholders})
+               AND r.race_date < ?
+               {cycle_sql}
+               AND rr.finishing_position IS NOT NULL
+             GROUP BY e.assigned_motor_number
+            """,
+            tuple(params),
+        ).fetchall()
+    recovered = {
+        int(motor_number): round(float(top2 or 0) / float(starts) * 100.0, 2)
+        for motor_number, starts, top2 in rows
+        if int(starts or 0) > 0
+    }
+    for pred in preds:
+        motor_number = pred.get("assigned_motor_number")
+        if motor_number is None or int(motor_number) not in recovered:
+            continue
+        pred["assigned_motor_top_2_percent"] = recovered[int(motor_number)]
+        pred["motor_rate_estimated"] = True
+
+
 def _attach_motor_fact_grades(
     race_id: str,
     preds: list[dict],
@@ -2594,12 +2645,14 @@ def _attach_motor_fact_grades(
     if not preds:
         return
     info = info or _race_basic_info(race_id)
+    _recover_all_zero_motor_rates(preds, info)
     ex_vals = [_safe_float(p.get("exhibition_time")) for p in preds]
     ex_vals = [v for v in ex_vals if v is not None]
     ex_st_vals = [_safe_float(p.get("start_timing_exhibition")) for p in preds]
     ex_st_vals = [v for v in ex_st_vals if v is not None]
     motor_vals = [_safe_float(p.get("assigned_motor_top_2_percent")) for p in preds]
     motor_vals = [v for v in motor_vals if v is not None]
+    motor_rates_unavailable = len(motor_vals) == 6 and all(v <= 0 for v in motor_vals)
     avg_ex = _mean_or_none(ex_vals)
     avg_ex_st = _mean_or_none(ex_st_vals)
     avg_motor = _mean_or_none(motor_vals)
@@ -2615,6 +2668,7 @@ def _attach_motor_fact_grades(
             logger.debug("ace motor threshold failed: %s", race_id, exc_info=True)
 
     for p in preds:
+        p["motor_rate_unavailable"] = motor_rates_unavailable
         ex_time = _safe_float(p.get("exhibition_time"))
         ex_st = _safe_float(p.get("start_timing_exhibition"))
         motor_rate = _safe_float(p.get("assigned_motor_top_2_percent"))
@@ -4355,7 +4409,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v6"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v14"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v15"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:

@@ -180,7 +180,14 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
                     local_top_2_percent = COALESCE(EXCLUDED.local_top_2_percent, race_entries.local_top_2_percent),
                     local_top_3_percent = COALESCE(EXCLUDED.local_top_3_percent, race_entries.local_top_3_percent),
                     assigned_motor_number = COALESCE(EXCLUDED.assigned_motor_number, race_entries.assigned_motor_number),
-                    assigned_motor_top_2_percent = COALESCE(EXCLUDED.assigned_motor_top_2_percent, race_entries.assigned_motor_top_2_percent),
+                    assigned_motor_top_2_percent = CASE
+                        WHEN EXCLUDED.assigned_motor_top_2_percent IS NULL THEN race_entries.assigned_motor_top_2_percent
+                        WHEN EXCLUDED.assigned_motor_top_2_percent = 0
+                             AND race_entries.assigned_motor_top_2_percent > 0
+                             AND EXCLUDED.assigned_motor_number = race_entries.assigned_motor_number
+                            THEN race_entries.assigned_motor_top_2_percent
+                        ELSE EXCLUDED.assigned_motor_top_2_percent
+                    END,
                     assigned_motor_top_3_percent = COALESCE(EXCLUDED.assigned_motor_top_3_percent, race_entries.assigned_motor_top_3_percent),
                     assigned_boat_number = COALESCE(EXCLUDED.assigned_boat_number, race_entries.assigned_boat_number),
                     assigned_boat_top_2_percent = COALESCE(EXCLUDED.assigned_boat_top_2_percent, race_entries.assigned_boat_top_2_percent),

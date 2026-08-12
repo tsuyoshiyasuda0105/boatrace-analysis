@@ -74,6 +74,28 @@ def upsert_b(conn: sqlite3.Connection, parsed: list[dict]) -> tuple[int, int]:
                 boat.get("assigned_motor_number"), boat.get("assigned_motor_top_2_percent"), None,
                 boat.get("assigned_boat_number"), boat.get("assigned_boat_top_2_percent"), None,
             ))
+            motor_number = boat.get("assigned_motor_number")
+            motor_rate = boat.get("assigned_motor_top_2_percent")
+            if motor_number is not None and motor_rate is not None and float(motor_rate) > 0:
+                conn.execute(
+                    """
+                    UPDATE race_entries
+                       SET assigned_motor_top_2_percent = ?
+                     WHERE race_id = ?
+                       AND boat_number = ?
+                       AND assigned_motor_number = ?
+                       AND (
+                           assigned_motor_top_2_percent IS NULL
+                           OR assigned_motor_top_2_percent <= 0
+                       )
+                    """,
+                    (
+                        motor_rate,
+                        race["race_id"],
+                        boat["boat_number"],
+                        motor_number,
+                    ),
+                )
             n_entries += 1
     return n_races, n_entries
 

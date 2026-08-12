@@ -21,6 +21,7 @@ def _official_race(stadium=1, race=1, deadline="2026-08-12 10:30:00"):
                 "boat_number": boat,
                 "racer_number": 4000 + boat,
                 "assigned_motor_number": 10 + boat,
+                "assigned_motor_top_2_percent": 30.0 + boat,
             }
             for boat in range(1, 7)
         ],
@@ -38,6 +39,7 @@ def _openapi_race(stadium=1, race=1, deadline="2026-08-12T10:30:00"):
                 "racer_boat_number": boat,
                 "racer_number": 4000 + boat,
                 "racer_assigned_motor_number": 10 + boat,
+                "racer_assigned_motor_top_2_percent": 30.0 + boat,
             }
             for boat in range(1, 7)
         ],
@@ -118,6 +120,7 @@ def test_reports_racer_motor_and_deadline_mismatches():
     openapi = _openapi_race(deadline="2026-08-12T10:31:00")
     openapi["boats"][1]["racer_number"] = 9999
     openapi["boats"][2]["racer_assigned_motor_number"] = 99
+    openapi["boats"][3]["racer_assigned_motor_top_2_percent"] = 0.0
 
     report = audit_program_source_consistency(
         [_official_race()], {"programs": [openapi]}
@@ -127,6 +130,7 @@ def test_reports_racer_motor_and_deadline_mismatches():
         (None, "race_closed_at"),
         (2, "racer_number"),
         (3, "motor_number"),
+        (4, "motor_top_2_percent"),
     ]
 
 
@@ -184,6 +188,37 @@ def test_reports_target_date_and_required_field_gaps():
     assert report["issues"]["invalid_dates"][0]["source"] == "openapi"
     assert report["issues"]["missing_required_fields"][0]["field"] == "motor_number"
     assert any(item["field"] == "race_date" for item in report["issues"]["mismatches"])
+
+
+def test_reports_all_zero_motor_rates_as_blocking():
+    official = _official_race()
+    openapi = _openapi_race()
+    for boat in official["boats"]:
+        boat["assigned_motor_top_2_percent"] = 0.0
+    for boat in openapi["boats"]:
+        boat["racer_assigned_motor_top_2_percent"] = 0.0
+
+    report = audit_program_source_consistency(
+        [official],
+        {"programs": [openapi]},
+        expected_payload={"stadium_number": 1, "race_numbers": [1]},
+    )
+
+    assert report["issues"]["all_zero_motor_rates"] == [
+        {
+            "race_id": "20260812-01-01",
+            "stadium_number": 1,
+            "race_number": 1,
+            "source": "official_b",
+        },
+        {
+            "race_id": "20260812-01-01",
+            "stadium_number": 1,
+            "race_number": 1,
+            "source": "openapi",
+        },
+    ]
+    assert classify_program_source_gate(report) == "ready_with_warning"
 
 
 @pytest.mark.parametrize(

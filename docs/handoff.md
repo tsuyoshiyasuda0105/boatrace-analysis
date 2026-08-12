@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Rin P0 Gamagori 12R motor-rate corruption. Production `/race/20260812-07-12` shows all six published motor top-2 rates as `0.00` although the same motors have history since the 2026-06-01 cycle. Prevent Open API placeholder zeroes from overwriting authoritative positive official-B values, make official-B recovery update existing entries, detect missing/all-zero rates in source and post-run audits, and render suspicious all-zero races as unavailable until repaired. No schema change, deletion, or ROI rule change. Skills: project-ops-guard, bug-resistant-programming, webapp-testing. Expected files: `src/collectors/openapi.py`, `scripts/backfill_official.py`, `scripts/audit_program_source_consistency.py`, `scripts/check_post_run_integrity.py`, `src/web/app.py`, `src/web/templates/race.html`, focused tests, `docs/handoff.md`.
 - 2026-08-12: Production login outage. Supabase password authentication succeeds, but the post-auth membership lookup hits `PoolTimeout`; the route misclassifies that infrastructure error as HTTP 401 and increments the shared IP failure counter to ten, locking both Supabase and legacy login for 30 minutes. Increase the four-thread web pool headroom, classify DB failures as retryable HTTP 503 without recording a password failure, restart through deployment to clear the false in-memory lock, and verify both login entry points without exposing credentials. Skills: project-ops-guard, bug-resistant-programming, webapp-testing. Expected files: `src/db/connection.py`, `src/web/auth.py`, `tests/test_db_connection_pool.py`, `tests/test_supabase_auth_stripe_migration.py`, `docs/handoff.md`.
 - 2026-08-12 login recovery completed at `d6f14ec`. Render process `n5hxc` reset the false ten-attempt lock and uses an eight-connection pool for four web threads. Infrastructure failures after successful Supabase authentication now return retryable HTTP 503 without incrementing password failures. All 45 focused auth/pool/smoke tests passed. Production verification returned 200 for legacy login, Supabase login, and the authenticated admin membership page (0.83s); no post-deploy `PoolTimeout`, 401, or 500 was logged. Credentials were not read or exposed.
 - 2026-08-12: Production TOP DB-pool recurrence. `/races` returns HTTP 500 because the Supabase role refresh waits ten seconds for an exhausted PostgreSQL pool. Preserve only an already validated cached role during a transient DB failure, throttle refresh retries, keep unvalidated sessions fail-closed, then deploy and verify the logged-in TOP and Render logs in a real browser. Skills: project-ops-guard, bug-resistant-programming, webapp-testing. Expected files: `src/web/auth.py`, `tests/test_auth_phase_migration.py`, `docs/handoff.md`.
@@ -25,6 +26,16 @@
 
 ## Expected files
 
+- `src/collectors/openapi.py`
+- `scripts/backfill_official.py`
+- `scripts/audit_program_source_consistency.py`
+- `scripts/check_post_run_integrity.py`
+- `src/web/app.py`
+- `src/web/templates/race.html`
+- `tests/test_program_source_consistency.py`
+- `tests/test_motor_history_integrity.py`
+- `tests/test_race_detail_ui_facts.py`
+- `docs/handoff.md`
 - `src/collectors/result_scraper.py`
 - `tests/test_result_scraper_market_signal_targets.py`
 - `scripts/check_post_run_integrity.py`
@@ -68,18 +79,21 @@
 
 ## Conflict avoidance
 
+- The Gamagori motor repair will not delete or rewrite production rows directly. It will preserve positive authoritative rates, allow bounded collector recovery, and keep strategy/ROI rules unchanged; current production repair will be performed only through the existing acquisition path after code verification.
 - The cron-defense task will not change DB schema, ROI strategy rules, odds selection rules, or delete existing Render services. It will reuse the canonical source gate and existing collectors, keep new orchestration isolated, and inspect `git status` before each commit.
 - New audit files are isolated from existing collectors. The current phase will not edit `src/collectors/openapi.py`, `scripts/backfill_official.py`, scheduler code, or database schema until the audit output and tests are reviewed.
 - Preserve unrelated user changes and inspect `git status` before editing.
 
 ## Running processes
 
+- 2026-08-12 Gamagori audit uses one finite logged-in Chrome session and one read-only subagent; no local scheduler, server, or production writer is running.
 - 2026-08-12 cron-defense redesign used no local scheduler, production writer, test server, or background process. Only finite pytest/compile commands were run.
 - 2026-08-12 P0 gate Playwright server on port 5015 is stopped; no listener remains. The manifest subagent is closed. No local scheduler or production writer was started.
 - Both source-consistency subagents are closed. `scripts/with_server.py` stopped the temporary Flask server and Chromium after the Playwright audit. No local process or scheduler is running.
 
 ## Cleanup targets
 
+- `.tmp_gamagori_motor/`, `.tmp_gamagori_motor_retry/`, `.tmp_gamagori_motor_final/`, `.tmp_gamagori_related/`, `.tmp_gamagori_related_retry/`, `.tmp_independent_qa_20260812/`, `.tmp_independent_qa_current_20260812/` (repository-local pytest basetemp directories from the Gamagori P0 task; safe to remove after verification)
 - `.tmp_rin_gate_related/` (repository-local pytest basetemp from stale-gate scheduler regression)
 - `.tmp_cron_defense_unit/`, `.tmp_cron_defense_retry/`, `.tmp_cron_defense_related/`, `.tmp_cron_defense_final/`, `.tmp_cron_defense_persistence/`, `.tmp_cron_defense_delivery/` (repository-local pytest basetemp directories created by this task)
 - `.gate_input/` (temporary isolated real-source gate inputs; no DB or production writes)
@@ -99,6 +113,8 @@
 
 ## Failures
 
+- The first expanded Gamagori regression run passed 99 tests and failed five source-gate fixtures because motor rates were accidentally promoted to a universally required raw field; older valid fixtures and preliminary sources may omit that rate. Prevention: keep racer/motor identity as blocking required fields, classify six explicit zero rates as a non-blocking source warning, and recover display values from verified history without broadening the gate contract.
+- The first Gamagori focused test run passed ingestion, motor-history, and UI tests but failed source-audit tests because the new `_optional_float` helper was inserted before `_optional_int`'s existing conversion block. Prevention: keep each conversion helper self-contained and rerun the exact focused bundle after the minimal indentation repair; no production data or scheduler was touched.
 - 2026-08-12 09:44 JST logged-in TOP and static assets returned HTTP 500 with `psycopg_pool.PoolTimeout` after ten seconds; `/healthz` remained 200 because it skipped DB. Root cause: the global Supabase role-refresh hook also ran for parallel static CSS/JS requests carrying the same stale session cookie, exhausting the four-connection web pool. Prevention: static/favicon/health requests bypass membership refresh; the HTML request still performs the 60-second role check.
 - 2026-08-12 09:25 JST Render accepted a scheduled and manual regular-cron run about ten seconds apart, and both started result polling. Root cause: only signal refresh had a task-level overlap check; the regular scheduler had no process-wide lock. Prevention: guard the complete scheduler with a PostgreSQL advisory lock and treat lock contention as a successful no-op.
 - 2026-08-12 09:26 JST production proved the new official-only gate returned `ready_with_warning` with exact DB `180/1080/1080`, but `run_signal_refresh_slot()` immediately invoked the strict gate again and stopped downstream generation. Prevention: pass an in-process `source_gate_verified=True` only from the already-validated daytime bootstrap; ordinary signal refresh calls still run the strict gate, and a regression test forbids the duplicate call.
@@ -145,6 +161,9 @@
 
 ## Next actions
 
+- P0 priority 1: deploy the Gamagori motor-rate defense, verify `/race/20260812-07-12` shows six non-zero history-derived reference rates instead of source `0.00`, confirm each motor inspector still opens, and confirm no browser console error. Then verify source/post-run audits report the official all-zero source as warning rather than stopping cron.
+- P0 priority 2: next acquisition-day validation remains the highest open operational task: source gate, 180/1080 program completeness, detail/tag cache completion, results, accident snapshot, and ROI settlement.
+- P1 priorities: continue DB-pool monitoring under cron overlap, production Supabase RLS/Policy/GRANT audit, and cold-load 1.5-second stability checks. Existing stale test assertions remain separate cleanup and must not drive production behavior changes.
 - Deploy the isolated daytime official-only fallback, trigger one regular-cron run, and verify `render_program_source_gate_official_fallback_v1` succeeds with reason `official_only_fallback` before signals/tags/pages run. Then confirm detail tags/pages reach `180/180`; strict `render_program_source_gate_v1` must remain unsuccessful while Open API programs are unavailable.
 - Deploy the today-navigation fix and verify that selecting unpublished 2026-08-13 no longer makes the "today races" button show zero; the button must return to the current JST date. Continue waiting for the official 2026-08-13 B file before generating future race rows.
 - Deploy the cron-defense commit, sync the Render Blueprint only after reviewing its plan for unintended service deletion, set/verify the new bootstrap service database binding, and confirm the live schedules/commands match `render.yaml`.
