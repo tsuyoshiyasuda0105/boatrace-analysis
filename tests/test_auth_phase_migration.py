@@ -53,6 +53,87 @@ def test_supabase_role_refresh_uses_session_ttl(monkeypatch):
         assert session["supabase_role_checked_at"] == 1_011.0
 
 
+def test_supabase_role_refresh_uses_validated_role_during_pool_timeout(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    clock = [1_000.0]
+    calls = []
+    monkeypatch.setattr(auth.time, "time", lambda: clock[0])
+
+    def fail_role_refresh(_user_id):
+        calls.append("refresh")
+        raise TimeoutError("pool unavailable")
+
+    monkeypatch.setattr(auth, "get_effective_role", fail_role_refresh)
+
+    with app.test_request_context("/"):
+        session.update({
+            "auth_provider": "supabase",
+            "user_id": "user-1",
+            "role": "paid_member",
+            "is_member": True,
+            "supabase_role_checked_at": 900.0,
+        })
+
+        auth._refresh_supabase_membership_session()
+        auth._refresh_supabase_membership_session()
+
+        assert calls == ["refresh"]
+        assert session["role"] == "paid_member"
+        assert session["is_member"] is True
+        assert session["supabase_role_retry_at"] == 1_015.0
+
+
+def test_supabase_role_refresh_clears_unvalidated_session_on_pool_timeout(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    monkeypatch.setattr(auth.time, "time", lambda: 1_000.0)
+    monkeypatch.setattr(
+        auth,
+        "get_effective_role",
+        lambda _user_id: (_ for _ in ()).throw(TimeoutError("pool unavailable")),
+    )
+
+    with app.test_request_context("/"):
+        session.update({
+            "auth_provider": "supabase",
+            "user_id": "user-1",
+            "role": "admin",
+            "is_member": True,
+        })
+
+        auth._refresh_supabase_membership_session()
+
+        assert dict(session) == {}
+
+
+def test_supabase_role_refresh_does_not_hide_programming_errors(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    monkeypatch.setattr(auth.time, "time", lambda: 1_000.0)
+    monkeypatch.setattr(
+        auth,
+        "get_effective_role",
+        lambda _user_id: (_ for _ in ()).throw(ValueError("bad role query")),
+    )
+
+    with app.test_request_context("/"):
+        session.update({
+            "auth_provider": "supabase",
+            "user_id": "user-1",
+            "role": "paid_member",
+            "is_member": True,
+            "supabase_role_checked_at": 900.0,
+        })
+
+        try:
+            auth._refresh_supabase_membership_session()
+        except ValueError as exc:
+            assert str(exc) == "bad role query"
+        else:
+            raise AssertionError("programming error must not be hidden")
+
+
 def test_supabase_login_session_starts_with_fresh_role_timestamp(monkeypatch):
     app = Flask(__name__)
     app.secret_key = "test-secret"
@@ -65,7 +146,7 @@ def test_supabase_login_session_starts_with_fresh_role_timestamp(monkeypatch):
         assert session["role"] == "paid_member"
 
 
-def test_static_and_health_requests_skip_supabase_role_refresh(monkeypatch):
+def test_public_race_and_health_requests_skip_supabase_role_refresh(monkeypatch):
     app = Flask(__name__, static_folder="static")
     app.secret_key = "test-secret"
     calls = []
@@ -76,14 +157,21 @@ def test_static_and_health_requests_skip_supabase_role_refresh(monkeypatch):
     )
     auth.register_auth_routes(app)
 
-    for path in ("/static/app.css", "/favicon.ico", "/healthz"):
+    for path in (
+        "/",
+        "/races?date=2026-08-12",
+        "/race/20260812-01-01",
+        "/static/app.css",
+        "/favicon.ico",
+        "/healthz",
+    ):
         with app.test_request_context(path):
             app.preprocess_request()
 
     assert calls == []
 
 
-def test_html_request_still_refreshes_supabase_role(monkeypatch):
+def test_protected_html_request_still_refreshes_supabase_role(monkeypatch):
     app = Flask(__name__)
     app.secret_key = "test-secret"
     calls = []
@@ -94,7 +182,7 @@ def test_html_request_still_refreshes_supabase_role(monkeypatch):
     )
     auth.register_auth_routes(app)
 
-    with app.test_request_context("/races"):
+    with app.test_request_context("/member/today-races"):
         app.preprocess_request()
 
     assert calls == ["refresh"]

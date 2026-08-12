@@ -42,7 +42,11 @@ logger = logging.getLogger(__name__)
 # {ip: [(timestamp, success_bool), ...]} 直近 15 分のみ保持
 _LOGIN_ATTEMPTS: dict[str, list[tuple[float, bool]]] = {}
 _SUPABASE_ROLE_REFRESH_TTL_SEC = 60
+_SUPABASE_ROLE_REFRESH_RETRY_SEC = 15
+_SUPABASE_ROLE_MAX_STALE_SEC = 900
 _SUPABASE_ROLE_CHECKED_AT_SESSION_KEY = "supabase_role_checked_at"
+_SUPABASE_ROLE_RETRY_AT_SESSION_KEY = "supabase_role_retry_at"
+_SUPABASE_MEMBER_ROLES = frozenset({"free_member", "paid_member", "admin"})
 _LOCKOUT_THRESHOLD = 10      # 15分以内に失敗10回でロック
 _LOCKOUT_WINDOW_SEC = 900    # 15 分
 _LOCKOUT_DURATION_SEC = 1800  # ロック後30分はログイン不可
@@ -232,12 +236,45 @@ def _refresh_supabase_membership_session() -> None:
         checked_at = float(session.get(_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY) or 0)
     except (TypeError, ValueError):
         checked_at = 0
+    try:
+        retry_at = float(session.get(_SUPABASE_ROLE_RETRY_AT_SESSION_KEY) or 0)
+    except (TypeError, ValueError):
+        retry_at = 0
+    if now < retry_at:
+        return
     if 0 <= now - checked_at < _SUPABASE_ROLE_REFRESH_TTL_SEC:
         return
-    role = get_effective_role(str(user_id))
+    try:
+        role = get_effective_role(str(user_id))
+    except Exception as exc:
+        module_name = exc.__class__.__module__
+        is_transient_db_error = isinstance(exc, TimeoutError) or module_name.startswith(
+            ("psycopg", "psycopg_pool")
+        )
+        if not is_transient_db_error:
+            raise
+        cached_role = str(session.get("role") or "")
+        cached_role_is_valid = (
+            cached_role in _SUPABASE_MEMBER_ROLES
+            and checked_at > 0
+            and 0 <= now - checked_at <= _SUPABASE_ROLE_MAX_STALE_SEC
+        )
+        if not cached_role_is_valid:
+            logger.warning("Supabase role refresh unavailable; clearing unvalidated session")
+            session.clear()
+            return
+        session[_SUPABASE_ROLE_RETRY_AT_SESSION_KEY] = (
+            now + _SUPABASE_ROLE_REFRESH_RETRY_SEC
+        )
+        logger.warning(
+            "Supabase role refresh unavailable; using recently validated cached role",
+            exc_info=True,
+        )
+        return
     session["role"] = role
-    session["is_member"] = role in {"free_member", "paid_member", "admin"}
+    session["is_member"] = role in _SUPABASE_MEMBER_ROLES
     session[_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY] = now
+    session.pop(_SUPABASE_ROLE_RETRY_AT_SESSION_KEY, None)
 
 
 def login_required(view):
@@ -471,7 +508,8 @@ def register_auth_routes(app):
         if (
             request.endpoint == "static"
             or request.path.startswith("/static/")
-            or request.path in {"/favicon.ico", "/healthz"}
+            or request.path.startswith("/race/")
+            or request.path in {"/", "/races", "/favicon.ico", "/healthz"}
         ):
             return None
         _refresh_supabase_membership_session()
