@@ -161,6 +161,9 @@
 
 ## Verification
 
+- 2026-08-12 final production delivery: Web `510a6fd` became live at 10:22 JST. Admin motor status is warning with 1080/1080 caches and zero missing; the five empty histories are explicitly `not established`. TOP measured 848/259/253 ms and race detail 436/242/216 ms. Motor M30 expanded in 823 ms with visible rows and no acquisition/DB error.
+- 2026-08-12 targeted motor repair on production generated exactly 114 missing keys in 21.604 seconds, preserved 966 existing keys, failed zero jobs, and validated all 1080 keys. Full-day validation then returned warning only for five valid empty histories; detail rows and 180 detail pages/tags remained OK.
+- 2026-08-12 result polling at 10:21 JST fetched five official races and inserted 30 rows. The prior Heiwajima 2R gap was repaired. Remaining integrity entries were Ashiya 3R (57 minutes after close), Ashiya 4R (31 minutes), and Heiwajima 4R (19 minutes), all still inside the configured 60-minute non-candidate grace period and eligible for later bounded repair.
 - 2026-08-12 admin recovery-precedence regression: 14 selected admin/motor/data-status tests passed. Current complete counted data downgrades an old task failure to warning; failures without counted recovery remain errors. Python compilation and `git diff --check` passed.
 - 2026-08-12 missing-only motor repair regression: 23 detail-data/motor-integrity/admin tests passed. The unit test seeds one existing motor key and proves the repair generates only the other five boats. Python compilation and `git diff --check` passed.
 - 2026-08-12 motor-history source audit: the latest production status had five `empty_history` payloads at Toda. Motors 45, 65, and 48 had zero prior result-bearing runs before the relevant race; three had no prior entry and two had one same-day entry with no result at morning generation. The monitoring-only correction passed 22 motor/detail/admin tests plus Python compilation and `git diff --check`.
