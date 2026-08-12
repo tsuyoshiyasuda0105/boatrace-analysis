@@ -6,6 +6,7 @@ jobs remain limited to live, bounded collection.
 """
 from __future__ import annotations
 
+import argparse
 from contextlib import contextmanager
 from datetime import datetime, time, timedelta
 import json
@@ -27,6 +28,7 @@ from src.deploy_info import log_deploy_revision  # noqa: E402
 JST = regular.JST
 LOCK_NAME = "boatrace-maintenance-scheduler-v1"
 MAX_PHASE_ATTEMPTS = 3
+SCHEDULER_VERSION = "v2"
 PHASES: tuple[tuple[str, time], ...] = (
     ("accident", time(4, 0)),
     ("program", time(4, 30)),
@@ -79,21 +81,32 @@ def phase_attempts(phase: str, run_date: str) -> int:
     try:
         with db_connect() as conn:
             row = conn.execute(
-                "SELECT run_count FROM task_runs WHERE task_name = ? AND run_date = ?",
+                "SELECT run_count, detail FROM task_runs WHERE task_name = ? AND run_date = ?",
                 (task_name(phase), run_date),
             ).fetchone()
-        return int(row[0] or 0) if row else 0
+        if not row:
+            return 0
+        try:
+            detail = json.loads(row[1] or "{}")
+        except (TypeError, ValueError):
+            detail = {}
+        # Legacy failures predate the circuit breaker and must not permanently
+        # prevent the repaired scheduler from making its own bounded attempts.
+        if detail.get("scheduler_version") != SCHEDULER_VERSION:
+            return 0
+        return int(detail.get("attempt_count") or 0)
     except Exception as exc:  # noqa: BLE001
         print(f"[maintenance] attempt read failed phase={phase} error={type(exc).__name__}", flush=True)
         return 0
 
 
 def record_phase(phase: str, run_date: str, ok: bool, detail: dict) -> None:
+    versioned_detail = {**detail, "scheduler_version": SCHEDULER_VERSION}
     regular.record_task(
         task_name(phase),
         run_date,
         "success" if ok else "failure",
-        detail=json.dumps(detail, ensure_ascii=True, sort_keys=True),
+        detail=json.dumps(versioned_detail, ensure_ascii=True, sort_keys=True),
     )
 
 
@@ -249,8 +262,10 @@ RUNNERS: dict[str, Callable[[datetime], tuple[bool, dict]]] = {
 }
 
 
-def run_tick(now: datetime) -> dict:
-    if not (4 <= now.hour < 7):
+def run_tick(now: datetime, *, allow_recovery: bool = False) -> dict:
+    in_automatic_window = 4 <= now.hour < 7
+    in_bounded_recovery_window = allow_recovery and 7 <= now.hour < 12
+    if not (in_automatic_window or in_bounded_recovery_window):
         return {"status": "noop", "reason": "outside-maintenance-window"}
     run_date = now.date().isoformat()
     with maintenance_lock() as locked:
@@ -281,6 +296,7 @@ def run_tick(now: datetime) -> dict:
             except Exception as exc:  # noqa: BLE001
                 ok = False
                 detail = {"error": f"{type(exc).__name__}: {exc}"[:1000]}
+            detail["attempt_count"] = attempts + 1
             record_phase(phase, run_date, ok, detail)
             return {
                 "status": "success" if ok else "waiting",
@@ -298,9 +314,16 @@ def run_tick(now: datetime) -> dict:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--allow-recovery",
+        action="store_true",
+        help="Allow a manually triggered recovery run from 07:00 through 11:59 JST.",
+    )
+    args = parser.parse_args()
     log_deploy_revision("boatrace-race-detail-cron")
     now = jst_now()
-    result = run_tick(now)
+    result = run_tick(now, allow_recovery=args.allow_recovery)
     print("[maintenance] " + json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
     # Missing/late inputs are expected retry states. Persist the failed phase
     # but keep Render healthy so the next ten-minute tick can resume it.

@@ -18,6 +18,80 @@ def test_tick_is_idle_outside_maintenance_window():
     assert scheduler.run_tick(_now(7, 0))["reason"] == "outside-maintenance-window"
 
 
+def test_manual_recovery_is_bounded_and_runs_after_automatic_window(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler, "maintenance_lock", _locked)
+    monkeypatch.setattr(scheduler, "phase_success", lambda phase, _date: phase == "accident")
+    monkeypatch.setattr(scheduler, "phase_attempts", lambda *_args: 0)
+    monkeypatch.setattr(
+        scheduler,
+        "RUNNERS",
+        {phase: (lambda _now, phase=phase: calls.append(phase) or (True, {})) for phase, _ in scheduler.PHASES},
+    )
+    monkeypatch.setattr(scheduler, "record_phase", lambda *_args: None)
+
+    result = scheduler.run_tick(_now(8, 0), allow_recovery=True)
+
+    assert result["phase"] == "program"
+    assert calls == ["program"]
+    assert scheduler.run_tick(_now(12, 0), allow_recovery=True)["reason"] == "outside-maintenance-window"
+
+
+def test_phase_attempts_ignores_legacy_scheduler_failures(monkeypatch):
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, *_args):
+            return self
+
+        def fetchone(self):
+            return (18, '{"target_date":"2026-08-12"}')
+
+    monkeypatch.setattr(scheduler, "db_connect", _Connection)
+
+    assert scheduler.phase_attempts("accident", "2026-08-13") == 0
+
+
+def test_phase_attempts_uses_current_scheduler_failures(monkeypatch):
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, *_args):
+            return self
+
+        def fetchone(self):
+            return (19, '{"scheduler_version":"v2","attempt_count":2}')
+
+    monkeypatch.setattr(scheduler, "db_connect", _Connection)
+
+    assert scheduler.phase_attempts("accident", "2026-08-13") == 2
+
+
+def test_recorded_phase_uses_new_attempt_count_not_legacy_run_count(monkeypatch):
+    records = []
+    monkeypatch.setattr(scheduler, "maintenance_lock", _locked)
+    monkeypatch.setattr(scheduler, "phase_success", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "phase_attempts", lambda *_args: 0)
+    monkeypatch.setattr(
+        scheduler,
+        "RUNNERS",
+        {**scheduler.RUNNERS, "accident": lambda _now: (False, {"reason": "upstream"})},
+    )
+    monkeypatch.setattr(scheduler, "record_phase", lambda *args: records.append(args))
+
+    scheduler.run_tick(_now(4, 10))
+
+    assert records[0][3]["attempt_count"] == 1
+
+
 def test_tick_runs_only_first_due_incomplete_phase(monkeypatch):
     calls = []
     records = []

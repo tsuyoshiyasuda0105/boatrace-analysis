@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 
 
 def deploy_revision() -> str:
@@ -11,4 +12,9 @@ def deploy_revision() -> str:
 
 
 def log_deploy_revision(service: str) -> None:
-    print(f"[deploy] service={service} revision={deploy_revision()}", flush=True)
+    # Keep stdout available for cron CLIs whose output is a JSON contract.
+    print(
+        f"[deploy] service={service} revision={deploy_revision()}",
+        file=sys.stderr,
+        flush=True,
+    )

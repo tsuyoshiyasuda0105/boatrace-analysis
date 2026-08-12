@@ -135,7 +135,7 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-    startCommand: python scripts/render_maintenance_scheduler.py
+    startCommand: python scripts/render_maintenance_scheduler.py --allow-recovery
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
