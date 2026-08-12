@@ -354,13 +354,19 @@ def check_accident_integrity(conn, target_date: str, _race_ids: list[str] | None
         SELECT source_kind
           FROM racer_accident_period_stats
          WHERE period_start = ?
-           AND source_kind IN ('official_external', 'reconstructed')
+           AND source_kind IN ('official_external', 'reconstructed', 'internal_rebuild')
            AND rule_version = ?
          GROUP BY source_kind
-         ORDER BY CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END
+         ORDER BY CASE WHEN MAX(period_end) >= ? THEN 0 ELSE 1 END,
+                  MAX(period_end) DESC,
+                  CASE source_kind
+                      WHEN 'official_external' THEN 0
+                      WHEN 'reconstructed' THEN 1
+                      ELSE 2
+                  END
          LIMIT 1
         """,
-        (period_start, RULE_VERSION),
+        (period_start, RULE_VERSION, target_date),
     ).fetchone()
     source_kind = str(preferred_source_row[0]) if preferred_source_row and preferred_source_row[0] else "reconstructed"
     period = conn.execute(
