@@ -8,6 +8,7 @@ labels for production so the daytime cron does less work:
 from __future__ import annotations
 
 from scripts import odds_scheduler as base
+from src.deploy_info import log_deploy_revision
 
 
 RENDER_SNAPSHOT_RULES = [
@@ -16,6 +17,7 @@ RENDER_SNAPSHOT_RULES = [
 
 
 def main() -> None:
+    log_deploy_revision("boatrace-odds-cron")
     base.SNAPSHOT_RULES = list(RENDER_SNAPSHOT_RULES)
     base.BIG_SNAPSHOT_RULES = [("T-1d", 24 * 60, 5), *base.SNAPSHOT_RULES]
     base.main()

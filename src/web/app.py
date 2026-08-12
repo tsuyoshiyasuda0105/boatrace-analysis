@@ -64,6 +64,7 @@ from flask import Flask, abort, g, has_request_context, jsonify, make_response, 
 import config
 from src.collectors import openapi
 from src.db.connection import connect as _raw_db_connect
+from src.deploy_info import deploy_revision
 from src.roi_contract import (
     MARKET_SIGNALS_CACHE_VERSION,
     ROI_DAILY_CACHE_VERSION,
@@ -6000,6 +6001,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         status_info = {
             "status": "ok",
             "model_loaded": predictor.artifact is not None,
+            "revision": deploy_revision(),
             "checks": {},
         }
         http_status = 200

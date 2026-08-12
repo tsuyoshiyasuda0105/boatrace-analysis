@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from scripts.backfill_official import upsert_b
-from scripts.check_post_run_integrity import check_race_detail_rows
+from scripts.check_post_run_integrity import check_prediction_rows, check_race_detail_rows
 from src.collectors.openapi import upsert_programs
 from src.web import app as web_app
 
@@ -112,6 +112,28 @@ def test_post_run_integrity_rejects_six_all_zero_motor_rates():
     assert status == "warning"
     assert detail["missing"] == []
     assert detail["all_zero_motor_rates"] == [race_id]
+
+
+def test_post_run_integrity_requires_predictions_for_every_race():
+    conn = _conn()
+    race_ids = ["20260812-07-01", "20260812-07-02"]
+    for race_no, race_id in enumerate(race_ids, start=1):
+        conn.execute(
+            "INSERT INTO races (race_id, race_date, stadium_number, race_number) "
+            "VALUES (?, '2026-08-12', 7, ?)",
+            (race_id, race_no),
+        )
+    conn.execute(
+        "INSERT INTO predictions (race_id, boat_number, model_version, prob_first, predicted_at) "
+        "VALUES (?, 1, 'test', 0.1, '2026-08-12T00:00:00')",
+        (race_ids[0],),
+    )
+
+    status, _message, detail = check_prediction_rows(conn, "2026-08-12", race_ids)
+
+    assert status == "error"
+    assert detail["prediction_races"] == 1
+    assert detail["missing_count"] == 1
 
 
 def test_race_detail_recovers_all_zero_rates_from_current_cycle_history(monkeypatch):

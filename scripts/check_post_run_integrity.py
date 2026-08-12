@@ -431,6 +431,28 @@ CHECKS = {
 }
 
 
+def check_prediction_rows(conn, target_date: str, race_ids: list[str] | None = None) -> tuple[str, str, dict]:
+    target_races = _select_race_ids(conn, target_date, race_ids)
+    if not target_races:
+        return "error", "no target races for prediction check", {"race_count": 0}
+    rows = conn.execute(
+        f"SELECT COUNT(DISTINCT race_id) FROM predictions WHERE race_id IN ({_placeholders(target_races)})",
+        tuple(target_races),
+    ).fetchone()
+    prediction_races = int(rows[0] or 0) if rows else 0
+    detail = {
+        "target_races": len(target_races),
+        "prediction_races": prediction_races,
+        "missing_count": max(0, len(target_races) - prediction_races),
+    }
+    if prediction_races < len(target_races):
+        return "error", f"prediction rows incomplete {prediction_races}/{len(target_races)} races", detail
+    return "ok", f"prediction rows OK {prediction_races} races", detail
+
+
+CHECKS["predictions"] = check_prediction_rows
+
+
 def check_result_after_close(conn, target_date: str, race_ids: list[str] | None = None) -> tuple[str, str, dict]:
     target_races = _select_race_ids(conn, target_date, race_ids)
     if not target_races:
@@ -493,7 +515,7 @@ CHECKS["result"] = check_result_after_close
 STAGE_SCOPES = {
     # Morning prewarm: source rows and caches should exist, but exhibition/result
     # data is not expected yet.
-    "morning": ["detail_rows", "motor_cache", "detail_cache"],
+    "morning": ["detail_rows", "predictions", "motor_cache", "detail_cache"],
     # Exhibition cron: validate only the races it touched. Missing exhibition
     # values themselves are not fatal because unsupported venues/sources exist.
     "exhibition": ["detail_rows", "motor_cache", "detail_cache"],
@@ -547,6 +569,11 @@ def main() -> int:
     )
     parser.add_argument("--race-id", action="append", default=[])
     parser.add_argument("--no-persist", action="store_true")
+    parser.add_argument(
+        "--warnings-ok",
+        action="store_true",
+        help="persist warnings but return success unless an error is present",
+    )
     args = parser.parse_args()
     scopes = scopes_for_stage(args.stage) if args.stage else args.scope or ["all"]
     summary = run_checks(
@@ -558,7 +585,7 @@ def main() -> int:
     if args.stage:
         summary["stage"] = args.stage
     print("[post-run-integrity] " + json.dumps(summary, ensure_ascii=False), flush=True)
-    return 2 if summary["status"] == "error" else 1 if summary["status"] == "warning" else 0
+    return 2 if summary["status"] == "error" else 0 if args.warnings_ok else 1 if summary["status"] == "warning" else 0
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from scripts import scrape_beforeinfo_live as live_beforeinfo  # noqa: E402
 from src.collectors import original_exhibition as original_exhibition_collector  # noqa: E402
 from src.db.cron_run_log import record_cron_run  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
+from src.deploy_info import log_deploy_revision  # noqa: E402
 
 
 MOTOR_CACHE_VERSION = "v9"
@@ -579,6 +580,7 @@ def refresh(target_date: str, *, delay_seconds: int = 60, limit: int = 12) -> di
 
 
 def main() -> int:
+    log_deploy_revision("boatrace-exhibition-detail-cron")
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=datetime.now(JST).date().isoformat())
     parser.add_argument("--delay-seconds", type=int, default=60)

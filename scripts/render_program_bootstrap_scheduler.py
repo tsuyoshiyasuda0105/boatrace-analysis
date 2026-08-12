@@ -31,6 +31,7 @@ from src.db.connection import (  # noqa: E402
     connect as db_connect,
 )
 from src.parsers.official_b import parse_b_text  # noqa: E402
+from src.deploy_info import log_deploy_revision  # noqa: E402
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -568,6 +569,7 @@ def run_tick(now: datetime) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    log_deploy_revision("boatrace-program-bootstrap-cron")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--now", help="test-only JST timestamp")
     args = parser.parse_args(argv)

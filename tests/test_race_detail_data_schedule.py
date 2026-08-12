@@ -152,7 +152,8 @@ def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
     assert "_race_detail_tag_cache_key" in source
     assert "racer_accident_period_stats" in source
     assert "racer_accident_rank_snapshots" in source
-    assert '"morning": ["detail_rows", "motor_cache", "detail_cache"]' in source
+    assert "def check_prediction_rows" in source
+    assert '"morning": ["detail_rows", "predictions", "motor_cache", "detail_cache"]' in source
     assert '"exhibition": ["detail_rows", "motor_cache", "detail_cache"]' in source
     assert '"post-result": ["result"]' in source
     assert '"nightly": ["accident"]' in source

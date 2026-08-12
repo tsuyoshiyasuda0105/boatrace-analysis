@@ -21,10 +21,12 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-maintenance")
 
 from scripts import render_regular_scheduler as regular  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
+from src.deploy_info import log_deploy_revision  # noqa: E402
 
 
 JST = regular.JST
 LOCK_NAME = "boatrace-maintenance-scheduler-v1"
+MAX_PHASE_ATTEMPTS = 3
 PHASES: tuple[tuple[str, time], ...] = (
     ("accident", time(4, 0)),
     ("program", time(4, 30)),
@@ -33,6 +35,14 @@ PHASES: tuple[tuple[str, time], ...] = (
     ("snapshot", time(6, 15)),
     ("integrity", time(6, 30)),
 )
+REQUIRED_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "accident": (),
+    "program": (),
+    "motor": ("program",),
+    "detail": ("program", "motor"),
+    "snapshot": ("program", "detail"),
+    "integrity": ("program", "motor", "detail", "snapshot"),
+}
 
 
 def jst_now() -> datetime:
@@ -65,6 +75,19 @@ def phase_success(phase: str, run_date: str) -> bool:
     return regular.task_success_exists(task_name(phase), run_date)
 
 
+def phase_attempts(phase: str, run_date: str) -> int:
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT run_count FROM task_runs WHERE task_name = ? AND run_date = ?",
+                (task_name(phase), run_date),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception as exc:  # noqa: BLE001
+        print(f"[maintenance] attempt read failed phase={phase} error={type(exc).__name__}", flush=True)
+        return 0
+
+
 def record_phase(phase: str, run_date: str, ok: bool, detail: dict) -> None:
     regular.record_task(
         task_name(phase),
@@ -75,19 +98,47 @@ def record_phase(phase: str, run_date: str, ok: bool, detail: dict) -> None:
 
 
 def run_accident_phase(now: datetime) -> tuple[bool, dict]:
+    run_date = now.date().isoformat()
     target = regular.latest_completed_results_date() or (
         now.date() - timedelta(days=1)
     ).isoformat()
     target_dt = datetime.fromisoformat(target).replace(tzinfo=JST)
-    ok = regular.run_accident_rebuild(regular.accident_period_start(target_dt), target)
-    if ok:
-        ok = regular.run_accident_rank_snapshot(target)
-    if ok:
-        ok = regular.run_py(
+    detail: dict[str, object] = {"target_date": target}
+
+    rebuild_phase = "accident_rebuild"
+    rebuild_ok = phase_success(rebuild_phase, run_date)
+    if not rebuild_ok:
+        rebuild_ok = regular.run_accident_rebuild(
+            regular.accident_period_start(target_dt), target
+        )
+        record_phase(rebuild_phase, run_date, rebuild_ok, {"target_date": target})
+    detail["rebuild_ok"] = bool(rebuild_ok)
+    if not rebuild_ok:
+        detail["failed_step"] = "rebuild"
+        return False, detail
+
+    snapshot_phase = "accident_snapshot"
+    snapshot_ok = phase_success(snapshot_phase, run_date)
+    if not snapshot_ok:
+        snapshot_ok = regular.run_accident_rank_snapshot(target)
+        record_phase(snapshot_phase, run_date, snapshot_ok, {"target_date": target})
+    detail["snapshot_ok"] = bool(snapshot_ok)
+    if not snapshot_ok:
+        detail["failed_step"] = "snapshot"
+        return False, detail
+
+    integrity_phase = "accident_integrity"
+    integrity_ok = phase_success(integrity_phase, run_date)
+    if not integrity_ok:
+        integrity_ok = regular.run_py(
             ["scripts/check_post_run_integrity.py", "--date", target, "--stage", "nightly"],
             timeout=300,
         )
-    return ok, {"target_date": target}
+        record_phase(integrity_phase, run_date, integrity_ok, {"target_date": target})
+    detail["integrity_ok"] = bool(integrity_ok)
+    if not integrity_ok:
+        detail["failed_step"] = "integrity"
+    return bool(integrity_ok), detail
 
 
 def run_program_phase(now: datetime) -> tuple[bool, dict]:
@@ -158,11 +209,34 @@ def run_snapshot_phase(now: datetime) -> tuple[bool, dict]:
 
 def run_integrity_phase(now: datetime) -> tuple[bool, dict]:
     today = now.date().isoformat()
+    run_date = today
+    roi_phase = "roi_reconcile"
+    roi_ok = phase_success(roi_phase, run_date)
+    if not roi_ok:
+        roi_ok = regular.run_roi_daily_self_heal(now)
+        record_phase(
+            roi_phase,
+            run_date,
+            roi_ok,
+            {"target_date": (now.date() - timedelta(days=1)).isoformat()},
+        )
+    if not roi_ok:
+        return False, {
+            "date": today,
+            "stage": "morning",
+            "roi_ok": False,
+            "failed_step": "roi_reconcile",
+        }
     ok = regular.run_py(
-        ["scripts/check_post_run_integrity.py", "--date", today, "--stage", "morning"],
+        [
+            "scripts/check_post_run_integrity.py",
+            "--date", today,
+            "--stage", "morning",
+            "--warnings-ok",
+        ],
         timeout=300,
     )
-    return ok, {"date": today, "stage": "morning"}
+    return ok, {"date": today, "stage": "morning", "roi_ok": True}
 
 
 RUNNERS: dict[str, Callable[[datetime], tuple[bool, dict]]] = {
@@ -187,6 +261,21 @@ def run_tick(now: datetime) -> dict:
                 break
             if phase_success(phase, run_date):
                 continue
+            attempts = phase_attempts(phase, run_date)
+            if attempts >= MAX_PHASE_ATTEMPTS:
+                print(
+                    f"[maintenance] circuit open phase={phase} attempts={attempts}",
+                    flush=True,
+                )
+                continue
+            dependencies = REQUIRED_DEPENDENCIES.get(phase, ())
+            missing_dependencies = [
+                dependency
+                for dependency in dependencies
+                if not phase_success(dependency, run_date)
+            ]
+            if missing_dependencies:
+                continue
             try:
                 ok, detail = RUNNERS[phase](now)
             except Exception as exc:  # noqa: BLE001
@@ -197,12 +286,19 @@ def run_tick(now: datetime) -> dict:
                 "status": "success" if ok else "waiting",
                 "date": run_date,
                 "phase": phase,
+                "attempt": attempts + 1,
                 "detail": detail,
             }
-    return {"status": "ready", "date": run_date}
+    incomplete = [phase for phase, _ in PHASES if not phase_success(phase, run_date)]
+    return {
+        "status": "ready" if not incomplete else "degraded",
+        "date": run_date,
+        "incomplete_phases": incomplete,
+    }
 
 
 def main() -> int:
+    log_deploy_revision("boatrace-race-detail-cron")
     now = jst_now()
     result = run_tick(now)
     print("[maintenance] " + json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)

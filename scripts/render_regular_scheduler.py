@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.db.connection import connect as db_connect
 from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature
+from src.deploy_info import log_deploy_revision
 import config
 
 
@@ -1200,6 +1201,7 @@ def run_nightly(now: datetime) -> bool:
 
 @_with_regular_run_lock
 def main() -> int:
+    log_deploy_revision("boatrace-regular-cron")
     os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-cron")
     now = jst_now()
     today = now.date().isoformat()

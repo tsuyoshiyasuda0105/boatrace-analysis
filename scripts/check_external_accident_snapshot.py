@@ -30,6 +30,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import config  # noqa: E402
+from src.deploy_info import log_deploy_revision  # noqa: E402
 from src.db.connection import assert_safe_production_write, connect as db_connect  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -561,6 +562,7 @@ def build_and_compare(check_date: str, *, dry_run: bool = False) -> dict[str, An
 
 
 def main() -> int:
+    log_deploy_revision("boatrace-accident-external-check-cron")
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=date.today().isoformat(), help="check_date written into snapshots/system_status")
     ap.add_argument("--no-write-status", action="store_true")
