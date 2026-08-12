@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Result completeness recovery. Production integrity checks covered every closed race, but the official Layer3 repair selected only ROI/high-signal candidates, leaving old non-candidate Open API shells unresolved. Keep ROI candidates immediate, add a 60-minute delayed repair for other races, cap each run at 12 official requests, and prioritize candidates ahead of the repair backlog.
 - 2026-08-12: Web DB-pool exhaustion recovery. Logged-in TOP requests triggered eight `PoolTimeout` errors at 09:44 while static CSS/JS requests unnecessarily ran the Supabase role-refresh hook. Exclude static assets, favicon, and health checks from membership DB refresh, then deploy and rerun logged-in browser verification.
 - 2026-08-12: Regular-cron overlap prevention. Production logged two scheduler processes starting ten seconds apart at 09:25 while the service runs every five minutes. Add a PostgreSQL advisory lock around the complete regular scheduler; a second trigger must exit successfully without polling, recomputing, or prewarming.
 - 2026-08-12: Daytime source recovery hardening. Open API programs can remain unavailable after official B, the independent official manifest, and persisted DB rows are complete. Permit only the daytime lite bootstrap to use a fully verified official-only fallback; keep morning/nightly/cross-source gates strict and isolate fallback success under its own task name.
@@ -17,6 +18,9 @@
 
 ## Expected files
 
+- `src/collectors/result_scraper.py`
+- `tests/test_result_scraper_market_signal_targets.py`
+- `docs/handoff.md`
 - `scripts/render_regular_scheduler.py`
 - `scripts/check_program_source_gate.py`
 - `tests/test_program_source_gate.py`

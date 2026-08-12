@@ -158,8 +158,13 @@ def overwrite_race_previews_weather(race_id: str, weather: dict, conn) -> int:
     return n
 
 
-def scrape_results_for_pending_races(target_date: date, conn,
-                                     l4_only: bool = True) -> dict:
+def scrape_results_for_pending_races(
+    target_date: date,
+    conn,
+    l4_only: bool = True,
+    non_candidate_delay_minutes: int = 60,
+    max_races: int = 12,
+) -> dict:
     """指定日の「締切後だが race_payouts が無い」レースを抽出し、
     boatrace.jp から結果をスクレイプして upsert_results 互換ペイロードに梱包。
 
@@ -232,8 +237,6 @@ def scrape_results_for_pending_races(target_date: date, conn,
     now = _jst_now_naive()
     for race_id, closed_at in cur.fetchall():
         # L4 フィルタ
-        if l4_only and race_id not in l4_candidate_ids:
-            continue
         # closed_at は datetime (psycopg) or 文字列 (SQLite)
         close_dt = _coerce_jst_naive(closed_at)
         if close_dt is None:
@@ -243,6 +246,12 @@ def scrape_results_for_pending_races(target_date: date, conn,
             continue
         # 現時刻より 24h 以上前のものは別途バッチ処理で扱うのでスキップ
         if now > close_dt + timedelta(hours=24):
+            continue
+        if (
+            l4_only
+            and race_id not in l4_candidate_ids
+            and now < close_dt + timedelta(minutes=non_candidate_delay_minutes)
+        ):
             continue
         pending.append(race_id)
 
@@ -270,8 +279,6 @@ def scrape_results_for_pending_races(target_date: date, conn,
     for race_id, closed_at in cur.fetchall():
         if race_id in seen:
             continue
-        if l4_only and race_id not in l4_candidate_ids:
-            continue
         close_dt = _coerce_jst_naive(closed_at)
         if close_dt is None:
             continue
@@ -279,8 +286,19 @@ def scrape_results_for_pending_races(target_date: date, conn,
             continue
         if now > close_dt + timedelta(hours=24):
             continue
+        if (
+            l4_only
+            and race_id not in l4_candidate_ids
+            and now < close_dt + timedelta(minutes=non_candidate_delay_minutes)
+        ):
+            continue
         pending.append(race_id)
         seen.add(race_id)
+
+    if l4_only:
+        pending.sort(key=lambda race_id: race_id not in l4_candidate_ids)
+    if max_races > 0:
+        pending = pending[:max_races]
 
     results = []
     failed: list[str] = []
