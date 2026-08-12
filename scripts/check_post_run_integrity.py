@@ -239,8 +239,10 @@ def check_motor_history_caches(conn, target_date: str, race_ids: list[str] | Non
 
     missing: list[str] = []
     invalid: list[dict] = []
+    empty_history: list[dict] = []
     missing_by_stadium: dict[str, int] = {}
     invalid_by_stadium: dict[str, int] = {}
+    empty_history_by_stadium: dict[str, int] = {}
 
     def add_count(bucket: dict[str, int], race_id: str) -> None:
         meta = race_meta.get(race_id) or {}
@@ -282,8 +284,21 @@ def check_motor_history_caches(conn, target_date: str, race_ids: list[str] | Non
             reasons.append("missing_current")
         if len(position_boats) < 6:
             reasons.append(f"position_boats={len(position_boats)}")
-        if not isinstance(history_rows, list) or not history_rows:
-            reasons.append("empty_history")
+        if not isinstance(history_rows, list):
+            reasons.append("missing_history")
+        elif not history_rows:
+            meta = race_meta.get(race_id) or {}
+            empty_history.append(
+                {
+                    "cache_key": key,
+                    "race_id": race_id,
+                    "stadium_number": meta.get("stadium_number"),
+                    "race_number": meta.get("race_number"),
+                    "boat": boat,
+                    "reason": "empty_history",
+                }
+            )
+            add_count(empty_history_by_stadium, race_id)
         if reasons:
             meta = race_meta.get(race_id) or {}
             invalid.append(
@@ -305,11 +320,16 @@ def check_motor_history_caches(conn, target_date: str, race_ids: list[str] | Non
         "missing_motor_histories_count": len(missing),
         "invalid_motor_histories": invalid[:20],
         "invalid_motor_histories_count": len(invalid),
+        "empty_motor_histories": empty_history[:20],
+        "empty_motor_histories_count": len(empty_history),
         "missing_by_stadium": missing_by_stadium,
         "invalid_by_stadium": invalid_by_stadium,
+        "empty_history_by_stadium": empty_history_by_stadium,
     }
     if missing or invalid:
         return "error", f"motor history cache incomplete {len(missing) + len(invalid)} items", detail
+    if empty_history:
+        return "warning", f"motor history not established {len(empty_history)} items", detail
     return "ok", f"motor history cache OK {len(expected)} items", detail
 
 

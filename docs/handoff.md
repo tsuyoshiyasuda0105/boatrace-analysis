@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Motor-history integrity classification. The latest persisted check has five empty histories at Toda (stadium 2), not nine at stadium 7. Three motors have no prior entry after the May replacement and two have an earlier same-day entry whose result was unavailable when the morning cache was built. Treat an empty history list as warning; missing/malformed history, current data, cache keys, or six-boat positions remain errors.
 - 2026-08-12: Result completeness recovery. Production integrity checks covered every closed race, but the official Layer3 repair selected only ROI/high-signal candidates, leaving old non-candidate Open API shells unresolved. Keep ROI candidates immediate, add a 60-minute delayed repair for other races, cap each run at 12 official requests, and prioritize candidates ahead of the repair backlog.
 - 2026-08-12: Web DB-pool exhaustion recovery. Logged-in TOP requests triggered eight `PoolTimeout` errors at 09:44 while static CSS/JS requests unnecessarily ran the Supabase role-refresh hook. Exclude static assets, favicon, and health checks from membership DB refresh, then deploy and rerun logged-in browser verification.
 - 2026-08-12: Regular-cron overlap prevention. Production logged two scheduler processes starting ten seconds apart at 09:25 while the service runs every five minutes. Add a PostgreSQL advisory lock around the complete regular scheduler; a second trigger must exit successfully without polling, recomputing, or prewarming.
@@ -20,6 +21,8 @@
 
 - `src/collectors/result_scraper.py`
 - `tests/test_result_scraper_market_signal_targets.py`
+- `scripts/check_post_run_integrity.py`
+- `tests/test_motor_history_integrity.py`
 - `docs/handoff.md`
 - `scripts/render_regular_scheduler.py`
 - `scripts/check_program_source_gate.py`
@@ -143,7 +146,7 @@
 - Delivery completion criteria: deployed `main` contains the gate commit; `/healthz` is HTTP 200; source gate is `ready`/`ready_with_warning` or a correctly classified temporary `retry_wait`; incomplete data does not reach prediction/ROI/tag/page generation; TOP/detail median targets remain at or below 1.5 seconds; browser runtime errors are zero; no local scheduler or production writer is left running.
 - Resolved deployment blocker: Render ephemeral raw inputs are now recovered inside the gate, one versioned daily success is persisted through `task_runs`, and gate failure stops downstream work with a non-zero scheduler exit.
 - P0 source guard is delivered. Production confirmed both a complete `ready_with_warning` day and an unpublished-day `retry_wait` without downstream generation.
-- Investigate nine `motor_history_v9` payloads for Edogawa (stadium 7) that exist but have an empty `history` array. Do not delete or regenerate them until source availability and expected fallback behavior are confirmed.
+- Resolved the motor-history alert classification without deleting or regenerating data. The latest five empty histories at Toda are valid not-yet-established histories; monitor them as warnings while keeping structural cache defects as errors.
 - Confirm the next JST daytime cron records complete source counts and lets `render_lite_daytime_bootstrap` finish, or records `source_incomplete` without running downstream tag/page prewarm.
 - Monitor Render pool health and TOP/race-detail latency; investigate only if repeated measurements regress beyond the 1.5-second target.
 - Confirm failed or not-yet-published result pages are recovered by a later five-minute cycle and that ROI settlement remains consistent.
@@ -154,6 +157,8 @@
 
 ## Verification
 
+- 2026-08-12 motor-history source audit: the latest production status had five `empty_history` payloads at Toda. Motors 45, 65, and 48 had zero prior result-bearing runs before the relevant race; three had no prior entry and two had one same-day entry with no result at morning generation. The monitoring-only correction passed 22 motor/detail/admin tests plus Python compilation and `git diff --check`.
+- 2026-08-12 result-repair production verification: regular cron built and ran `bb6b1ff`. At 10:01 JST it fetched four official races and inserted 24 result rows; persistent Ashiya 1R was repaired, reducing integrity gaps from three to two. The two remaining races were only 37 and 51 minutes past close and correctly remained inside the 60-minute Open API grace period. Result/ROI regression passed 25 tests plus compilation and `git diff --check`.
 - 2026-08-12 production web recovery `ac1b86f`: Render deploy became available at 09:49:53 JST. Logged-in TOP loaded in 5.514s immediately after deploy, then 0.561s/0.533s; it rendered 180 race links plus accident, escape, ace-motor `M`, and `!` badges with no DB error. Web logs showed `/races` and `/static/style.css` HTTP 200 and zero post-deploy `PoolTimeout`. Race detail cold/warm timings were 3.755s then 0.186s/0.183s; motor M30 expanded in 0.997s with `aria-expanded=true`, history rows, and no acquisition error.
 - 2026-08-12 static-auth DB guard regression: 27 auth/Playwright/Supabase/pool tests passed. Static assets, favicon, and health checks skip Supabase role refresh; a normal `/races` request still refreshes. Python compilation and `git diff --check` passed.
 - 2026-08-12 production recovery: official-only fallback generated eight market signals from `180/180`; detail tags completed `180/180` with zero failures; detail HTML completed `180/180`, persistent missing `0`, median generation 1.011s, and cached read samples 0.074-0.146s. Regular-cron advisory lock was then verified live: a second run started during result polling and logged `skip: previous run active` before any collector work, then exited successfully.
