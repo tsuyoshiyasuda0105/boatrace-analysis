@@ -123,6 +123,7 @@ def _prewarm_motors(
     failures: list[dict],
     *,
     workers: int,
+    missing_only: bool = False,
 ) -> int:
     """Build all motor histories with bounded DB concurrency."""
     jobs: list[tuple[str, int, dict]] = []
@@ -132,6 +133,32 @@ def _prewarm_motors(
             _record_failure(failures, "motor", race_id, None, RuntimeError("race info not found"))
             continue
         jobs.extend((race_id, boat, info) for boat in range(1, 7))
+
+    if missing_only and jobs:
+        expected = {
+            f"motor_history_{MOTOR_CACHE_VERSION}:{race_id}:{boat}"
+            for race_id, boat, _info in jobs
+        }
+        found: set[str] = set()
+        with db_connect() as conn:
+            keys = sorted(expected)
+            for start in range(0, len(keys), 900):
+                chunk = keys[start : start + 900]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"SELECT cache_key FROM page_html_cache WHERE cache_key IN ({placeholders})",
+                    tuple(chunk),
+                ).fetchall()
+                found.update(str(row[0]) for row in rows)
+        jobs = [
+            job
+            for job in jobs
+            if f"motor_history_{MOTOR_CACHE_VERSION}:{job[0]}:{job[1]}" not in found
+        ]
+        print(
+            f"[race-detail-daily] motor missing-only jobs={len(jobs)} existing={len(found)}",
+            flush=True,
+        )
 
     def build(job: tuple[str, int, dict]) -> tuple[str, int, bool]:
         race_id, boat, info = job
@@ -164,7 +191,13 @@ def _prewarm_motors(
     return generated
 
 
-def prewarm(target_date: str, *, phase: str = "all", motor_workers: int = 4) -> dict:
+def prewarm(
+    target_date: str,
+    *,
+    phase: str = "all",
+    motor_workers: int = 4,
+    missing_only: bool = False,
+) -> dict:
     race_infos = _race_infos(target_date)
     race_ids = list(race_infos)
     failures: list[dict] = []
@@ -190,6 +223,7 @@ def prewarm(target_date: str, *, phase: str = "all", motor_workers: int = 4) -> 
         race_infos,
         failures,
         workers=motor_workers,
+        missing_only=missing_only,
     )
 
     # Tags must exist before complete HTML is rendered.
@@ -230,13 +264,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=datetime.now(JST).date().isoformat())
     parser.add_argument("--phase", choices=("all", "motor"), default="all")
+    parser.add_argument("--missing-only", action="store_true")
     parser.add_argument(
         "--motor-workers",
         type=int,
         default=int(os.getenv("BOATRACE_MOTOR_PREWARM_WORKERS", "4")),
     )
     args = parser.parse_args()
-    task_name = f"render_race_detail_{args.phase}"
+    task_name = f"render_race_detail_{args.phase}{'_repair' if args.missing_only else ''}"
     existing_state = _existing_run_state(task_name, args.date)
     if existing_state:
         print(
@@ -259,7 +294,12 @@ def main() -> int:
             return 0 if gate_status == "retry_wait" else 1
     record_cron_run(task_name, args.date, "running")
     try:
-        summary = prewarm(args.date, phase=args.phase, motor_workers=args.motor_workers)
+        summary = prewarm(
+            args.date,
+            phase=args.phase,
+            motor_workers=args.motor_workers,
+            missing_only=args.missing_only,
+        )
     except Exception as exc:
         record_cron_run(
             task_name,

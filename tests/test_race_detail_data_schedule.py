@@ -1,4 +1,7 @@
 from pathlib import Path
+import sqlite3
+
+from scripts import prewarm_race_detail_data
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,11 +94,45 @@ def test_motor_history_can_be_run_alone_with_bounded_parallelism():
     refresh_source = (ROOT / "scripts" / "refresh_race_detail_after_exhibition.py").read_text(encoding="utf-8")
 
     assert 'choices=("all", "motor")' in source
+    assert 'parser.add_argument("--missing-only", action="store_true")' in source
+    assert "motor missing-only jobs=" in source
     assert "ThreadPoolExecutor(max_workers=max(1, workers))" in source
     assert 'MOTOR_CACHE_VERSION = "v9"' in source
     assert 'MOTOR_CACHE_VERSION = "v9"' in refresh_source
     assert 'BOATRACE_MOTOR_PREWARM_WORKERS", "4"' in source
     assert 'BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1"' in source
+
+
+def test_motor_missing_only_preserves_existing_cache(monkeypatch):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.execute("CREATE TABLE page_html_cache (cache_key TEXT PRIMARY KEY)")
+    conn.execute(
+        "INSERT INTO page_html_cache VALUES (?)",
+        ("motor_history_v9:20260812-02-01:1",),
+    )
+    written = []
+    monkeypatch.setattr(prewarm_race_detail_data, "db_connect", lambda: conn)
+    monkeypatch.setattr(
+        prewarm_race_detail_data.web_app,
+        "_motor_history_payload",
+        lambda race_id, boat, info=None: {"race_id": race_id, "boat": boat},
+    )
+    monkeypatch.setattr(
+        prewarm_race_detail_data.web_app,
+        "_write_json_cache",
+        lambda key, payload: written.append((key, payload)),
+    )
+
+    generated = prewarm_race_detail_data._prewarm_motors(
+        ["20260812-02-01"],
+        {"20260812-02-01": {"race_date": "2026-08-12"}},
+        [],
+        workers=1,
+        missing_only=True,
+    )
+
+    assert generated == 5
+    assert all(not key.endswith(":1") for key, _payload in written)
 
 
 def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():

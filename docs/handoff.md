@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Missing-only motor repair. After all 180 races became available, the morning cache still covered the earlier 155-race source set, leaving 114 real missing keys: Ashiya 42 and Fukuoka 72. Add a bounded `--phase motor --missing-only` repair path that preserves all existing motor caches and writes only absent keys.
 - 2026-08-12: Motor-history integrity classification. The latest persisted check has five empty histories at Toda (stadium 2), not nine at stadium 7. Three motors have no prior entry after the May replacement and two have an earlier same-day entry whose result was unavailable when the morning cache was built. Treat an empty history list as warning; missing/malformed history, current data, cache keys, or six-boat positions remain errors.
 - 2026-08-12: Result completeness recovery. Production integrity checks covered every closed race, but the official Layer3 repair selected only ROI/high-signal candidates, leaving old non-candidate Open API shells unresolved. Keep ROI candidates immediate, add a 60-minute delayed repair for other races, cap each run at 12 official requests, and prioritize candidates ahead of the repair backlog.
 - 2026-08-12: Web DB-pool exhaustion recovery. Logged-in TOP requests triggered eight `PoolTimeout` errors at 09:44 while static CSS/JS requests unnecessarily ran the Supabase role-refresh hook. Exclude static assets, favicon, and health checks from membership DB refresh, then deploy and rerun logged-in browser verification.
@@ -22,7 +23,9 @@
 - `src/collectors/result_scraper.py`
 - `tests/test_result_scraper_market_signal_targets.py`
 - `scripts/check_post_run_integrity.py`
+- `scripts/prewarm_race_detail_data.py`
 - `tests/test_motor_history_integrity.py`
+- `tests/test_race_detail_data_schedule.py`
 - `docs/handoff.md`
 - `scripts/render_regular_scheduler.py`
 - `scripts/check_program_source_gate.py`
@@ -157,6 +160,7 @@
 
 ## Verification
 
+- 2026-08-12 missing-only motor repair regression: 23 detail-data/motor-integrity/admin tests passed. The unit test seeds one existing motor key and proves the repair generates only the other five boats. Python compilation and `git diff --check` passed.
 - 2026-08-12 motor-history source audit: the latest production status had five `empty_history` payloads at Toda. Motors 45, 65, and 48 had zero prior result-bearing runs before the relevant race; three had no prior entry and two had one same-day entry with no result at morning generation. The monitoring-only correction passed 22 motor/detail/admin tests plus Python compilation and `git diff --check`.
 - 2026-08-12 result-repair production verification: regular cron built and ran `bb6b1ff`. At 10:01 JST it fetched four official races and inserted 24 result rows; persistent Ashiya 1R was repaired, reducing integrity gaps from three to two. The two remaining races were only 37 and 51 minutes past close and correctly remained inside the 60-minute Open API grace period. Result/ROI regression passed 25 tests plus compilation and `git diff --check`.
 - 2026-08-12 production web recovery `ac1b86f`: Render deploy became available at 09:49:53 JST. Logged-in TOP loaded in 5.514s immediately after deploy, then 0.561s/0.533s; it rendered 180 race links plus accident, escape, ace-motor `M`, and `!` badges with no DB error. Web logs showed `/races` and `/static/style.css` HTTP 200 and zero post-deploy `PoolTimeout`. Race detail cold/warm timings were 3.755s then 0.186s/0.183s; motor M30 expanded in 0.997s with `aria-expanded=true`, history rows, and no acquisition error.
