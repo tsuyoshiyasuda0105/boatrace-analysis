@@ -192,7 +192,7 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
     monkeypatch.setattr(
         scheduler,
         "run_signal_refresh_slot",
-        lambda _now: calls.append("signal_refresh") or True,
+        lambda _now, **kwargs: calls.append(("signal_refresh", kwargs)) or True,
     )
     monkeypatch.setattr(
         scheduler,
@@ -214,7 +214,7 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
 
     now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
     assert scheduler.run_lite_daytime_bootstrap(now)
-    assert "signal_refresh" in calls
+    assert ("signal_refresh", {"source_gate_verified": True}) in calls
     assert "source_recovery" not in calls
     assert (("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21"), 900) in calls
     assert (("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21"), 1800) in calls
@@ -245,7 +245,7 @@ def test_lite_daytime_bootstrap_revalidates_stale_gate_after_rows_complete(monke
     monkeypatch.setattr(
         scheduler,
         "run_signal_refresh_slot",
-        lambda _now: calls.append("signal_refresh") or True,
+        lambda _now, **kwargs: calls.append(("signal_refresh", kwargs)) or True,
     )
     monkeypatch.setattr(scheduler, "run_top_page_snapshot", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler, "record_task", lambda *_args, **_kwargs: None)
@@ -258,7 +258,7 @@ def test_lite_daytime_bootstrap_revalidates_stale_gate_after_rows_complete(monke
             "2026-07-21",
             {"allow_official_fallback": True},
         ),
-        "signal_refresh",
+        ("signal_refresh", {"source_gate_verified": True}),
     ]
 
 
@@ -338,7 +338,11 @@ def test_lite_daytime_bootstrap_stops_when_signal_gate_fails(monkeypatch):
         "daily_source_counts",
         lambda _run_date: {"races": 10, "entries": 60, "predictions": 10},
     )
-    monkeypatch.setattr(scheduler, "run_signal_refresh_slot", lambda _now: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_signal_refresh_slot",
+        lambda _now, **_kwargs: False,
+    )
     monkeypatch.setattr(
         scheduler,
         "run_py",

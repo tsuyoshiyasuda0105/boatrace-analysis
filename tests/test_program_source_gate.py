@@ -413,6 +413,33 @@ def test_signal_refresh_stops_before_roi_generation_when_gate_is_not_ready(monke
     assert records[-1][2:] == ("failure", "program_source_gate_not_ready")
 
 
+def test_signal_refresh_reuses_gate_verified_by_daytime_bootstrap(monkeypatch):
+    records = []
+    monkeypatch.setattr(scheduler, "task_attempt_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "signal_refresh_recently_running", lambda _now: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_program_source_gate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must reuse the verified daytime gate")
+        ),
+    )
+    monkeypatch.setattr(scheduler, "run_derived_start_stats", lambda *_args: True)
+    monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, run_date, status, detail=None: records.append(
+            (task, run_date, status, detail)
+        ),
+    )
+
+    now = scheduler.datetime(2026, 8, 12, 10, 5, tzinfo=scheduler.JST)
+
+    assert scheduler.run_signal_refresh_slot(now, source_gate_verified=True) is True
+    assert records[-1][2] == "success"
+
+
 def test_nightly_stops_before_tomorrow_predictions_when_gate_is_not_ready(monkeypatch):
     calls = []
     monkeypatch.setattr(

@@ -37,7 +37,7 @@ def test_signal_refresh_runs_before_today_tag_materialization():
     bootstrap = src[start:end]
 
     source_idx = bootstrap.index('source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)')
-    signal_idx = bootstrap.index("ok = run_signal_refresh_slot(now)")
+    signal_idx = bootstrap.index("ok = run_signal_refresh_slot(now, source_gate_verified=True)")
     tags_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
 
     assert source_idx < signal_idx < tags_idx

@@ -563,7 +563,7 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
         record_task(task, today, "failure", detail="source_gate_not_ready")
         return False
 
-    ok = run_signal_refresh_slot(now)
+    ok = run_signal_refresh_slot(now, source_gate_verified=True)
     if not ok:
         record_task(task, today, "failure", detail="signal_refresh_failed")
         return False
@@ -792,7 +792,11 @@ def run_morning_catchup_if_needed(now: datetime) -> bool:
     return ok
 
 
-def run_signal_refresh_slot(now: datetime) -> bool:
+def run_signal_refresh_slot(
+    now: datetime,
+    *,
+    source_gate_verified: bool = False,
+) -> bool:
     """Rebuild today's ROI candidate snapshot once per five-minute slot.
 
     Failed attempts are retried by the next cron tick. A cold or missing signal
@@ -810,7 +814,7 @@ def run_signal_refresh_slot(now: datetime) -> bool:
         return True
 
     record_task(task, today, "running")
-    if not run_program_source_gate(today):
+    if not source_gate_verified and not run_program_source_gate(today):
         record_task(task, today, "failure", detail="program_source_gate_not_ready")
         return False
     ok = run_derived_start_stats(today, today)
