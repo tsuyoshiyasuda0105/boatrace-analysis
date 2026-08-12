@@ -2,6 +2,7 @@
 
 ## Active task
 
+- 2026-08-12: Rin sequential recovery task. Production has complete `180/1080/1080/180` source rows, but lite bootstrap remains blocked because the persisted source-gate task is stale while bootstrap backoff waits. Revalidate the canonical gate immediately only after structural counts are complete, then verify tags/pages and result follow-up without bypassing safety checks.
 - 2026-08-12: Restore the empty "today races" UX. Production audit confirmed 2026-08-12 has 155 races and one ROI candidate, while selecting unpublished 2026-08-13 makes the shared navigation carry that future date into "today races" and show zero. Keep future-date source safety unchanged; fix only the navigation date and verify in a real browser.
 - 2026-08-12: Rin cron defense redesign. Reconcile the agreed 23:30 official / 00:10 Open API / adaptive retry / 06:30 final recovery / 07:30 alert flow with Render production, then implement a dedicated fail-closed bootstrap scheduler, full-run exclusion, pre-generation validation, tests, deployment, and production verification.
 - 2026-08-12 completion: P0 source-consistency guard is delivered. Code is on `main`, web is live, regular-cron has the same built artifact, production gates fail closed, and logged-in browser regression passed.
@@ -13,6 +14,10 @@
 
 ## Expected files
 
+- `scripts/render_regular_scheduler.py`
+- `tests/test_web_recompute_guard.py`
+- `tests/test_scheduler_morning_order.py`
+- `docs/handoff.md`
 - `src/web/templates/base.html`
 - `tests/test_today_races_page.py`
 - `docs/handoff.md`
@@ -53,6 +58,7 @@
 
 ## Cleanup targets
 
+- `.tmp_rin_gate_related/` (repository-local pytest basetemp from stale-gate scheduler regression)
 - `.tmp_cron_defense_unit/`, `.tmp_cron_defense_retry/`, `.tmp_cron_defense_related/`, `.tmp_cron_defense_final/`, `.tmp_cron_defense_persistence/`, `.tmp_cron_defense_delivery/` (repository-local pytest basetemp directories created by this task)
 - `.gate_input/` (temporary isolated real-source gate inputs; no DB or production writes)
 - `.tmp_manifest_gate/`, `.tmp_gate_core/`, `.tmp_gate_db/`, `.tmp_gate_integration/` (generated pytest temporary data)
@@ -71,6 +77,7 @@
 
 ## Failures
 
+- 2026-08-12 09:10 JST production had complete structural counts (`races=180`, `entries=1080`, `detail_entries=1080`, `predictions=180`) but lite bootstrap still recorded `source incomplete`. Root cause: it only read the stale persisted gate task while the dedicated bootstrap respected a 60-minute source backoff, even though the regular collector had already obtained Open API data. Prevention: once structural counts are complete, lite bootstrap reruns the canonical source gate immediately; it still stops all downstream work when that validation fails.
 - The 26-test today-races bundle passed 23 and failed three pre-existing stale cache/badge assertions already recorded by the cron-defense work. The exact navigation regression and JST default tests pass. Prevention: do not change unrelated cache or badge behavior for a one-line navigation fix.
 - The cron-defense commit first failed because the linked-worktree Git metadata under `C:\boat_project\boatrace-analysis\.git\worktrees` is outside the writable workspace and could not create `index.lock`. Prevention: retain the explicit reviewed file list and rerun only add/commit with approved Git metadata access.
 - The first 44-test cron-defense retry had one failure because `test_render_cron_schedule.py` matched a `fromService` reference to `boatrace-regular-cron` instead of the service definition. Prevention: schedule tests now anchor on the four-space service-name indentation.
@@ -131,6 +138,7 @@
 
 ## Verification
 
+- 2026-08-12 stale-gate recovery regression: 39 web/gate guard tests and 37 scheduler/source/bootstrap/cron tests passed. The new tests prove complete rows trigger canonical gate revalidation, incomplete rows do not, and a failed revalidation cannot reach signals/tags/pages.
 - 2026-08-12 cron-defense pre-deploy verification: 134 related scheduler/source/parser/detail/admin/smoke tests passed. Python compilation, `render.yaml` parsing, and `git diff --check` passed. SQLite persistence covered task state and admin warning writes; source retry coverage verified only missing stadiums are written.
 - Production delivery: `main` contains `220cdb3` and hardening commit `305047b`. Render web deploy `dep-d9tk4gijobas73d715g0` is live on `305047b`; `boatrace-regular-cron` manual build succeeded on the same commit without triggering an out-of-hours scheduler run. `/healthz` returned HTTP 200 and Render health checks remained HTTP 200 through cutover.
 - Production source gate on 2026-08-11 returned `ready_with_warning`: official 180, Open API 180, manifest expected 180, DB races 180, entries 1080, detail entries 1080, zero omissions/incomplete boats/required-field gaps. The 23 warnings are the previously verified deadline revisions. On 2026-08-12 at 00:44 JST, official and manifest each had 180 while Open API was unavailable, so the gate correctly returned `retry_wait` and did not allow downstream materialization.

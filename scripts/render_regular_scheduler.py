@@ -535,16 +535,25 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
     if task_success_exists(task, today):
         return True
 
-    source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)
     try:
         source_counts = daily_source_counts(today)
     except Exception as exc:
         print(f"[lite-bootstrap] source recheck failed: {type(exc).__name__}: {exc}", flush=True)
         record_task(task, today, "failure", detail="source_recheck_failed")
         return False
-    if not source_recovery_ok or not daily_source_complete(source_counts):
+    if not daily_source_complete(source_counts):
         print(f"[lite-bootstrap] source incomplete -> skip downstream prewarm: {source_counts}", flush=True)
         record_task(task, today, "failure", detail=f"source_incomplete={source_counts}")
+        return False
+
+    source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)
+    if not source_recovery_ok:
+        # The dedicated collector may still be inside its source backoff even
+        # after another canonical collector has completed today's rows.
+        source_recovery_ok = run_program_source_gate(today)
+    if not source_recovery_ok:
+        print("[lite-bootstrap] source gate not ready -> skip downstream prewarm", flush=True)
+        record_task(task, today, "failure", detail="source_gate_not_ready")
         return False
 
     ok = run_signal_refresh_slot(now)

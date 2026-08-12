@@ -222,6 +222,68 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
     assert any(item[:3] == ("record", "render_lite_daytime_bootstrap", "success") for item in calls if isinstance(item, tuple))
 
 
+def test_lite_daytime_bootstrap_revalidates_stale_gate_after_rows_complete(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "task_success_exists",
+        lambda task, _run_date: task not in {
+            "render_lite_daytime_bootstrap",
+            "render_program_source_gate_v1",
+        },
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "daily_source_counts",
+        lambda _run_date: {"races": 10, "entries": 60, "predictions": 10},
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_program_source_gate",
+        lambda run_date: calls.append(("source_gate", run_date)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_signal_refresh_slot",
+        lambda _now: calls.append("signal_refresh") or True,
+    )
+    monkeypatch.setattr(scheduler, "run_top_page_snapshot", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler, "record_task", lambda *_args, **_kwargs: None)
+
+    now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
+    assert scheduler.run_lite_daytime_bootstrap(now)
+    assert calls[:2] == [("source_gate", "2026-07-21"), "signal_refresh"]
+
+
+def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        scheduler,
+        "daily_source_counts",
+        lambda _run_date: {"races": 10, "entries": 60, "predictions": 10},
+    )
+    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _run_date: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_signal_refresh_slot",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not build before gate success")),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, _run_date, status, detail=None: calls.append((task, status, detail)),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
+    assert scheduler.run_lite_daytime_bootstrap(now) is False
+    assert calls[-1] == (
+        "render_lite_daytime_bootstrap",
+        "failure",
+        "source_gate_not_ready",
+    )
+
+
 def test_lite_daytime_bootstrap_stops_when_sources_remain_incomplete(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
