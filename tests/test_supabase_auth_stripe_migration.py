@@ -44,6 +44,15 @@ def test_security_policy_allows_supabase_auth_fetch():
 def test_legacy_password_login_is_not_admin():
     source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
     assert '"legacy_password" if member_match else "playwright_password"' in source
+
+
+def test_supabase_membership_db_failure_is_retryable_not_auth_failure():
+    source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
+    route = source[source.index("def login_supabase()") : source.index("def signup_supabase()")]
+    assert "except supabase_auth_client.SupabaseAuthError" in route
+    assert "if _is_transient_db_error(e):" in route
+    assert "membership lookup unavailable" in route
+    assert "), 503" in route
     assert '"paid_member" if member_match else "test_viewer"' in source
     assert 'session["role"] = "admin"' not in source
 

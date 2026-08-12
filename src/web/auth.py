@@ -217,6 +217,12 @@ def _set_test_session_role(role: str) -> None:
     session.permanent = True
 
 
+def _is_transient_db_error(exc: Exception) -> bool:
+    return isinstance(exc, TimeoutError) or exc.__class__.__module__.startswith(
+        ("psycopg", "psycopg_pool")
+    )
+
+
 def _playwright_test_login_enabled() -> bool:
     try:
         return bool(current_app and current_app.config.get("TESTING"))
@@ -247,11 +253,7 @@ def _refresh_supabase_membership_session() -> None:
     try:
         role = get_effective_role(str(user_id))
     except Exception as exc:
-        module_name = exc.__class__.__module__
-        is_transient_db_error = isinstance(exc, TimeoutError) or module_name.startswith(
-            ("psycopg", "psycopg_pool")
-        )
-        if not is_transient_db_error:
+        if not _is_transient_db_error(exc):
             raise
         cached_role = str(session.get("role") or "")
         cached_role_is_valid = (
@@ -610,11 +612,27 @@ def register_auth_routes(app):
                 _set_supabase_session(auth_session.user_id, auth_session.email, role)
                 next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))
                 return redirect(next_url)
-            except Exception as e:
-                logger.warning("supabase login failed for %s from %s: %s", email, ip, e)
+            except supabase_auth_client.SupabaseAuthError as e:
+                logger.warning("supabase authentication rejected for %s from %s", email, ip)
                 _record_attempt(ip, False)
                 time.sleep(0.3)
                 return _render_supabase_login(str(e)), 401
+            except Exception as e:
+                if _is_transient_db_error(e):
+                    logger.error(
+                        "supabase login membership lookup unavailable for %s from %s",
+                        email,
+                        ip,
+                        exc_info=True,
+                    )
+                    return _render_supabase_login(
+                        "ログイン情報は確認できましたが、会員情報を取得できません。"
+                        "少し待ってから再度お試しください。"
+                    ), 503
+                logger.exception("supabase login processing failed for %s from %s", email, ip)
+                return _render_supabase_login(
+                    "ログイン処理で一時的な問題が発生しました。少し待ってから再度お試しください。"
+                ), 503
         return _render_supabase_login(None)
 
     @app.route("/signup-supabase", methods=["GET", "POST"])

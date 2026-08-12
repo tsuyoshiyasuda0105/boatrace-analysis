@@ -61,3 +61,8 @@ def test_pg_pool_configures_connections_once_on_creation():
         "SET enable_hashjoin = on",
         "SET enable_mergejoin = off",
     ]
+
+
+def test_pg_pool_default_has_headroom_for_nested_web_queries():
+    source = open(connection.__file__, encoding="utf-8").read()
+    assert 'os.getenv("BOATRACE_DB_POOL_SIZE", "8")' in source

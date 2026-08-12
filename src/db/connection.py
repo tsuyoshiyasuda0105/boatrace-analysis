@@ -200,7 +200,9 @@ def _get_pg_pool(dsn: str):
             _PG_POOL = ConnectionPool(
                 conninfo=dsn,
                 min_size=1,
-                max_size=max(1, int(os.getenv("BOATRACE_DB_POOL_SIZE", "4"))),
+                # Four web threads can each enter a helper that briefly needs a
+                # second connection. Keep headroom to avoid a pool self-deadlock.
+                max_size=max(1, int(os.getenv("BOATRACE_DB_POOL_SIZE", "8"))),
                 timeout=10,
                 configure=_configure_pg_connection,
                 open=True,
