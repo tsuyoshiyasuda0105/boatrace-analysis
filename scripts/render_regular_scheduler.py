@@ -567,16 +567,20 @@ def run_top_page_snapshot(
 
 
 def run_lite_daytime_bootstrap(now: datetime) -> bool:
-    """Restore one full daytime snapshot even when Render lite mode is enabled.
+    """Run at most one lightweight recovery attempt per daytime hour.
 
-    Lite mode keeps the steady-state five-minute loop small, but the TOP page
-    still needs one daily full snapshot so race badges and prewarmed detail
-    pages exist for the current JST date.
+    Full-day racer/motor/tag/page generation belongs to the 04:00-07:00
+    maintenance scheduler. Daytime recovery may validate sources, refresh the
+    signal snapshot, and rebuild the lightweight TOP snapshot only.
     """
 
     today = now.date().isoformat()
     task = "render_lite_daytime_bootstrap"
     if task_success_exists(task, today):
+        return True
+    attempt_task = f"render_lite_daytime_recovery_{now.hour:02d}"
+    if task_attempt_exists(attempt_task, today):
+        print(f"[lite-bootstrap] hourly attempt already completed hour={now.hour:02d}", flush=True)
         return True
 
     try:
@@ -588,6 +592,7 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
     if not daily_source_complete(source_counts):
         print(f"[lite-bootstrap] source incomplete -> skip downstream prewarm: {source_counts}", flush=True)
         record_task(task, today, "failure", detail=f"source_incomplete={source_counts}")
+        record_task(attempt_task, today, "failure", detail=f"source_incomplete={source_counts}")
         return False
 
     source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)
@@ -601,24 +606,19 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
     if not source_recovery_ok:
         print("[lite-bootstrap] source gate not ready -> skip downstream prewarm", flush=True)
         record_task(task, today, "failure", detail="source_gate_not_ready")
+        record_task(attempt_task, today, "failure", detail="source_gate_not_ready")
         return False
 
     ok = run_signal_refresh_slot(now, source_gate_verified=True)
     if not ok:
         record_task(task, today, "failure", detail="signal_refresh_failed")
+        record_task(attempt_task, today, "failure", detail="signal_refresh_failed")
         return False
-    if not task_success_exists("render_detail_tags_today", today):
-        tags_ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
-        record_task("render_detail_tags_today", today, "success" if tags_ok else "failure")
-        ok &= tags_ok
-        if tags_ok:
-            pages_ok = run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)
-            record_task("render_detail_pages_today", today, "success" if pages_ok else "failure")
-            ok &= pages_ok
 
-    snapshot_ok = run_top_page_snapshot(now, lightweight=False)
+    snapshot_ok = run_top_page_snapshot(now, lightweight=True)
     ok &= snapshot_ok
     record_task(task, today, "success" if ok else "failure")
+    record_task(attempt_task, today, "success" if ok else "failure")
     return ok
 
 
@@ -1241,8 +1241,7 @@ def main() -> int:
     # five-minute scheduler prevents duplicate exhibition fetches.
 
     # Results settle live ROI rows and must run before signal/detail prewarming.
-    # A first daytime bootstrap can take many minutes for 180 detail pages; it
-    # must never delay payouts from races that have already closed.
+    # Daytime work is bounded; full detail generation belongs to maintenance.
     if 8 <= now.hour <= 23:
         run_py(["scripts/poll_results.py", "--no-jitter"], timeout=900)
         run_py(
@@ -1283,11 +1282,9 @@ def main() -> int:
             ok = run_hourly(now)
             record_task(task, today, "success" if ok else "failure")
 
-    # Accident rankings feed race tags and several adopted ROI strategies.
-    # Refresh once daily in the first live scheduler slot. The Render regular
-    # cron starts at 08:00 JST, so an earlier window can never be reached.
-    if now.hour == 8 and now.minute < 5:
-        run_accident_self_heal(now)
+    # Full accident rebuilding is isolated in the overnight maintenance
+    # scheduler. Running it here can hold the regular advisory lock for up to
+    # 75 minutes and delay live results, ROI settlement, and health checks.
 
     # End-of-day refresh and tomorrow preload: run once per JST day.
     if not dedicated_bootstrap and not lite_mode and now.hour == 23 and now.minute >= 30:

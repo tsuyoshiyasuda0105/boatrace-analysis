@@ -18,19 +18,19 @@ def test_run_morning_orders_accident_before_predictions_and_skips_tags():
     assert 'prewarm_race_detail_tags.py' not in block
 
 
-def test_signal_refresh_rebuilds_today_tags_before_today_pages():
-    src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
-    start = src.index("def run_lite_daytime_bootstrap(")
-    end = src.index("def tide_refresh_needed(", start)
+def test_maintenance_rebuilds_today_tags_before_today_pages():
+    src = (REPO / "scripts" / "render_maintenance_scheduler.py").read_text(encoding="utf-8")
+    start = src.index("def run_detail_phase(")
+    end = src.index("def run_snapshot_phase(", start)
     bootstrap = src[start:end]
 
-    tags_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
-    pages_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)')
+    tags_idx = bootstrap.index('"scripts/prewarm_race_detail_tags.py"')
+    pages_idx = bootstrap.index('"scripts/prewarm_race_detail_pages.py"')
 
     assert tags_idx < pages_idx
 
 
-def test_signal_refresh_runs_before_today_tag_materialization():
+def test_daytime_bootstrap_keeps_full_detail_materialization_out():
     src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
     start = src.index("def run_lite_daytime_bootstrap(")
     end = src.index("def tide_refresh_needed(", start)
@@ -38,15 +38,18 @@ def test_signal_refresh_runs_before_today_tag_materialization():
 
     source_idx = bootstrap.index('source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)')
     signal_idx = bootstrap.index("ok = run_signal_refresh_slot(now, source_gate_verified=True)")
-    tags_idx = bootstrap.index('run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)')
 
-    assert source_idx < signal_idx < tags_idx
+    assert source_idx < signal_idx
+    assert "prewarm_race_detail_tags.py" not in bootstrap
+    assert "prewarm_race_detail_pages.py" not in bootstrap
 
 
-def test_race_detail_cron_schedule_moves_after_final_source_recovery():
+def test_race_detail_cron_is_the_overnight_maintenance_coordinator():
     src = (REPO / "render.yaml").read_text(encoding="utf-8")
 
     cron_idx = src.index("name: boatrace-race-detail-cron")
-    schedule_idx = src.index('schedule: "*/15 0,22-23 * * *"', cron_idx)
+    schedule_idx = src.index('schedule: "*/10 19-21 * * *"', cron_idx)
+    command_idx = src.index("python scripts/render_maintenance_scheduler.py", cron_idx)
 
     assert schedule_idx > cron_idx
+    assert command_idx > schedule_idx

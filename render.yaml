@@ -42,7 +42,7 @@ services:
     autoDeploy: true
     # 23:00-09:59 JST = 14:00-23:59 and 00:00-00:59 UTC. The scheduler itself
     # performs the 23:30/00:10/06:30/07:30 milestones and late-source recovery.
-    schedule: "*/5 0,14-23 * * *"
+    schedule: "*/10 0,14-23 * * *"
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
@@ -129,13 +129,13 @@ services:
     branch: main
     region: singapore
     autoDeploy: true
-    # 22:00-00:59 UTC = 07:00-09:59 JST. Retry every 15 minutes after the
-    # 06:30 final source recovery; the script skips once the day succeeds.
-    schedule: "*/15 0,22-23 * * *"
+    # 19:00-21:59 UTC = 04:00-06:59 JST. Heavy phases run serially and resume
+    # from the first incomplete phase every ten minutes.
+    schedule: "*/10 19-21 * * *"
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-    startCommand: python scripts/prewarm_race_detail_data.py
+    startCommand: python scripts/render_maintenance_scheduler.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
@@ -147,7 +147,7 @@ services:
       - key: BOATRACE_SUPABASE_ONLY
         value: "1"
       - key: BOATRACE_TASK_TRIGGER
-        value: "render-detail-prewarm"
+        value: "render-maintenance"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
@@ -190,9 +190,8 @@ services:
     branch: main
     region: singapore
     autoDeploy: true
-    # 20:10 UTC = 05:10 JST. Verify external accident benchmark once daily
-    # after the 04:00 JST race-detail preparation window.
-    schedule: "10 20 * * *"
+    # 21:50 UTC = 06:50 JST. Verify after the maintenance accident snapshot.
+    schedule: "50 21 * * *"
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt

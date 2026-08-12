@@ -201,8 +201,8 @@ def test_render_blueprint_separates_daily_and_exhibition_jobs():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
 
     assert "name: boatrace-race-detail-cron" in source
-    assert 'schedule: "*/15 0,22-23 * * *"' in source
-    assert "python scripts/prewarm_race_detail_data.py" in source
+    assert 'schedule: "*/10 19-21 * * *"' in source
+    assert "python scripts/render_maintenance_scheduler.py" in source
     assert "name: boatrace-exhibition-detail-cron" in source
     assert 'schedule: "*/5 23,0-13 * * *"' in source
     assert "python scripts/refresh_race_detail_after_exhibition.py" in source

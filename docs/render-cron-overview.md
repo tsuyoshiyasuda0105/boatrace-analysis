@@ -2,7 +2,7 @@
 
 ## 2026-08-12 canonical program flow
 
-- `boatrace-program-bootstrap-cron`: every five minutes from 23:00 through 09:59 JST.
+- `boatrace-program-bootstrap-cron`: every ten minutes from 23:00 through 09:59 JST.
   - 23:30: acquire tomorrow's official B program.
   - 00:10: acquire today's Open API program and run the cross-source gate.
   - Failed source attempts persist a 15, 30, then 60 minute backoff in `task_runs`.
@@ -10,9 +10,12 @@
   - A PostgreSQL advisory lock prevents overlapping bootstrap runs.
   - 06:30: one final forced recovery attempt.
   - 07:30: unresolved source state is written to `system_status` for the admin warning.
-- `boatrace-race-detail-cron`: 07:00-09:59 JST every 15 minutes. It exits before cache generation unless the source gate is ready, and skips after the first successful daily generation.
+- `boatrace-race-detail-cron`: every ten minutes from 04:00 through 06:59 JST. It is the maintenance coordinator and executes only the first due incomplete phase per tick: accident snapshot (04:00), program validation/predictions (04:30), missing motor histories (05:00), detail tags/pages (05:30), signals/TOP snapshot (06:15), and morning integrity (06:30).
 - `boatrace-odds-cron`, `boatrace-regular-cron`, and `boatrace-exhibition-detail-cron`: every five minutes from 08:00 through 22:59 JST.
-- The dedicated bootstrap owns program acquisition. The regular cron only consumes the persisted source-gate success before tags, pages, TOP snapshots, or ROI signals are generated.
+- `boatrace-accident-external-check-cron`: once at 06:50 JST, after the internal accident snapshot phase.
+- Public UI requests return a static HTTP 503 maintenance page from 04:00 through 06:59 JST. `/healthz` and `/static/*` stay available, and the maintenance response does not open a DB connection.
+- The dedicated bootstrap owns program acquisition. The daytime regular cron only performs bounded live/result work and at most one lightweight recovery per hour; full tags/pages and accident generation are not part of its five-minute loop.
+- The coordinator uses a PostgreSQL advisory lock, persists phase-level success/failure in `task_runs`, retries only the first incomplete phase, and never starts a later heavy phase while an earlier phase is unresolved.
 - Blueprint schedules are part of the deployment. A code-only service deploy does not prove schedule synchronization.
 
 最終確認日: 2026-08-09

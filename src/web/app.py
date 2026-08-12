@@ -49,6 +49,16 @@ def _today_jst_iso() -> str:
     """Return today's date in JST, independent of OS/TZ quirks."""
     return _today_jst_date().isoformat()
 
+
+def _maintenance_window_active(now: datetime | None = None) -> bool:
+    """Return whether the public UI is inside the fixed 04:00-07:00 window."""
+    enabled = str(os.environ.get("BOATRACE_MAINTENANCE_WINDOW", "1")).lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return False
+    current = now or _now_jst()
+    minute_of_day = current.hour * 60 + current.minute
+    return 4 * 60 <= minute_of_day < 7 * 60
+
 from flask import Flask, abort, g, has_request_context, jsonify, make_response, redirect, render_template, request, session, url_for
 
 import config
@@ -5611,6 +5621,19 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
             "Set this env var to a strong password (16+ chars)."
         )
+    @app.before_request
+    def serve_scheduled_maintenance():
+        # Keep Render health probes and static assets available. The maintenance
+        # response is static and therefore does not consume a DB connection.
+        if not is_production or not _maintenance_window_active():
+            return None
+        if request.path == "/healthz" or request.path.startswith("/static/"):
+            return None
+        response = make_response(app.send_static_file("maintenance.html"), 503)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Retry-After"] = "300"
+        return response
+
     @app.before_request
     def start_response_profile():
         if not _is_response_profiling_enabled():

@@ -9,7 +9,7 @@ def test_blueprint_has_separate_overnight_program_bootstrap():
     start = source.index("\n    name: boatrace-program-bootstrap-cron")
     end = source.index("\n    name: boatrace-odds-cron", start)
     block = source[start:end]
-    assert 'schedule: "*/5 0,14-23 * * *"' in block
+    assert 'schedule: "*/10 0,14-23 * * *"' in block
     assert "python scripts/render_program_bootstrap_scheduler.py" in block
 
 
@@ -26,11 +26,19 @@ def test_daytime_crons_are_limited_to_0800_2259_jst():
         assert 'schedule: "*/5 23,0-13 * * *"' in block
 
 
-def test_race_detail_runs_after_final_source_recovery():
+def test_race_detail_runs_as_serial_overnight_maintenance():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
     start = source.index("\n    name: boatrace-race-detail-cron")
     end = source.index("\n    name: boatrace-exhibition-detail-cron", start)
-    assert 'schedule: "*/15 0,22-23 * * *"' in source[start:end]
+    block = source[start:end]
+    assert 'schedule: "*/10 19-21 * * *"' in block
+    assert "python scripts/render_maintenance_scheduler.py" in block
+
+
+def test_accident_external_check_runs_after_maintenance_snapshot():
+    source = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    start = source.index("\n    name: boatrace-accident-external-check-cron")
+    assert 'schedule: "50 21 * * *"' in source[start:]
 
 
 def test_odds_uses_two_snapshot_render_scheduler():
