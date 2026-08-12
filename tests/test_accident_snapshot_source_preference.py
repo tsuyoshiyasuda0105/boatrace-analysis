@@ -78,6 +78,30 @@ def test_build_snapshot_prefers_official_external(tmp_path):
     assert row == ("official_external", 40, 4.0)
 
 
+def test_build_snapshot_prefers_fresh_internal_rebuild_over_stale_external(tmp_path):
+    db_path = tmp_path / "fresh-internal.sqlite3"
+    _init_snapshot_db(str(db_path))
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        INSERT INTO racer_accident_period_stats
+          (racer_number, period_year, period_half, period_start, period_end,
+           starts_count, accident_events, accident_points, accident_rate,
+           rule_version, source_kind, updated_at)
+        VALUES (5001, 2027, 1, '2026-05-01', '2026-08-12',
+                12, 2, 30, 2.5, ?, 'internal_rebuild', CURRENT_TIMESTAMP)
+        """,
+        (RULE_VERSION,),
+    )
+    conn.commit()
+    conn.close()
+
+    summary = build_snapshot("2026-08-12", "2026-05-01", str(db_path))
+
+    assert summary["source_kind"] == "internal_rebuild"
+    assert summary["period_end"] == "2026-08-12"
+
+
 def test_load_internal_rows_reads_reconstructed_source(tmp_path):
     db_path = tmp_path / "compare.sqlite3"
     conn = sqlite3.connect(db_path)
@@ -95,13 +119,16 @@ def test_load_internal_rows_reads_reconstructed_source(tmp_path):
         )
         """
     )
-    conn.execute(
+    conn.executemany(
         """
         INSERT INTO racer_accident_period_stats
           (racer_number, starts_count, accident_points, accident_rate, period_end, period_start, source_kind, rule_version)
-        VALUES (5002, 55, 10, 0.18, '2026-08-05', '2026-05-01', 'reconstructed', ?)
+        VALUES (?, ?, ?, ?, ?, '2026-05-01', 'reconstructed', ?)
         """,
-        (RULE_VERSION,),
+        [
+            (5002, 40, 5, 0.12, "2026-08-05", RULE_VERSION),
+            (5002, 55, 10, 0.18, "2026-08-11", RULE_VERSION),
+        ],
     )
 
     rows = load_internal_rows(conn, "2026-05-01")
@@ -110,3 +137,4 @@ def test_load_internal_rows_reads_reconstructed_source(tmp_path):
     assert rows[5002]["starts_count"] == 55
     assert rows[5002]["accident_points"] == 10
     assert rows[5002]["accident_rate"] == 0.18
+    assert rows[5002]["period_end"] == "2026-08-11"

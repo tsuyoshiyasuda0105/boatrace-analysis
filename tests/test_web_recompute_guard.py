@@ -176,13 +176,13 @@ def test_signal_refresh_lock_reads_recent_running_task(monkeypatch):
     assert scheduler.signal_refresh_recently_running(now)
 
 
-def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
+def test_lite_daytime_bootstrap_runs_lightweight_snapshot_once(monkeypatch):
     calls = []
 
     monkeypatch.setattr(
         scheduler,
         "task_success_exists",
-        lambda task, _run_date: False if task in {"render_lite_daytime_bootstrap", "render_detail_tags_today"} else True,
+        lambda task, _run_date: task != "render_lite_daytime_bootstrap",
     )
     monkeypatch.setattr(
         scheduler,
@@ -216,9 +216,9 @@ def test_lite_daytime_bootstrap_runs_full_snapshot_once(monkeypatch):
     assert scheduler.run_lite_daytime_bootstrap(now)
     assert ("signal_refresh", {"source_gate_verified": True}) in calls
     assert "source_recovery" not in calls
-    assert (("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21"), 900) in calls
-    assert (("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21"), 1800) in calls
-    assert ("snapshot", False, False) in calls
+    assert not any(item and item[0] == ("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21") for item in calls)
+    assert not any(item and item[0] == ("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21") for item in calls)
+    assert ("snapshot", True, False) in calls
     assert any(item[:3] == ("record", "render_lite_daytime_bootstrap", "success") for item in calls if isinstance(item, tuple))
 
 
@@ -289,7 +289,7 @@ def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeyp
     now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
     assert scheduler.run_lite_daytime_bootstrap(now) is False
     assert calls[-1] == (
-        "render_lite_daytime_bootstrap",
+        "render_lite_daytime_recovery_08",
         "failure",
         "source_gate_not_ready",
     )
@@ -322,7 +322,12 @@ def test_lite_daytime_bootstrap_stops_when_sources_remain_incomplete(monkeypatch
             "render_lite_daytime_bootstrap",
             "failure",
             "source_incomplete={'races': 10, 'entries': 54, 'predictions': 9}",
-        )
+        ),
+        (
+            "render_lite_daytime_recovery_08",
+            "failure",
+            "source_incomplete={'races': 10, 'entries': 54, 'predictions': 9}",
+        ),
     ]
 
 
@@ -368,7 +373,7 @@ def test_lite_daytime_bootstrap_stops_when_signal_gate_fails(monkeypatch):
     now = scheduler.datetime(2026, 7, 21, 8, 10, tzinfo=scheduler.JST)
     assert scheduler.run_lite_daytime_bootstrap(now) is False
     assert calls[-1] == (
-        "render_lite_daytime_bootstrap",
+        "render_lite_daytime_recovery_08",
         "failure",
         "signal_refresh_failed",
     )
@@ -398,7 +403,7 @@ def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
     assert scheduler.main() == 1
 
 
-def test_main_runs_daily_accident_refresh_in_lite_mode(monkeypatch):
+def test_main_does_not_run_heavy_accident_refresh_in_lite_mode(monkeypatch):
     from contextlib import contextmanager
 
     @contextmanager
@@ -418,7 +423,7 @@ def test_main_runs_daily_accident_refresh_in_lite_mode(monkeypatch):
     monkeypatch.setattr(scheduler, "run_accident_self_heal", lambda _now: calls.append("accident") or True)
 
     assert scheduler.main() == 0
-    assert calls == ["accident"]
+    assert calls == []
 
 
 def test_main_skips_safely_when_previous_regular_run_is_active(monkeypatch):
@@ -708,13 +713,20 @@ def test_accident_full_refresh_rebuilds_from_period_start(monkeypatch):
     )
     monkeypatch.setattr(
         scheduler,
+        "run_accident_external_check",
+        lambda target: calls.append(("external", target)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
         "run_accident_rank_snapshot",
         lambda target: calls.append(("snapshot", target)) or True,
     )
+    monkeypatch.setattr(scheduler, "race_count_for_date", lambda _target: 0)
 
     assert scheduler.run_accident_full_refresh("2026-07-20")
     assert calls == [
         (scheduler.accident_period_start(scheduler.datetime(2026, 7, 20, tzinfo=scheduler.JST)), "2026-07-20"),
+        ("external", "2026-07-20"),
         ("snapshot", "2026-07-20"),
     ]
 
@@ -724,14 +736,14 @@ def test_scheduler_never_rebuilds_accident_stats_from_one_day_only():
     assert "run_accident_rebuild(today, today)" not in source
 
 
-def test_scheduler_runs_accident_refresh_in_first_reachable_live_window():
+def test_scheduler_isolates_accident_refresh_to_maintenance_window():
     source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     main_source = source.split("def main() -> int:", 1)[1]
     live_loop = main_source.split("# End-of-day refresh", 1)[0]
     nightly_source = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
 
-    assert live_loop.count("run_accident_self_heal(now)") == 1
-    assert "if now.hour == 8 and now.minute < 5:" in live_loop
+    assert "run_accident_self_heal(now)" not in live_loop
+    assert "Full accident rebuilding is isolated in the overnight maintenance" in live_loop
     assert "run_accident_full_refresh(today)" in nightly_source
 
 

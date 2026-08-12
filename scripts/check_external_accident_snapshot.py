@@ -10,6 +10,7 @@ Usage:
   python scripts/check_external_accident_snapshot.py
   python scripts/check_external_accident_snapshot.py --date 2026-08-05
   python scripts/check_external_accident_snapshot.py --no-write-status
+  python scripts/check_external_accident_snapshot.py --dry-run
 """
 from __future__ import annotations
 
@@ -259,8 +260,15 @@ def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
              WHERE period_start = ?
                AND source_kind = 'reconstructed'
                AND rule_version = ?
+               AND period_end = (
+                   SELECT MAX(period_end)
+                     FROM racer_accident_period_stats
+                    WHERE period_start = ?
+                      AND source_kind = 'reconstructed'
+                      AND rule_version = ?
+               )
             """,
-            (period_start, RULE_VERSION),
+            (period_start, RULE_VERSION, period_start, RULE_VERSION),
         )
         fetched_rows = cur.fetchall()
     except Exception as exc:  # noqa: BLE001 - supports older local test schemas
@@ -273,8 +281,15 @@ def load_internal_rows(conn, period_start: str) -> dict[int, dict[str, Any]]:
              WHERE period_start = ?
                AND source_kind = 'reconstructed'
                AND rule_version = ?
+               AND period_end = (
+                   SELECT MAX(period_end)
+                     FROM racer_accident_period_stats
+                    WHERE period_start = ?
+                      AND source_kind = 'reconstructed'
+                      AND rule_version = ?
+               )
             """,
-            (period_start, RULE_VERSION),
+            (period_start, RULE_VERSION, period_start, RULE_VERSION),
         )
         fetched_rows = [(rn, starts, 0, points, rate, pend) for rn, starts, points, rate, pend in cur.fetchall()]
     internal: dict[int, dict[str, Any]] = {}
@@ -483,36 +498,48 @@ def status_from_summary(summary: dict[str, Any]) -> tuple[str, str]:
     return "ok", f"事故率照合OK: {compared_rows}件一致"
 
 
-def build_and_compare(check_date: str) -> dict[str, Any]:
+def fetch_external_data() -> tuple[str, str, dict[int, ExternalAccidentRow]]:
+    """Fetch and parse the benchmark without touching the database."""
     html = fetch_text(SOURCE_HTML_URL)
     plain_js = fetch_text(SOURCE_JS_BASE + JS_FILES["plain"])
     tensu_js = fetch_text(SOURCE_JS_BASE + JS_FILES["tensu"])
     period_start, period_end = parse_period(html, tensu_js)
     external_rows = parse_js_rows(tensu_js, plain_js)
+    if not external_rows:
+        raise RuntimeError("external accident source parsed zero racer rows")
+    return period_start, period_end, external_rows
+
+
+def build_and_compare(check_date: str, *, dry_run: bool = False) -> dict[str, Any]:
+    period_start, period_end, external_rows = fetch_external_data()
 
     with db_connect() as conn:
-        save_external_snapshot(
-            conn,
-            snapshot_date=check_date,
-            period_start=period_start,
-            period_end=period_end,
-            rows=external_rows,
-        )
-        mirror_external_period_stats(
-            conn,
-            period_start=period_start,
-            period_end=period_end,
-            rows=external_rows,
-        )
-        pre_calibration_summary = compare_rows(external_rows, load_internal_rows(conn, period_start))
-        calibrate_reconstructed_period_stats(
-            conn,
-            period_start=period_start,
-            period_end=period_end,
-            rows=external_rows,
-        )
         internal_rows = load_internal_rows(conn, period_start)
-        summary = compare_rows(external_rows, internal_rows)
+        pre_calibration_summary = compare_rows(external_rows, internal_rows)
+        if dry_run:
+            summary = dict(pre_calibration_summary)
+        else:
+            save_external_snapshot(
+                conn,
+                snapshot_date=check_date,
+                period_start=period_start,
+                period_end=period_end,
+                rows=external_rows,
+            )
+            mirror_external_period_stats(
+                conn,
+                period_start=period_start,
+                period_end=period_end,
+                rows=external_rows,
+            )
+            calibrate_reconstructed_period_stats(
+                conn,
+                period_start=period_start,
+                period_end=period_end,
+                rows=external_rows,
+            )
+            internal_rows = load_internal_rows(conn, period_start)
+            summary = compare_rows(external_rows, internal_rows)
 
     summary.update(
         {
@@ -522,7 +549,11 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
             "external_rows": len(external_rows),
             "internal_rows": len(internal_rows),
             "pre_calibration": pre_calibration_summary,
-            "calibration_source_kind": "interq_class2000_calibration",
+            "calibration_source_kind": (
+                None if dry_run else "interq_class2000_calibration"
+            ),
+            "dry_run": dry_run,
+            "writes_performed": not dry_run,
             "source_url": SOURCE_HTML_URL,
         }
     )
@@ -533,17 +564,52 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=date.today().isoformat(), help="check_date written into snapshots/system_status")
     ap.add_argument("--no-write-status", action="store_true")
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="fetch, parse, and compare without DB/schema/status writes",
+    )
     args = ap.parse_args()
 
-    assert_safe_production_write(
-        action="check_external_accident_snapshot",
-        allow_env_var="BOATRACE_ALLOW_ACCIDENT_PROD_WRITE",
-    )
-    summary = build_and_compare(args.date)
+    if not args.dry_run:
+        assert_safe_production_write(
+            action="check_external_accident_snapshot",
+            allow_env_var="BOATRACE_ALLOW_ACCIDENT_PROD_WRITE",
+        )
+    try:
+        summary = build_and_compare(args.date, dry_run=args.dry_run)
+    except Exception as exc:  # noqa: BLE001 - classify upstream cron failures
+        failure = {
+            "status": "error",
+            "message": "external accident preflight failed",
+            "check_date": args.date,
+            "dry_run": args.dry_run,
+            "writes_performed": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+        }
+        print(json.dumps(failure, ensure_ascii=False, indent=2))
+        if not args.dry_run and not args.no_write_status:
+            try:
+                with db_connect() as conn:
+                    upsert_status(
+                        conn,
+                        CHECK_NAME,
+                        args.date,
+                        "error",
+                        failure["message"],
+                        failure,
+                    )
+            except Exception as status_exc:  # noqa: BLE001
+                logger.error(
+                    "failed to persist external accident error status: %s",
+                    type(status_exc).__name__,
+                )
+        return 2
     status, message = status_from_summary(summary)
     print(json.dumps({"status": status, "message": message, **summary}, ensure_ascii=False, indent=2))
 
-    if not args.no_write_status:
+    if not args.dry_run and not args.no_write_status:
         with db_connect() as conn:
             upsert_status(conn, CHECK_NAME, args.date, status, message, summary)
     return 0 if status in {"ok", "warning"} else 1

@@ -101,11 +101,15 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
                    MAX(updated_at) AS source_updated_at
               FROM racer_accident_period_stats
              WHERE period_start = ?
-               AND source_kind IN ('official_external', 'reconstructed')
+               AND source_kind IN ('official_external', 'reconstructed', 'internal_rebuild')
                AND rule_version = ?
              GROUP BY source_kind, period_start
-             ORDER BY CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END,
-                      MAX(period_end) DESC
+             ORDER BY MAX(period_end) DESC,
+                      CASE source_kind
+                          WHEN 'official_external' THEN 0
+                          WHEN 'reconstructed' THEN 1
+                          ELSE 2
+                      END
              LIMIT 1
             """,
             (period_start, RULE_VERSION),
@@ -116,18 +120,22 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
                 SELECT source_kind, period_start, MAX(period_end) AS period_end, COUNT(*) AS n,
                        MAX(updated_at) AS source_updated_at
                   FROM racer_accident_period_stats
-                 WHERE source_kind IN ('official_external', 'reconstructed')
+                 WHERE source_kind IN ('official_external', 'reconstructed', 'internal_rebuild')
                    AND rule_version = ?
                  GROUP BY source_kind, period_start
                  ORDER BY period_start DESC,
-                          CASE WHEN source_kind = 'official_external' THEN 0 ELSE 1 END,
-                          MAX(period_end) DESC
+                          MAX(period_end) DESC,
+                          CASE source_kind
+                              WHEN 'official_external' THEN 0
+                              WHEN 'reconstructed' THEN 1
+                              ELSE 2
+                          END
                  LIMIT 1
                 """,
                 (RULE_VERSION,),
             ).fetchone()
         if not period_row:
-            raise RuntimeError("racer_accident_period_stats has no official_external/reconstructed rows")
+            raise RuntimeError("racer_accident_period_stats has no supported source rows")
 
         source_kind = str(period_row[0] or "reconstructed")
         period_start = str(period_row[1])
