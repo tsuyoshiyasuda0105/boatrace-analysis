@@ -40,6 +40,7 @@ class _FakePool:
 
 def test_pg_connection_returns_connection_to_pool_once(monkeypatch):
     pool = _FakePool()
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", pool)
 
     conn = connection._PgConnection("postgresql://unused")
@@ -50,6 +51,25 @@ def test_pg_connection_returns_connection_to_pool_once(monkeypatch):
     conn.close()
 
     assert pool.returned == [pool.raw]
+
+
+def test_cron_connection_closes_physical_connection_instead_of_pooling(monkeypatch):
+    raw = _FakeRawConnection()
+    raw.closed = 0
+    raw.close = lambda: setattr(raw, "closed", raw.closed + 1)
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-cron")
+    monkeypatch.setattr(connection, "_open_direct_pg_connection", lambda _dsn: raw)
+    monkeypatch.setattr(
+        connection,
+        "_get_pg_pool",
+        lambda _dsn: (_ for _ in ()).throw(AssertionError("cron must not create a pool")),
+    )
+
+    conn = connection._PgConnection("postgresql://unused")
+    conn.close()
+    conn.close()
+
+    assert raw.closed == 1
 
 
 def test_pg_pool_configures_connections_once_on_creation(monkeypatch):
@@ -85,6 +105,7 @@ def test_pg_pool_checkout_failure_logs_non_secret_stats(monkeypatch, caplog):
         def getconn(self):
             raise TimeoutError("busy")
 
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", _FailingPool())
 
     with caplog.at_level("ERROR"):

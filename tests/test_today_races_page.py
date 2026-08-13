@@ -524,6 +524,53 @@ def test_races_page_keeps_empty_snapshot_badges_without_expensive_repair(monkeyp
     assert response.status_code == 200
 
 
+def test_stale_json_cache_reads_memory_without_db_schema_probe(monkeypatch):
+    key = "top_page_snapshot:test"
+    monkeypatch.setitem(web_app._PAGE_HTML_MEM_CACHE, key, (1.0, '{"status":"ok"}'))
+    monkeypatch.setattr(
+        web_app,
+        "_ensure_page_html_cache_table",
+        lambda: (_ for _ in ()).throw(AssertionError("memory hit must not touch DB")),
+    )
+
+    assert web_app._read_json_cache_stale(key) == {"status": "ok"}
+
+
+def test_stale_html_cache_reads_memory_without_db_schema_probe(monkeypatch):
+    key = "race_detail:test"
+    monkeypatch.setitem(web_app._PAGE_HTML_MEM_CACHE, key, (1.0, "<main>cached</main>"))
+    monkeypatch.setattr(
+        web_app,
+        "_ensure_page_html_cache_table",
+        lambda: (_ for _ in ()).throw(AssertionError("memory hit must not touch DB")),
+    )
+
+    assert web_app._read_page_html_cache_stale(key) == "<main>cached</main>"
+
+
+def test_postgres_page_cache_schema_check_is_probe_only(monkeypatch):
+    statements = []
+
+    class FakeConnection:
+        _kind = "postgres"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, *_args):
+            statements.append(" ".join(sql.split()))
+
+    monkeypatch.setattr(web_app, "_PAGE_HTML_CACHE_TABLE_READY", False)
+    monkeypatch.setattr(web_app, "db_connect", FakeConnection)
+
+    web_app._ensure_page_html_cache_table()
+
+    assert statements == ["SELECT 1 FROM page_html_cache LIMIT 0"]
+
+
 def test_motor_history_cache_miss_returns_pending_without_sync_build(monkeypatch):
     race_id = "202607300501"
     web_app.invalidate_cache()

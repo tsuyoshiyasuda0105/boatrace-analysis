@@ -36,6 +36,12 @@ def ensure_membership_schema() -> None:
         return
     ts = now_iso()
     with db_connect() as conn:
+        if getattr(conn, "_kind", "") == "postgres":
+            conn.execute("SELECT 1 FROM profiles LIMIT 0")
+            conn.execute("SELECT 1 FROM user_roles LIMIT 0")
+            conn.execute("SELECT 1 FROM subscriptions LIMIT 0")
+            _SCHEMA_CHECKED = True
+            return
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS profiles (

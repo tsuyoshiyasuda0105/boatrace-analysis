@@ -236,22 +236,43 @@ def _get_pg_pool(dsn: str):
     return _PG_POOL
 
 
+def _open_direct_pg_connection(dsn: str):
+    import psycopg
+
+    connect_timeout = max(
+        1,
+        int(os.getenv("BOATRACE_DB_CONNECT_TIMEOUT_SEC", "5")),
+    )
+    conn = psycopg.connect(
+        dsn,
+        autocommit=True,
+        connect_timeout=connect_timeout,
+    )
+    _configure_pg_connection(conn)
+    return conn
+
+
 class _PgConnection:
     """psycopg3 connection を sqlite3 風に薄くラップ。
     `execute(sql, params)` で `?` を `%s` に変換しつつ ON CONFLICT を補完。"""
 
     def __init__(self, dsn: str):
-        self._pool = _get_pg_pool(dsn)
-        try:
-            self._conn = self._pool.getconn()
-        except Exception:
-            stats = {}
+        trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
+        self._pool = None
+        if trigger:
+            self._conn = _open_direct_pg_connection(dsn)
+        else:
+            self._pool = _get_pg_pool(dsn)
             try:
-                stats = self._pool.get_stats()
+                self._conn = self._pool.getconn()
             except Exception:
-                pass
-            logger.error("postgres pool checkout failed stats=%s", stats)
-            raise
+                stats = {}
+                try:
+                    stats = self._pool.get_stats()
+                except Exception:
+                    pass
+                logger.error("postgres pool checkout failed stats=%s", stats)
+                raise
         self._conn.autocommit = True
         self._kind = "postgres"
 
@@ -293,7 +314,10 @@ class _PgConnection:
 
     def close(self):
         if self._conn is not None:
-            self._pool.putconn(self._conn)
+            if self._pool is None:
+                self._conn.close()
+            else:
+                self._pool.putconn(self._conn)
             self._conn = None
 
     def __enter__(self):
