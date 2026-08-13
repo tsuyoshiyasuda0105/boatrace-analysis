@@ -23,14 +23,28 @@ def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
     return proc.returncode == 0
 
 
+def _default_target_date(now: datetime | None = None) -> str:
+    """準備対象日を返す。
+
+    このバッチは「これから始まるレース日」を準備する。夕方〜深夜0時前に
+    走れば翌日、深夜0時過ぎ (定時 01:00) に走れば「その日」が対象。
+    素朴な today+1 だと 01:00 実行時に一日先 (未公開の番組表) を狙って
+    毎晩失敗する (2026-08-14 の障害)。正午を境に切り替える。
+    """
+    current = now or datetime.now()
+    base = current.date() if current.hour < 12 else current.date() + timedelta(days=1)
+    return base.isoformat()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prepare next-day boatrace data on the PC-local SQLite source of truth.",
     )
     parser.add_argument(
         "--date",
-        default=(date.today() + timedelta(days=1)).isoformat(),
-        help="Target race date to prepare on local SQLite (default: tomorrow).",
+        default=_default_target_date(),
+        help="Target race date to prepare on local SQLite "
+             "(default: today before noon, tomorrow from noon).",
     )
     parser.add_argument(
         "--sync-start",

@@ -58,3 +58,17 @@ def test_pc_nightly_prepare_syncs_selected_tables(monkeypatch):
     table_csv = sync_args[sync_args.index("--tables") + 1]
     assert "race_tides" in table_csv
     assert "derived_start_stats" in table_csv
+
+
+def test_default_target_date_prepares_current_day_after_midnight():
+    from datetime import datetime
+
+    # 定時 01:00 実行: 始まったばかりの「その日」を準備する
+    assert nightly._default_target_date(datetime(2026, 8, 14, 1, 0)) == "2026-08-14"
+    # 早朝リトライも同様
+    assert nightly._default_target_date(datetime(2026, 8, 14, 6, 30)) == "2026-08-14"
+    # 夕方の手動実行: 翌日分を準備する (番組表公開後)
+    assert nightly._default_target_date(datetime(2026, 8, 13, 19, 56)) == "2026-08-14"
+    # 正午が切り替え境界
+    assert nightly._default_target_date(datetime(2026, 8, 14, 11, 59)) == "2026-08-14"
+    assert nightly._default_target_date(datetime(2026, 8, 14, 12, 0)) == "2026-08-15"
