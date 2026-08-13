@@ -134,3 +134,21 @@ git -C 'C:\boat_project\boatrace-analysis' grep ... origin/main -- <relevant fil
 - Verified all five created commit objects (`42ed768`, `800ba71`, `8c358ca`, `d6fb8d5`, `1edacff`) with independently quoted `git rev-parse --verify '<id>^{commit}'` commands.
 - An initial combined `git cat-file -e <id>^{commit}` PowerShell command failed because unquoted braces were parsed as ScriptBlocks; it changed nothing. Prevention: quote revision expressions and verify each object independently.
 - All nine worktrees remain registered. No deletion, reset, force push, deployment, Supabase/Render change, scheduled-task change, or scheduled-task run occurred.
+
+## Phase 3: canonical repository update
+
+- Preserved the canonical worktree's audit files and consolidation records on `rescue/main-audit-assets-20260813` as commit `db2f418` before updating `main`.
+- Fast-forwarded `C:\boat_project\boatrace-analysis` from `dade455` to `cb442f4` with `git pull --ff-only origin main`.
+- Verified local `main` and `origin/main` both resolve to `cb442f4`; ahead/behind is `0/0`.
+- Ran the complete test suite: `550 collected`, `535 passed`, `15 failed` in 13.99 seconds.
+- The 15 failures match the existing current baseline and cover stale source assertions, authorization fixtures, legacy motor-history status expectations, and badge-label fixtures. No new failure attributable to the fast-forward was found.
+- No push, deployment, scheduled-task change/run, worktree deletion, branch deletion, reset, or force push was performed.
+
+## Phase 4 proposal (not executed)
+
+- Current task: `BoatracePcNightlyPrepare`, state `Ready`, next run `2026-08-14 01:00 JST`.
+- Current executable: `C:\Users\tsuyo\OneDrive\ドキュメント\New project 2\boatrace-main-deploy\scripts\run_pc_nightly_prepare.bat`.
+- Proposed executable: `C:\boat_project\boatrace-analysis\scripts\run_pc_nightly_prepare.bat`.
+- The proposed batch file resolves its repository root from its own location, honors `.pc_schedule_paused`, writes `logs\pc_nightly_prepare.log`, and uses the canonical `.venv` Python executable.
+- Last task run was `2026-08-13 01:00:01 JST` with result code `1` (failure). The task definition and execution were not changed during this phase.
+- Await explicit user approval before changing the task action or running it manually.

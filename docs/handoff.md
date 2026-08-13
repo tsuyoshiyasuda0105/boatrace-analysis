@@ -53,7 +53,8 @@
 
 ## Next actions
 
-- Phase 0 through Phase 2 are complete. Await separate approval for Phase 3 main update, Phase 4 scheduled-task reassignment/run, and Phase 5 deletion.
+- Phase 3 completed: canonical `main` now matches `origin/main` at `cb442f4`; full tests are 535 passed / 15 existing failures. Await approval for the Phase 4 `BoatracePcNightlyPrepare` path change.
+- Phase 0 through Phase 3 are complete. Await separate approval for Phase 4 scheduled-task reassignment/run and Phase 5 deletion.
 - Monitor the normal five-minute Render cycle; failed/not-yet-published result pages remain retryable.
 - Update the three stale scheduler-order tests separately when that test suite is next maintained.
 
