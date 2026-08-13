@@ -1,5 +1,11 @@
 # Handoff
 
+## Active task (2026-08-13 Phase 4 nightly task verification)
+
+- `BoatracePcNightlyPrepare` was reassigned to the canonical repository and its manual verification exposed a local/Render prediction command mismatch.
+- Expected edit files: `scripts/pc_nightly_prepare.py`, `tests/test_pc_nightly_prepare.py`, and this handoff.
+- Replace only the Render-only prediction command with the existing local SQLite command; do not change the ROI rules, database schema, scheduled time, or sync table contract.
+
 ## Active task
 
 - 2026-08-13 recovery target-date follow-up: after the first current-day result arrived, `latest_completed_results_date()` advanced the accident phase from 2026-08-12 to 2026-08-13 while its substep checkpoints remained keyed to the maintenance run date. Freeze overnight/manual morning accident recovery to the previous JST date, add a regression, redeploy, and use the remaining bounded attempt. No deletion, schema change, or ROI-rule change.

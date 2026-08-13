@@ -27,6 +27,8 @@ def test_pc_nightly_prepare_uses_supported_cli_arguments(monkeypatch):
     assert ["scripts/build_racer_entry_change_stats.py", "--date", "2026-08-10"] in step_args
     assert all("--db-path" not in args for args in step_args if args[:1] == ["scripts/build_racer_entry_change_stats.py"])
     assert ["scripts/build_top_page_snapshot.py", "--date", "2026-08-10"] in step_args
+    assert ["scripts/cache_predictions.py", "--date", "2026-08-10"] in step_args
+    assert not any(args[:1] == ["scripts/render_cache_predictions.py"] for args in step_args)
 
 
 def test_pc_nightly_prepare_syncs_selected_tables(monkeypatch):
