@@ -249,19 +249,19 @@ python scripts/_check_odds.py        # オッズ収集状況
 
 ## 自動化（タスクスケジューラ）
 
-### 登録済み
-- `BoatraceDailyCollect`: 毎日 23:30 → Layer 2 取得 (`daily_collect.ps1`)
+### 稼働中（2026-08-13確認）
+- `BoatracePcNightlyPrepare`: 毎日01:00。正本 `C:\boat_project\boatrace-analysis\scripts\run_pc_nightly_prepare.bat` を実行。直近結果0。
+- `BoatraceLocalSupabaseSync`: 毎日23:45。リポジトリ外のローカル同期スクリプトを実行。
 
-### 未登録 (推奨)
-- `BoatraceOddsScheduler`: 毎分 → 締切 5/1 分前 オッズスナップショット (`odds_scheduler.py`)
-- `BoatraceLayer3Parts`: 毎日 22:00 → 当日 parts 取得
+### 無効化中
+- `BoatraceAnalyzeKimarite`, `BoatraceBeforeinfoLive`, `BoatraceBeforeinfoNightBackfill`
+- `BoatraceDailyCollect`, `BoatraceHourlyResults`, `BoatraceL4Alert`, `BoatraceLocalXWorker`
+- `BoatraceMorningTask`, `BoatraceNoteMotors23`, `BoatraceOddsScheduler`
+- `BoatraceResultsPolling`, `BoatraceStartupCatchup`, `BoatraceSyncSupabase`
 
-```powershell
-# 登録例
-schtasks /Create /TN "BoatraceOddsScheduler" /SC MINUTE /MO 1 `
-  /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"C:\boat_project\boatrace-analysis\scripts\odds_scheduler_pass.ps1`"" `
-  /RL LIMITED /F
-```
+無効化中タスクを勝手に復活させないこと。特に `scripts/install_all_tasks.ps1` と
+`scripts/startup_catchup.py` は旧タスク群を再有効化する可能性があるため実行禁止。
+本番の定期取得はRender cron、PC側は上記2タスクだけを正とする。
 
 ---
 

@@ -12,7 +12,14 @@
 - First manual run exposed the Render-only `render_cache_predictions.py` command in the local workflow and exited 1. Replaced it with `cache_predictions.py --date`, covered by 3/3 focused tests, commit `a6d7dc2` (local only; not pushed).
 - Second manual run completed with scheduled-task result 0. For 2026-08-14 it prepared and synced 132 races, 792 entries, 792 predictions, 72 tide rows, 1,621 accident-period rows, and 1,621 accident-rank snapshots. Detail tags cached 132/132 with zero failures; TOP snapshot contained 132 races and 96 badged races.
 - A Python 3.14 `PythonFinalizationError` was emitted by `psycopg_pool` after `sync complete`, but the sync and task both exited 0. Track this as a cleanup warning, not a failed data run.
-- Phase 5 worktree/branch deletion has not started and still requires explicit approval.
+- Phase 5 was not started during the Phase 4 verification; it was executed only after the user's subsequent explicit approval.
+
+## Phase 5-6 result (2026-08-13)
+
+- Removed all eight approved Git worktree registrations and the five approved obsolete local branches. Git now has one canonical worktree and only `main` plus five protected `rescue/*` branches.
+- Four OneDrive directories remain physically present but are no longer Git worktrees. They contain 2,470 files in total; no manual recursive deletion was attempted.
+- Verified the bundle, both scheduled-task XML backups, canonical scheduler path, and the latest successful task result. `main` and all rescue commits remain protected; no push or deployment occurred.
+- Updated the scheduler section in `CLAUDE.md` to reflect the two active tasks and thirteen disabled tasks. Legacy task reactivation scripts remain prohibited.
 
 ## Active task
 
