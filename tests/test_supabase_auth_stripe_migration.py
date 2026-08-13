@@ -52,7 +52,8 @@ def test_supabase_membership_db_failure_is_retryable_not_auth_failure():
     assert "except supabase_auth_client.SupabaseAuthError" in route
     assert "if _is_transient_db_error(e):" in route
     assert "membership lookup unavailable" in route
-    assert "), 503" in route
+    assert '"free_member"' in route
+    assert "role_validated=False" in route
     assert '"paid_member" if member_match else "test_viewer"' in source
     assert 'session["role"] = "admin"' not in source
 

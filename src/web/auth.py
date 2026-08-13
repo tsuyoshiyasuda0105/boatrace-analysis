@@ -46,6 +46,7 @@ _SUPABASE_ROLE_REFRESH_RETRY_SEC = 15
 _SUPABASE_ROLE_MAX_STALE_SEC = 900
 _SUPABASE_ROLE_CHECKED_AT_SESSION_KEY = "supabase_role_checked_at"
 _SUPABASE_ROLE_RETRY_AT_SESSION_KEY = "supabase_role_retry_at"
+_SUPABASE_ROLE_PENDING_AT_SESSION_KEY = "supabase_role_pending_at"
 _SUPABASE_MEMBER_ROLES = frozenset({"free_member", "paid_member", "admin"})
 _LOCKOUT_THRESHOLD = 10      # 15分以内に失敗10回でロック
 _LOCKOUT_WINDOW_SEC = 900    # 15 分
@@ -198,14 +199,24 @@ def _playwright_password_version() -> str:
     ).hexdigest()
 
 
-def _set_supabase_session(user_id: str, email: str | None, role: str) -> None:
+def _set_supabase_session(
+    user_id: str,
+    email: str | None,
+    role: str,
+    *,
+    role_validated: bool = True,
+) -> None:
     session.clear()
     session["is_member"] = role in {"free_member", "paid_member", "admin"}
     session["user_id"] = user_id
     session["email"] = email
     session["role"] = role
     session["auth_provider"] = "supabase"
-    session[_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY] = time.time()
+    now = time.time()
+    if role_validated:
+        session[_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY] = now
+    else:
+        session[_SUPABASE_ROLE_PENDING_AT_SESSION_KEY] = now
     session.permanent = True
 
 
@@ -246,6 +257,10 @@ def _refresh_supabase_membership_session() -> None:
         retry_at = float(session.get(_SUPABASE_ROLE_RETRY_AT_SESSION_KEY) or 0)
     except (TypeError, ValueError):
         retry_at = 0
+    try:
+        pending_at = float(session.get(_SUPABASE_ROLE_PENDING_AT_SESSION_KEY) or 0)
+    except (TypeError, ValueError):
+        pending_at = 0
     if now < retry_at:
         return
     if 0 <= now - checked_at < _SUPABASE_ROLE_REFRESH_TTL_SEC:
@@ -261,7 +276,12 @@ def _refresh_supabase_membership_session() -> None:
             and checked_at > 0
             and 0 <= now - checked_at <= _SUPABASE_ROLE_MAX_STALE_SEC
         )
-        if not cached_role_is_valid:
+        pending_free_member_is_valid = (
+            cached_role == "free_member"
+            and pending_at > 0
+            and 0 <= now - pending_at <= _SUPABASE_ROLE_MAX_STALE_SEC
+        )
+        if not (cached_role_is_valid or pending_free_member_is_valid):
             logger.warning("Supabase role refresh unavailable; clearing unvalidated session")
             session.clear()
             return
@@ -277,6 +297,7 @@ def _refresh_supabase_membership_session() -> None:
     session["is_member"] = role in _SUPABASE_MEMBER_ROLES
     session[_SUPABASE_ROLE_CHECKED_AT_SESSION_KEY] = now
     session.pop(_SUPABASE_ROLE_RETRY_AT_SESSION_KEY, None)
+    session.pop(_SUPABASE_ROLE_PENDING_AT_SESSION_KEY, None)
 
 
 def login_required(view):
@@ -606,17 +627,19 @@ def register_auth_routes(app):
             pw = request.form.get("password", "")
             try:
                 auth_session = supabase_auth_client.sign_in_with_password(email, pw)
-                ensure_profile(auth_session.user_id, auth_session.email)
-                role = get_effective_role(auth_session.user_id)
-                _record_attempt(ip, True)
-                _set_supabase_session(auth_session.user_id, auth_session.email, role)
-                next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))
-                return redirect(next_url)
             except supabase_auth_client.SupabaseAuthError as e:
                 logger.warning("supabase authentication rejected for %s from %s", email, ip)
                 _record_attempt(ip, False)
                 time.sleep(0.3)
                 return _render_supabase_login(str(e)), 401
+            except Exception:
+                logger.exception("supabase authentication unavailable for %s from %s", email, ip)
+                return _render_supabase_login(
+                    "Supabase認証に一時的に接続できません。少し待ってから再度お試しください。"
+                ), 503
+            try:
+                ensure_profile(auth_session.user_id, auth_session.email)
+                role = get_effective_role(auth_session.user_id)
             except Exception as e:
                 if _is_transient_db_error(e):
                     logger.error(
@@ -625,14 +648,25 @@ def register_auth_routes(app):
                         ip,
                         exc_info=True,
                     )
-                    return _render_supabase_login(
-                        "ログイン情報は確認できましたが、会員情報を取得できません。"
-                        "少し待ってから再度お試しください。"
-                    ), 503
+                    _record_attempt(ip, True)
+                    _set_supabase_session(
+                        auth_session.user_id,
+                        auth_session.email,
+                        "free_member",
+                        role_validated=False,
+                    )
+                    next_url = _safe_redirect_url(
+                        request.form.get("next", ""), url_for("index")
+                    )
+                    return redirect(next_url)
                 logger.exception("supabase login processing failed for %s from %s", email, ip)
                 return _render_supabase_login(
                     "ログイン処理で一時的な問題が発生しました。少し待ってから再度お試しください。"
                 ), 503
+            _record_attempt(ip, True)
+            _set_supabase_session(auth_session.user_id, auth_session.email, role)
+            next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))
+            return redirect(next_url)
         return _render_supabase_login(None)
 
     @app.route("/signup-supabase", methods=["GET", "POST"])

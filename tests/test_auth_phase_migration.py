@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from flask import Flask, session
 
@@ -144,6 +145,89 @@ def test_supabase_login_session_starts_with_fresh_role_timestamp(monkeypatch):
 
         assert session["supabase_role_checked_at"] == 2_000.0
         assert session["role"] == "paid_member"
+
+
+def test_pending_supabase_login_keeps_minimum_role_during_pool_timeout(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    monkeypatch.setattr(auth.time, "time", lambda: 2_000.0)
+    monkeypatch.setattr(
+        auth,
+        "get_effective_role",
+        lambda _user_id: (_ for _ in ()).throw(TimeoutError("pool unavailable")),
+    )
+
+    with app.test_request_context("/"):
+        auth._set_supabase_session(
+            "user-3", "member@example.com", "free_member", role_validated=False
+        )
+        auth._refresh_supabase_membership_session()
+
+        assert session["is_member"] is True
+        assert session["role"] == "free_member"
+        assert session["supabase_role_retry_at"] == 2_015.0
+
+
+def test_pending_supabase_login_upgrades_after_db_recovery(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    monkeypatch.setattr(auth.time, "time", lambda: 2_000.0)
+    monkeypatch.setattr(auth, "get_effective_role", lambda _user_id: "admin")
+
+    with app.test_request_context("/"):
+        auth._set_supabase_session(
+            "user-4", "admin@example.com", "free_member", role_validated=False
+        )
+        auth._refresh_supabase_membership_session()
+
+        assert session["role"] == "admin"
+        assert "supabase_role_pending_at" not in session
+
+
+def test_supabase_login_redirects_with_minimum_role_when_membership_db_is_busy(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+
+    @app.route("/")
+    def index():
+        return "ok"
+
+    monkeypatch.setattr(auth.supabase_auth_client, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        auth.supabase_auth_client,
+        "sign_in_with_password",
+        lambda _email, _password: SimpleNamespace(
+            user_id="user-5", email="member@example.com"
+        ),
+    )
+    monkeypatch.setattr(
+        auth,
+        "ensure_profile",
+        lambda _user_id, _email: (_ for _ in ()).throw(TimeoutError("pool busy")),
+    )
+    auth.register_auth_routes(app)
+    client = app.test_client()
+    with client.session_transaction() as login_session:
+        login_session["csrf_token"] = "csrf-test"
+
+    response = client.post(
+        "/login-supabase",
+        data={
+            "csrf_token": "csrf-test",
+            "email": "member@example.com",
+            "password": "valid-password",
+            "next": "/",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
+    with client.session_transaction() as logged_in_session:
+        assert logged_in_session["is_member"] is True
+        assert logged_in_session["role"] == "free_member"
+        assert logged_in_session["auth_provider"] == "supabase"
+        assert "supabase_role_pending_at" in logged_in_session
 
 
 def test_public_race_and_health_requests_skip_supabase_role_refresh(monkeypatch):
