@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -21,6 +22,13 @@ if str(ROOT_DIR) not in sys.path:
 
 from scripts.rebuild_racer_accident_stats import RULE_VERSION  # noqa: E402
 from src.db.connection import assert_safe_production_write, connect as db_connect  # noqa: E402
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(JST).date().isoformat()
 
 
 def accident_period_start_for_date(date_iso: str) -> str:
@@ -220,7 +228,7 @@ def build_snapshot(target_date: str, period_start: str | None = None, db_path: s
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default=date.today().isoformat())
+    ap.add_argument("--date", default=_today_jst_iso())
     ap.add_argument("--period")
     ap.add_argument("--db-path", help="Use a local SQLite DB path even when DATABASE_URL exists.")
     args = ap.parse_args()

@@ -23,6 +23,10 @@ import time
 import traceback
 from collections import defaultdict
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+JST = ZoneInfo("Asia/Tokyo")
 
 
 class EmailErrorHandler(logging.Handler):
@@ -53,7 +57,7 @@ class EmailErrorHandler(logging.Handler):
             # 送信内容組み立て
             subject = f"[BOATRACE ERROR] {record.levelname}: {record.name} - {(record.getMessage() or '')[:80]}"
             body_lines = [
-                f"時刻 : {datetime.now().isoformat(timespec='seconds')}",
+                f"時刻 : {datetime.now(JST).isoformat(timespec='seconds')}",
                 f"レベル: {record.levelname}",
                 f"場所  : {record.name} | {record.module}:{record.lineno} | {record.funcName}()",
                 f"パス  : {record.pathname}",

@@ -5,6 +5,7 @@ import json
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Callable, Iterable
+from zoneinfo import ZoneInfo
 
 
 STRATEGY_KEY_ALIASES = {
@@ -14,6 +15,7 @@ STRATEGY_KEY_ALIASES = {
     # continuous across strategy renames.
     "exacta_niche_hamanako14": "hamanako_14_exa",
 }
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def canonical_strategy_key(strategy_key: str) -> str:
@@ -80,7 +82,7 @@ def replace_roi_history_snapshot(
 
     ensure_roi_race_history_table(conn)
     adopted = set(adopted_keys)
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = datetime.now(JST).replace(tzinfo=None).isoformat(timespec="seconds")
     payload_hash = hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:20]

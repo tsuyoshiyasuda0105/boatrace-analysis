@@ -28,6 +28,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8")
@@ -43,6 +44,12 @@ from src.collectors.openapi import fetch_results, upsert_results
 from src.collectors.result_scraper import scrape_results_for_pending_races
 from src.db.connection import connect as db_connect
 
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
 
 def _parse_closed_at(value) -> datetime | None:
     if value in (None, "", "-"):
@@ -52,9 +59,9 @@ def _parse_closed_at(value) -> datetime | None:
         dt = datetime.fromisoformat(text)
     except ValueError:
         return None
-    if dt.tzinfo is not None:
-        return dt.astimezone().replace(tzinfo=None)
-    return dt
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=JST)
+    return dt.astimezone(JST)
 
 
 def _count_openapi_shell_races(conn: sqlite3.Connection, target_date: date) -> int:
@@ -74,7 +81,7 @@ def _count_openapi_shell_races(conn: sqlite3.Connection, target_date: date) -> i
         """,
         (target_date.isoformat(),),
     ).fetchall()
-    now_local = datetime.now()
+    now_local = _now_jst()
     pending = 0
     for _race_id, race_closed_at in rows:
         closed_at = _parse_closed_at(race_closed_at)
@@ -108,8 +115,7 @@ def main():
         time.sleep(jitter)
 
     target_date = (datetime.fromisoformat(args.date).date()
-                   if args.date else date.today())
-    now = datetime.now()
+                   if args.date else _now_jst().date())
 
     # スキップ判定: 最初のレース締切より前なら何もしない
     if not args.force:

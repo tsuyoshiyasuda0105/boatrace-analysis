@@ -17,14 +17,22 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.collectors import beforeinfo as beforeinfo_collector
 from src.collectors import odds as odds_collector
 from src.collectors import original_exhibition as original_exhibition_collector
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
 
 
 def parse_args():
@@ -55,7 +63,7 @@ def main():
         print(f"[ERROR] unknown targets: {invalid}", file=sys.stderr)
         sys.exit(2)
 
-    target_date = date.fromisoformat(args.date) if args.date else date.today()
+    target_date = date.fromisoformat(args.date) if args.date else _today_jst()
     if args.backfill > 0:
         dates = [target_date - timedelta(days=i) for i in range(args.backfill + 1)]
     else:

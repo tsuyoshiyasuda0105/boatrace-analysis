@@ -57,6 +57,18 @@ logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
 
 
+def _now_jst() -> datetime:
+    return datetime.now(tz=JST)
+
+
+def _today_jst_iso() -> str:
+    return _now_jst().date().isoformat()
+
+
+def _now_jst_iso() -> str:
+    return _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
+
+
 # Volatile な列だけ更新する (Open API データを「上書き」する対象)。
 # 天候・水面に加えて、直前で確定する展示T/ST/進入/チルトも艇別に補完する。
 _VOLATILE_COLS = ("weather_number", "wind_speed", "wind_direction_number",
@@ -483,7 +495,7 @@ def run_repredict_and_sync(supabase_only: bool = False) -> dict:
     Supabase 直保存時(Render clone 想定):
       render_cache_predictions 側の Supabase 直書き経路を使う
     """
-    today = date.today().isoformat()
+    today = _today_jst_iso()
 
     if supabase_only:
         from scripts.render_cache_predictions import cache_predictions_for_date as render_cache_predictions_for_date
@@ -548,7 +560,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    now = datetime.now(tz=JST)
+    now = _now_jst()
     print(f"[{now.strftime('%H:%M:%S')}] beforeinfo live scrape start "
           f"(window={args.window[0]}-{args.window[1]}min, cooldown={args.cooldown_min}min)")
 
@@ -614,7 +626,7 @@ def main():
         print("  no valid pages, exiting")
         return
 
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = _now_jst_iso()
     s = write_updates(updates, now_iso, also_local=not supabase_only)
     print(f"  written: supabase_rows={s['supabase_rows']} "
           f"local_rows={s['local_rows']} races_updated={s['races']}")

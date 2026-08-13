@@ -14,10 +14,24 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 DB = "data/boatrace.db"
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _now_jst_iso() -> str:
+    return _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _today_jst_iso() -> str:
+    return _now_jst().date().isoformat()
 
 
 def ensure_schema(conn):
@@ -76,7 +90,7 @@ def record_signals(target_date: str):
         return 0
 
     recorded = 0
-    now = datetime.now().isoformat()
+    now = _now_jst_iso()
 
     for race_id, grade, closed, cls1, t5_min_odds in rows:
         t5_payout = int(t5_min_odds * 100)  # オッズ × 100円 = 払戻
@@ -251,7 +265,7 @@ def main():
         report()
         return
 
-    target = args.date or datetime.now().strftime("%Y-%m-%d")
+    target = args.date or _today_jst_iso()
     if args.action == "record":
         record_signals(target)
     elif args.action == "settle":

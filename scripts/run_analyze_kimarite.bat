@@ -13,7 +13,7 @@ if not exist logs mkdir logs
 
 REM Session header: ISO timestamp via Python (more reliable than wmic in
 REM the hidden VBS context where stdout pipes can fail silently).
-.venv\Scripts\python.exe -c "from datetime import datetime; print('\n====== analyze_kimarite run ' + datetime.now().isoformat(timespec='seconds') + ' ======')" >> logs\analyze_kimarite.log 2>&1
+.venv\Scripts\python.exe -c "from datetime import datetime; from zoneinfo import ZoneInfo; print('\n====== analyze_kimarite run ' + datetime.now(ZoneInfo('Asia/Tokyo')).isoformat(timespec='seconds') + ' ======')" >> logs\analyze_kimarite.log 2>&1
 
 .venv\Scripts\python.exe scripts\analyze_kimarite.py >> logs\analyze_kimarite.log 2>&1
 exit /b %errorlevel%

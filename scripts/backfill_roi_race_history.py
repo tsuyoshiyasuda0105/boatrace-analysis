@@ -19,6 +19,10 @@ from src.web.app import _parse_market_signal_bets_for_roi, create_app  # noqa: E
 JST = ZoneInfo("Asia/Tokyo")
 
 
+def _today_jst() -> date:
+    return datetime.now(JST).date()
+
+
 def _choose_snapshots(rows):
     by_date = {}
     for cache_key, html, updated_at in rows:
@@ -50,7 +54,7 @@ def main() -> int:
     parser.add_argument("--from", dest="from_date")
     parser.add_argument("--to", dest="to_date")
     args = parser.parse_args()
-    today = date.today()
+    today = _today_jst()
     from_date = args.from_date or (today - timedelta(days=30)).isoformat()
     to_date = args.to_date or (today - timedelta(days=1)).isoformat()
     if not (os.getenv("DATABASE_URL") or "").startswith(("postgres://", "postgresql://")):

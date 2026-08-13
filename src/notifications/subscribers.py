@@ -13,7 +13,7 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src.db.connection import connect as db_connect
@@ -61,6 +61,14 @@ DEFAULT_BODY_TEMPLATE = (
     "配信停止: {unsubscribe_url}\n"
     "サイト: {site_url}\n"
 )
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_iso(dt: datetime | None = None) -> str:
+    return (dt or _now_utc()).replace(microsecond=0).isoformat()
 
 
 def _hash_ip(ip: str) -> str:
@@ -135,8 +143,8 @@ def subscribe(
     enc = encrypt_email(email)
     verify_token = secrets.token_urlsafe(32)
     unsub_token = secrets.token_urlsafe(32)
-    now = datetime.utcnow().isoformat()
-    expires = (datetime.utcnow() + timedelta(days=2)).isoformat()
+    now = _utc_iso()
+    expires = _utc_iso(_now_utc() + timedelta(days=2))
     ip_hashed = _hash_ip(ip)
 
     with db_connect() as conn:
@@ -196,7 +204,7 @@ def verify(token: str) -> Optional[str]:
         if not row:
             return None
         eh, expires = row
-        if expires and expires < datetime.utcnow().isoformat():
+        if expires and expires < _utc_iso():
             logger.warning("verification token expired for %s", eh[:8])
             return None
         conn.execute(
@@ -266,7 +274,7 @@ def list_active_subscribers() -> list[dict]:
 
 def mark_sent(email_hash: str, race_id: str, alert_type: str):
     """送信履歴を記録 (重複送信防止)"""
-    now = datetime.utcnow().isoformat()
+    now = _utc_iso()
     with db_connect() as conn:
         try:
             conn.execute(

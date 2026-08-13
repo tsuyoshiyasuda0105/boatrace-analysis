@@ -4,6 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst_iso() -> str:
+    return datetime.now(JST).isoformat()
 
 
 def _rows(cur) -> list[dict[str, Any]]:
@@ -46,7 +54,7 @@ def _safe_cutoff(stage: str, race: dict[str, Any], entries: list[dict[str, Any]]
         race_closed_at = _timestamp_or_none(race.get("race_closed_at"))
         if race_closed_at:
             return race_closed_at
-    return datetime.now().astimezone().isoformat()
+    return _now_jst_iso()
 
 
 @dataclass(frozen=True)

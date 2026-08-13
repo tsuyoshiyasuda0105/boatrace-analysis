@@ -39,8 +39,9 @@ import sqlite3
 import sys
 import urllib.error
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
@@ -57,7 +58,22 @@ logging.basicConfig(level=logging.INFO,
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / "logs"
-NOW = datetime.now()
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _normalize_jst_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=JST)
+    return value.astimezone(JST)
+
+
+NOW = _now_jst()
 TODAY = NOW.date()
 PC_PAUSED_MSG = "PC-local checks skipped; Render cron is primary"
 
@@ -172,6 +188,7 @@ def check_task(task: dict):
         )
     if last is None:
         return "error", "24h以内に成功記録なし (task_runs)"
+    last = _normalize_jst_datetime(last)
     age_h = (NOW - last).total_seconds() / 3600
     if age_h <= task["ok_h"]:
         return "ok", f"{age_h:.1f}h前に成功 ({last:%m-%d %H:%M})"
@@ -350,7 +367,7 @@ def work_odds_scheduler():
         # ずれて COUNT=0 → レース時間中でも恒常的に誤 ERROR を出していた
         # (2026-05-30 19:16 の「直近10分0件(サボリ?)」誤検知の根本原因)。
         # cutoff も UTC で作って recorded_at と同一時系で比較する。
-        cutoff = (datetime.utcnow() - timedelta(minutes=10)).isoformat(timespec="seconds")
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(timespec="seconds")
         cur = pg.execute(
             "SELECT COUNT(*) FROM odds_trifecta WHERE recorded_at >= ?",
             (cutoff,),
@@ -416,7 +433,7 @@ WORK_CHECKS = [
 def _upsert_status(conn, check_name: str, status: str, message: str,
                    detail: dict | None = None) -> None:
     """system_status へ upsert (check_data_quality.py と同様)。"""
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
     today_iso = TODAY.isoformat()
     detail_json = json.dumps(detail or {}, ensure_ascii=False)
     row = conn.execute(

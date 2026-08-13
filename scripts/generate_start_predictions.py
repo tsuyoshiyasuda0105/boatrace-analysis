@@ -6,12 +6,20 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from src.db.connection import connect
 from src.start_prediction import StartPredictionService
 from src.start_prediction.models import MODEL_VERSIONS
 from src.start_prediction.repository import StartPredictionRepository
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(JST).date().isoformat()
 
 
 def due_race_ids(target_date: str) -> list[str]:
@@ -51,7 +59,7 @@ def due_race_ids(target_date: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--date", default=_today_jst_iso())
     args = parser.parse_args()
     service = StartPredictionService()
     done = failed = 0

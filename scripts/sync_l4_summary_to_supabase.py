@@ -27,6 +27,7 @@ import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -35,6 +36,11 @@ import config
 from src.db.connection import connect as db_connect
 
 EXCLUDE_B = (2, 4, 7, 8, 10, 19, 21, 24)
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 
 def compute_summary(src, start: str, end: str) -> list[dict]:
@@ -523,7 +529,7 @@ def compute_summary(src, start: str, end: str) -> list[dict]:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--start", type=str, default="2022-01-01")
-    p.add_argument("--end", type=str, default=datetime.now().strftime("%Y-%m-%d"))
+    p.add_argument("--end", type=str, default=_now_jst().strftime("%Y-%m-%d"))
     p.add_argument("--src", choices=["supabase", "local"], default="supabase",
                    help="集計データ源 (default=supabase)")
     p.add_argument("--recent-days", type=int, default=None,
@@ -536,7 +542,7 @@ def main():
     # --recent-days 指定時は --start/--end をオーバーライド
     if args.recent_days is not None and args.recent_days > 0:
         from datetime import timedelta as _td
-        today_dt = datetime.now().date()
+        today_dt = _now_jst().date()
         args.end = today_dt.strftime("%Y-%m-%d")
         args.start = (today_dt - _td(days=args.recent_days - 1)).strftime("%Y-%m-%d")
 
@@ -569,7 +575,7 @@ def main():
 
     # Supabase に upsert
     dst = db_connect()
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
     n_upsert = 0
     BATCH = 500
     batch = []

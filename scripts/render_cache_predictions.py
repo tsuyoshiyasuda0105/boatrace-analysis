@@ -5,11 +5,26 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.db.connection import connect as db_connect
 from src.web.predictor import Predictor
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _now_jst_iso() -> str:
+    return _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _today_jst() -> date:
+    return _now_jst().date()
 
 
 def _require_postgres() -> None:
@@ -27,7 +42,7 @@ def cache_predictions_for_date(target_date: str, version: str = "v0.8") -> int:
         print(f"[{target_date}] no prediction rows")
         return 0
 
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = _now_jst_iso()
     rows = [
         (
             row["race_id"],
@@ -66,9 +81,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.tomorrow:
-        targets = [(date.today() + timedelta(days=1)).isoformat()]
+        targets = [(_today_jst() + timedelta(days=1)).isoformat()]
     elif args.today:
-        targets = [date.today().isoformat()]
+        targets = [_today_jst().isoformat()]
     elif args.date:
         targets = [args.date]
     else:

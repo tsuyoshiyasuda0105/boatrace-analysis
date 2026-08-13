@@ -22,8 +22,9 @@ import argparse
 import logging
 import sys
 from collections import defaultdict
-from datetime import date
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -42,6 +43,13 @@ from src.notifications.subscribers import (
     already_sent,
 )
 from src.notifications.mailer import send_l4_alert
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(JST).date().isoformat()
 # 単一情報源 (DRY): app.py と共通の L4 定義を使う
 from src.evaluation.l4_strategy import (
     EXCLUDE_VENUES,
@@ -475,7 +483,7 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    target_date = args.date or date.today().isoformat()
+    target_date = args.date or _today_jst_iso()
     print(f"[{target_date}] L4 アラート判定中 (mode={args.mode})...")
 
     # モードに応じて検出ソースを選択

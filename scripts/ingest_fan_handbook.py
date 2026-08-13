@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -23,9 +24,16 @@ from src.parsers.official_f import parse_fan_file
 import config
 
 
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
+
+
 def ingest_one(conn, rows: list[dict], dry_run: bool = False) -> dict:
     """rows を racers テーブルに INSERT OR REPLACE。"""
-    today = date.today().isoformat()
+    today = _today_jst().isoformat()
     stats = {"inserted": 0, "updated": 0, "skipped": 0, "errors": 0}
     for r in rows:
         if r["racer_number"] is None:

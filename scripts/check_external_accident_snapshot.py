@@ -23,6 +23,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -33,6 +34,7 @@ from src.db.connection import assert_safe_production_write, connect as db_connec
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+JST = ZoneInfo("Asia/Tokyo")
 
 SOURCE_HTML_URL = "http://www.interq.or.jp/ito/kiida/kyotei/Class/class2000.html"
 SOURCE_JS_BASE = "http://www.interq.or.jp/ito/kiida/kyotei/ajs/"
@@ -40,6 +42,10 @@ JS_FILES = {
     "plain": "plain2000.js",
     "tensu": "tensu2000.js",
 }
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(JST).date().isoformat()
 CHECK_NAME = "accident_external_compare"
 RULE_VERSION = "official_table_2025_05_reconstructed_v2"
 ROW_RE = re.compile(r"yp\[(\d+)\]='([^']*)';")
@@ -138,7 +144,7 @@ def ensure_external_table(conn) -> None:
 
 
 def upsert_status(conn, check_name: str, check_date: str, status: str, message: str, detail: dict[str, Any]) -> None:
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = datetime.now(JST).replace(tzinfo=None).isoformat(timespec="seconds")
     detail_json = json.dumps(detail, ensure_ascii=False)
     row = conn.execute(
         "SELECT 1 FROM system_status WHERE check_name=? AND check_date=?",
@@ -531,7 +537,7 @@ def build_and_compare(check_date: str) -> dict[str, Any]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default=date.today().isoformat(), help="check_date written into snapshots/system_status")
+    ap.add_argument("--date", default=_today_jst_iso(), help="check_date written into snapshots/system_status")
     ap.add_argument("--no-write-status", action="store_true")
     args = ap.parse_args()
 

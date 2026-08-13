@@ -12,6 +12,7 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 import config
 from src.collectors._http import fetch_html
@@ -19,6 +20,7 @@ from src.db.connection import connect as db_connect
 from src.parsers.original_exhibition import parse_original_exhibition
 
 logger = logging.getLogger(__name__)
+JST = ZoneInfo("Asia/Tokyo")
 
 
 SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
@@ -290,7 +292,7 @@ def _upsert_rows(
     source_url: str,
     rows: Iterable[dict],
 ) -> int:
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = datetime.now(JST).replace(tzinfo=None).isoformat(timespec="seconds")
     payload = []
     for row in rows:
         payload.append(

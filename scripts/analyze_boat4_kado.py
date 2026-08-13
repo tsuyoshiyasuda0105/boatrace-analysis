@@ -14,6 +14,7 @@ import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
@@ -22,6 +23,13 @@ except Exception:  # noqa: BLE001
     pass
 
 import config
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 STAD = {1:"桐生",2:"戸田",3:"江戸川",4:"平和島",5:"多摩川",6:"浜名湖",7:"蒲郡",8:"常滑",
         9:"津",10:"三国",11:"びわこ",12:"住之江",13:"尼崎",14:"鳴門",15:"丸亀",16:"児島",
@@ -193,7 +201,7 @@ def main():
     # markdown 出力
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fpath = out_dir / f"boat4_kado_{datetime.now():%Y%m%d_%H%M}.md"
+    fpath = out_dir / f"boat4_kado_{_now_jst():%Y%m%d_%H%M}.md"
     fpath.write_text("# 4号艇カド分析レポート (詳細はコンソール出力参照)\n",
                      encoding="utf-8")
     print(f"\nレポート骨子: {fpath}")

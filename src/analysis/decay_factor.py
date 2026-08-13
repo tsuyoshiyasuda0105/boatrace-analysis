@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -153,8 +154,7 @@ def save_decay_table(decay_table: pd.DataFrame, db_path: Optional[str] = None) -
                 updated_at   TEXT NOT NULL
             )
         """)
-        from datetime import datetime
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         for _, r in decay_table.iterrows():
             conn.execute("""
                 INSERT OR REPLACE INTO decay_factor

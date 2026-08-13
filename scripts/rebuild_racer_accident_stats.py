@@ -17,9 +17,10 @@ import csv
 import sqlite3
 import sys
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Optional
+from zoneinfo import ZoneInfo
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -27,6 +28,13 @@ if str(ROOT_DIR) not in sys.path:
 
 import config
 from src.db.connection import assert_safe_production_write, connect as db_connect
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
 
 
 RULE_VERSION = "official_table_2025_05_reconstructed_v2"
@@ -988,7 +996,7 @@ def rebuild(conn: sqlite3.Connection, date_from: str, date_to: str, dry_run: boo
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--from", dest="date_from", default="2016-01-01")
-    parser.add_argument("--to", dest="date_to", default=date.today().isoformat())
+    parser.add_argument("--to", dest="date_to", default=_today_jst().isoformat())
     parser.add_argument("--local", action="store_true", help="Force local SQLite. This avoids production writes.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(

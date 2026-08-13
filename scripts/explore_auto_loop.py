@@ -1,4 +1,4 @@
-"""自律検証ループ:
+﻿"""自律検証ループ:
   1. 大量の仮説バッチを生成 (refinement / analog / Venus / combinations)
   2. 各仮説を train/test split で検証
   3. robust survivors を蓄積
@@ -15,6 +15,7 @@ import sys
 from datetime import date, datetime, timedelta
 from itertools import product
 from pathlib import Path
+from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -23,6 +24,12 @@ except Exception:
 
 import config
 from src.verification.backtest import _build_where
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 STAD = {1:"桐生",2:"戸田",3:"江戸川",4:"平和島",5:"多摩川",6:"浜名湖",7:"蒲郡",8:"常滑",
         9:"津",10:"三国",11:"びわこ",12:"住之江",13:"尼崎",14:"鳴門",15:"丸亀",16:"児島",
@@ -306,8 +313,8 @@ def main():
     # markdown 出力
     out_dir = Path("reports")
     out_dir.mkdir(exist_ok=True)
-    fp = out_dir / f"auto_loop_{datetime.now():%Y%m%d_%H%M}.md"
-    lines = [f"# 自律検証ループレポート {datetime.now():%Y-%m-%d %H:%M}",
+    fp = out_dir / f"auto_loop_{_now_jst():%Y%m%d_%H%M}.md"
+    lines = [f"# 自律検証ループレポート {_now_jst():%Y-%m-%d %H:%M}",
              f"split={sd_iso}, threshold={THRESHOLD}%", "",
              f"## robust survivors ({len(final_robust)} 件)", "",
              "| train n | train ROI | test n | test ROI | 手法 |",
@@ -324,3 +331,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

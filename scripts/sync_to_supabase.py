@@ -13,11 +13,19 @@ import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
 from src.db.connection import connect as db_connect
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(JST).date().isoformat()
 
 
 ACCIDENT_FULL_TABLES = {
@@ -128,7 +136,7 @@ def sync_specs_for_table(table: str, args, race_ids: list[str]) -> list[tuple[st
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--start", type=str, default="2026-01-01")
-    parser.add_argument("--end", type=str, default=datetime.now().strftime("%Y-%m-%d"))
+    parser.add_argument("--end", type=str, default=_today_jst_iso())
     parser.add_argument(
         "--tables",
         type=str,

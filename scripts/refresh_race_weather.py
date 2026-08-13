@@ -30,6 +30,7 @@ import sys
 import time as _time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
@@ -43,12 +44,17 @@ from src.collectors.result_scraper import scrape_race_result, overwrite_race_pre
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
+JST = ZoneInfo("Asia/Tokyo")
 
 WX = {1: "晴", 2: "曇", 3: "雨", 4: "霧", 5: "雪"}
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    return datetime.now(JST).date().isoformat()
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 
 def _local_conn():
@@ -60,7 +66,7 @@ def _list_target_races(conn, target_date: str, stadium: int | None,
     """対象レース (締切済 = 現在時刻 > race_closed_at) を抽出。
     since_hours: 指定するとそれ以内に締切ったレースだけに絞る (hourly 自動実行用)。
     """
-    now = datetime.now()
+    now = _now_jst()
     sql = """SELECT race_id, stadium_number, race_number, race_closed_at
                FROM races
               WHERE race_date=? AND race_closed_at < ?"""

@@ -11,8 +11,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from src.verification.extract import title_of
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 TIER_ORDER = ["tier_1", "tier_2", "tier_3", "discard", "insufficient_sample"]
 TIER_LABEL = {
@@ -27,7 +34,7 @@ TIER_LABEL = {
 def write_report(methods: list[dict], output_dir: Path) -> Path:
     """検証済 method リストを markdown ファイルに保存し、パスを返す。"""
     output_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now()
+    ts = _now_jst()
     fpath = output_dir / f"verification_{ts:%Y%m%d_%H%M}.md"
 
     lines: list[str] = []

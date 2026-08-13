@@ -15,11 +15,23 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.db.connection import connect as db_connect
 from src.start_prediction.repository import StartPredictionRepository
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _today_jst() -> date:
+    return _now_jst().date()
 
 
 @dataclass(frozen=True)
@@ -103,7 +115,7 @@ def build_rows(conn, from_date: str, to_date: str) -> list[tuple]:
 
     warmup_from = (date.fromisoformat(from_date) - timedelta(days=370)).isoformat()
     history = _historical_starts(conn, warmup_from, to_date)
-    updated_at = datetime.now().isoformat(timespec="seconds")
+    updated_at = _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
     rows: list[tuple] = []
 
     dates_by_racer: dict[int, list[date]] = {
@@ -180,7 +192,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    to_date = args.to_date or date.today().isoformat()
+    to_date = args.to_date or _today_jst().isoformat()
     from_date = args.from_date or (
         date.fromisoformat(to_date) - timedelta(days=max(1, args.recent_days) - 1)
     ).isoformat()

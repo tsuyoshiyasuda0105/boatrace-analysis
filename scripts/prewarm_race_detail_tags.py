@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 
@@ -14,6 +14,10 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
 
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.web.app import JST, _race_detail_tag_snapshot  # noqa: E402,F401
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(JST).date().isoformat()
 
 
 def prewarm(target_date: str) -> dict[str, int]:
@@ -65,7 +69,7 @@ def prewarm(target_date: str) -> dict[str, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--date", default=_today_jst_iso())
     args = parser.parse_args()
     summary = prewarm(args.date)
     return 0 if summary["races"] > 0 and summary["failed"] == 0 else 1

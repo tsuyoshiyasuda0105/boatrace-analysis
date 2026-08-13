@@ -24,8 +24,9 @@ import logging
 import os
 import sqlite3
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
@@ -42,6 +43,11 @@ logging.basicConfig(
 )
 
 WINDOW_DAYS = 180  # COURSE1_WINDOW_DAYS (l4_strategy と整合)
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
 
 
 def ensure_schema(conn) -> None:
@@ -102,7 +108,7 @@ def cleanup_old(conn, keep_days: int) -> int:
 
     既定の使い方では当日分しか必要ないので keep_days=7 程度で十分.
     """
-    cutoff = (date.today() - timedelta(days=keep_days)).isoformat()
+    cutoff = (_today_jst() - timedelta(days=keep_days)).isoformat()
     cur = conn.execute(
         "DELETE FROM course1_stats_cache WHERE as_of_date < ?",
         (cutoff,),
@@ -120,7 +126,7 @@ def main() -> None:
                    help="古い cache を何日分残すか (default 7日)")
     args = p.parse_args()
 
-    target = date.fromisoformat(args.date) if args.date else date.today()
+    target = date.fromisoformat(args.date) if args.date else _today_jst()
     logger.info("course1_stats_cache 集計開始 as_of=%s window=%d days",
                 target.isoformat(), WINDOW_DAYS)
 

@@ -12,6 +12,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -25,6 +26,15 @@ from src.web import app as web_app  # noqa: E402
 
 MOTOR_CACHE_VERSION = "v9"
 STATUS_ORDER = {"ok": 0, "warning": 1, "error": 2}
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _today_jst_iso() -> str:
+    return _now_jst().date().isoformat()
 
 
 def _placeholders(values: Iterable[object]) -> str:
@@ -50,7 +60,7 @@ def _ensure_system_status(conn) -> None:
 
 def _upsert_status(conn, check_name: str, check_date: str, status: str, message: str, detail: dict) -> None:
     _ensure_system_status(conn)
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
     detail_json = json.dumps(detail, ensure_ascii=False)
     row = conn.execute(
         "SELECT 1 FROM system_status WHERE check_name=? AND check_date=?",
@@ -395,7 +405,7 @@ def check_result_after_close(conn, target_date: str, race_ids: list[str] | None 
     target_races = _select_race_ids(conn, target_date, race_ids)
     if not target_races:
         return "ok", "no target races for result check", {"race_count": 0}
-    cutoff = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (_now_jst() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
     placeholders = _placeholders(target_races)
     closed_rows = conn.execute(
         f"""
@@ -492,7 +502,7 @@ def run_checks(target_date: str, scopes: list[str], race_ids: list[str] | None =
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--date", default=_today_jst_iso())
     parser.add_argument("--stage", choices=sorted(STAGE_SCOPES), help="Use the safe check set for a cron timing.")
     parser.add_argument(
         "--scope",

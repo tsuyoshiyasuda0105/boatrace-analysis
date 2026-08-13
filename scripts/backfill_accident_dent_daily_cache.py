@@ -13,6 +13,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -22,6 +23,17 @@ from src.evaluation.accident_dent_strategy import (
     ACCIDENT_DENT_STRATEGIES,
     iter_backtest_matches,
 )
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _today_jst_iso() -> str:
+    return _now_jst().date().isoformat()
 
 
 def patch_daily_stats(stats: dict[str, Any], metrics: dict[str, dict[str, int]]) -> dict[str, Any]:
@@ -61,7 +73,7 @@ def backfill(from_date: str, to_date: str) -> tuple[int, int]:
             "SELECT race_date, stats_json FROM l4_daily_stats_cache WHERE race_date BETWEEN ? AND ?",
             (from_date, to_date),
         ).fetchall()
-        cached_at = datetime.now().isoformat(timespec="seconds")
+        cached_at = _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
         updated = 0
         skipped = 0
         for race_date, raw in rows:
@@ -96,7 +108,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    to_date = args.to_date or date.today().isoformat()
+    to_date = args.to_date or _today_jst_iso()
     from_date = args.from_date or (
         date.fromisoformat(to_date) - timedelta(days=max(1, args.recent_days) - 1)
     ).isoformat()

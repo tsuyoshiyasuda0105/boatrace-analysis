@@ -31,6 +31,7 @@ import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
@@ -43,6 +44,17 @@ import sqlite3
 
 import config
 from src.verification.backtest import _build_where, _tier
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 
 # search 1-3 で頻出した候補 + race番号別新発見 5件
@@ -128,7 +140,7 @@ def find_split_date(ratio: float) -> str:
     ).fetchone()
     conn.close()
     if not rows or not rows[0]:
-        return date.today().isoformat()
+        return _today_jst().isoformat()
     start = datetime.strptime(rows[0], "%Y-%m-%d").date()
     end = datetime.strptime(rows[1], "%Y-%m-%d").date()
     span = (end - start).days
@@ -279,8 +291,8 @@ def main():
     # markdown 出力
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fpath = out_dir / f"validate_{datetime.now():%Y%m%d_%H%M}.md"
-    lines = [f"# 時期分割検証レポート  {datetime.now():%Y-%m-%d %H:%M}", "",
+    fpath = out_dir / f"validate_{_now_jst():%Y%m%d_%H%M}.md"
+    lines = [f"# 時期分割検証レポート  {_now_jst():%Y-%m-%d %H:%M}", "",
              f"- 分割日: **{split_date}** (train ≤ {prev} / test ≥ {split_date})",
              f"- robust 判定: train・test 両方 ROI ≥ **{args.threshold}%**",
              "",

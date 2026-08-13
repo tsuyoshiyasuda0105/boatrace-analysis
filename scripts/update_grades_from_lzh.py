@@ -16,6 +16,7 @@ import sqlite3
 import sys
 from datetime import datetime, date
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -25,12 +26,19 @@ from src.db.connection import connect as db_connect
 from src.parsers.official_b import parse_b_text
 
 
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--target", choices=["local", "supabase"], default="local",
                    help="UPDATE 先 (default=local)")
     p.add_argument("--start", default="2022-01-01")
-    p.add_argument("--end", default=datetime.now().strftime("%Y-%m-%d"))
+    p.add_argument("--end", default=_today_jst().isoformat())
     args = p.parse_args()
 
     if args.target == "local":

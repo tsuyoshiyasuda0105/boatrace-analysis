@@ -103,3 +103,33 @@ def test_needs_catchup_interval(monkeypatch):
     # 30 分前 (stale_min=15 超) → 鮮度切れ → 要
     monkeypatch.setattr(task_log, "last_success_at", lambda *a, **k: base - timedelta(minutes=30))
     assert sc.needs_catchup(task, base)[0] is True
+
+
+def test_startup_catchup_now_helper_uses_jst(monkeypatch):
+    sc = _load_startup_catchup()
+    fake_now = datetime(2026, 8, 8, 0, 25, tzinfo=sc.JST)
+
+    class _FakeDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz == sc.JST
+            return fake_now
+
+    monkeypatch.setattr(sc, "datetime", _FakeDatetime)
+
+    assert sc._now_jst() == fake_now
+
+
+def test_last_log_update_returns_jst_aware_datetime(tmp_path, monkeypatch):
+    sc = _load_startup_catchup()
+    monkeypatch.setattr(sc, "ROOT", tmp_path)
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    log_path = log_dir / "beforeinfo_live_20260808.log"
+    log_path.write_text("ok", encoding="utf-8")
+
+    got = sc.last_log_update({"log_glob": "beforeinfo_live_*.log"})
+
+    assert got is not None
+    assert got.tzinfo is not None
+    assert got.utcoffset() == sc.JST.utcoffset(got)

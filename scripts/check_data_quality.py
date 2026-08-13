@@ -23,6 +23,7 @@ import logging
 import sys
 from datetime import datetime, date
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -33,12 +34,21 @@ from src.collectors.tide import load_tide_station_map
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _today_jst_iso() -> str:
+    return _now_jst().date().isoformat()
 
 
 def upsert_status(conn, check_name: str, check_date: str,
                   status: str, message: str, detail: dict | None = None):
     """system_status に UPSERT (Postgres + SQLite 両対応)"""
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
     detail_json = json.dumps(detail or {}, ensure_ascii=False)
     # 既存判定 → INSERT / UPDATE 切り替え (Postgres/SQLite 共通でシンプル)
     cur = conn.execute(
@@ -143,7 +153,7 @@ def check_predictions_count(conn, target_date: str) -> tuple[str, str, dict]:
     # 当日予測は朝バッチ (morning task 06:30) で生成される。それ以前の早朝は
     # 未生成が正常なので error に上げない (前夜キャッシュ未実行時の誤検知防止)。
     # 例: 06:23 に 0/144 → morning task 後 (06:30) に 144/144 へ自己解決する。
-    if datetime.now().hour < 7 and coverage < 80:
+    if _now_jst().hour < 7 and coverage < 80:
         return "ok", f"予測生成待ち ({n_pred}/{n_complete}、朝バッチ前)", detail
     if coverage < 30:
         return "error", f"予測未生成 ({n_pred}/{n_complete}、{coverage:.0f}%)", detail
@@ -168,7 +178,7 @@ def check_previews_count(conn, target_date: str) -> tuple[str, str, dict]:
     cov = n_pv / n_races * 100
     # 朝早い時間帯は preview が無いのが正常 (午前 8 時以前等)
     # シビアな判定は午後にする
-    now_hour = datetime.now().hour
+    now_hour = _now_jst().hour
     if now_hour < 11:
         if cov < 30:
             return "ok", f"直前情報 {n_pv}/{n_races} (朝のため未取得は正常)", detail
@@ -185,7 +195,7 @@ def check_results_count(conn, target_date: str) -> tuple[str, str, dict]:
     # datetime.now().isoformat() は 'YYYY-MM-DDThh:mm:ss' (T 区切り) を返すため、
     # 文字列比較で空白(0x20) < 'T'(0x54) となり「同日の全レースが締切済」と
     # 誤判定する (2026-05-22 障害)。同じスペース区切り形式で比較する。
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = _now_jst().strftime("%Y-%m-%d %H:%M:%S")
     cur = conn.execute("""
         SELECT COUNT(DISTINCT r.race_id) FROM races r
          WHERE r.race_date = ?
@@ -286,7 +296,7 @@ def check_tides_count(conn, target_date: str) -> tuple[str, str, dict]:
         return "ok", "本日は潮対象会場なし", detail
 
     coverage = tide_races / expected_races * 100 if expected_races else 0.0
-    now_hour = datetime.now().hour
+    now_hour = _now_jst().hour
     if now_hour < 7 and coverage < 100:
         return "ok", f"潮情報取り込み前 {tide_races}/{expected_races}", detail
     if coverage == 100:
@@ -308,7 +318,7 @@ CHECKS = [
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", type=str, default=date.today().isoformat())
+    parser.add_argument("--date", type=str, default=_today_jst_iso())
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 

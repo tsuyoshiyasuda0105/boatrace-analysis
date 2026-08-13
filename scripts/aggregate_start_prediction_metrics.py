@@ -4,8 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -15,9 +16,16 @@ from src.start_prediction.models import MODEL_VERSIONS
 from src.start_prediction.repository import StartPredictionRepository
 
 
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=(date.today() - timedelta(days=1)).isoformat())
+    parser.add_argument("--date", default=(_today_jst() - timedelta(days=1)).isoformat())
     args = parser.parse_args()
     metrics = StartPredictionService().metrics({"from": args.date, "to": args.date})
     with connect() as conn:

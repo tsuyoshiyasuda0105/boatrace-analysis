@@ -18,8 +18,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import config
+
+JST = ZoneInfo("Asia/Tokyo")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS task_runs (
@@ -48,8 +51,12 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
 def _today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return _now_jst().strftime("%Y-%m-%d")
 
 
 def record(task_name: str, status: str, *,
@@ -61,9 +68,9 @@ def record(task_name: str, status: str, *,
     - 同一 (task_name, run_date) があれば run_count を +1 し status/finished_at 更新。
     - status=='success' のときだけ success_at を更新 (失敗実行で成功記録を消さない)。
     """
-    now = datetime.now()
+    now = _now_jst()
     rd = run_date or now.strftime("%Y-%m-%d")
-    now_iso = now.isoformat(timespec="seconds")
+    now_iso = now.replace(tzinfo=None).isoformat(timespec="seconds")
     success_at = now_iso if status == "success" else None
 
     conn = _conn()

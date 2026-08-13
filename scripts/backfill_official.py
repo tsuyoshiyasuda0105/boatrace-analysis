@@ -13,8 +13,9 @@ import logging
 import sqlite3
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -22,6 +23,13 @@ from src.collectors import official_dl
 from src.db.connection import connect as db_connect
 from src.parsers.official_b import parse_b_text
 from src.parsers.official_k import parse_k_text
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
 
 
 def upsert_b(conn: sqlite3.Connection, parsed: list[dict]) -> tuple[int, int]:
@@ -210,7 +218,7 @@ def main():
     # --tomorrow 指定時は start/end を翌日に自動設定
     if args.tomorrow:
         from datetime import timedelta as _td
-        tomorrow = date.today() + _td(days=1)
+        tomorrow = _today_jst() + _td(days=1)
         args.start = tomorrow.isoformat()
         args.end = tomorrow.isoformat()
     elif not (args.start and args.end):

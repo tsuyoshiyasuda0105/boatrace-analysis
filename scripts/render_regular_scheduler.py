@@ -354,7 +354,7 @@ def run_beforeinfo(now: datetime) -> bool:
             return
         batch_summary = write_updates(
             updates,
-            datetime.now().isoformat(timespec="seconds"),
+            jst_now().replace(tzinfo=None).isoformat(timespec="seconds"),
             also_local=False,
         )
         for key in summary:

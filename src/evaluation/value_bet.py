@@ -15,10 +15,15 @@ EV > 閾値 (例: 0.15) のものを買い目とし、Kelly基準でベットサ
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from typing import Optional
 import pandas as pd
 
 import config
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 # ============================================================
@@ -159,8 +164,7 @@ def save_value_bets(
     if df.empty:
         return 0
 
-    from datetime import datetime
-    now = datetime.utcnow().isoformat()
+    now = _utc_now_iso()
 
     with sqlite3.connect(db_path) as conn:
         rows = []

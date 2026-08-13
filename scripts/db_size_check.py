@@ -20,11 +20,23 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from src.db.connection import connect as db_connect
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _today_jst() -> date:
+    return _now_jst().date()
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -89,7 +101,7 @@ def cleanup_old_odds(conn, is_pg: bool, keep_days: int = 60,
 
     返り値: {'deleted_rows': N, 'cutoff_date': 'YYYY-MM-DD'}
     """
-    cutoff = (date.today() - timedelta(days=keep_days)).isoformat()
+    cutoff = (_today_jst() - timedelta(days=keep_days)).isoformat()
     # 削除候補数を先にカウント
     count_sql = """
         SELECT COUNT(*) FROM odds_trifecta o
@@ -152,7 +164,7 @@ def cleanup_old_raw_data(conn, is_pg: bool, keep_days: int = 90,
     Returns:
       {'deleted_rows': {table: n}, 'deleted_dates': N, 'cutoff_date': ...}
     """
-    cutoff = (date.today() - timedelta(days=keep_days)).isoformat()
+    cutoff = (_today_jst() - timedelta(days=keep_days)).isoformat()
     logger.info("aggressive cleanup: cutoff=%s (keep_days=%d)", cutoff, keep_days)
 
     # 1. 削除候補日付: races の日付 < cutoff かつ l4_daily_summary に集計済み
@@ -291,7 +303,7 @@ def update_system_status(conn, total_bytes: int, sizes: list[dict],
                           cleanup_result: dict | None = None,
                           *, is_pg: bool = False):
     """システム状態テーブルに DB 使用量を記録"""
-    today_iso = date.today().isoformat()
+    today_iso = _today_jst().isoformat()
     total_mb = total_bytes / 1024 / 1024
     limit_mb, limit_source = _resolve_capacity_limit_mb(is_pg)
     db_kind = "postgres" if is_pg else "sqlite"
@@ -316,7 +328,7 @@ def update_system_status(conn, total_bytes: int, sizes: list[dict],
     if cleanup_result:
         detail["cleanup"] = cleanup_result
     detail_json = json.dumps(detail, ensure_ascii=False)
-    now_iso = datetime.now().isoformat(timespec="seconds")
+    now_iso = _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
     # UPSERT (Postgres + SQLite 両対応の素直な書き方)
     cur = conn.execute(
         "SELECT 1 FROM system_status WHERE check_name=? AND check_date=?",

@@ -4,10 +4,12 @@ import argparse
 import os
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parents[1]
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def _date_range(from_date: date, to_date: date):
@@ -23,7 +25,7 @@ def _run_py(args: list[str], *, env: dict[str, str]) -> None:
 
 
 def _today() -> date:
-    return date.today()
+    return datetime.now(JST).date()
 
 
 def parse_args() -> argparse.Namespace:

@@ -27,6 +27,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -40,6 +41,7 @@ from src.db import task_log  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
+JST = ZoneInfo("Asia/Tokyo")
 SCHEDULED_TASKS = {
     "daily_collect": "BoatraceDailyCollect",
     "morning": "BoatraceMorningTask",
@@ -69,6 +71,10 @@ TASKS = [
 ]
 
 
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
 def _at(hhmm: str, base: datetime) -> datetime:
     """base と同じ日付の hh:mm を返す。"""
     h, m = (int(x) for x in hhmm.split(":"))
@@ -84,7 +90,7 @@ def last_log_update(task: dict) -> datetime | None:
     latest = None
     for p in log_dir.glob(log_glob):
         try:
-            dt = datetime.fromtimestamp(p.stat().st_mtime)
+            dt = datetime.fromtimestamp(p.stat().st_mtime, tz=JST)
         except OSError:
             continue
         if latest is None or dt > latest:
@@ -218,9 +224,9 @@ def main() -> int:
     args = parser.parse_args()
 
     def log(msg: str) -> None:
-        print(f"{datetime.now():%H:%M:%S} {msg}", flush=True)
+        print(f"{_now_jst():%H:%M:%S} {msg}", flush=True)
 
-    now = datetime.now()
+    now = _now_jst()
     log(f"=== 起動時タスクキャッチアップ {now:%Y-%m-%d %H:%M:%S} ===")
 
     for scheduled_name in SCHEDULED_TASKS.values():

@@ -6,10 +6,18 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.db.connection import connect
 from src.start_prediction import StartPredictionService
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(JST).date().isoformat()
 
 
 def _load_due_predictions(conn, date_from: str, date_to: str) -> list[tuple[str, str]]:
@@ -46,7 +54,7 @@ def due_predictions(date_from: str, date_to: str) -> list[tuple[str, str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=date.today().isoformat())
+    parser.add_argument("--date", default=_today_jst_iso())
     parser.add_argument("--lookback-days", type=int, default=2)
     args = parser.parse_args()
     date_from = (date.fromisoformat(args.date) - timedelta(days=args.lookback_days)).isoformat()

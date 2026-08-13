@@ -1,4 +1,4 @@
-"""多条件組合せ探索エージェント。
+﻿"""多条件組合せ探索エージェント。
 
 verification_agent.py が "自然言語 → 既知手法の検証" を行うのに対し、
 このスクリプトは "組合せの総当たり" で未知の優位パターンを掘る。
@@ -35,6 +35,7 @@ import sys
 from datetime import datetime
 from itertools import product
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
@@ -43,6 +44,12 @@ except Exception:  # noqa: BLE001
     pass
 
 from src.verification.backtest import backtest_method, _tier  # noqa: E402
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -108,7 +115,7 @@ def search(n_min: int, top: int, bet_type: str, combos: list[str],
                * len(ob_axis) * len(lo_axis) * len(mo_axis))
     print(f"=== combinatorial search: {n_total:,} cells ===")
     i = 0
-    last_log = datetime.now()
+    last_log = _now_jst()
     for stadium, cls, rn, kim, wexc, combo, ob, lo, mo in product(
             STADIUMS_AXIS, CLASS_AXIS, rn_axis, kim_axis,
             WEATHER_EXC_AXIS, combos, ob_axis, lo_axis, mo_axis):
@@ -127,9 +134,9 @@ def search(n_min: int, top: int, bet_type: str, combos: list[str],
             continue
         method["backtest"] = bt
         results.append(method)
-        if (datetime.now() - last_log).total_seconds() > 5:
+        if (_now_jst() - last_log).total_seconds() > 5:
             print(f"  {i}/{n_total}  hits={len(results)}")
-            last_log = datetime.now()
+            last_log = _now_jst()
 
     # ROI 降順
     results.sort(key=lambda m: (-m["backtest"]["roi"],
@@ -139,7 +146,7 @@ def search(n_min: int, top: int, bet_type: str, combos: list[str],
 
 def render_report(results: list[dict], output: Path, n_min: int):
     output.mkdir(parents=True, exist_ok=True)
-    lines = [f"# 多条件総当たり探索レポート  {datetime.now():%Y-%m-%d %H:%M}",
+    lines = [f"# 多条件総当たり探索レポート  {_now_jst():%Y-%m-%d %H:%M}",
              "",
              "> ⚠ **多重比較の罠**: 数千セルから ROI 上位を抽出するため、",
              "> data-snooping により偽優位が混入する可能性が高い。",
@@ -192,7 +199,7 @@ def render_report(results: list[dict], output: Path, n_min: int):
                          f"{bt['avg_payout_on_hit']:,.0f}円 | "
                          f"{bt['profit']:+,d}円 |")
         lines.append("")
-    out = output / f"search_{datetime.now():%Y%m%d_%H%M}.md"
+    out = output / f"search_{_now_jst():%Y%m%d_%H%M}.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return out
 
@@ -232,3 +239,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

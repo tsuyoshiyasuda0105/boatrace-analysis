@@ -32,12 +32,20 @@ if "--local" in sys.argv:
     os.environ["DATABASE_URL"] = ""
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.collectors import openapi
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
 
 
 def parse_args():
@@ -66,7 +74,7 @@ def main():
         force=True,
     )
 
-    target = date.fromisoformat(args.date) if args.date else date.today()
+    target = date.fromisoformat(args.date) if args.date else _today_jst()
 
     if args.backfill > 0:
         targets = [target - timedelta(days=i) for i in range(args.backfill + 1)]

@@ -21,8 +21,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.stdout.reconfigure(encoding="utf-8")
@@ -40,10 +41,17 @@ from src.evaluation.strategy_monitor import (
 )
 
 
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
+
+
 def main():
     p = argparse.ArgumentParser()
-    today = date.today().isoformat()
-    default_from = (date.today() - timedelta(days=90)).isoformat()
+    today = _today_jst().isoformat()
+    default_from = (_today_jst() - timedelta(days=90)).isoformat()
     p.add_argument("--from", dest="from_date", default=default_from,
                    help=f"開始日 (default: {default_from})")
     p.add_argument("--to", dest="to_date", default=today,

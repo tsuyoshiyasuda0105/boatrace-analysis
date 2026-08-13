@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -21,10 +22,27 @@ PRELOAD_HOUR = 0
 PRELOAD_MINUTE = 5
 MORNING_DUE_HOUR = 6
 MORNING_DUE_MINUTE = 30
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def _now() -> datetime:
-    return datetime.now()
+    return datetime.now(JST)
+
+
+def _today_iso() -> str:
+    return _now().date().isoformat()
+
+
+def _parse_jst_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=JST)
+    return dt.astimezone(JST)
 
 
 def _conn() -> sqlite3.Connection:
@@ -108,9 +126,8 @@ def _recent_attempt_exists(now: datetime) -> bool:
     finished_at = row.get("finished_at")
     if not finished_at:
         return False
-    try:
-        finished = datetime.fromisoformat(finished_at)
-    except ValueError:
+    finished = _parse_jst_datetime(finished_at)
+    if finished is None:
         return False
     age_min = (now - finished).total_seconds() / 60
     return age_min < RETRY_MINUTES
@@ -196,7 +213,7 @@ def _run_pre_morning_chain(today: str) -> tuple[bool, str]:
 
 def main() -> int:
     now = _now()
-    today = date.today().isoformat()
+    today = _today_iso()
     state = _today_state(today)
     need_heal, reason = _should_heal(state, now)
     print(f"[self-heal] state={state}")

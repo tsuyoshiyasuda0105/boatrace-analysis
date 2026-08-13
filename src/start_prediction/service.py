@@ -1,8 +1,9 @@
 """Application service for generation, retrieval, evaluation and metrics."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.db.connection import connect
 
@@ -10,6 +11,12 @@ from .evaluation import evaluate_prediction
 from .features import PointInTimeFeatureBuilder
 from .models import MODEL_VERSIONS, RuleEnsembleV1
 from .repository import StartPredictionRepository, _loads
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _today_jst() -> date:
+    return datetime.now(JST).date()
 
 MODEL_FEATURES = [
     "course_avg_st", "derived_st_12", "derived_st_180d", "entry_avg_st",
@@ -74,13 +81,14 @@ class StartPredictionService:
         }
 
     def metrics(self, filters: dict[str, Any]) -> dict[str, Any]:
-        default_from = (date.today() - timedelta(days=30)).isoformat()
+        today = _today_jst()
+        default_from = (today - timedelta(days=30)).isoformat()
         with self.connection_factory() as conn:
             repo = StartPredictionRepository(conn)
             repo.ensure_schema()
             rows = repo.metrics_rows(
                 date_from=filters.get("from") or default_from,
-                date_to=filters.get("to") or date.today().isoformat(),
+                date_to=filters.get("to") or today.isoformat(),
                 stadium_number=int(filters["stadium_number"]) if filters.get("stadium_number") else None,
                 grade=int(filters["grade"]) if filters.get("grade") else None,
                 race_number=int(filters["race_number"]) if filters.get("race_number") else None,

@@ -17,11 +17,26 @@ import sqlite3
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
 from src.web.predictor import Predictor
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
+
+
+def _now_jst_iso() -> str:
+    return _now_jst().replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _today_jst() -> date:
+    return _now_jst().date()
 
 
 def ensure_predictions_schema(conn):
@@ -60,7 +75,7 @@ def cache_predictions_for_date(target_date: str, version: str = "v0.8"):
             print(f"  → データなし or 予測失敗")
             return 0
 
-        now_iso = datetime.now().isoformat()
+        now_iso = _now_jst_iso()
         rows = []
         for _, row in df.iterrows():
             rows.append((
@@ -167,9 +182,9 @@ def main():
     args = p.parse_args()
 
     if args.tomorrow:
-        targets = [(date.today() + timedelta(days=1)).isoformat()]
+        targets = [(_today_jst() + timedelta(days=1)).isoformat()]
     elif args.today:
-        targets = [date.today().isoformat()]
+        targets = [_today_jst().isoformat()]
     elif args.date:
         targets = [args.date]
     elif args.date_from and args.date_to:
