@@ -170,6 +170,7 @@ _PAGE_HTML_CACHE_TABLE_READY = False
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
+    "render-maintenance",
     "render-detail-prewarm",
     "db-maintenance",
 }

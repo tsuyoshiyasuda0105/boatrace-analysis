@@ -181,6 +181,14 @@ def _hit(client, path: str) -> tuple[int, int, bool, str]:
     return resp.status_code, len(body), True, "ok"
 
 
+def _prepare_internal_session(client) -> None:
+    """Grant the in-process maintenance client the same role as scheduled ROI jobs."""
+    with client.session_transaction() as sess:
+        sess["is_member"] = True
+        sess["role"] = "admin"
+        sess["auth_provider"] = "internal_prewarm"
+
+
 def _days_ago(today: date, days: int) -> str:
     return (today - timedelta(days=days)).isoformat()
 
@@ -274,8 +282,7 @@ def main() -> int:
 
     app = create_app()
     client = app.test_client()
-    with client.session_transaction() as sess:
-        sess["is_member"] = True
+    _prepare_internal_session(client)
 
     if args.mode in ("nightly", "morning-check"):
         ensure_performance_indexes()

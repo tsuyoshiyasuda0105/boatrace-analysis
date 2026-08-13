@@ -2,16 +2,32 @@ import os
 from datetime import date
 from pathlib import Path
 
+from flask import Flask
+
 os.environ["DATABASE_URL"] = ""
 
 from scripts.prewarm_strategy_pages import (
     _hit,
+    _prepare_internal_session,
     _validate_market_signal_response,
     build_targets,
 )
 
 
 TODAY = date(2026, 7, 18)
+
+
+def test_internal_prewarm_session_has_admin_role():
+    app = Flask(__name__)
+    app.secret_key = "test-only-secret"
+    client = app.test_client()
+
+    _prepare_internal_session(client)
+
+    with client.session_transaction() as sess:
+        assert sess["is_member"] is True
+        assert sess["role"] == "admin"
+        assert sess["auth_provider"] == "internal_prewarm"
 
 
 def test_signals_mode_is_the_daytime_market_signal_writer():
