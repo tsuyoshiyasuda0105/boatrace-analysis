@@ -179,3 +179,24 @@ git push origin rescue/boatrace-cron-audit-worktree-wip-20260813 rescue/boatrace
 - Phase 5 and cleanup records present: **PASS, awaiting local documentation commit**.
 - `origin/main` unchanged: **PASS**, `cb442f4`.
 - No deployment, Render/Supabase change, or scheduled-task change/run occurred.
+
+## Cleanup finish final verification
+
+- Required documentation commit created locally on `main`: `00e3d003c490a4dd18690b0eaa7e146a79971163` (`Record worktree consolidation completion`). It contains only the cleanup instruction and consolidation log.
+- Canonical status immediately after that commit was clean; exactly one worktree remains at `C:\boat_project\boatrace-analysis`.
+- Local branch refs remain:
+  - `main` `00e3d00`
+  - `rescue/boatrace-cron-audit-worktree-wip-20260813` `42ed768`
+  - `rescue/boatrace-deploy-worktree-wip-20260813` `800ba71`
+  - `rescue/boatrace-main-deploy-wip-20260813` `8c358ca`
+  - `rescue/main-audit-assets-20260813` `80e72a2`
+  - `rescue/unmerged-commits-20260813` `1edacff`
+- Complete-history bundle verification succeeded again.
+- Final physical-folder state:
+  - `boatrace-main-deploy`: absent.
+  - `boatrace-cron-audit-worktree`: remains after access denial; 519 residual filesystem entries observed.
+  - `boatrace-deploy-worktree`: remains after access denial; 697 residual filesystem entries observed.
+  - `boatrace-main-deploy-pushsync`: remains after access denial; 879 residual filesystem entries observed.
+- Final remote refs are unchanged: `origin/main=cb442f4`, `origin/deploy-main=bdf9cef`, `origin/codex/pushsync-top-badges=f0078c2`, and `origin/agent/supabase-auth-admin-phase=eb1e530`. No remote rescue refs exist.
+- A combined multi-revision `git rev-parse --verify` verification command returned `Needed a single revision`; it changed nothing. Rescue commit IDs were confirmed through `for-each-ref`/branch output instead.
+- **Final checklist:** Task 1 completed with the instruction's residual-report fallback; Task 2 complete; Task 3 skipped/incomplete due external-push safety rejection; Task 4 locally committed. `origin/main` is unchanged and no prohibited operation occurred.
