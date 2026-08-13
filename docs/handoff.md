@@ -6,6 +6,14 @@
 - Expected edit files: `scripts/pc_nightly_prepare.py`, `tests/test_pc_nightly_prepare.py`, and this handoff.
 - Replace only the Render-only prediction command with the existing local SQLite command; do not change the ROI rules, database schema, scheduled time, or sync table contract.
 
+## Phase 4 result (2026-08-13)
+
+- Reassigned `BoatracePcNightlyPrepare` from the OneDrive worktree batch to `C:\boat_project\boatrace-analysis\scripts\run_pc_nightly_prepare.bat`; next run remains 2026-08-14 01:00 JST.
+- First manual run exposed the Render-only `render_cache_predictions.py` command in the local workflow and exited 1. Replaced it with `cache_predictions.py --date`, covered by 3/3 focused tests, commit `a6d7dc2` (local only; not pushed).
+- Second manual run completed with scheduled-task result 0. For 2026-08-14 it prepared and synced 132 races, 792 entries, 792 predictions, 72 tide rows, 1,621 accident-period rows, and 1,621 accident-rank snapshots. Detail tags cached 132/132 with zero failures; TOP snapshot contained 132 races and 96 badged races.
+- A Python 3.14 `PythonFinalizationError` was emitted by `psycopg_pool` after `sync complete`, but the sync and task both exited 0. Track this as a cleanup warning, not a failed data run.
+- Phase 5 worktree/branch deletion has not started and still requires explicit approval.
+
 ## Active task
 
 - 2026-08-13 recovery target-date follow-up: after the first current-day result arrived, `latest_completed_results_date()` advanced the accident phase from 2026-08-12 to 2026-08-13 while its substep checkpoints remained keyed to the maintenance run date. Freeze overnight/manual morning accident recovery to the previous JST date, add a regression, redeploy, and use the remaining bounded attempt. No deletion, schema change, or ROI-rule change.
