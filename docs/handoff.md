@@ -1,5 +1,18 @@
 # Handoff
 
+## Active task (2026-08-13 production login outage investigation)
+
+- Production `/healthz` is HTTP 200 on revision `cb442f4ed2b1`, while the canonical local `main` contains a rescued but undeployed DB-pool recurrence fix (`1edacff`). Determine whether the current login failure is Supabase credential verification, post-auth membership lookup, or authenticated TOP failure before changing code.
+- Skills: `project-ops-guard`, `webapp-testing`, `supabase`, and `bug-resistant-programming`.
+- Expected edit files after confirmation: `src/db/connection.py`, `src/web/app.py`, `src/web/membership.py`, focused login/cache/pool tests, `docs/handoff.md`, and `docs/secretary_status.json`. No secret inspection/logging, DB schema/RLS/data change, deletion, push, or deployment without the required gate.
+- Running process: the finite logged-in Chrome/Playwright inspection is closed; no local server, browser, scheduler, or production writer remains.
+- Production evidence at 21:25 JST: the live Web instance reported `pool_max=4`, `pool_available=0`, `requests_waiting=30`, and 30 checkout errors while `/healthz` remained 200 and `/login-supabase` rendered 200. This confirms DB-pool exhaustion after/beside authentication, not a broken Supabase login form.
+- The rescued third-recurrence patch was restored without the unrelated odds-audit commit. It makes cron PostgreSQL connections direct/short-lived, serves stale in-memory TOP/detail caches before DB probes, and makes PostgreSQL membership/page-cache schema guards probe-only.
+- Verification so far: 101 focused login/Supabase/pool/cache/cron tests passed. The broader 114-test run passed 111; its three failures are the already-recorded stale market-signal TTL and badge-label expectations outside this diff.
+- Verification failure log: an attempted command named nonexistent `tests/test_auth.py`, so pytest collected zero tests, and `py_compile` could not write into a pre-existing read-only `src/db/__pycache__`. Root cause is stale test-path selection plus an unwritable generated-cache directory, not source failure. Prevention: resolve test paths with `rg --files tests` first and use `python -B` import checks or a writable pycache prefix instead of writing beside source.
+- Final local verification: 101 focused login/Supabase/pool/cache/cron tests and 10 Playwright-login contract tests passed. Write-free imports for all three changed modules and `git diff --check` passed. No local server, scheduler, production writer, DB/schema/data/RLS/ROI change, or secret access occurred. Production deployment remains an explicit approval gate.
+- Commit failure log: the first `git add/commit` ran from `C:\boat_project\boatrace-analysis` without the approved repository-qualified command and could not create `.git/index.lock`; no index or history change occurred. Prevention: use the approved `git -C C:/boat_project/boatrace-analysis ...` prefix for canonical-repository Git writes.
+
 ## Active task (2026-08-13 Phase 4 nightly task verification)
 
 - `BoatracePcNightlyPrepare` was reassigned to the canonical repository and its manual verification exposed a local/Render prediction command mismatch.

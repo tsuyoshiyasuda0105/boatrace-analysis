@@ -1155,12 +1155,9 @@ def _ensure_page_html_cache_table() -> None:
     try:
         with db_connect() as conn:
             if getattr(conn, "_kind", "") == "postgres":
-                try:
-                    conn.execute("SELECT 1 FROM page_html_cache LIMIT 0")
-                    _PAGE_HTML_CACHE_TABLE_READY = True
-                    return
-                except Exception:
-                    pass
+                conn.execute("SELECT 1 FROM page_html_cache LIMIT 0")
+                _PAGE_HTML_CACHE_TABLE_READY = True
+                return
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS page_html_cache (
@@ -1235,10 +1232,10 @@ def _read_page_html_cache_stale(cache_key: str) -> Optional[str]:
     because the fresh TTL elapsed between cron runs.
     """
     try:
-        _ensure_page_html_cache_table()
         mem_entry = _PAGE_HTML_MEM_CACHE.get(cache_key)
         if mem_entry:
             return mem_entry[1]
+        _ensure_page_html_cache_table()
         with db_connect() as conn:
             row = conn.execute(
                 "SELECT html, updated_at FROM page_html_cache WHERE cache_key = ?",
@@ -1283,20 +1280,19 @@ def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
     recomputation.
     """
     try:
-        _ensure_page_html_cache_table()
-        raw = None
         mem_entry = _PAGE_HTML_MEM_CACHE.get(cache_key)
         if mem_entry:
-            _, raw = mem_entry
-        if raw is None:
-            with db_connect() as conn:
-                row = conn.execute(
-                    "SELECT html FROM page_html_cache WHERE cache_key = ?",
-                    (cache_key,),
-                ).fetchone()
-            raw = row[0] if row else None
+            return json.loads(mem_entry[1])
+        _ensure_page_html_cache_table()
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT html, updated_at FROM page_html_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        raw = row[0] if row else None
         if not raw:
             return None
+        _PAGE_HTML_MEM_CACHE[cache_key] = (float(row[1] or 0), raw)
         return json.loads(raw)
     except Exception:
         logger.exception("failed to read stale json cache: %s", cache_key)

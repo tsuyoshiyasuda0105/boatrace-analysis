@@ -3,9 +3,36 @@ from types import SimpleNamespace
 
 from flask import Flask, session
 
-from src.web import auth
+from src.web import auth, membership
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_postgres_membership_schema_check_is_probe_only(monkeypatch):
+    statements = []
+
+    class FakeConnection:
+        _kind = "postgres"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, *_args):
+            statements.append(" ".join(sql.split()))
+
+    monkeypatch.setattr(membership, "_SCHEMA_CHECKED", False)
+    monkeypatch.setattr(membership, "db_connect", FakeConnection)
+
+    membership.ensure_membership_schema()
+
+    assert statements == [
+        "SELECT 1 FROM profiles LIMIT 0",
+        "SELECT 1 FROM user_roles LIMIT 0",
+        "SELECT 1 FROM subscriptions LIMIT 0",
+    ]
 
 
 def test_supabase_session_role_is_refreshed_from_membership_table():
