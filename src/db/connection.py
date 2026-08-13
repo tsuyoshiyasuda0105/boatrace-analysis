@@ -17,6 +17,7 @@ Postgres 専用処理:
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sqlite3
@@ -26,6 +27,7 @@ from typing import Optional, Union
 import config
 
 
+logger = logging.getLogger(__name__)
 _PG_POOL = None
 _PG_POOL_LOCK = threading.Lock()
 
@@ -181,8 +183,17 @@ def _configure_pg_connection(conn) -> None:
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
+            trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
+            default_statement_timeout = "0" if trigger else "8000"
+            statement_timeout = max(
+                0,
+                int(os.getenv("BOATRACE_DB_STATEMENT_TIMEOUT_MS", default_statement_timeout)),
+            )
             cur.execute("SET max_parallel_workers_per_gather = 0")
-            cur.execute("SET work_mem = '64MB'")
+            cur.execute("SET work_mem = '16MB'")
+            cur.execute(f"SET statement_timeout = {statement_timeout}")
+            cur.execute("SET lock_timeout = '3s'")
+            cur.execute("SET idle_in_transaction_session_timeout = '15s'")
             cur.execute("SET enable_hashjoin = on")
             cur.execute("SET enable_mergejoin = off")
     except Exception:
@@ -197,14 +208,24 @@ def _get_pg_pool(dsn: str):
         if _PG_POOL is None:
             from psycopg_pool import ConnectionPool
 
+            trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
+            default_pool_size = "2" if trigger else "6"
+
             _PG_POOL = ConnectionPool(
                 conninfo=dsn,
                 min_size=1,
-                # Auth and page helpers can briefly overlap nested queries.
-                # Keep three connections per web thread to absorb that burst.
-                max_size=max(1, int(os.getenv("BOATRACE_DB_POOL_SIZE", "12"))),
-                timeout=10,
+                # Supavisor has a finite client budget shared by web and cron
+                # processes. Keep the web pool above its four threads without
+                # allowing one process to consume the whole shared budget.
+                max_size=max(
+                    1,
+                    int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),
+                ),
+                timeout=max(1, int(os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5"))),
+                max_lifetime=900,
+                max_idle=120,
                 configure=_configure_pg_connection,
+                check=ConnectionPool.check_connection,
                 open=True,
             )
     return _PG_POOL
@@ -216,7 +237,16 @@ class _PgConnection:
 
     def __init__(self, dsn: str):
         self._pool = _get_pg_pool(dsn)
-        self._conn = self._pool.getconn()
+        try:
+            self._conn = self._pool.getconn()
+        except Exception:
+            stats = {}
+            try:
+                stats = self._pool.get_stats()
+            except Exception:
+                pass
+            logger.error("postgres pool checkout failed stats=%s", stats)
+            raise
         self._conn.autocommit = True
         self._kind = "postgres"
 

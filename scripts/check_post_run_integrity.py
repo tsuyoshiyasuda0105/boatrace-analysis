@@ -27,6 +27,7 @@ from src.web import app as web_app  # noqa: E402
 MOTOR_CACHE_VERSION = "v9"
 STATUS_ORDER = {"ok": 0, "warning": 1, "error": 2}
 JST = ZoneInfo("Asia/Tokyo")
+_SYSTEM_STATUS_READY = False
 
 
 def _jst_now_naive() -> datetime:
@@ -38,6 +39,16 @@ def _placeholders(values: Iterable[object]) -> str:
 
 
 def _ensure_system_status(conn) -> None:
+    global _SYSTEM_STATUS_READY
+    if _SYSTEM_STATUS_READY:
+        return
+    if getattr(conn, "_kind", "") == "postgres":
+        try:
+            conn.execute("SELECT 1 FROM system_status LIMIT 0")
+            _SYSTEM_STATUS_READY = True
+            return
+        except Exception:
+            pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS system_status (
@@ -52,6 +63,7 @@ def _ensure_system_status(conn) -> None:
         """
     )
     conn.commit()
+    _SYSTEM_STATUS_READY = True
 
 
 def _upsert_status(conn, check_name: str, check_date: str, status: str, message: str, detail: dict) -> None:

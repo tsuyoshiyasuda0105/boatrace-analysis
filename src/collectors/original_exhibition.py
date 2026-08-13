@@ -195,7 +195,23 @@ def _existing_columns(conn, table_name: str) -> set[str]:
     return {str(row[1]) for row in rows}
 
 
+_POSTGRES_SCHEMA_READY = False
+
+
 def ensure_schema(conn) -> None:
+    global _POSTGRES_SCHEMA_READY
+    is_postgres = getattr(conn, "_kind", "sqlite") == "postgres"
+    if is_postgres and _POSTGRES_SCHEMA_READY:
+        return
+    if is_postgres:
+        columns = _existing_columns(conn, "race_original_exhibitions")
+        required = {
+            "race_id", "boat_number", "source_name", "dash_mark", "turn_mark",
+            "straight_mark", "motor_eval_points",
+        }
+        if required.issubset(columns):
+            _POSTGRES_SCHEMA_READY = True
+            return
     _execute_ddl(
         conn,
         """
@@ -239,6 +255,8 @@ def ensure_schema(conn) -> None:
         "CREATE INDEX IF NOT EXISTS idx_original_exhibitions_race ON race_original_exhibitions(race_id)",
     )
     conn.commit()
+    if is_postgres:
+        _POSTGRES_SCHEMA_READY = True
 
 
 def _raw_dir() -> Path:

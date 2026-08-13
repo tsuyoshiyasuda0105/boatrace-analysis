@@ -14,6 +14,7 @@ STRATEGY_KEY_ALIASES = {
     # continuous across strategy renames.
     "exacta_niche_hamanako14": "hamanako_14_exa",
 }
+_ROI_SCHEMA_READY = False
 
 
 def canonical_strategy_key(strategy_key: str) -> str:
@@ -27,6 +28,17 @@ def _is_excluded_history_label(label: Any) -> bool:
 
 def ensure_roi_race_history_table(conn: Any) -> None:
     """Create the durable per-race ROI ledger for SQLite and PostgreSQL."""
+    global _ROI_SCHEMA_READY
+    is_postgres = getattr(conn, "_kind", "") == "postgres"
+    if is_postgres and _ROI_SCHEMA_READY:
+        return
+    if is_postgres:
+        try:
+            conn.execute("SELECT 1 FROM roi_race_history LIMIT 0")
+            _ROI_SCHEMA_READY = True
+            return
+        except Exception:
+            pass
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS roi_race_history (
@@ -59,6 +71,8 @@ def ensure_roi_race_history_table(conn: Any) -> None:
         "CREATE INDEX IF NOT EXISTS idx_roi_race_history_strategy_date "
         "ON roi_race_history(strategy_key, race_date)"
     )
+    if is_postgres:
+        _ROI_SCHEMA_READY = True
 
 
 def replace_roi_history_snapshot(

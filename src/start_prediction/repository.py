@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS derived_start_stats (
   PRIMARY KEY (race_id, boat_number)
 )
 """
+_POSTGRES_SCHEMA_READY = False
 
 
 def _json(value: Any) -> str:
@@ -47,17 +48,27 @@ class StartPredictionRepository:
         self.conn = conn
 
     def ensure_schema(self) -> None:
+        global _POSTGRES_SCHEMA_READY
         if isinstance(self.conn, sqlite3.Connection):
             self.conn.executescript(SCHEMA_SQL)
             self.conn.commit()
             return
         if getattr(self.conn, "_kind", "") == "postgres":
+            if _POSTGRES_SCHEMA_READY:
+                return
+            try:
+                self.conn.execute("SELECT 1 FROM derived_start_stats LIMIT 0")
+                _POSTGRES_SCHEMA_READY = True
+                return
+            except Exception:
+                pass
             self.conn.execute(DERIVED_START_STATS_SQL)
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_derived_start_stats_race "
                 "ON derived_start_stats(race_id)"
             )
             self.conn.commit()
+            _POSTGRES_SCHEMA_READY = True
 
     def register_models(self, versions: dict[str, str], feature_names: list[str]) -> None:
         """Register the exact components used by an immutable prediction."""

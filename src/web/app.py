@@ -1154,6 +1154,13 @@ def _ensure_page_html_cache_table() -> None:
         return
     try:
         with db_connect() as conn:
+            if getattr(conn, "_kind", "") == "postgres":
+                try:
+                    conn.execute("SELECT 1 FROM page_html_cache LIMIT 0")
+                    _PAGE_HTML_CACHE_TABLE_READY = True
+                    return
+                except Exception:
+                    pass
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS page_html_cache (
@@ -5962,6 +5969,16 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         _ensure_db_initialized()
     except Exception as e:
         logger.warning("DB init skipped: %s", e)
+
+    # Prime the current-day TOP snapshot while the web process is healthy.
+    # If cron DDL briefly blocks PostgreSQL later, login can still land on TOP
+    # from process memory instead of immediately requiring another checkout.
+    if os.environ.get("RENDER") and not os.environ.get("BOATRACE_TASK_TRIGGER"):
+        try:
+            warmed_snapshot = _read_top_page_snapshot(_today_jst_iso())
+            logger.info("TOP startup snapshot warm=%s", bool(warmed_snapshot))
+        except Exception as e:
+            logger.warning("TOP startup snapshot warm skipped: %s", e)
 
     predictor = Predictor(version=version)
 
