@@ -1,0 +1,100 @@
+{
+  "base_url": "http://127.0.0.1:5011",
+  "date": "2026-08-09",
+  "role": "admin",
+  "pages": {
+    "member_today_races": {
+      "url": "http://127.0.0.1:5011/member/today-races?date=2026-08-09",
+      "title": "2026-08-09 本日のレース | BOATRACE WEB",
+      "meta": "2026-08-09 / ROIが高いレース候補 7件",
+      "system_warning_visible": false,
+      "pick_row_count": 7,
+      "first_detail_link": "/race/20260809-24-06",
+      "screenshot": "playwright_audit\\member_today_races.png"
+    },
+    "top_races": {
+      "url": "http://127.0.0.1:5011/races?date=2026-08-09",
+      "title": "2026-08-09 のレース一覧",
+      "count_note": "",
+      "system_warning_visible": false,
+      "stadium_env_count": 14,
+      "first_stadium_env": "次走 1R 基準 潮データなし 天候 - 風 - 波 - 淡水水面。潮より風と展示を重視",
+      "first_race_link": "/race/20260809-02-01",
+      "race_link_count": 168,
+      "screenshot": "playwright_audit\\top_races.png"
+    },
+    "race_detail": {
+      "url": "http://127.0.0.1:5011/race/20260809-24-06",
+      "title": "大村 6R 予測",
+      "system_warning_visible": false,
+      "water_info_visible": true,
+      "water_info_text": "水面情報 上げ潮 (+67cm/h) 曇り 風 3m 波 2cm 満ち潮寄り。イン残りを少し意識 / 風あり。外の仕掛けが効く余地あり 取得日時 2026-08-08 23:53",
+      "entry_change_alert_count": 0,
+      "screenshot": "playwright_audit\\race_detail.png"
+    },
+    "admin_data_status": {
+      "url": "http://127.0.0.1:5011/admin/data-status?date=2026-08-09",
+      "title": "データ取得状況",
+      "admin_header_visible": true,
+      "system_warning_visible": false,
+      "card_count": 5,
+      "recommendation_count": 2,
+      "screenshot": "playwright_audit\\admin_data_status.png"
+    },
+    "all_race_details_scan": {
+      "checked_races": 168,
+      "system_warning_visible_count": 0,
+      "water_info_visible_count": 168,
+      "water_info_missing_values_count": 72,
+      "entry_change_alert_races": 1,
+      "sample_missing_value_races": [
+        {
+          "race": "/race/20260809-02-01",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-02",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-03",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-04",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-05",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-06",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-07",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-08",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-09",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        },
+        {
+          "race": "/race/20260809-02-10",
+          "water_info_text": "水面情報 潮データなし 晴れ 風 2m 波 1cm 淡水水面。潮より風と展示を重視 取得日時 -"
+        }
+      ],
+      "sample_entry_change_races": [
+        {
+          "race": "/race/20260809-15-05",
+          "entry_change_alert_count": 1
+        }
+      ]
+    }
+  }
+}
