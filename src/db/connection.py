@@ -255,10 +255,10 @@ class _PgConnection:
     """psycopg3 connection を sqlite3 風に薄くラップ。
     `execute(sql, params)` で `?` を `%s` に変換しつつ ON CONFLICT を補完。"""
 
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, direct: bool = False):
         trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
         self._pool = None
-        if trigger:
+        if trigger or direct:
             self._conn = _open_direct_pg_connection(dsn)
         else:
             self._pool = _get_pg_pool(dsn)
@@ -327,7 +327,10 @@ class _PgConnection:
         return False
 
 
-def connect(db_path: Optional[str] = None) -> Union[sqlite3.Connection, "_PgConnection"]:
+def connect(
+    db_path: Optional[str] = None,
+    direct: bool = False,
+) -> Union[sqlite3.Connection, "_PgConnection"]:
     """
     プロジェクト共通の DB 接続を返す。
 
@@ -340,6 +343,12 @@ def connect(db_path: Optional[str] = None) -> Union[sqlite3.Connection, "_PgConn
       - psycopg3 で接続
       - autocommit=True
       - SQLite 構文を最低限書き換えて execute
+
+    direct=True (Postgres のみ効果):
+      - 共有プールを経由せず短命の直結接続を開く。
+      - ログイン/会員確認などの認証クリティカル経路が、重いページ処理による
+        プール枯渇 (PoolTimeout) に巻き込まれないようにするためのもの。
+      - SQLite では通常接続と同じ動作。
     """
     # 明示的に db_path が渡された場合は、そのローカル SQLite を最優先する。
     # バックフィル/検証スクリプトでは .env の DATABASE_URL が残っていても、
@@ -354,7 +363,7 @@ def connect(db_path: Optional[str] = None) -> Union[sqlite3.Connection, "_PgConn
 
     db_url = os.getenv("DATABASE_URL", "").strip()
     if db_url and _is_postgres_url(db_url):
-        return _PgConnection(_normalize_pg_url(db_url))
+        return _PgConnection(_normalize_pg_url(db_url), direct=direct)
 
     # 本番 (Render) で DATABASE_URL 空はサイレント SQLite フォールバックで
     # 壊滅的バグになる (空 DB で起動する)。明示的に失敗させる。

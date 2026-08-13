@@ -5626,6 +5626,17 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
             "Set this env var to a strong password (16+ chars)."
         )
+    # メンテ時間帯 (04:00-07:00) でも通すパス。
+    # 認証系は DB 負荷が軽く (会員確認は direct 接続)、締め出すとユーザーが
+    # 「いつもログインできない」状態になるため常時許可する。
+    _MAINTENANCE_EXEMPT_PATHS = frozenset({
+        "/login",
+        "/login-supabase",
+        "/signup-supabase",
+        "/reset-password",
+        "/logout",
+    })
+
     @app.before_request
     def serve_scheduled_maintenance():
         # Keep Render health probes and static assets available. The maintenance
@@ -5634,6 +5645,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return None
         if request.path == "/healthz" or request.path.startswith("/static/"):
             return None
+        if request.path in _MAINTENANCE_EXEMPT_PATHS:
+            return None
+        if request.path in {"/", "/races"}:
+            # TOP はスナップショットが存在する時だけ通す (routes 側は snapshot
+            # 優先で描画するため DB 重処理には入らない)。スナップショットが
+            # 無い場合のみメンテページへフォールバックし、DB を保護する。
+            target_date = request.args.get("date") or _today_jst_iso()
+            try:
+                if _read_top_page_snapshot(target_date) is not None:
+                    return None
+            except Exception:
+                logger.warning("maintenance snapshot probe failed", exc_info=True)
         response = make_response(app.send_static_file("maintenance.html"), 503)
         response.headers["Cache-Control"] = "no-store"
         response.headers["Retry-After"] = "300"

@@ -17,9 +17,47 @@ def test_production_maintenance_page_is_static_and_health_remains_available(monk
     app.config.update(TESTING=True)
     client = app.test_client()
 
+    monkeypatch.setattr(app_module, "_read_top_page_snapshot", lambda _d: None)
     response = client.get("/races?date=2026-08-13")
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "300"
     assert "データ更新中" in response.get_data(as_text=True)
     assert client.get("/healthz").status_code == 200
     assert client.get("/static/maintenance.html").status_code == 200
+
+
+def test_maintenance_window_keeps_login_routes_available(monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setattr(app_module, "_ensure_db_initialized", lambda: None)
+    monkeypatch.setattr(app_module, "_maintenance_window_active", lambda: True)
+    app = app_module.create_app()
+    app.config.update(TESTING=True)
+    client = app.test_client()
+
+    # 認証系はメンテ時間帯でも締め出さない (「早朝ログインできない」対策)
+    for path in ("/login", "/login-supabase", "/signup-supabase",
+                 "/reset-password", "/logout"):
+        status = client.get(path).status_code
+        assert status != 503, f"{path} must stay reachable during maintenance"
+
+
+def test_maintenance_window_serves_top_from_snapshot(monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setattr(app_module, "_ensure_db_initialized", lambda: None)
+    monkeypatch.setattr(app_module, "_maintenance_window_active", lambda: True)
+    app = app_module.create_app()
+    app.config.update(TESTING=True)
+    client = app.test_client()
+
+    # スナップショットがあれば TOP は 503 にしない (ルート側が snapshot 優先描画)
+    monkeypatch.setattr(
+        app_module,
+        "_read_top_page_snapshot",
+        lambda _d: {"stadium_groups": [], "empty": True},
+    )
+    assert client.get("/races?date=2026-08-13").status_code != 503
+    assert client.get("/?date=2026-08-13").status_code != 503
+
+    # スナップショットが無ければ従来どおりメンテページで DB を守る
+    monkeypatch.setattr(app_module, "_read_top_page_snapshot", lambda _d: None)
+    assert client.get("/races?date=2026-08-13").status_code == 503

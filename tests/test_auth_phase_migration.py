@@ -14,6 +14,10 @@ def test_postgres_membership_schema_check_is_probe_only(monkeypatch):
     class FakeConnection:
         _kind = "postgres"
 
+        def __init__(self, db_path=None, direct=False):
+            # 認証クリティカル経路は direct=True で共有プールを迂回する
+            assert direct is True
+
         def __enter__(self):
             return self
 

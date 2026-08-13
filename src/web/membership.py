@@ -11,6 +11,17 @@ ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
 _SCHEMA_CHECKED = False
 
 
+def _auth_db_connect():
+    """認証クリティカル経路 (ログイン・会員確認) 用のDB接続。
+
+    共有プールが重いページ処理で枯渇 (PoolTimeout) していても、ログインと
+    ロール確認だけは通るように、Postgres では短命の直結接続を使う。
+    クエリはすべて主キー参照の軽量なものなので接続コストは許容できる。
+    SQLite では通常接続と同一。
+    """
+    return db_connect(direct=True)
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -35,7 +46,7 @@ def ensure_membership_schema() -> None:
     if _SCHEMA_CHECKED:
         return
     ts = now_iso()
-    with db_connect() as conn:
+    with _auth_db_connect() as conn:
         if getattr(conn, "_kind", "") == "postgres":
             conn.execute("SELECT 1 FROM profiles LIMIT 0")
             conn.execute("SELECT 1 FROM user_roles LIMIT 0")
@@ -89,7 +100,7 @@ def ensure_membership_schema() -> None:
 def ensure_profile(user_id: str, email: str | None = None) -> None:
     ensure_membership_schema()
     ts = now_iso()
-    with db_connect() as conn:
+    with _auth_db_connect() as conn:
         conn.execute(
             """
             INSERT INTO profiles (id, email, created_at, updated_at)
@@ -113,7 +124,7 @@ def ensure_profile(user_id: str, email: str | None = None) -> None:
 def get_effective_role(user_id: str | None) -> str:
     if not user_id:
         return "guest"
-    with db_connect() as conn:
+    with _auth_db_connect() as conn:
         rows = conn.execute(
             """
             SELECT role
