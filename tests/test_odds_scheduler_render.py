@@ -13,6 +13,13 @@ def test_render_odds_scheduler_limits_snapshot_labels():
     assert '("T-1min", 1, 0.5)' not in source
 
 
+def test_render_odds_scheduler_bootstraps_repo_import_path():
+    source = (Path("scripts") / "odds_scheduler_render.py").read_text(encoding="utf-8")
+
+    assert "Path(__file__).resolve().parents[1]" in source
+    assert "sys.path.insert(0, str(REPO))" in source
+
+
 def test_render_blueprint_uses_render_specific_odds_scheduler():
     source = Path("render.yaml").read_text(encoding="utf-8")
 
