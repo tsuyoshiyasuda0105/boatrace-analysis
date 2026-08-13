@@ -2,6 +2,9 @@
 
 ## Active task
 
+- 2026-08-13 recovery target-date follow-up: after the first current-day result arrived, `latest_completed_results_date()` advanced the accident phase from 2026-08-12 to 2026-08-13 while its substep checkpoints remained keyed to the maintenance run date. Freeze overnight/manual morning accident recovery to the previous JST date, add a regression, redeploy, and use the remaining bounded attempt. No deletion, schema change, or ROI-rule change.
+- The accident recovery target is now fixed to the previous JST date throughout the 04:00-11:59 recovery lifecycle. Focused scheduler/accident tests passed 25/25; compilation and `git diff --check` passed. Production evidence before the fix was `attempt_count=2` with a mismatched 2026-08-13 integrity target; no row deletion or schema write was performed.
+
 - 2026-08-13 production recovery follow-up: the repaired accident snapshot generated 1621 rows from fresh `internal_rebuild`, but nightly integrity still selected stale `official_external`. Align integrity source selection with the snapshot builder by freshness first, add a focused regression, redeploy, and resume the bounded maintenance phases. Expected edits: `scripts/check_post_run_integrity.py`, one focused test, `docs/handoff.md`, and `docs/secretary_status.json`. No deletion, schema change, or ROI-rule change.
 - Production evidence at 08:54 JST: revision `d559d9f` rebuilt accident stats, generated a fresh 1621-row `internal_rebuild` snapshot through 2026-08-12, then exposed the stale-source integrity bug. The integrity query now includes `internal_rebuild` and selects a source covering the target date before applying source priority. Focused accident/scheduler/detail tests passed 40/40; compilation and `git diff --check` passed.
 

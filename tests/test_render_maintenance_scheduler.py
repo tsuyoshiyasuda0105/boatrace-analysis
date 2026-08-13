@@ -206,6 +206,30 @@ def test_accident_phase_resumes_from_failed_snapshot(monkeypatch):
     assert calls[0] == ("snapshot", "2026-08-12")
 
 
+def test_accident_phase_keeps_previous_day_after_live_results_begin(monkeypatch):
+    targets = []
+    monkeypatch.setattr(scheduler, "phase_success", lambda *_args: False)
+    monkeypatch.setattr(
+        scheduler.regular,
+        "latest_completed_results_date",
+        lambda: "2026-08-13",
+    )
+    monkeypatch.setattr(scheduler.regular, "run_accident_rebuild", lambda *_args: True)
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_accident_rank_snapshot",
+        lambda target: targets.append(target) or True,
+    )
+    monkeypatch.setattr(scheduler.regular, "run_py", lambda args, **_kwargs: targets.append(args[2]) or True)
+    monkeypatch.setattr(scheduler, "record_phase", lambda *_args: None)
+
+    ok, detail = scheduler.run_accident_phase(_now(9, 0))
+
+    assert ok is True
+    assert detail["target_date"] == "2026-08-12"
+    assert targets == ["2026-08-12", "2026-08-12"]
+
+
 def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler, "phase_success", lambda *_args: False)

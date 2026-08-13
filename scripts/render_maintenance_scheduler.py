@@ -112,9 +112,10 @@ def record_phase(phase: str, run_date: str, ok: bool, detail: dict) -> None:
 
 def run_accident_phase(now: datetime) -> tuple[bool, dict]:
     run_date = now.date().isoformat()
-    target = regular.latest_completed_results_date() or (
-        now.date() - timedelta(days=1)
-    ).isoformat()
+    # This phase closes the previous day's accident ledger. Live results can
+    # start arriving during manual morning recovery and must not move its
+    # checkpoint target to the current day halfway through the phase.
+    target = (now.date() - timedelta(days=1)).isoformat()
     target_dt = datetime.fromisoformat(target).replace(tzinfo=JST)
     detail: dict[str, object] = {"target_date": target}
 
