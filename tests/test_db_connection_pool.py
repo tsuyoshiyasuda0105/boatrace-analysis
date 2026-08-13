@@ -73,7 +73,9 @@ def test_pg_pool_configures_connections_once_on_creation(monkeypatch):
 
 def test_pg_pool_default_has_headroom_for_nested_web_queries():
     source = open(connection.__file__, encoding="utf-8").read()
-    assert 'default_pool_size = "2" if trigger else "6"' in source
+    assert 'default_pool_size = "1" if trigger else "4"' in source
+    assert "default_min_size = 0 if trigger else 1" in source
+    assert 'os.getenv("BOATRACE_DB_POOL_MIN_SIZE", str(default_min_size))' in source
     assert 'os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)' in source
     assert 'os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5")' in source
 

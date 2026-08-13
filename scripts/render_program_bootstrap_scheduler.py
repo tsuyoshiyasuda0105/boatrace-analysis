@@ -35,6 +35,7 @@ from src.deploy_info import log_deploy_revision  # noqa: E402
 
 
 JST = ZoneInfo("Asia/Tokyo")
+_TABLES_READY = False
 BACKOFF_MINUTES = (15, 30, 60)
 LOCK_NAME = "boatrace-program-bootstrap-v1"
 OFFICIAL_TASK = "render_program_bootstrap_official_v1"
@@ -58,7 +59,15 @@ def target_for_tick(now: datetime) -> date | None:
 
 
 def _ensure_tables() -> None:
+    global _TABLES_READY
+    if _TABLES_READY:
+        return
     with db_connect() as conn:
+        if getattr(conn, "_kind", "sqlite") == "postgres":
+            conn.execute("SELECT 1 FROM task_runs LIMIT 0")
+            conn.execute("SELECT 1 FROM system_status LIMIT 0")
+            _TABLES_READY = True
+            return
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS task_runs (
@@ -85,6 +94,7 @@ def _ensure_tables() -> None:
             """
         )
         conn.commit()
+    _TABLES_READY = True
 
 
 @contextmanager

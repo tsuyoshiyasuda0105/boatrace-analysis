@@ -18,6 +18,9 @@ def test_render_odds_scheduler_bootstraps_repo_import_path():
 
     assert "Path(__file__).resolve().parents[1]" in source
     assert "sys.path.insert(0, str(REPO))" in source
+    assert source.index('BOATRACE_TASK_TRIGGER", "render-odds"') < source.index(
+        "from scripts import odds_scheduler as base"
+    )
 
 
 def test_render_blueprint_uses_render_specific_odds_scheduler():
@@ -25,3 +28,4 @@ def test_render_blueprint_uses_render_specific_odds_scheduler():
 
     assert "startCommand: python scripts/odds_scheduler_render.py --no-jitter" in source
     assert 'schedule: "*/5 23,0-13 * * *"' in source
+    assert 'value: "render-odds"' in source

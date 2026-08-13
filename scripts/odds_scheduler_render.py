@@ -7,6 +7,7 @@ labels for production so the daytime cron does less work:
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+if __name__ == "__main__":
+    os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-odds")
 
 from scripts import odds_scheduler as base  # noqa: E402
 from src.deploy_info import log_deploy_revision

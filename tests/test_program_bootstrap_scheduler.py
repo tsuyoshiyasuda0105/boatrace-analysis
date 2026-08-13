@@ -229,6 +229,35 @@ def test_task_and_admin_status_persist_on_sqlite(monkeypatch, tmp_path):
     assert row == ("error", "unresolved")
 
 
+def test_postgres_table_guard_only_probes_existing_schema(monkeypatch):
+    calls = []
+
+    class _Connection:
+        _kind = "postgres"
+
+        def execute(self, sql, params=()):
+            calls.append(sql)
+
+        def executescript(self, _script):
+            raise AssertionError("runtime PostgreSQL DDL is forbidden")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(bootstrap, "_TABLES_READY", False)
+    monkeypatch.setattr(bootstrap, "db_connect", lambda: _Connection())
+
+    bootstrap._ensure_tables()
+
+    assert calls == [
+        "SELECT 1 FROM task_runs LIMIT 0",
+        "SELECT 1 FROM system_status LIMIT 0",
+    ]
+
+
 def test_official_retry_writes_only_missing_stadiums(monkeypatch, tmp_path):
     races = []
     for stadium in (1, 2):

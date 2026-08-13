@@ -209,14 +209,18 @@ def _get_pg_pool(dsn: str):
             from psycopg_pool import ConnectionPool
 
             trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
-            default_pool_size = "2" if trigger else "6"
+            default_pool_size = "1" if trigger else "4"
+            default_min_size = 0 if trigger else 1
 
             _PG_POOL = ConnectionPool(
                 conninfo=dsn,
-                min_size=1,
+                min_size=max(
+                    0,
+                    int(os.getenv("BOATRACE_DB_POOL_MIN_SIZE", str(default_min_size))),
+                ),
                 # Supavisor has a finite client budget shared by web and cron
-                # processes. Keep the web pool above its four threads without
-                # allowing one process to consume the whole shared budget.
+                # processes. Reserve four Web connections while cron processes
+                # open at most one on demand and return to zero when idle.
                 max_size=max(
                     1,
                     int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),

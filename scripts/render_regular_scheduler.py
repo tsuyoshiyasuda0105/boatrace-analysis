@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+if __name__ == "__main__":
+    os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-cron")
 
 from src.db.connection import connect as db_connect
 from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature
@@ -32,6 +34,7 @@ ORIGINAL_EXHIBITION_CATCHUP_PAST_MIN = 36 * 60
 ORIGINAL_EXHIBITION_CATCHUP_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_CATCHUP_LIMIT = 96
 REGULAR_RUN_LOCK_NAME = "boatrace-regular-scheduler-v1"
+_TASK_RUNS_SCHEMA_READY = False
 
 
 def jst_now() -> datetime:
@@ -49,24 +52,67 @@ def render_daytime_lite_mode() -> bool:
 
 @contextmanager
 def _regular_run_lock() -> Iterator[bool]:
-    conn = db_connect()
+    ensure_task_runs_table()
     locked = True
+    now = jst_now()
+    lease_detail = json.dumps({"lease_seconds": 1800, "pid": os.getpid(), "started_at": now.isoformat()})
+    conn = db_connect()
     is_postgres = getattr(conn, "_kind", "sqlite") == "postgres"
-    try:
-        if is_postgres:
+    if is_postgres:
+        now_iso = now.replace(tzinfo=None).isoformat(timespec="seconds")
+        stale_iso = (now - timedelta(minutes=30)).replace(tzinfo=None).isoformat(timespec="seconds")
+        try:
             row = conn.execute(
-                "SELECT pg_try_advisory_lock(hashtext(?))",
-                (REGULAR_RUN_LOCK_NAME,),
+                """
+                INSERT INTO task_runs
+                    (task_name, run_date, status, run_count, started_at, trigger, detail)
+                VALUES (?, ?, 'running', 1, ?, 'render-cron-lock', ?)
+                ON CONFLICT (task_name, run_date) DO UPDATE SET
+                    status = 'running',
+                    run_count = task_runs.run_count + 1,
+                    started_at = EXCLUDED.started_at,
+                    finished_at = NULL,
+                    trigger = EXCLUDED.trigger,
+                    detail = EXCLUDED.detail
+                WHERE task_runs.status <> 'running'
+                   OR task_runs.started_at IS NULL
+                   OR task_runs.started_at < ?
+                RETURNING 1
+                """,
+                (
+                    REGULAR_RUN_LOCK_NAME,
+                    now.date().isoformat(),
+                    now_iso,
+                    lease_detail,
+                    stale_iso,
+                ),
             ).fetchone()
             locked = bool(row and row[0])
+        finally:
+            conn.close()
+    else:
+        conn.close()
+    try:
         yield locked
     finally:
         if is_postgres and locked:
-            conn.execute(
-                "SELECT pg_advisory_unlock(hashtext(?))",
-                (REGULAR_RUN_LOCK_NAME,),
-            )
-        conn.close()
+            finished_iso = jst_now().replace(tzinfo=None).isoformat(timespec="seconds")
+            with db_connect() as release_conn:
+                release_conn.execute(
+                    """
+                    UPDATE task_runs
+                       SET status = 'success', finished_at = ?, success_at = ?
+                     WHERE task_name = ? AND run_date = ? AND status = 'running'
+                       AND detail = ?
+                    """,
+                    (
+                        finished_iso,
+                        finished_iso,
+                        REGULAR_RUN_LOCK_NAME,
+                        now.date().isoformat(),
+                        lease_detail,
+                    ),
+                )
 
 
 def _with_regular_run_lock(func: Callable[[], int]) -> Callable[[], int]:
@@ -299,7 +345,14 @@ def roi_history_task_name(now: datetime) -> str:
 
 
 def ensure_task_runs_table() -> None:
+    global _TASK_RUNS_SCHEMA_READY
+    if _TASK_RUNS_SCHEMA_READY:
+        return
     with db_connect() as conn:
+        if getattr(conn, "_kind", "sqlite") == "postgres":
+            conn.execute("SELECT 1 FROM task_runs LIMIT 0")
+            _TASK_RUNS_SCHEMA_READY = True
+            return
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS task_runs (
               task_name TEXT NOT NULL,
@@ -316,6 +369,7 @@ def ensure_task_runs_table() -> None:
             ALTER TABLE task_runs ENABLE ROW LEVEL SECURITY;
         """)
         conn.commit()
+    _TASK_RUNS_SCHEMA_READY = True
 
 
 def record_task(task_name: str, run_date: str, status: str, detail: str | None = None) -> None:

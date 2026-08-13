@@ -43,6 +43,7 @@ POST_RACE_INCOMPLETE_PAST_MIN = 36 * 60
 POST_RACE_INCOMPLETE_FUTURE_MIN = 0
 POST_RACE_INCOMPLETE_LIMIT = 72
 ORIGINAL_EXHIBITION_PAST_MIN = 36 * 60
+_TASK_RUNS_SCHEMA_READY = False
 ORIGINAL_EXHIBITION_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_LIMIT = 96
 SIGNAL_REFRESH_MIN_GAP_MIN = 5
@@ -69,7 +70,14 @@ def _run_py(args: list[str], timeout: int = 900) -> bool:
 
 
 def _ensure_task_runs_table() -> None:
+    global _TASK_RUNS_SCHEMA_READY
+    if _TASK_RUNS_SCHEMA_READY:
+        return
     with db_connect() as conn:
+        if getattr(conn, "_kind", "sqlite") == "postgres":
+            conn.execute("SELECT 1 FROM task_runs LIMIT 0")
+            _TASK_RUNS_SCHEMA_READY = True
+            return
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS task_runs (
@@ -88,6 +96,7 @@ def _ensure_task_runs_table() -> None:
             """
         )
         conn.commit()
+    _TASK_RUNS_SCHEMA_READY = True
 
 
 def _record_task(task_name: str, run_date: str, status: str, detail: str | None = None) -> None:

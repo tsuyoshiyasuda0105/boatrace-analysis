@@ -88,6 +88,8 @@ services:
         value: "30"
       - key: BOATRACE_RENDER_DAYTIME_LITE
         value: "1"
+      - key: BOATRACE_TASK_TRIGGER
+        value: "render-odds"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
@@ -117,6 +119,8 @@ services:
         value: "30"
       - key: BOATRACE_RENDER_DAYTIME_LITE
         value: "1"
+      - key: BOATRACE_TASK_TRIGGER
+        value: "render-cron"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
@@ -206,6 +210,8 @@ services:
           envVarKey: DATABASE_URL
       - key: BOATRACE_SUPABASE_ONLY
         value: "1"
+      - key: BOATRACE_TASK_TRIGGER
+        value: "render-accident-external-check"
       - key: BOATRACE_USER_AGENT
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB

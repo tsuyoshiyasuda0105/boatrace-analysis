@@ -452,8 +452,9 @@ def test_main_skips_safely_when_previous_regular_run_is_active(monkeypatch):
     assert scheduler.main() == 0
 
 
-def test_regular_run_lock_uses_postgres_advisory_lock(monkeypatch):
+def test_regular_run_lock_uses_short_lived_task_lease(monkeypatch):
     calls = []
+    monkeypatch.setattr(scheduler, "_TASK_RUNS_SCHEMA_READY", True)
 
     class _Cursor:
         def fetchone(self):
@@ -469,15 +470,56 @@ def test_regular_run_lock_uses_postgres_advisory_lock(monkeypatch):
         def close(self):
             calls.append("close")
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
     monkeypatch.setattr(scheduler, "db_connect", lambda: _Connection())
 
     with scheduler._regular_run_lock() as locked:
         assert locked is True
 
-    assert "pg_try_advisory_lock" in calls[0][0]
-    assert calls[0][1] == (scheduler.REGULAR_RUN_LOCK_NAME,)
-    assert "pg_advisory_unlock" in calls[1][0]
+    assert "INSERT INTO task_runs" in calls[0][0]
+    assert calls[0][1][0] == scheduler.REGULAR_RUN_LOCK_NAME
+    first_close = calls.index("close")
+    assert first_close == 1
+    assert "UPDATE task_runs" in calls[2][0]
     assert calls[-1] == "close"
+
+
+def test_regular_scheduler_marks_cron_before_importing_db_connection():
+    source = open(scheduler.__file__, encoding="utf-8").read()
+    assert source.index('BOATRACE_TASK_TRIGGER", "render-cron"') < source.index(
+        "from src.db.connection import connect as db_connect"
+    )
+
+
+def test_regular_scheduler_only_probes_existing_postgres_task_table(monkeypatch):
+    calls = []
+
+    class _Connection:
+        _kind = "postgres"
+
+        def execute(self, sql, params=()):
+            calls.append(sql)
+
+        def executescript(self, _script):
+            raise AssertionError("runtime PostgreSQL DDL is forbidden")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(scheduler, "_TASK_RUNS_SCHEMA_READY", False)
+    monkeypatch.setattr(scheduler, "db_connect", lambda: _Connection())
+
+    scheduler.ensure_task_runs_table()
+
+    assert calls == ["SELECT 1 FROM task_runs LIMIT 0"]
 
 
 def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):

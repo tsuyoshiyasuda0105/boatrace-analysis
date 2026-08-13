@@ -41,6 +41,22 @@ def test_accident_external_check_runs_after_maintenance_snapshot():
     assert 'schedule: "50 21 * * *"' in source[start:]
 
 
+def test_every_cron_declares_a_bounded_pool_trigger():
+    source = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    for name in (
+        "boatrace-program-bootstrap-cron",
+        "boatrace-odds-cron",
+        "boatrace-regular-cron",
+        "boatrace-race-detail-cron",
+        "boatrace-exhibition-detail-cron",
+        "boatrace-accident-external-check-cron",
+    ):
+        start = source.index(f"\n    name: {name}")
+        next_service = source.find("\n  - type:", start + 1)
+        block = source[start : next_service if next_service >= 0 else None]
+        assert "BOATRACE_TASK_TRIGGER" in block
+
+
 def test_odds_uses_two_snapshot_render_scheduler():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
     start = source.index("\n    name: boatrace-odds-cron")
