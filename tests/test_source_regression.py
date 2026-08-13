@@ -320,6 +320,40 @@ def test_upsert_programs_uses_coalesce():
     )
 
 
+def test_upsert_results_ensures_parent_race_shell():
+    """Results/Previews だけ先に来ても parent races 行を補完すること。"""
+    src = _read("src/collectors/openapi.py")
+    assert "def _ensure_race_shell(" in src
+    assert "INSERT INTO races" in src
+    assert "rid = _ensure_race_shell(" in src
+    assert "results upsert skipped race_id=%s stadium=%s race_no=%s err=%s" in src
+
+
+def test_poll_results_backfills_programs_before_openapi_results():
+    """結果APIで parent race が欠ける時は programs 補完を先に試すこと。"""
+    src = _read("scripts/poll_results.py")
+    assert "def _backfill_program_shells_for_results(" in src
+    assert "programs_payload = fetch_programs(target_date)" in src
+    assert "upsert_programs(conn, programs_payload)" in src
+    assert "missing_after_backfill = _backfill_program_shells_for_results(" in src
+    assert "RESULT_SHELL_GRACE_MINUTES = 30" in src
+    assert "timedelta(minutes=RESULT_SHELL_GRACE_MINUTES)" in src
+
+
+def test_layer3_http_skips_connection_refused_without_retry_loop():
+    """接続拒否系は同一 run で回復しにくいので即打ち切ること。"""
+    src = _read("src/collectors/_http.py")
+    assert '"connection refused" in message' in src
+
+
+def test_security_default_auth_warnings_are_web_only():
+    """cron/import 側では auth default 警告を出しすぎないこと。"""
+    src = _read("src/web/app.py")
+    assert 'is_web_runtime = bool(os.environ.get("PORT"))' in src
+    assert "if is_production and is_web_runtime and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:" in src
+    assert "if is_production and is_web_runtime and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:" in src
+
+
 def test_postgres_upsert_knows_l4_daily_stats_cache_pk():
     """l4_daily_stats_cache の INSERT OR REPLACE が Postgres で上書きになること。"""
     src = _read("src/db/connection.py")
@@ -462,7 +496,7 @@ def test_reference_market_signals_are_not_today_roi_candidates():
     assert 'if l4.get("is_reference") and level in ("morning_general", "general"):' not in block
 
     template = _read("src/web/templates/index.html")
-    start = template.index("function renderTodaysPicks()")
+    start = template.index("renderTodaysPicks = function()")
     end = template.index("function renderPickRows", start)
     block = template[start:end]
     assert "if (isRef) {" in block
@@ -522,3 +556,19 @@ def test_race_detail_fl_counts_fallback_to_external_accident_codes():
     assert 'codes.count("L")' in source
     assert 'p["flying_count"] = max(int(p.get("flying_count") or 0), int(acc.get("flying_count") or 0))' in source
     assert 'p["late_count"] = max(int(p.get("late_count") or 0), int(acc.get("late_count") or 0))' in source
+def test_poll_results_repairs_only_missing_closed_races_after_openapi():
+    """Open API 後の残欠損だけ Layer3 repair すること。"""
+    src = _read("scripts/poll_results.py")
+    assert "def _missing_closed_result_race_ids" in src
+    assert "missing_after_openapi = _missing_closed_result_race_ids(conn, target_date)" in src
+    assert "race_ids=missing_after_openapi" in src
+    assert "l4_only=False" in src
+    assert "Layer3 repair" in src
+
+
+def test_result_scraper_accepts_targeted_race_ids():
+    """Layer3 result scraper can narrow to explicit race ids."""
+    src = _read("src/collectors/result_scraper.py")
+    assert "race_ids: Optional[Iterable[str]] = None" in src
+    assert "target_race_ids = {str(race_id) for race_id in (race_ids or []) if race_id}" in src
+    assert "if target_race_ids and race_id not in target_race_ids:" in src

@@ -105,6 +105,9 @@ def test_post_run_integrity_checks_cover_detail_accident_and_motor_cache():
     assert "def check_race_detail_caches" in source
     assert "def check_motor_history_caches" in source
     assert "def check_result_after_close" in source
+    assert "RESULT_CLOSE_GRACE_MINUTES = 30" in source
+    assert "timedelta(minutes=RESULT_CLOSE_GRACE_MINUTES)" in source
+    assert 'f"no races closed more than {RESULT_CLOSE_GRACE_MINUTES} minutes ago"' in source
     assert "def check_accident_integrity" in source
     assert "assigned_motor_number IS NOT NULL" in source
     assert "motor_history_" in source

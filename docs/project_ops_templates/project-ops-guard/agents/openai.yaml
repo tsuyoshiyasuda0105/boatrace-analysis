@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Ops Guard"
+  short_description: "Safe project handoff and cleanup guardrails."
+  default_prompt: "Use $project-ops-guard to start safely, track active files, log failures, and close tools before finishing."

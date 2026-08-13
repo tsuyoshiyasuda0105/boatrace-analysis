@@ -90,6 +90,7 @@ def fetch_html(url: str) -> Optional[str]:
                 "nameresolutionerror" in message
                 or "getaddrinfo failed" in message
                 or "failed to resolve" in message
+                or "connection refused" in message
             ):
                 return None
             if attempt < config.LAYER3_MAX_RETRIES:

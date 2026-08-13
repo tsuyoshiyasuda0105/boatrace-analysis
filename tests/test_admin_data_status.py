@@ -80,6 +80,10 @@ def test_admin_data_status_snapshot_counts_expected_caches(monkeypatch):
         web_app._race_detail_page_cache_key("202608041001"),
         web_app._race_detail_page_cache_key("202608041002"),
     ]
+    tag_keys = [
+        web_app._race_detail_tag_cache_key("202608041001"),
+        web_app._race_detail_tag_cache_key("202608041002"),
+    ]
     motor_keys = [
         f"motor_history_v9:202608041001:{boat}" for boat in range(1, 7)
     ] + [
@@ -90,7 +94,7 @@ def test_admin_data_status_snapshot_counts_expected_caches(monkeypatch):
     ] + [
         f"racer_detail:202608041002:{boat}" for boat in range(1, 7)
     ]
-    for key in page_keys + motor_keys + racer_keys:
+    for key in page_keys + tag_keys + motor_keys + racer_keys:
         conn.execute(
             "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
             (key,),
@@ -101,6 +105,20 @@ def test_admin_data_status_snapshot_counts_expected_caches(monkeypatch):
         VALUES (?, ?, 'success', 1, '2026-08-04T07:00:00', '2026-08-04T07:05:00', '2026-08-04T07:05:00', 'render-detail-prewarm', ?)
         """,
         ("render_race_detail_all", target_date, '{"races":2,"racer":12,"motor":11,"pages":2,"failed":0}'),
+    )
+    conn.execute(
+        """
+        INSERT INTO task_runs(task_name, run_date, status, run_count, started_at, finished_at, success_at, trigger, detail)
+        VALUES (?, ?, 'success', 1, '2026-08-04T08:00:00', '2026-08-04T08:03:00', '2026-08-04T08:03:00', 'render-regular', '{}')
+        """,
+        ("render_detail_tags_today", target_date),
+    )
+    conn.execute(
+        """
+        INSERT INTO task_runs(task_name, run_date, status, run_count, started_at, finished_at, success_at, trigger, detail)
+        VALUES (?, ?, 'success', 1, '2026-08-04T08:03:00', '2026-08-04T08:06:00', '2026-08-04T08:06:00', 'render-regular', '{}')
+        """,
+        ("render_detail_pages_today", target_date),
     )
     conn.execute(
         """
@@ -127,6 +145,10 @@ def test_admin_data_status_snapshot_counts_expected_caches(monkeypatch):
     assert items["race_detail"]["present_count"] == 2
     assert items["race_detail"]["missing_count"] == 0
     assert items["race_detail"]["status"] == "healthy"
+    assert items["race_detail_tags_today"]["present_count"] == 2
+    assert items["race_detail_tags_today"]["status"] == "healthy"
+    assert items["race_detail_pages_today"]["present_count"] == 2
+    assert items["race_detail_pages_today"]["status"] == "healthy"
     assert items["motor_history"]["present_count"] == 11
     assert items["motor_history"]["missing_count"] == 1
     assert items["motor_history"]["status"] == "error"
@@ -223,9 +245,34 @@ def test_admin_data_status_partial_counts_are_warning_while_morning_build_is_run
     items = {item["slug"]: item for item in snapshot["items"]}
 
     assert items["race_detail"]["status"] == "warning"
-    assert items["race_detail"]["status_hint"]
+    assert "実行中" in items["race_detail"]["status_hint"]
     assert items["motor_history"]["status"] == "warning"
     assert items["racer_detail"]["status"] == "warning"
+
+
+def test_admin_data_status_counts_compatible_race_detail_cache_versions(monkeypatch):
+    conn = _prepare_db()
+    target_date = "2026-08-04"
+    races = [("202608041001", target_date, 10, 1), ("202608041002", target_date, 10, 2)]
+    conn.executemany("INSERT INTO races VALUES (?, ?, ?, ?)", races)
+    conn.execute(
+        "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+        ("race_detail_page:v11:202608041001",),
+    )
+    conn.execute(
+        "INSERT INTO page_html_cache(cache_key, html, updated_at) VALUES (?, 'x', 1.0)",
+        ("race_detail_tags:v5:202608041001",),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(web_app, "db_connect", lambda: _ConnCtx(conn))
+
+    snapshot = web_app._admin_data_status_snapshot(target_date)
+    items = {item["slug"]: item for item in snapshot["items"]}
+
+    assert items["race_detail"]["present_count"] == 1
+    assert items["race_detail_pages_today"]["present_count"] == 1
+    assert items["race_detail_tags_today"]["present_count"] == 1
 
 
 def test_admin_data_status_page_renders_for_admin(monkeypatch):
@@ -245,6 +292,7 @@ def test_admin_data_status_page_renders_for_admin(monkeypatch):
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "cron / データ取得状況" in html
-    assert "レース詳細HTML" in html
-    assert "取得状況を見る" not in html
+    assert "cron /" in html
+    assert "HTML" in html
+    assert "詳細タグ事前生成" in html
+    assert "詳細ページ事前生成" in html

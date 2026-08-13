@@ -17,13 +17,23 @@ def test_race_detail_uses_fresh_page_cache_for_today_and_stale_for_past():
     end = source.index("@app.route", start)
     route_source = source[start:end]
 
+    cache_helper_read = route_source.index("_read_race_detail_page_cache(")
     info_read = route_source.index("_race_basic_info(race_id)")
-    fresh_cache_read = route_source.index("_read_page_html_cache(page_cache_key, 180)")
-    stale_cache_read = route_source.index("_read_page_html_cache_stale(page_cache_key)")
-    assert info_read < fresh_cache_read
-    assert info_read < stale_cache_read
+    assert cache_helper_read < info_read
     assert "use_fresh_page_cache = race_date >= _today_jst_iso()" in route_source
     assert "_write_page_html_cache(page_cache_key, html)" in route_source
+
+
+def test_race_detail_cache_helper_uses_stale_and_compat_fallbacks():
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    start = source.index("def _read_race_detail_page_cache(")
+    end = source.index("def _build_race_detail_tag_snapshot", start)
+    helper_source = source[start:end]
+
+    assert "_read_page_html_cache(page_cache_key, max_age_sec)" in helper_source
+    assert "_read_page_html_cache_stale(page_cache_key)" in helper_source
+    assert "for compat_key in _race_detail_page_compat_cache_keys(race_id):" in helper_source
+    assert "_read_page_html_cache_stale(compat_key)" in helper_source
 
 
 def test_manual_prewarm_uses_guarded_recompute_and_member_session():

@@ -60,6 +60,49 @@ def _race_id(race_date: str, stadium: int, race_no: int) -> str:
     return f"{d}-{stadium:02d}-{race_no:02d}"
 
 
+def _ensure_race_shell(
+    conn: sqlite3.Connection,
+    race_date: str,
+    stadium_number: int,
+    race_number: int,
+    *,
+    race_grade_number=None,
+    race_title=None,
+    race_subtitle=None,
+    race_distance=None,
+    race_closed_at=None,
+) -> str:
+    """Ensure the parent races row exists before preview/result writes."""
+    rid = _race_id(race_date, stadium_number, race_number)
+    conn.execute(
+        """
+        INSERT INTO races
+            (race_id, race_date, stadium_number, race_number,
+             race_grade_number, race_title, race_subtitle,
+             race_distance, race_closed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (race_id) DO UPDATE SET
+            race_grade_number = COALESCE(EXCLUDED.race_grade_number, races.race_grade_number),
+            race_title = COALESCE(EXCLUDED.race_title, races.race_title),
+            race_subtitle = COALESCE(EXCLUDED.race_subtitle, races.race_subtitle),
+            race_distance = COALESCE(EXCLUDED.race_distance, races.race_distance),
+            race_closed_at = COALESCE(EXCLUDED.race_closed_at, races.race_closed_at)
+        """,
+        (
+            rid,
+            race_date,
+            stadium_number,
+            race_number,
+            race_grade_number,
+            race_title,
+            race_subtitle,
+            race_distance,
+            race_closed_at,
+        ),
+    )
+    return rid
+
+
 # ============================================================
 # Programs (出走表)
 # ============================================================
@@ -89,7 +132,17 @@ def upsert_programs(conn: sqlite3.Connection, programs_payload: dict) -> int:
     n_skipped_holiday = 0
 
     for race in races:
-        rid = _race_id(race["race_date"], race["race_stadium_number"], race["race_number"])
+        rid = _ensure_race_shell(
+            conn,
+            race["race_date"],
+            race["race_stadium_number"],
+            race["race_number"],
+            race_grade_number=race.get("race_grade_number"),
+            race_title=race.get("race_title"),
+            race_subtitle=race.get("race_subtitle"),
+            race_distance=race.get("race_distance"),
+            race_closed_at=race.get("race_closed_at"),
+        )
 
         # backlog item: 休催 (canceled/no racing) 検出
         # Open API は休催会場でも race shell を返してくるが、全 boats が
@@ -237,7 +290,13 @@ def upsert_previews(conn: sqlite3.Connection, payload: dict) -> int:
     races = payload.get("previews", [])
     n = 0
     for race in races:
-        rid = _race_id(race["race_date"], race["race_stadium_number"], race["race_number"])
+        rid = _ensure_race_shell(
+            conn,
+            race["race_date"],
+            race["race_stadium_number"],
+            race["race_number"],
+            race_closed_at=race.get("race_closed_at"),
+        )
         weather_number = race.get("race_weather_number")
         wind_speed = race.get("race_wind")
         wind_dir = race.get("race_wind_direction_number")
@@ -316,87 +375,106 @@ def upsert_results(conn: sqlite3.Connection, payload: dict) -> int:
     races = payload.get("results", [])
     n_results = 0
     n_payouts = 0
+    skipped_races = 0
 
     for race in races:
-        rid = _race_id(race["race_date"], race["race_stadium_number"], race["race_number"])
+        savepoint = f"result_race_{race.get('race_stadium_number')}_{race.get('race_number')}"
+        conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            rid = _ensure_race_shell(
+                conn,
+                race["race_date"],
+                race["race_stadium_number"],
+                race["race_number"],
+                race_closed_at=race.get("race_closed_at"),
+            )
 
-        # 着順 (キー名は API 仕様により 'boats' か 'results' のどちらかで来る想定)
-        boat_results = race.get("boats", race.get("results", []))
-        if isinstance(boat_results, dict):
-            boat_results = list(boat_results.values())
+            # 着順 (キー名は API 仕様により 'boats' か 'results' のどちらかで来る想定)
+            boat_results = race.get("boats", race.get("results", []))
+            if isinstance(boat_results, dict):
+                boat_results = list(boat_results.values())
 
-        # 決まり手は race レベルで 1 つだけ持つ (1着艇の決まり手)。
-        # boat ループ内で個別に取ろうとすると None になるので、race から取り出して
-        # 1 着の行にのみ記録する。
-        race_kimarite = race.get("race_kimarite") or race.get("kimarite")
+            # 決まり手は race レベルで 1 つだけ持つ (1着艇の決まり手)。
+            # boat ループ内で個別に取ろうとすると None になるので、race から取り出して
+            # 1 着の行にのみ記録する。
+            race_kimarite = race.get("race_kimarite") or race.get("kimarite")
 
-        # Open API は payouts は出すが boats 配列が空 or place=null のまま
-        # 残してくるケースがある (バッチ更新の遅延中)。
-        # その場合、INSERT OR REPLACE で既存の Layer 3 スクレイプ結果を
-        # NULL で上書きしてしまうので、boats が完全に NULL の race は skip。
-        all_places_null = all(
-            r.get("racer_place_number") is None for r in boat_results
-        ) if boat_results else True
-        if all_places_null:
-            # boats 情報なし → race_results に触らない (既存値を保持)
-            pass
-        else:
-            for r in boat_results:
-                place = r.get("racer_place_number")
-                # place=null の row は既存を保持するためスキップ
-                if place is None:
+            # Open API は payouts は出すが boats 配列が空 or place=null のまま
+            # 残してくるケースがある (バッチ更新の遅延中)。
+            # その場合、INSERT OR REPLACE で既存の Layer 3 スクレイプ結果を
+            # NULL で上書きしてしまうので、boats が完全に NULL の race は skip。
+            all_places_null = all(
+                r.get("racer_place_number") is None for r in boat_results
+            ) if boat_results else True
+            if not all_places_null:
+                for r in boat_results:
+                    place = r.get("racer_place_number")
+                    # place=null の row は既存を保持するためスキップ
+                    if place is None:
+                        continue
+                    is_winner = (place == 1 or place == "1")
+                    kimarite_to_save = race_kimarite if is_winner else None
+                    if is_winner and not kimarite_to_save:
+                        existing = conn.execute(
+                            """
+                            SELECT kimarite
+                              FROM race_results
+                             WHERE race_id = ? AND boat_number = ?
+                            """,
+                            (rid, r.get("racer_boat_number")),
+                        ).fetchone()
+                        if existing and existing[0]:
+                            kimarite_to_save = existing[0]
+                    conn.execute("""
+                        INSERT OR REPLACE INTO race_results (
+                            race_id, boat_number, finishing_position,
+                            course_number, start_timing, race_time, remarks, kimarite
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        rid,
+                        r.get("racer_boat_number"),
+                        place,
+                        r.get("racer_course_number"),
+                        r.get("racer_start_timing"),
+                        r.get("racer_race_time"),
+                        r.get("racer_remarks"),
+                        kimarite_to_save,
+                    ))
+                    n_results += 1
+
+            # 払戻金 (API構造に合わせてフィールド名を調整する想定)
+            payouts = race.get("payouts", {})
+            for bet_type, items in payouts.items():
+                if not isinstance(items, list):
                     continue
-                is_winner = (place == 1 or place == "1")
-                kimarite_to_save = race_kimarite if is_winner else None
-                if is_winner and not kimarite_to_save:
-                    existing = conn.execute(
-                        """
-                        SELECT kimarite
-                          FROM race_results
-                         WHERE race_id = ? AND boat_number = ?
-                        """,
-                        (rid, r.get("racer_boat_number")),
-                    ).fetchone()
-                    if existing and existing[0]:
-                        kimarite_to_save = existing[0]
-                conn.execute("""
-                    INSERT OR REPLACE INTO race_results (
-                        race_id, boat_number, finishing_position,
-                        course_number, start_timing, race_time, remarks, kimarite
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    rid,
-                    r.get("racer_boat_number"),
-                    place,
-                    r.get("racer_course_number"),
-                    r.get("racer_start_timing"),
-                    r.get("racer_race_time"),
-                    r.get("racer_remarks"),
-                    kimarite_to_save,
-                ))
-                n_results += 1
+                for item in items:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO race_payouts
+                            (race_id, bet_type, combination, payout, popularity)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        rid,
+                        bet_type,
+                        item.get("combination", ""),
+                        item.get("payout", 0),
+                        item.get("popularity"),
+                    ))
+                    n_payouts += 1
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except sqlite3.DatabaseError as exc:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            skipped_races += 1
+            logger.warning(
+                "results upsert skipped race_id=%s stadium=%s race_no=%s err=%s",
+                race.get("race_date", "").replace("-", "") + f"-{int(race.get('race_stadium_number') or 0):02d}-{int(race.get('race_number') or 0):02d}",
+                race.get("race_stadium_number"),
+                race.get("race_number"),
+                exc,
+            )
 
-        # 払戻金 (API構造に合わせてフィールド名を調整する想定)
-        payouts = race.get("payouts", {})
-        for bet_type, items in payouts.items():
-            if not isinstance(items, list):
-                continue
-            for item in items:
-                conn.execute("""
-                    INSERT OR REPLACE INTO race_payouts
-                        (race_id, bet_type, combination, payout, popularity)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    rid,
-                    bet_type,
-                    item.get("combination", ""),
-                    item.get("payout", 0),
-                    item.get("popularity"),
-                ))
-                n_payouts += 1
-
-    logger.info("Results: %d 着順 / %d 払戻 投入", n_results, n_payouts)
+    logger.info("Results: %d 着順 / %d 払戻 投入 (skipped races: %d)", n_results, n_payouts, skipped_races)
     return n_results
 
 

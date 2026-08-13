@@ -390,12 +390,14 @@ CHECKS = {
     "accident": check_accident_integrity,
 }
 
+RESULT_CLOSE_GRACE_MINUTES = 30
+
 
 def check_result_after_close(conn, target_date: str, race_ids: list[str] | None = None) -> tuple[str, str, dict]:
     target_races = _select_race_ids(conn, target_date, race_ids)
     if not target_races:
         return "ok", "no target races for result check", {"race_count": 0}
-    cutoff = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (datetime.now() - timedelta(minutes=RESULT_CLOSE_GRACE_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
     placeholders = _placeholders(target_races)
     closed_rows = conn.execute(
         f"""
@@ -410,7 +412,7 @@ def check_result_after_close(conn, target_date: str, race_ids: list[str] | None 
         (*target_races, target_date, cutoff),
     ).fetchall()
     if not closed_rows:
-        return "ok", "no races closed more than 15 minutes ago", {"race_count": len(target_races), "cutoff": cutoff}
+        return "ok", f"no races closed more than {RESULT_CLOSE_GRACE_MINUTES} minutes ago", {"race_count": len(target_races), "cutoff": cutoff}
     closed_ids = [str(row[0]) for row in closed_rows]
     result_rows = conn.execute(
         f"""
@@ -457,7 +459,7 @@ STAGE_SCOPES = {
     # Exhibition cron: validate only the races it touched. Missing exhibition
     # values themselves are not fatal because unsupported venues/sources exist.
     "exhibition": ["detail_rows", "motor_cache", "detail_cache"],
-    # Result polling: only races closed at least 15 minutes ago are expected to
+    # Result polling: only races closed at least 30 minutes ago are expected to
     # have complete result rows.
     "post-result": ["result"],
     # Nightly: accident stats are only strict after the full result day has run.

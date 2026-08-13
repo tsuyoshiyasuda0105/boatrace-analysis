@@ -30,17 +30,51 @@ def test_today_pages_default_to_jst_date(monkeypatch):
     app = web_app.create_app()
     app.config.update(TESTING=True, SECRET_KEY="test")
     client = app.test_client()
-    with client.session_transaction() as session:
-        session["is_member"] = True
-        session["role"] = "admin"
-
     races_response = client.get("/")
     today_response = client.get("/member/today-races")
 
     assert races_response.status_code == 302
     assert races_response.headers["Location"].endswith("/races?date=2026-08-04")
-    assert today_response.status_code == 200
-    assert "2026-08-04" in today_response.get_data(as_text=True)
+    assert today_response.status_code == 302
+    assert today_response.headers["Location"].endswith("/login?next=/member/today-races")
+ 
+
+def test_public_top_routes_render_without_login(monkeypatch):
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-04")
+    monkeypatch.setattr(web_app, "db_connect", _fake_connection)
+    monkeypatch.setattr(
+        web_app,
+        "_races_for_date",
+        lambda target_date, conn=None: [],
+    )
+    monkeypatch.setattr(
+        web_app,
+        "_venue_environment_summaries_for_date",
+        lambda _target_date, conn=None: {},
+    )
+    web_app.invalidate_cache()
+
+    app = web_app.create_app()
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    client = app.test_client()
+
+    races_response = client.get("/races?date=2026-08-04")
+    assert races_response.status_code == 200
+    assert "2026-08-04" in races_response.get_data(as_text=True)
+
+
+def test_public_routes_do_not_require_login():
+    source = (Path(__file__).resolve().parents[1] / "src" / "web" / "app.py").read_text(
+        encoding="utf-8"
+    )
+
+    index_block = source.split('@app.route("/")', 1)[1].split('@app.route("/races")', 1)[0]
+    races_block = source.split('@app.route("/races")', 1)[1].split('@app.route("/member/today-races")', 1)[0]
+    detail_block = source.split('@app.route("/race/<race_id>")', 1)[1].split('@app.route("/api/race/<race_id>/value-bets")', 1)[0]
+
+    assert "@login_required" not in index_block
+    assert "@login_required" not in races_block
+    assert "@login_required" not in detail_block
 
 
 def _member_client(monkeypatch):
@@ -212,7 +246,10 @@ def test_races_page_excludes_roi_list_and_does_not_read_snapshot(monkeypatch):
     assert "2026-07-30" in html
     assert "ROIが高いレース候補" not in html
     assert "G2/G3 1-2-3" not in html
-    assert "const marketSignalsEnabled = false" in html
+    assert "mode: 'top-lightweight'" in html
+    assert "renderTodaysPicks = function()" not in html
+    assert "async function loadMarketSignals()" not in html
+    assert "renderTodaysPicks: { calls: 0, result: 'not_loaded_top_only' }" in html
 
 
 def test_races_page_disables_browser_cache_for_member_html(monkeypatch):
@@ -225,6 +262,9 @@ def test_races_page_disables_browser_cache_for_member_html(monkeypatch):
 def test_top_page_template_uses_slower_refresh_and_hides_tile_countdown():
     source = Path("src/web/templates/index.html").read_text(encoding="utf-8")
 
+    assert "{% if not show_today_picks_panel|default(false) %}" in source
+    assert "window.setInterval(updateRaceState, 60000);" in source
+    assert "marketSignalsRequests: 0" in source
     assert "const showRaceTileCountdown = roiPicksVisible;" in source
     assert "if (tilEl && showRaceTileCountdown && minutesUntil <= 60)" in source
     assert "if (!roiPicksVisible) return;" in source
@@ -309,9 +349,7 @@ def test_write_top_page_snapshot_preserves_existing_daily_badges(monkeypatch):
         "stadium_groups": [{"stadium_number": 1, "stadium_name": "桐生", "races": []}],
         "initial_market_signals": {
             "date": "2026-07-30",
-            "race_badges": {
-                "202607300101": {"accident": {"label": "ACCIDENT BADGE"}}
-            },
+            "race_badges": {},
             "accident_watch": {},
         },
         "empty": False,
@@ -423,7 +461,9 @@ def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch)
         ],
         "initial_market_signals": {
             "date": "2026-07-30",
-            "race_badges": {},
+            "race_badges": {
+                "202607300101": {"accident": {"label": "事故率0.50+ 1号艇"}}
+            },
             "accident_watch": {},
         },
         "empty": False,
@@ -457,7 +497,6 @@ def test_races_page_uses_top_snapshot_without_db_or_badge_hydration(monkeypatch)
     assert response.status_code == 200
     assert "Kiryu" in response.get_data(as_text=True)
     assert response.headers["Cache-Control"] == "no-store, no-cache, must-revalidate, private"
-
 
 
 def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
@@ -497,7 +536,7 @@ def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
             "date": "2026-07-30",
             "signals": {},
             "race_badges": {
-                "202607300101": {"accident": {"label": "ACCIDENT BADGE"}}
+                "202607300101": {"accident": {"label": "事故率0.50+ 1号艇"}}
             },
             "accident_watch": {},
         },
@@ -528,7 +567,8 @@ def test_races_page_repairs_empty_top_snapshot_badges(monkeypatch):
     assert response.status_code == 200
     assert written["target_date"] == "2026-07-30"
     saved = written["payload"]["initial_market_signals"]["race_badges"]
-    assert saved["202607300101"]["accident"]["label"] == "ACCIDENT BADGE"
+    assert saved["202607300101"]["accident"]["label"] == "事故率0.50+ 1号艇"
+
 
 def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
     monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)

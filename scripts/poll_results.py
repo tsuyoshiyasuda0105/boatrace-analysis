@@ -1,6 +1,6 @@
 """軽量・高頻度の結果ポーリングスクリプト
 
-5 分毎のタスクで実行し、レース終了から 5-15 分以内に結果を DB に反映する。
+5 分毎のタスクで実行し、レース終了後の結果を DB に反映する。
 daily_collect.py が 23:30 にフル取得するのに対し、これは「結果のみ」 を取得し
 API 負荷を最小化する。
 
@@ -39,9 +39,17 @@ except ImportError:
     pass
 
 import config
-from src.collectors.openapi import fetch_results, upsert_results
+from src.collectors.openapi import (
+    fetch_programs,
+    fetch_results,
+    upsert_programs,
+    upsert_results,
+)
 from src.collectors.result_scraper import scrape_results_for_pending_races
 from src.db.connection import connect as db_connect
+
+
+RESULT_SHELL_GRACE_MINUTES = 30
 
 
 def _parse_closed_at(value) -> datetime | None:
@@ -57,7 +65,7 @@ def _parse_closed_at(value) -> datetime | None:
     return dt
 
 
-def _count_openapi_shell_races(conn: sqlite3.Connection, target_date: date) -> int:
+def _missing_closed_result_race_ids(conn: sqlite3.Connection, target_date: date) -> list[str]:
     rows = conn.execute(
         """
         SELECT r.race_id, r.race_closed_at
@@ -75,12 +83,50 @@ def _count_openapi_shell_races(conn: sqlite3.Connection, target_date: date) -> i
         (target_date.isoformat(),),
     ).fetchall()
     now_local = datetime.now()
-    pending = 0
-    for _race_id, race_closed_at in rows:
+    missing: list[str] = []
+    for race_id, race_closed_at in rows:
         closed_at = _parse_closed_at(race_closed_at)
-        if closed_at and closed_at + timedelta(minutes=5) <= now_local:
-            pending += 1
-    return pending
+        if closed_at and closed_at + timedelta(minutes=RESULT_SHELL_GRACE_MINUTES) <= now_local:
+            missing.append(str(race_id))
+    return missing
+
+
+def _count_openapi_shell_races(conn: sqlite3.Connection, target_date: date) -> int:
+    return len(_missing_closed_result_race_ids(conn, target_date))
+
+
+def _missing_result_parent_race_ids(conn: sqlite3.Connection, payload: dict) -> list[str]:
+    missing: list[str] = []
+    for race in payload.get("results", []) or []:
+        race_date = str(race.get("race_date") or "")
+        stadium_number = race.get("race_stadium_number")
+        race_number = race.get("race_number")
+        if not race_date or stadium_number is None or race_number is None:
+            continue
+        rid = f"{race_date.replace('-', '')}-{int(stadium_number):02d}-{int(race_number):02d}"
+        row = conn.execute(
+            "SELECT 1 FROM races WHERE race_id = ? LIMIT 1",
+            (rid,),
+        ).fetchone()
+        if row:
+            continue
+        missing.append(rid)
+    return missing
+
+
+def _backfill_program_shells_for_results(
+    conn: sqlite3.Connection,
+    target_date: date,
+    payload: dict,
+) -> list[str]:
+    missing_before = _missing_result_parent_race_ids(conn, payload)
+    if not missing_before:
+        return []
+    programs_payload = fetch_programs(target_date)
+    if programs_payload:
+        upsert_programs(conn, programs_payload)
+        conn.commit()
+    return _missing_result_parent_race_ids(conn, payload)
 
 
 def main():
@@ -135,6 +181,16 @@ def main():
             n_openapi = len(payload.get("results", []))
             print(f"[{target_date}] Open API: {n_openapi} races fetched")
             try:
+                missing_after_backfill = _backfill_program_shells_for_results(
+                    conn,
+                    target_date,
+                    payload,
+                )
+                if missing_after_backfill:
+                    print(
+                        "[Open API] missing parent race shells after programs backfill: "
+                        + ", ".join(missing_after_backfill[:10]),
+                    )
                 n_results = upsert_results(conn, payload)
                 conn.commit()
                 print(f"  upsert_results (Open API): {n_results}")
@@ -142,6 +198,26 @@ def main():
                 print(f"  Open API ERROR: {e}")
         else:
             print(f"[{target_date}] Open API: no response")
+
+        missing_after_openapi = _missing_closed_result_race_ids(conn, target_date)
+        if missing_after_openapi:
+            try:
+                repaired = scrape_results_for_pending_races(
+                    target_date,
+                    conn,
+                    l4_only=False,
+                    race_ids=missing_after_openapi,
+                )
+                repaired_count = len(repaired["results"])
+                if repaired_count > 0:
+                    print(f"[{target_date}] Layer3 repair: {repaired_count} missing races")
+                    repaired_rows = upsert_results(conn, repaired)
+                    conn.commit()
+                    print(f"  upsert_results (Layer3 repair): {repaired_rows}")
+                else:
+                    print(f"[{target_date}] Layer3 repair: no additional races")
+            except Exception as e:
+                print(f"  Layer3 repair ERROR: {e}")
 
         shell_races = _count_openapi_shell_races(conn, target_date)
 

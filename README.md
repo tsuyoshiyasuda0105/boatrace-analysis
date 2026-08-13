@@ -223,3 +223,20 @@ pytest tests/
 予測時点の入力スナップショットから生成・保存・自動評価します。
 構成、データリーク防止、API、学習、Render運用、既知の制約は
 [`docs/start_prediction_v1.md`](docs/start_prediction_v1.md) を参照してください。
+---
+
+## Project ops guard
+
+This repository includes a reusable cross-project operations guard pack.
+
+- Shared skill template: [`docs/project_ops_templates/project-ops-guard/SKILL.md`](docs/project_ops_templates/project-ops-guard/SKILL.md)
+- Project rules: [`AGENTS.md`](AGENTS.md)
+- Handoff log: [`docs/handoff.md`](docs/handoff.md)
+- Ops checklist: [`docs/ops_checklist.md`](docs/ops_checklist.md)
+- Installer: [`scripts/install_project_ops_guard.py`](scripts/install_project_ops_guard.py)
+
+Example:
+
+```bash
+python scripts/install_project_ops_guard.py --target "C:/path/to/another-project" --date 2026-08-09
+```

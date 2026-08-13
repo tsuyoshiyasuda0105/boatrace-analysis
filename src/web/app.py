@@ -1281,6 +1281,69 @@ def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
         return None
 
 
+def _list_recent_page_cache_variants(
+    cache_family: str,
+    identifier: str,
+    current_key: str,
+    *,
+    limit: int = 4,
+) -> list[str]:
+    """Return recent cache-key variants for the same logical artifact."""
+    try:
+        _ensure_page_html_cache_table()
+        with db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT cache_key
+                  FROM page_html_cache
+                 WHERE cache_key LIKE ?
+                   AND cache_key <> ?
+                 ORDER BY updated_at DESC
+                 LIMIT ?
+                """,
+                (f"{cache_family}:%:{identifier}", current_key, int(limit)),
+            ).fetchall()
+        out: list[str] = []
+        for row in rows:
+            key = str(row[0] or "")
+            if key and key not in out:
+                out.append(key)
+        return out
+    except Exception:
+        logger.exception("failed to list cache variants: %s %s", cache_family, identifier)
+        return []
+
+
+def _count_existing_cache_key_variants(
+    conn: Any,
+    cache_family: str,
+    identifiers: list[str],
+) -> int:
+    """Count logical cache entries even when older versions still exist."""
+    if not identifiers:
+        return 0
+    seen: set[str] = set()
+    chunk_size = 50
+    for start in range(0, len(identifiers), chunk_size):
+        chunk = identifiers[start:start + chunk_size]
+        like_sql = " OR ".join("cache_key LIKE ?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT cache_key
+              FROM page_html_cache
+             WHERE {like_sql}
+            """,
+            tuple(f"{cache_family}:%:{identifier}" for identifier in chunk),
+        ).fetchall()
+        wanted = set(chunk)
+        for row in rows:
+            key = str(row[0] or "")
+            identifier = key.rsplit(":", 1)[-1] if key else ""
+            if identifier in wanted:
+                seen.add(identifier)
+    return len(seen)
+
+
 def _db_placeholders(values: list[object]) -> str:
     return ",".join("?" for _ in values) or "?"
 
@@ -1441,6 +1504,7 @@ def _compose_admin_status(
             return "healthy"
     return "warning" if treat_missing_task_as_warning else "unknown"
 
+
 def _mark_admin_item_running_partial_warning(item: dict[str, Any]) -> None:
     task_detail = item.get("task_detail") or {}
     if str(item.get("runtime_status") or "") != "running":
@@ -1467,7 +1531,6 @@ def _mark_admin_item_running_partial_warning(item: dict[str, Any]) -> None:
     )
 
 
-
 def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
     today_iso = _today_jst_iso()
     with db_connect() as conn:
@@ -1486,11 +1549,14 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
             for boat in range(1, 7)
         ]
 
-        page_present = _count_existing_cache_keys(conn, page_keys)
+        page_present = _count_existing_cache_key_variants(conn, "race_detail_page", race_ids)
+        tag_present = _count_existing_cache_key_variants(conn, "race_detail_tags", race_ids)
         motor_present = _count_existing_cache_keys(conn, motor_keys)
         racer_present = _count_existing_cache_keys(conn, racer_keys)
 
         race_detail_run = _load_task_run_exact(conn, "render_race_detail_all", target_date)
+        detail_tags_run = _load_task_run_exact(conn, "render_detail_tags_today", target_date)
+        detail_pages_run = _load_task_run_exact(conn, "render_detail_pages_today", target_date)
         exhibition_run = _load_task_run_exact(conn, "render_exhibition_detail_refresh", target_date)
         accident_run = _load_task_run_latest_like(conn, "render_accident_refresh%", target_date)
 
@@ -1548,6 +1614,32 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
                 "status_hint": None,
             }
         )
+
+    append_item(
+        "race_detail_tags_today",
+        "詳細タグ事前生成",
+        "boatrace-regular-cron",
+        "日中 1回",
+        detail_tags_run,
+        None,
+        race_count,
+        tag_present,
+        "race detail の事故・エース・逃げ・変化タグ JSON キャッシュ。",
+        [race_id for race_id in race_ids[:3]],
+    )
+
+    append_item(
+        "race_detail_pages_today",
+        "詳細ページ事前生成",
+        "boatrace-regular-cron",
+        "日中 1回",
+        detail_pages_run,
+        detail_cache_check or detail_rows_check,
+        race_count,
+        page_present,
+        "当日 race detail HTML の事前生成結果。互換ページキャッシュも件数に含めます。",
+        [race_id for race_id in race_ids[:3]],
+    )
 
     append_item(
         "race_detail",
@@ -4356,6 +4448,42 @@ def _race_detail_page_cache_key(race_id: str) -> str:
     return f"race_detail_page:{RACE_DETAIL_PAGE_CACHE_VERSION}:{race_id}"
 
 
+def _race_detail_tag_compat_cache_keys(race_id: str) -> list[str]:
+    return _list_recent_page_cache_variants(
+        "race_detail_tags",
+        race_id,
+        _race_detail_tag_cache_key(race_id),
+    )
+
+
+def _race_detail_page_compat_cache_keys(race_id: str) -> list[str]:
+    return _list_recent_page_cache_variants(
+        "race_detail_page",
+        race_id,
+        _race_detail_page_cache_key(race_id),
+    )
+
+
+def _read_race_detail_page_cache(
+    race_id: str,
+    *,
+    max_age_sec: int | None,
+) -> Optional[str]:
+    page_cache_key = _race_detail_page_cache_key(race_id)
+    if max_age_sec is not None:
+        cached_html = _read_page_html_cache(page_cache_key, max_age_sec)
+        if cached_html:
+            return cached_html
+    stale_html = _read_page_html_cache_stale(page_cache_key)
+    if stale_html:
+        return stale_html
+    for compat_key in _race_detail_page_compat_cache_keys(race_id):
+        compat_html = _read_page_html_cache_stale(compat_key)
+        if compat_html:
+            return compat_html
+    return None
+
+
 def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
     """Build pre-race display tags using only information available by race day."""
     info = _race_basic_info(race_id)
@@ -5527,6 +5655,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # ===== セキュリティ設定: Cookie 保護 =====
     # 本番 (RENDER) では HTTPS 強制、開発時は HTTP 許可
     is_production = bool(os.environ.get("RENDER"))
+    is_web_runtime = bool(os.environ.get("PORT"))
     app.config["SESSION_COOKIE_SECURE"] = is_production       # HTTPS のみ送信
     app.config["SESSION_COOKIE_HTTPONLY"] = True              # JS からアクセス不可
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"             # CSRF 緩和
@@ -5537,12 +5666,12 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     # noqa: S105 は「デフォルト値リテラルとの比較」であり実パスワードではない
     _DEFAULT_SECRET = "dev-only-do-not-use-in-prod"  # noqa: S105
     _DEFAULT_MEMBER = "dev-member"  # noqa: S105
-    if is_production and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:
+    if is_production and is_web_runtime and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:
         logger.critical(
             "SECURITY: WEB_SESSION_SECRET is using DEFAULT value in production. "
             "Set BOATRACE_WEB_SECRET environment variable to a long random string."
         )
-    if is_production and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:
+    if is_production and is_web_runtime and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:
         logger.critical(
             "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
             "Set this env var to a strong password (16+ chars)."
@@ -6271,7 +6400,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
 
     @app.route("/")
-    @login_required
     def index():
         target = request.args.get("date") or _today_jst_iso()
         resp = redirect(url_for("races", date=target))
@@ -6281,7 +6409,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         return resp
 
     @app.route("/races")
-    @login_required
     @cached(ttl=30, past_ttl=3600)  # 今日30秒/過去日1時間キャッシュ
     # backlog item 11: 旧 60s → 120s。レース予定の動的要素は results_count のみで
     # poll_results が 5分間隔なので 120s 化しても表示遅延ほぼ無し。Cloudflare
@@ -6557,7 +6684,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         )
 
     @app.route("/race/<race_id>")
-    @login_required
     @cached(ttl=300, past_ttl=21600)
     def race_detail(race_id: str):
         canonical_race_id = _canonicalize_race_id(race_id)
@@ -6570,10 +6696,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         race_date = _race_date_from_race_id(race_id)
         use_fresh_page_cache = race_date >= _today_jst_iso()
         if not force_recompute:
-            cached_html = (
-                _read_page_html_cache(page_cache_key, 180)
-                if use_fresh_page_cache
-                else _read_page_html_cache_stale(page_cache_key)
+            cached_html = _read_race_detail_page_cache(
+                race_id,
+                max_age_sec=180 if use_fresh_page_cache else None,
             )
             if cached_html:
                 logger.info(
