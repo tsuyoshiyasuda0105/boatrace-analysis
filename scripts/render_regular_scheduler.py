@@ -532,9 +532,13 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
 
     today = now.date().isoformat()
     task = "render_lite_daytime_bootstrap"
+    attempt_task = f"render_lite_daytime_recovery_{now.hour:02d}"
+    if not run_yesterday_results_backfill(now):
+        record_task(task, today, "failure", detail="results_backfill_failed")
+        record_task(attempt_task, today, "failure", detail="results_backfill_failed")
+        return False
     if task_success_exists(task, today):
         return True
-    attempt_task = f"render_lite_daytime_recovery_{now.hour:02d}"
     if task_attempt_exists(attempt_task, today):
         print(f"[lite-bootstrap] hourly attempt already completed hour={now.hour:02d}", flush=True)
         return True
@@ -607,6 +611,27 @@ def race_detail_page_cache_coverage(run_date: str) -> dict[str, int]:
         "races": int(row[0] or 0) if row else 0,
         "covered": int(row[1] or 0) if row else 0,
     }
+
+
+def run_yesterday_results_backfill(now: datetime) -> bool:
+    """Retry yesterday's idempotent result poll once each JST morning."""
+    if now.hour != 8:
+        return True
+    target_date = (now.date() - timedelta(days=1)).isoformat()
+    task = "render_results_backfill_yesterday"
+    if task_success_exists(task, target_date):
+        return True
+    ok = run_py(
+        ["scripts/poll_results.py", "--date", target_date, "--no-jitter"],
+        timeout=900,
+    )
+    record_task(
+        task,
+        target_date,
+        "success" if ok else "failure",
+        detail=f"target_date={target_date}",
+    )
+    return ok
 
 
 def run_detail_pages_selfheal(now: datetime) -> bool:

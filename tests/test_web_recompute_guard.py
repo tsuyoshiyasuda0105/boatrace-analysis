@@ -338,6 +338,73 @@ def test_detail_pages_selfheal_does_not_run_twice_after_same_day_success(monkeyp
     assert scheduler.run_detail_pages_selfheal(now)
 
 
+def test_yesterday_results_backfill_runs_once_in_the_eight_oclock_hour(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: calls.append((tuple(args), timeout)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda *args, **kwargs: calls.append(("record", args, kwargs)),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
+    assert scheduler.run_yesterday_results_backfill(now)
+    assert calls[0] == (
+        (
+            "scripts/poll_results.py",
+            "--date",
+            "2026-07-20",
+            "--no-jitter",
+        ),
+        900,
+    )
+    assert calls[1][1][0:3] == (
+        "render_results_backfill_yesterday",
+        "2026-07-20",
+        "success",
+    )
+
+
+def test_yesterday_results_backfill_skips_after_same_date_success(monkeypatch):
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: True)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("same-date success must skip result polling")
+        ),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 10, tzinfo=scheduler.JST)
+    assert scheduler.run_yesterday_results_backfill(now)
+
+
+def test_yesterday_results_backfill_retries_after_failure(monkeypatch):
+    outcomes = iter((False, True))
+    statuses = []
+    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: next(outcomes),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda _task, _run_date, status, detail=None: statuses.append(status),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 15, tzinfo=scheduler.JST)
+    assert scheduler.run_yesterday_results_backfill(now) is False
+    assert scheduler.run_yesterday_results_backfill(now) is True
+    assert statuses == ["failure", "success"]
+
+
 def test_lite_daytime_bootstrap_revalidates_stale_gate_after_rows_complete(monkeypatch):
     calls = []
     monkeypatch.setattr(
@@ -381,6 +448,7 @@ def test_lite_daytime_bootstrap_revalidates_stale_gate_after_rows_complete(monke
 def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "run_yesterday_results_backfill", lambda _now: True)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",
@@ -414,6 +482,7 @@ def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeyp
 def test_lite_daytime_bootstrap_stops_when_sources_remain_incomplete(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "run_yesterday_results_backfill", lambda _now: True)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",
@@ -453,6 +522,7 @@ def test_lite_daytime_bootstrap_stops_when_signal_gate_fails(monkeypatch):
         "task_success_exists",
         lambda task, _run_date: task == "render_program_source_gate_v1",
     )
+    monkeypatch.setattr(scheduler, "run_yesterday_results_backfill", lambda _now: True)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",

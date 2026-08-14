@@ -33,11 +33,12 @@ def test_daytime_bootstrap_runs_bounded_detail_selfheal_after_source_gate():
     end = src.index("def tide_refresh_needed(", start)
     bootstrap = src[start:end]
 
+    results_idx = bootstrap.index("if not run_yesterday_results_backfill(now):")
     source_idx = bootstrap.index('source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)')
     signal_idx = bootstrap.index("ok = run_signal_refresh_slot(now, source_gate_verified=True)")
     selfheal_idx = bootstrap.index("detail_selfheal_ok = run_detail_pages_selfheal(now)")
 
-    assert source_idx < signal_idx < selfheal_idx
+    assert results_idx < source_idx < signal_idx < selfheal_idx
 
 
 def test_race_detail_cron_is_the_overnight_maintenance_coordinator():
