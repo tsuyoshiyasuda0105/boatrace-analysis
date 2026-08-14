@@ -8,17 +8,14 @@ PROGRAM_BOOTSTRAP = ROOT / "scripts" / "render_program_bootstrap_scheduler.py"
 MAINTENANCE = ROOT / "scripts" / "render_maintenance_scheduler.py"
 
 
-def test_daily_tag_prewarm_is_wired_into_maintenance_and_nightly_jobs():
+def test_daily_tag_prewarm_is_owned_by_maintenance_not_regular_cron():
     source = SCHEDULER.read_text(encoding="utf-8")
 
     bootstrap = source.split("def run_lite_daytime_bootstrap", 1)[1].split("def tide_refresh_needed", 1)[0]
-    nightly = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
     maintenance = MAINTENANCE.read_text(encoding="utf-8")
     assert '"scripts/prewarm_race_detail_tags.py", "--date", today' not in bootstrap
     assert '["scripts/prewarm_race_detail_tags.py", "--date", today]' in maintenance
-    assert '"scripts/prewarm_race_detail_tags.py", "--date", tomorrow' in nightly
-    assert "run_entry_change_snapshot(tomorrow)" in nightly
-    assert nightly.index("run_entry_change_snapshot(tomorrow)") < nightly.index('"scripts/prewarm_race_detail_tags.py", "--date", tomorrow')
+    assert "def run_nightly(" not in source
     assert '["scripts/prewarm_race_detail_pages.py", "--date", today]' in maintenance
     assert maintenance.index('["scripts/prewarm_race_detail_tags.py", "--date", today]') < maintenance.index('["scripts/prewarm_race_detail_pages.py", "--date", today]')
     assert "_at_or_after(now, 6, 30)" in PROGRAM_BOOTSTRAP.read_text(encoding="utf-8")

@@ -177,7 +177,7 @@ def test_daily_validation_is_full_day_while_exhibition_validation_is_targeted():
 def test_accident_refresh_rebuilds_tags_pages_and_validates_after_stats():
     source = (ROOT / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
     start = source.index("def run_accident_full_refresh")
-    end = source.index("def run_accident_self_heal", start)
+    end = source.index("@_with_regular_run_lock", start)
     function_source = source[start:end]
 
     rebuild = function_source.index("run_accident_rebuild")
@@ -191,7 +191,9 @@ def test_accident_refresh_rebuilds_tags_pages_and_validates_after_stats():
 
 def test_result_polling_uses_post_result_stage_after_polling():
     source = (ROOT / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
-    main = source.split("if 8 <= now.hour <= 23:", 1)[1].split("# Hourly summaries", 1)[0]
+    main = source.split("if 8 <= now.hour <= 23:", 1)[1].split(
+        "# Refresh the top snapshot", 1
+    )[0]
 
     poll = main.index("scripts/poll_results.py")
     validate = main.index("scripts/check_post_run_integrity.py")

@@ -104,33 +104,25 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "startCommand: python scripts/prewarm_strategy_pages.py --mode signals" not in blueprint
 
 
-def test_regular_scheduler_runs_roi_refreshes_in_the_existing_cron():
-    scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
-    main_block = scheduler.split("def main() -> int:", 1)[1]
-    hourly_block = scheduler.split("def run_hourly", 1)[1].split(
-        "def run_roi_daily_self_heal", 1
-    )[0]
-    nightly_block = scheduler.split("def run_nightly", 1)[1].split(
-        "def main() -> int:", 1
-    )[0]
+def test_roi_refresh_ownership_is_lite_and_maintenance_only():
+    regular = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    maintenance = Path("scripts/render_maintenance_scheduler.py").read_text(encoding="utf-8")
+    main_block = regular.split("def main() -> int:", 1)[1]
 
-    assert "run_signal_refresh_slot(now)" in main_block
-    assert "should_run_roi_history_slot(now)" in main_block
-    assert "run_roi_history_slot(now)" in main_block
-    assert "run_roi_daily_self_heal(now)" in main_block
-    assert "prewarm_strategy_pages.py" not in hourly_block
-    assert '"--mode", "nightly"' not in nightly_block
-    assert '"--mode", "signals", "--date", tomorrow' in nightly_block
+    assert "run_lite_daytime_bootstrap(now)" in main_block
+    assert "run_signal_refresh_slot(now, source_gate_verified=True)" in regular
+    assert "regular.run_signal_refresh_slot(now, source_gate_verified=True)" in maintenance
+    assert "regular.run_roi_daily_self_heal(now)" in maintenance
+    assert "run_roi_history_slot" not in regular
 
 
 def test_regular_scheduler_can_run_in_daytime_lite_mode():
     scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
 
     assert "def render_daytime_lite_mode()" in scheduler
-    assert "if not dedicated_bootstrap and not lite_mode and morning_start <= now < morning_end:" in scheduler
     assert "run_lite_daytime_bootstrap(now)" in scheduler
-    assert "if not lite_mode and 6 <= now.hour <= 23:" in scheduler
-    assert "if not dedicated_bootstrap and not lite_mode and now.hour == 23 and now.minute >= 30:" in scheduler
+    assert "if lite_mode and 8 <= now.hour <= 23:" in scheduler
+    assert "if not lite_mode and 6 <= now.hour <= 23:" not in scheduler
 
 
 class _Response:
@@ -218,19 +210,19 @@ def test_regular_scheduler_does_not_duplicate_signal_rebuild_each_loop():
     assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' not in live_block
 
 
-def test_regular_scheduler_keeps_history_out_of_every_five_minute_loop():
+def test_regular_scheduler_removes_historical_roi_refresh_from_live_cron():
     scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
     main_block = scheduler.split("def main() -> int:", 1)[1]
-    history_block = main_block.split("# Historical ROI pages", 1)[1]
 
-    assert "if not lite_mode and should_run_roi_history_slot(now):" in history_block
-    assert "run_roi_history_slot(now)" in history_block
-    assert "return now.minute < 5 and now.hour in (0, 12)" in scheduler
+    assert "run_roi_history_slot" not in main_block
+    assert "should_run_roi_history_slot" not in scheduler
 
 
 def test_beforeinfo_leaves_signal_rebuild_to_dedicated_cron():
     scheduler = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
-    beforeinfo_block = scheduler.split("def run_beforeinfo", 1)[1].split("def run_morning", 1)[0]
+    beforeinfo_block = scheduler.split("def run_beforeinfo", 1)[1].split(
+        "def run_top_page_snapshot", 1
+    )[0]
 
     assert 'if summary.get("races", 0) > 0:' in beforeinfo_block
     assert 'run_py(["scripts/prewarm_strategy_pages.py", "--mode", "signals"]' not in beforeinfo_block

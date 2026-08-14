@@ -499,20 +499,14 @@ def test_render_jobs_build_derived_start_stats_before_roi_signals():
     scheduler = _read("scripts/render_regular_scheduler.py")
     assert "def run_derived_start_stats(" in scheduler
     signal_start = scheduler.index("def run_signal_refresh_slot(")
-    signal_end = scheduler.index("def run_roi_history_slot", signal_start)
+    signal_end = scheduler.index("def run_original_exhibition_catchup", signal_start)
     signal_block = scheduler[signal_start:signal_end]
     assert "ok = run_derived_start_stats(today, today)" in signal_block
     assert signal_block.index("run_derived_start_stats(today, today)") < signal_block.index(
         '"scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today'
     )
 
-    nightly_start = scheduler.index("def run_nightly(")
-    nightly_end = scheduler.index("def main()", nightly_start)
-    nightly_block = scheduler[nightly_start:nightly_end]
-    assert "ok &= run_derived_start_stats(today, tomorrow)" in nightly_block
-    assert nightly_block.index("run_derived_start_stats(today, tomorrow)") < nightly_block.index(
-        '"scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow'
-    )
+    assert "def run_nightly(" not in scheduler
 
     refresh = _read("scripts/refresh_race_detail_after_exhibition.py")
     assert '"scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date' in refresh

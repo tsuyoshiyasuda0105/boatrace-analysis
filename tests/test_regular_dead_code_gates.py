@@ -1,10 +1,4 @@
-from datetime import datetime
 from pathlib import Path
-
-import pytest
-
-from scripts import render_regular_scheduler as scheduler
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DISABLED_PATHS = (
@@ -28,30 +22,18 @@ def test_render_regular_service_enables_daytime_lite():
     assert 'value: "1"' in regular_service
 
 
-@pytest.mark.parametrize(
-    "now",
-    [
-        datetime(2026, 8, 14, 7, 0, tzinfo=scheduler.JST),
-        datetime(2026, 8, 14, 10, 0, tzinfo=scheduler.JST),
-        datetime(2026, 8, 14, 12, 0, tzinfo=scheduler.JST),
-        datetime(2026, 8, 14, 23, 35, tzinfo=scheduler.JST),
-    ],
-)
-def test_production_flags_make_legacy_regular_paths_unreachable(monkeypatch, now):
-    monkeypatch.setenv("DATABASE_URL", "postgresql://test.invalid/db")
-    monkeypatch.setenv("BOATRACE_RENDER_DAYTIME_LITE", "1")
-    monkeypatch.setenv("BOATRACE_DEDICATED_PROGRAM_BOOTSTRAP", "1")
-    monkeypatch.setattr(scheduler, "jst_now", lambda: now)
-    monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
-    monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(scheduler, "run_lite_daytime_bootstrap", lambda _now: True)
-    monkeypatch.setattr(scheduler, "run_top_page_snapshot", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
-
-    def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("production-disabled regular path was called")
+def test_production_disabled_legacy_regular_paths_are_removed():
+    source = (ROOT / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
 
     for name in DISABLED_PATHS:
-        monkeypatch.setattr(scheduler, name, fail_if_called)
+        assert f"def {name}(" not in source
+        assert f"{name}(now)" not in source
 
-    assert scheduler.main.__wrapped__() == 0
+
+def test_regular_main_keeps_only_the_lightweight_daytime_path():
+    source = (ROOT / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    main = source.split("def main() -> int:", 1)[1]
+
+    assert "run_lite_daytime_bootstrap(now)" in main
+    assert '["scripts/poll_results.py", "--no-jitter"]' in main
+    assert "run_top_page_snapshot(now, lightweight=True, environment_only=True)" in main

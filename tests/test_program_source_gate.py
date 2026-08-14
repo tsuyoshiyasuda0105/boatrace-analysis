@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from pathlib import Path
 
 from scripts import check_program_source_gate as gate
 from scripts import render_regular_scheduler as scheduler
@@ -369,24 +370,11 @@ def test_scheduler_daytime_fallback_uses_isolated_task_and_cli_flag(monkeypatch)
     ]
 
 
-def test_morning_stops_before_downstream_generation_when_gate_is_not_ready(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        scheduler,
-        "run_py",
-        lambda args, timeout: calls.append((tuple(args), timeout)) or True,
-    )
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: False)
-    monkeypatch.setattr(
-        scheduler,
-        "run_tides",
-        lambda _now: (_ for _ in ()).throw(AssertionError("must not run tides")),
-    )
+def test_regular_scheduler_no_longer_owns_morning_source_collection():
+    source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
 
-    now = scheduler.datetime(2026, 8, 12, 6, 0, tzinfo=scheduler.JST)
-
-    assert scheduler.run_morning(now) is False
-    assert len(calls) == 2
+    assert "def run_morning(" not in source
+    assert 'run_py(["scripts/daily_collect.py"' not in source
 
 
 def test_signal_refresh_stops_before_roi_generation_when_gate_is_not_ready(monkeypatch):
@@ -440,21 +428,11 @@ def test_signal_refresh_reuses_gate_verified_by_daytime_bootstrap(monkeypatch):
     assert records[-1][2] == "success"
 
 
-def test_nightly_stops_before_tomorrow_predictions_when_gate_is_not_ready(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        scheduler,
-        "run_py",
-        lambda args, timeout: calls.append((tuple(args), timeout)) or True,
+def test_regular_scheduler_no_longer_owns_nightly_program_bootstrap():
+    regular = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    bootstrap = Path("scripts/render_program_bootstrap_scheduler.py").read_text(
+        encoding="utf-8"
     )
-    monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date: False)
 
-    now = scheduler.datetime(2026, 8, 12, 23, 30, tzinfo=scheduler.JST)
-
-    assert scheduler.run_nightly(now) is False
-    assert not any(
-        args[:2] == ("scripts/render_cache_predictions.py", "--date")
-        and "2026-08-13" in args
-        for args, _timeout in calls
-    )
+    assert "def run_nightly(" not in regular
+    assert "check_program_source_gate(target)" in bootstrap

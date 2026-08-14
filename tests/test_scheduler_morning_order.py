@@ -4,18 +4,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-def test_run_morning_orders_accident_before_predictions_and_skips_tags():
-    src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
-    start = src.index("def run_morning(")
-    end = src.index("def run_top_page_snapshot(", start)
-    block = src[start:end]
+def test_regular_scheduler_no_longer_owns_the_morning_pipeline():
+    regular = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    maintenance = (REPO / "scripts" / "render_maintenance_scheduler.py").read_text(
+        encoding="utf-8"
+    )
 
-    accident_idx = block.index('run_accident_self_heal(now)')
-    entry_change_idx = block.index("run_entry_change_snapshot(today)")
-    prediction_idx = block.index('run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)')
-
-    assert accident_idx < entry_change_idx < prediction_idx
-    assert 'prewarm_race_detail_tags.py' not in block
+    assert "def run_morning(" not in regular
+    assert "def run_program_phase(" in maintenance
+    assert "def run_accident_phase(" in maintenance
 
 
 def test_maintenance_rebuilds_today_tags_before_today_pages():

@@ -307,7 +307,6 @@ def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeyp
 def test_lite_daytime_bootstrap_stops_when_sources_remain_incomplete(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
-    monkeypatch.setattr(scheduler, "run_morning_catchup_if_needed", lambda _now: False)
     monkeypatch.setattr(
         scheduler,
         "daily_source_counts",
@@ -412,14 +411,13 @@ def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
     assert scheduler.main() == 1
 
 
-def test_main_does_not_run_heavy_accident_refresh_in_lite_mode(monkeypatch):
+def test_main_does_not_contain_heavy_accident_refresh(monkeypatch):
     from contextlib import contextmanager
 
     @contextmanager
     def unlocked():
         yield True
 
-    calls = []
     now = scheduler.datetime(2026, 8, 12, 8, 1, tzinfo=scheduler.JST)
     monkeypatch.setenv("DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(scheduler, "jst_now", lambda: now)
@@ -429,10 +427,9 @@ def test_main_does_not_run_heavy_accident_refresh_in_lite_mode(monkeypatch):
     monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler, "run_lite_daytime_bootstrap", lambda _now: True)
     monkeypatch.setattr(scheduler, "run_top_page_snapshot", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(scheduler, "run_accident_self_heal", lambda _now: calls.append("accident") or True)
 
     assert scheduler.main() == 0
-    assert calls == []
+    assert not hasattr(scheduler, "run_accident_self_heal")
 
 
 def test_main_skips_safely_when_previous_regular_run_is_active(monkeypatch):
@@ -522,65 +519,11 @@ def test_regular_scheduler_only_probes_existing_postgres_task_table(monkeypatch)
     assert calls == ["SELECT 1 FROM task_runs LIMIT 0"]
 
 
-def test_roi_history_uses_one_task_slot_per_twelve_hours(monkeypatch):
-    attempted = []
-    monkeypatch.setattr(
-        scheduler,
-        "task_attempt_exists",
-        lambda _task, _run_date: False,
-    )
-    monkeypatch.setattr(
-        scheduler,
-        "task_success_exists",
-        lambda task, run_date: attempted.append((task, run_date)) or True,
-    )
+def test_regular_cron_has_no_historical_roi_refresh_path():
+    source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
 
-    morning = scheduler.datetime(2026, 7, 21, 10, 37, tzinfo=scheduler.JST)
-    evening = scheduler.datetime(2026, 7, 21, 18, 2, tzinfo=scheduler.JST)
-    assert scheduler.run_roi_history_slot(morning)
-    assert scheduler.run_roi_history_slot(evening)
-    assert attempted == [
-        ("render_roi_history_00", "2026-07-21"),
-        ("render_roi_history_12", "2026-07-21"),
-    ]
-
-
-def test_roi_history_does_not_retry_failed_slot_every_five_minutes(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        scheduler,
-        "task_attempt_exists",
-        lambda task, run_date: calls.append(("attempt", task, run_date)) or True,
-    )
-    monkeypatch.setattr(
-        scheduler,
-        "task_success_exists",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("attempt check should win")),
-    )
-    monkeypatch.setattr(
-        scheduler,
-        "run_py",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not rerun history")),
-    )
-
-    now = scheduler.datetime(2026, 7, 21, 14, 43, tzinfo=scheduler.JST)
-    assert scheduler.run_roi_history_slot(now)
-    assert calls == [("attempt", "render_roi_history_12", "2026-07-21")]
-
-
-def test_roi_history_only_runs_in_two_narrow_windows():
-    assert scheduler.should_run_roi_history_slot(
-        scheduler.datetime(2026, 7, 21, 0, 0, tzinfo=scheduler.JST)
-    )
-    assert scheduler.should_run_roi_history_slot(
-        scheduler.datetime(2026, 7, 21, 12, 4, tzinfo=scheduler.JST)
-    )
-    assert not scheduler.should_run_roi_history_slot(
-        scheduler.datetime(2026, 7, 21, 14, 43, tzinfo=scheduler.JST)
-    )
-    assert not scheduler.should_run_roi_history_slot(
-        scheduler.datetime(2026, 7, 21, 12, 5, tzinfo=scheduler.JST)
-    )
+    assert "run_roi_history_slot" not in source
+    assert "should_run_roi_history_slot" not in source
 
 
 def test_market_signals_keep_a_stable_last_good_snapshot():
@@ -704,55 +647,12 @@ def test_pending_market_signals_skip_badge_hydration():
     assert web_app._hydrate_market_race_badges(payload, "2026-07-21") is payload
 
 
-def test_accident_self_heal_skips_when_snapshot_is_current(monkeypatch):
-    monkeypatch.setattr(scheduler, "latest_completed_results_date", lambda: "2026-07-20")
-    monkeypatch.setattr(scheduler, "latest_accident_snapshot_state", lambda: ("2026-07-20", "2026-07-20"))
-    monkeypatch.setattr(
-        scheduler,
-        "run_accident_full_refresh",
-        lambda _target: (_ for _ in ()).throw(AssertionError("must not rebuild")),
-    )
+def test_accident_self_heal_is_removed_from_regular_cron():
+    regular = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    maintenance = Path("scripts/render_maintenance_scheduler.py").read_text(encoding="utf-8")
 
-    now = scheduler.datetime(2026, 7, 21, 9, 0, tzinfo=scheduler.JST)
-    assert scheduler.run_accident_self_heal(now)
-
-
-def test_accident_self_heal_rebuilds_full_period_and_verifies_snapshot(monkeypatch):
-    snapshots = iter([("2026-07-19", "2026-07-19"), ("2026-07-20", "2026-07-20")])
-    monkeypatch.setattr(scheduler, "latest_completed_results_date", lambda: "2026-07-20")
-    rebuilt = []
-    recorded = []
-    monkeypatch.setattr(scheduler, "latest_accident_snapshot_state", lambda: next(snapshots))
-    monkeypatch.setattr(scheduler, "task_attempt_exists", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(
-        scheduler,
-        "run_accident_full_refresh",
-        lambda target: rebuilt.append(target) or True,
-    )
-    monkeypatch.setattr(
-        scheduler,
-        "record_task",
-        lambda *args, **kwargs: recorded.append((args, kwargs)),
-    )
-
-    now = scheduler.datetime(2026, 7, 21, 9, 0, tzinfo=scheduler.JST)
-    assert scheduler.run_accident_self_heal(now)
-    assert rebuilt == ["2026-07-20"]
-    assert recorded[0][0][:3] == (
-        "render_accident_refresh_slot_09",
-        "2026-07-21",
-        "running",
-    )
-    assert recorded[1][0][:3] == (
-        "render_accident_refresh_slot_09",
-        "2026-07-21",
-        "success",
-    )
-    assert recorded[2][0][:3] == (
-        "render_accident_refresh",
-        "2026-07-20",
-        "success",
-    )
+    assert "def run_accident_self_heal(" not in regular
+    assert "def run_accident_phase(" in maintenance
 
 
 def test_accident_full_refresh_rebuilds_from_period_start(monkeypatch):
@@ -788,14 +688,12 @@ def test_scheduler_never_rebuilds_accident_stats_from_one_day_only():
 
 
 def test_scheduler_isolates_accident_refresh_to_maintenance_window():
-    source = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
-    main_source = source.split("def main() -> int:", 1)[1]
-    live_loop = main_source.split("# End-of-day refresh", 1)[0]
-    nightly_source = source.split("def run_nightly", 1)[1].split("def main", 1)[0]
+    regular = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    maintenance = Path("scripts/render_maintenance_scheduler.py").read_text(encoding="utf-8")
 
-    assert "run_accident_self_heal(now)" not in live_loop
-    assert "Full accident rebuilding is isolated in the overnight maintenance" in live_loop
-    assert "run_accident_full_refresh(today)" in nightly_source
+    assert "run_accident_self_heal" not in regular
+    assert "regular.run_accident_rebuild(" in maintenance
+    assert "regular.run_accident_rank_snapshot(" in maintenance
 
 
 def test_accident_watch_map_uses_latest_period_end_before_target(monkeypatch):
@@ -932,55 +830,11 @@ def test_daily_reconcile_targets_yesterday_before_roi_page():
     assert targets[1] == "/member/strategy?from=2026-07-20&to=2026-07-21&recompute=1"
 
 
-def test_nightly_prewarms_tomorrow_market_signals(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        scheduler,
-        "run_py",
-        lambda args, timeout: calls.append((args, timeout)) or True,
-    )
-    monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date, **_kwargs: True)
-    monkeypatch.setattr(
-        scheduler,
-        "daily_source_counts",
-        lambda _date: {"races": 12, "entries": 72, "predictions": 12},
-    )
-    monkeypatch.setattr(scheduler, "run_accident_full_refresh", lambda _today: True)
-    monkeypatch.setattr(scheduler, "run_db_maintenance", lambda: True)
-
-    now = scheduler.datetime(2026, 7, 21, 23, 30, tzinfo=scheduler.JST)
-    assert scheduler.run_nightly(now)
-    assert (
-        [
-            "scripts/prewarm_strategy_pages.py",
-            "--mode",
-            "signals",
-            "--date",
-            "2026-07-22",
-        ],
-        1800,
-    ) in calls
-
-
-def test_nightly_retries_when_tomorrow_source_is_not_ready(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        scheduler,
-        "run_py",
-        lambda args, timeout: calls.append((args, timeout)) or True,
-    )
-    monkeypatch.setattr(scheduler, "run_tides", lambda _now: True)
-    monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date, **_kwargs: True)
-    monkeypatch.setattr(
-        scheduler,
-        "daily_source_counts",
-        lambda _date: {"races": 0, "entries": 0, "predictions": 0},
+def test_nightly_bootstrap_is_removed_from_regular_cron():
+    regular = Path("scripts/render_regular_scheduler.py").read_text(encoding="utf-8")
+    bootstrap = Path("scripts/render_program_bootstrap_scheduler.py").read_text(
+        encoding="utf-8"
     )
 
-    now = scheduler.datetime(2026, 7, 21, 23, 30, tzinfo=scheduler.JST)
-    assert scheduler.run_nightly(now) is False
-    assert not any(
-        args[:3] == ["scripts/prewarm_strategy_pages.py", "--mode", "signals"]
-        for args, _timeout in calls
-    )
+    assert "def run_nightly(" not in regular
+    assert "check_program_source_gate(target)" in bootstrap

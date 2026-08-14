@@ -495,31 +495,6 @@ def run_beforeinfo(now: datetime) -> bool:
     return True
 
 
-def run_morning(now: datetime) -> bool:
-    today = now.date().isoformat()
-    official_ok = run_py(
-        ["scripts/backfill_official.py", "--start", today, "--end", today],
-        timeout=1800,
-    )
-    openapi_ok = run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
-    if not official_ok or not openapi_ok or not run_program_source_gate(today):
-        print("[morning] source gate not ready -> skip downstream generation", flush=True)
-        return False
-
-    ok = True
-    # Tide rows depend on races already existing, so import after daily race data is written.
-    ok &= run_tides(now)
-    # Accident-based strategies and tags should be ready before the first
-    # morning prediction/signal materialization.
-    ok &= run_accident_self_heal(now)
-    ok &= run_entry_change_snapshot(today)
-    ok &= run_py(["scripts/render_cache_predictions.py", "--date", today], timeout=1800)
-    ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
-    ok &= run_top_page_snapshot(now, lightweight=False)
-    return ok
-
-
-
 def run_top_page_snapshot(
     now: datetime,
     *,
@@ -638,20 +613,6 @@ def tide_refresh_needed(run_date: str) -> bool:
     return imported < expected
 
 
-def run_hourly(now: datetime) -> bool:
-    ok = True
-    try:
-        if tide_refresh_needed(now.date().isoformat()):
-            print("[hourly] tide rows missing -> rerun import", flush=True)
-            ok &= run_tides(now)
-    except Exception as exc:
-        print(f"[hourly] tide check failed: {type(exc).__name__}: {exc}", flush=True)
-    ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "3"], timeout=1800)
-    ok &= run_py(["scripts/check_data_quality.py"], timeout=600)
-    ok &= run_py(["scripts/agent_monitor.py", "--quiet"], timeout=600)
-    return ok
-
-
 def roi_daily_cache_needs_repair(target_date: str) -> bool:
     """Return True when yesterday's finalized ROI cache is absent or invalid."""
     try:
@@ -706,22 +667,6 @@ def run_derived_start_stats(from_date: str, to_date: str) -> bool:
         ["scripts/build_derived_start_stats.py", "--from", from_date, "--to", to_date],
         timeout=1800,
     )
-
-
-def run_tide_self_heal(now: datetime) -> bool:
-    """5分周期の本体ループでも潮欠損を補修する。
-
-    朝バッチや毎時バッチが何らかの理由で取りこぼしても、
-    race が投入済みで race_tides だけ欠けているケースを拾い直す。
-    """
-    try:
-        if tide_refresh_needed(now.date().isoformat()):
-            print("[self-heal] tide rows missing -> rerun import", flush=True)
-            return run_tides(now)
-    except Exception as exc:
-        print(f"[self-heal] tide check failed: {type(exc).__name__}: {exc}", flush=True)
-        return False
-    return True
 
 
 def task_attempt_exists(task_name: str, run_date: str) -> bool:
@@ -789,30 +734,6 @@ def daily_source_complete(counts: dict[str, int]) -> bool:
     )
 
 
-def run_morning_catchup_if_needed(now: datetime) -> bool:
-    """Recover a missed morning job at most once per hour during service hours."""
-    today = now.date().isoformat()
-    try:
-        counts = daily_source_counts(today)
-    except Exception as exc:
-        print(f"[morning-catchup] source check failed: {type(exc).__name__}: {exc}", flush=True)
-        return False
-
-    print(f"[morning-catchup] source={counts}", flush=True)
-    if daily_source_complete(counts):
-        return True
-
-    task = f"render_morning_catchup_{now.hour:02d}"
-    if task_attempt_exists(task, today):
-        print(f"[morning-catchup] already attempted slot={now.hour:02d}", flush=True)
-        return False
-
-    print("[morning-catchup] source incomplete -> rerun morning collection", flush=True)
-    ok = run_morning(now)
-    record_task(task, today, "success" if ok else "failure", detail=str(counts))
-    return ok
-
-
 def run_signal_refresh_slot(
     now: datetime,
     *,
@@ -848,36 +769,6 @@ def run_signal_refresh_slot(
     )
     record_task(task, today, "success" if ok else "failure")
     return ok
-
-
-def run_roi_history_slot(now: datetime) -> bool:
-    """Refresh historical ROI pages once in each 12-hour JST window."""
-    today = now.date().isoformat()
-    task = roi_history_task_name(now)
-    if task_attempt_exists(task, today):
-        print(f"[roi-history] already attempted task={task}", flush=True)
-        return True
-    if task_success_exists(task, today):
-        print(f"[roi-history] already succeeded task={task}", flush=True)
-        return True
-
-    ok = run_py(
-        ["scripts/prewarm_strategy_pages.py", "--mode", "history", "--date", today],
-        timeout=3600,
-    )
-    record_task(task, today, "success" if ok else "failure")
-    return ok
-
-
-def should_run_roi_history_slot(now: datetime) -> bool:
-    """Keep heavy ROI history refresh out of the five-minute live loop.
-
-    The history page recompute can exceed the Render Starter 512MiB memory cap
-    when Supabase is slow. Run it only in two narrow windows; current-day race
-    collection, result polling, and high-ROI candidate snapshots must remain
-    the priority for boatrace-regular-cron.
-    """
-    return now.minute < 5 and now.hour in (0, 12)
 
 
 def run_original_exhibition_catchup(now: datetime, target_date: str, *, label: str) -> bool:
@@ -1076,109 +967,6 @@ def run_accident_full_refresh(target_date: str) -> bool:
     return ok
 
 
-def run_accident_self_heal(now: datetime) -> bool:
-    """Rebuild the latest completed-results day when the materialized ranking is stale."""
-    target_date = latest_completed_results_date() or (now.date() - timedelta(days=1)).isoformat()
-    latest_snapshot, latest_period_end = latest_accident_snapshot_state()
-    if (
-        latest_snapshot
-        and latest_period_end
-        and latest_snapshot >= target_date
-        and latest_period_end >= target_date
-    ):
-        print(
-            f"[accident-refresh] current snapshot={latest_snapshot} period_end={latest_period_end}",
-            flush=True,
-        )
-        return True
-
-    slot_task = f"render_accident_refresh_slot_{now.hour:02d}"
-    run_date = now.date().isoformat()
-    if task_attempt_exists(slot_task, run_date):
-        print(f"[accident-refresh] stale but already attempted slot={now.hour:02d}", flush=True)
-        return False
-
-    print(
-        "[accident-refresh] stale "
-        f"snapshot={latest_snapshot or '-'} period_end={latest_period_end or '-'} "
-        f"target={target_date}",
-        flush=True,
-    )
-    record_task(slot_task, run_date, "running", detail=f"target={target_date}")
-    ok = run_accident_full_refresh(target_date)
-    record_task(slot_task, run_date, "success" if ok else "failure", detail=f"target={target_date}")
-    verified_snapshot, verified_period_end = latest_accident_snapshot_state() if ok else (None, None)
-    ok = bool(
-        ok
-        and verified_snapshot
-        and verified_period_end
-        and verified_snapshot >= target_date
-        and verified_period_end >= target_date
-    )
-    record_task(
-        "render_accident_refresh",
-        target_date,
-        "success" if ok else "failure",
-        detail=(
-            f"snapshot={verified_snapshot or '-'} "
-            f"period_end={verified_period_end or '-'} target={target_date}"
-        ),
-    )
-    return ok
-
-
-def run_nightly(now: datetime) -> bool:
-    today = now.date().isoformat()
-    tomorrow = (now.date() + timedelta(days=1)).isoformat()
-    ok = True
-    ok &= run_py(["scripts/backfill_official.py", "--start", today, "--end", today], timeout=1800)
-    ok &= run_py(["scripts/daily_collect.py", "--date", today], timeout=1800)
-    ok &= run_tides(now)
-    ok &= run_py(["scripts/sync_l4_summary_to_supabase.py", "--recent-days", "5"], timeout=1800)
-    ok &= run_py(["scripts/backfill_official.py", "--start", tomorrow, "--end", tomorrow], timeout=1800)
-    ok &= run_py(["scripts/daily_collect.py", "--date", tomorrow], timeout=1800)
-    if not run_program_source_gate(tomorrow):
-        print("[nightly] tomorrow source gate not ready -> retry next cron", flush=True)
-        return False
-    # Preload tomorrow after its races exist as well.
-    ok &= run_tides(now)
-    ok &= run_py(["scripts/render_cache_predictions.py", "--date", tomorrow], timeout=1800)
-    try:
-        tomorrow_counts = daily_source_counts(tomorrow)
-    except Exception as exc:
-        print(
-            f"[nightly] tomorrow source check failed: {type(exc).__name__}: {exc}",
-            flush=True,
-        )
-        return False
-    print(f"[nightly] tomorrow source={tomorrow_counts}", flush=True)
-    if not daily_source_complete(tomorrow_counts):
-        # The official B file can appear a few minutes after the first 23:30
-        # attempt. Keep the task failed so the next five-minute cron retries.
-        print("[nightly] tomorrow source incomplete -> retry next cron", flush=True)
-        return False
-    # Build tomorrow's high-ROI snapshot after tomorrow's races and predictions
-    # exist. Without this, nightly prewarming only refreshes today's signals and
-    # previous-day confirmed candidates do not appear until the morning run.
-    ok &= run_derived_start_stats(today, tomorrow)
-    ok &= run_entry_change_snapshot(tomorrow)
-    ok &= run_py(["scripts/prewarm_race_detail_tags.py", "--date", tomorrow], timeout=900)
-    ok &= run_py(
-        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", tomorrow],
-        timeout=1800,
-    )
-    ok &= run_py(
-        ["scripts/backfill_accident_dent_daily_cache.py", "--recent-days", "400"],
-        timeout=1800,
-    )
-    ok &= run_py(["scripts/aggregate_start_prediction_metrics.py", "--date", today], timeout=900)
-    ok &= run_accident_full_refresh(today)
-    ok &= run_accident_external_check(today)
-    ok &= run_accident_rank_snapshot(today)
-    ok &= run_db_maintenance()
-    return ok
-
-
 @_with_regular_run_lock
 def main() -> int:
     log_deploy_revision("boatrace-regular-cron")
@@ -1191,32 +979,7 @@ def main() -> int:
         raise RuntimeError("DATABASE_URL is required for Render regular scheduler")
     ensure_task_runs_table()
     lite_mode = render_daytime_lite_mode()
-    dedicated_bootstrap = os.getenv("BOATRACE_DEDICATED_PROGRAM_BOOTSTRAP", "1") == "1"
     exit_code = 0
-
-    # Morning data and predictions: run once per JST day.
-    morning_start = now.replace(hour=6, minute=0, second=0, microsecond=0)
-    morning_end = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    if not dedicated_bootstrap and not lite_mode and morning_start <= now < morning_end:
-        task = "render_morning"
-        if not task_success_exists(task, today):
-            ok = run_morning(now)
-            record_task(task, today, "success" if ok else "failure")
-            if not ok:
-                exit_code = 1
-        else:
-            print("[morning] already successful today", flush=True)
-
-    # A narrow morning window must not leave the service empty all day. Render is
-    # the source of truth, so verify actual rows and recover even when a PC was off
-    # or a previous task_runs row incorrectly reported success.
-    if (
-        not dedicated_bootstrap
-        and not lite_mode
-        and morning_end <= now < now.replace(hour=22, minute=0, second=0, microsecond=0)
-    ):
-        if not run_morning_catchup_if_needed(now):
-            exit_code = 1
 
     # Live beforeinfo/original-exhibition collection and race-detail refresh are
     # owned by boatrace-exhibition-detail-cron. Keeping them out of the regular
@@ -1236,57 +999,9 @@ def main() -> int:
         if not run_lite_daytime_bootstrap(now):
             exit_code = 1
 
-    # Refresh source-dependent candidates before the slower result poll. This
-    # keeps the dashboard snapshot close to the five-minute cron cadence.
-    if not lite_mode and 6 <= now.hour <= 23:
-        run_tide_self_heal(now)
-        signal_ok = run_signal_refresh_slot(now)
-        if not signal_ok:
-            exit_code = 1
-        if signal_ok and not task_success_exists("render_detail_tags_today", today):
-            ok = run_py(["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900)
-            record_task("render_detail_tags_today", today, "success" if ok else "failure")
-            if ok:
-                pages_ok = run_py(["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800)
-                record_task("render_detail_pages_today", today, "success" if pages_ok else "failure")
-                run_top_page_snapshot(now, lightweight=False)
-        elif signal_ok:
-            run_top_page_snapshot(now, lightweight=True, environment_only=True)
-
     # Refresh the top snapshot after result polling and any signal rebuild.
     if 8 <= now.hour <= 23:
         run_top_page_snapshot(now, lightweight=True, environment_only=True)
-
-    # Hourly summaries/health checks near the top of the hour.
-    if not lite_mode and now.minute < 5 and 9 <= now.hour <= 23:
-        task = f"render_hourly_{now.hour:02d}"
-        if not task_success_exists(task, today):
-            ok = run_hourly(now)
-            record_task(task, today, "success" if ok else "failure")
-
-    # Full accident rebuilding is isolated in the overnight maintenance
-    # scheduler. Running it here can hold the regular advisory lock for up to
-    # 75 minutes and delay live results, ROI settlement, and health checks.
-
-    # End-of-day refresh and tomorrow preload: run once per JST day.
-    if not dedicated_bootstrap and not lite_mode and now.hour == 23 and now.minute >= 30:
-        task = "render_nightly"
-        if not task_success_exists(task, today):
-            ok = run_nightly(now)
-            record_task(task, today, "success" if ok else "failure")
-            if not ok:
-                exit_code = 1
-        else:
-            print("[nightly] already successful today", flush=True)
-        finalized_date = (now.date() - timedelta(days=1)).isoformat()
-        if not task_success_exists("render_roi_daily_reconcile", finalized_date):
-            run_roi_daily_self_heal(now)
-
-    # Historical ROI pages are deliberately isolated from the live five-minute
-    # loop. They may be expensive, and a failed 12-hour attempt must not keep
-    # retrying every five minutes while today's races are running.
-    if not lite_mode and should_run_roi_history_slot(now):
-        run_roi_history_slot(now)
 
     print("[render-regular] done", flush=True)
     return exit_code
