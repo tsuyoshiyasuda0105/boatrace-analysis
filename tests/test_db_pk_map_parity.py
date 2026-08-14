@@ -65,3 +65,17 @@ def test_accident_period_stats_map_matches_production_postgres_primary_key():
         "rule_version",
         "source_kind",
     ]
+
+
+def test_sync_script_table_list_is_fully_pk_mapped():
+    """sync_to_supabase.py は動的 SQL (INSERT OR REPLACE INTO {table}) のため
+    静的 grep のパリティテストに映らない。夜間 sync が使う全テーブルが
+    PK マップに載っていることを直接検証する (2026-08-15 race_tides 欠落の再発防止)。"""
+    nightly_sync_tables = [
+        "races", "race_entries", "race_previews", "race_tides",
+        "race_original_exhibitions", "predictions", "derived_start_stats",
+        "racer_accident_point_rules", "racer_accident_events",
+        "racer_accident_period_stats", "racer_accident_rank_snapshots",
+    ]
+    missing = [t for t in nightly_sync_tables if t not in _TABLE_PRIMARY_KEYS]
+    assert not missing, f"nightly sync tables missing PK mappings: {missing}"

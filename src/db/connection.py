@@ -125,6 +125,9 @@ _TABLE_PRIMARY_KEYS = {
     "race_entries": ["race_id", "boat_number"],
     "race_previews": ["race_id", "boat_number"],
     "race_parts": ["race_id", "boat_number", "part_code"],
+    # sync_to_supabase.py が動的 SQL で書く (静的 grep に映らない) ので注意。
+    # 2026-08-15 の夜間 sync がここの欠落で停止した (P1-3 の strict guard が検出)。
+    "race_tides": ["race_id"],
     "race_original_exhibitions": ["race_id", "boat_number", "source_name"],
     "race_results": ["race_id", "boat_number"],
     "race_payouts": ["race_id", "bet_type", "combination"],
