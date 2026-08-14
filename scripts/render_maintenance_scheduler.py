@@ -192,18 +192,28 @@ def run_detail_phase(now: datetime) -> tuple[bool, dict]:
     tags_ok = regular.run_py(
         ["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900
     )
-    pages_ok = False
-    if tags_ok:
-        # Tags can change after the accident snapshot, so render every page
-        # exactly once inside the maintenance window. The page builder retries
-        # only persistent misses internally.
-        pages_ok = regular.run_py(
-            ["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800
-        )
-    return bool(tags_ok and pages_ok), {
+    # A partial tag refresh must not prevent the primary page prewarm. The final
+    # integrity check below distinguishes a real cache gap from an acceptable
+    # new-motor warning, so always give every page a chance to render first.
+    pages_ok = regular.run_py(
+        ["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800
+    )
+    integrity_ok = regular.run_py(
+        [
+            "scripts/check_post_run_integrity.py",
+            "--date", today,
+            "--scope", "detail_rows",
+            "--scope", "motor_cache",
+            "--scope", "detail_cache",
+            "--warnings-ok",
+        ],
+        timeout=300,
+    )
+    return bool(pages_ok and integrity_ok), {
         "date": today,
         "tags_ok": bool(tags_ok),
         "pages_ok": bool(pages_ok),
+        "integrity_ok": bool(integrity_ok),
     }
 
 

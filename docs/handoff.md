@@ -1,5 +1,17 @@
 # Handoff
 
+## Active task (2026-08-15 morning outage fixes tasks 1-3)
+
+- Implement tasks 1-3 from `reports/morning_outage_fixes_plan_20260815.md` as three independent local `main` commits. Push and deployment are prohibited.
+- Skills: `project-ops-guard`.
+- Expected edit files: `scripts/render_maintenance_scheduler.py`, `scripts/render_regular_scheduler.py`, focused scheduler tests under `tests/`, `reports/morning_fixes_work_log_20260815.md`, and `docs/handoff.md`.
+- Conflict avoidance: preserve the existing local commit `23c6950` and all unrelated untracked reports/`.serena/`; stage only explicit task files. Do not edit ROI or prediction logic, database schema, `render.yaml`, or `scripts/poll_results.py`.
+- Running processes: none. Only finite pytest/import/Git commands are planned; no local server, scheduler, browser, or production writer will be started.
+- Failure log: the first UTF-8 file-metadata inspection used a PowerShell `foreach` expression directly before a pipeline and failed parsing before any read or write. Root cause: an empty pipeline element in PowerShell syntax. Prevention: collect loop output in `$rows` before piping; the corrected read completed successfully.
+- Failure log: the required baseline `.venv/Scripts/python.exe -m pytest tests/ -q` collected 650 tests but ended `608 passed / 42 setup errors` because pytest could not write to the shared Windows temporary directory. No product assertion failed. Prevention: rerun the same full suite with repository-local `--basetemp .pytest_tmp_morning_fixes_20260815` and use that isolated path for subsequent full runs.
+- Cleanup target created by this task: `C:\boat_project\boatrace-analysis\.pytest_tmp_morning_fixes_20260815` only. It is generated pytest scratch data inside the canonical worktree; no source, report, cache, database, or production data is a deletion target.
+- Task 1 complete: `run_detail_phase()` now always executes tags, pages, and a final scoped integrity check. Phase success depends on page generation plus final cache/data integrity with `--warnings-ok`, so new-motor all-zero/history-not-established warnings remain persisted without opening the circuit, while actual cache gaps still fail. Focused tests passed 20/20; full suite passed 651/651.
+
 ## Active task (2026-08-13 production login outage investigation)
 
 - Production `/healthz` is HTTP 200 on revision `cb442f4ed2b1`, while the canonical local `main` contains a rescued but undeployed DB-pool recurrence fix (`1edacff`). Determine whether the current login failure is Supabase credential verification, post-auth membership lookup, or authenticated TOP failure before changing code.

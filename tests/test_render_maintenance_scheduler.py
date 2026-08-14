@@ -230,6 +230,37 @@ def test_accident_phase_keeps_previous_day_after_live_results_begin(monkeypatch)
     assert targets == ["2026-08-12", "2026-08-12"]
 
 
+def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch):
+    calls = []
+
+    def fake_run_py(args, **_kwargs):
+        calls.append(tuple(args))
+        if args[0] == "scripts/prewarm_race_detail_tags.py":
+            return False
+        return True
+
+    monkeypatch.setattr(scheduler.regular, "run_py", fake_run_py)
+
+    ok, detail = scheduler.run_detail_phase(_now(6, 0))
+
+    assert ok is True
+    assert detail == {
+        "date": "2026-08-13",
+        "tags_ok": False,
+        "pages_ok": True,
+        "integrity_ok": True,
+    }
+    assert [call[0] for call in calls] == [
+        "scripts/prewarm_race_detail_tags.py",
+        "scripts/prewarm_race_detail_pages.py",
+        "scripts/check_post_run_integrity.py",
+    ]
+    assert "--warnings-ok" in calls[-1]
+    assert ("--scope", "detail_rows") == calls[-1][3:5]
+    assert ("--scope", "motor_cache") == calls[-1][5:7]
+    assert ("--scope", "detail_cache") == calls[-1][7:9]
+
+
 def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler, "phase_success", lambda *_args: False)
