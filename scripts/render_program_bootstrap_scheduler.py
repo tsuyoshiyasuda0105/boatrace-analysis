@@ -32,9 +32,11 @@ from src.db.connection import (  # noqa: E402
 )
 from src.parsers.official_b import parse_b_text  # noqa: E402
 from src.deploy_info import log_deploy_revision  # noqa: E402
+from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
 
 
 JST = ZoneInfo("Asia/Tokyo")
+CRON_JOB_NAME = "boatrace-program-bootstrap-cron"
 _TABLES_READY = False
 BACKOFF_MINUTES = (15, 30, 60)
 LOCK_NAME = "boatrace-program-bootstrap-v1"
@@ -555,6 +557,7 @@ def run_tick(now: datetime) -> dict[str, Any]:
         alert_window = now.date() == target and _at_or_after(now, 7, 30)
         alert_prior = _load_task(ALERT_TASK, target)
         alert_due = alert_window and alert_prior.get("status") != "success"
+        alert_status: str | None = None
         if alert_due and alert_prior.get("status") != "success":
             detail = {
                 "official": _load_task(OFFICIAL_TASK, target),
@@ -565,6 +568,7 @@ def run_tick(now: datetime) -> dict[str, Any]:
             message = "program sources ready" if status == "ok" else "program sources unresolved at 07:30 JST"
             _write_status(target, status, message, detail)
             _write_task(ALERT_TASK, target, "success", {"reported_status": status})
+            alert_status = status
 
         gate_status = _load_task(GATE_TASK, target).get("status")
         return {
@@ -575,19 +579,43 @@ def run_tick(now: datetime) -> dict[str, Any]:
             "gate_ready": gate_status == "success",
             "final_recovery": final_due,
             "alert_due": alert_due,
+            "alert_status": alert_status,
         }
 
 
 def main(argv: list[str] | None = None) -> int:
-    log_deploy_revision("boatrace-program-bootstrap-cron")
+    log_deploy_revision(CRON_JOB_NAME)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--now", help="test-only JST timestamp")
     args = parser.parse_args(argv)
     now = datetime.fromisoformat(args.now).replace(tzinfo=JST) if args.now else jst_now()
     result = run_tick(now)
     print("[program-bootstrap] " + json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
-    # Publication delays are an expected waiting state. Persisted status and
-    # the admin warning report them without marking a healthy cron tick failed.
+    # Publication delays are an expected waiting state while retries remain:
+    # those ticks stay exit 0 so the next trigger resumes. The 07:30 alert is
+    # the final judgment; unresolved sources there have no retry left, so the
+    # tick exits non-zero (Render marks the cron failed) and mails the admin.
+    # run_tick already recorded the system_status error on this path.
+    if result.get("alert_status") == "error":
+        message = "program sources unresolved at 07:30 JST"
+        try:
+            notify_cron_failure(
+                CRON_JOB_NAME,
+                message,
+                detail={
+                    "date": result.get("date"),
+                    "official_ready": result.get("official_ready"),
+                    "openapi_ready": result.get("openapi_ready"),
+                    "gate_ready": result.get("gate_ready"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[program-bootstrap] failure mail skipped: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+        print("[program-bootstrap] final failure: " + message, flush=True)
+        return 1
     return 0
 
 

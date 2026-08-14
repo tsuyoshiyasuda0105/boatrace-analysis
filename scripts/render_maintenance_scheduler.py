@@ -23,9 +23,13 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-maintenance")
 from scripts import render_regular_scheduler as regular  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.deploy_info import log_deploy_revision  # noqa: E402
+from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
 
 
 JST = regular.JST
+CRON_JOB_NAME = "boatrace-race-detail-cron"
+STATUS_NAME = "maintenance_window"
+TICK_INTERVAL_MINUTES = 10
 LOCK_NAME = "boatrace-maintenance-scheduler-v1"
 MAX_PHASE_ATTEMPTS = 3
 SCHEDULER_VERSION = "v2"
@@ -314,6 +318,67 @@ def run_tick(now: datetime, *, allow_recovery: bool = False) -> dict:
     }
 
 
+def is_final_window_tick(now: datetime) -> bool:
+    """Return True on the last automatic tick (06:50) of the 04:00-07:00 window."""
+    if not (4 <= now.hour < 7):
+        return False
+    return (now + timedelta(minutes=TICK_INTERVAL_MINUTES)).hour >= 7
+
+
+def _write_window_status(run_date: str, status: str, message: str, detail: dict) -> None:
+    """system_status へ窓の最終判定を upsert する (bootstrap の _write_status と同型)。"""
+    now_iso = jst_now().replace(tzinfo=None).isoformat(timespec="seconds")
+    payload = json.dumps(detail, ensure_ascii=True, sort_keys=True, default=str)
+    try:
+        with db_connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM system_status WHERE check_name=? AND check_date=?",
+                (STATUS_NAME, run_date),
+            ).fetchone()
+            if exists:
+                conn.execute(
+                    """
+                    UPDATE system_status
+                       SET status=?, message=?, detail_json=?, checked_at=?
+                     WHERE check_name=? AND check_date=?
+                    """,
+                    (status, message, payload, now_iso, STATUS_NAME, run_date),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO system_status
+                        (check_name, check_date, status, message, detail_json, checked_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (STATUS_NAME, run_date, status, message, payload, now_iso),
+                )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[maintenance] status write failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
+def final_window_failure(now: datetime, result: dict) -> list[str]:
+    """最終 tick で未完フェーズが残っていればそのリストを返す (無ければ空)。
+
+    "waiting"/"success" はフェーズを実行した tick の戻り値で incomplete_phases を
+    含まないため、task_runs から再判定する。"noop" (ロック競合等) と
+    "ready" (全フェーズ完了) は最終失敗ではない。
+    """
+    if not is_final_window_tick(now):
+        return []
+    if result.get("status") in {"noop", "ready"}:
+        return []
+    incomplete = result.get("incomplete_phases")
+    if incomplete is None:
+        run_date = now.date().isoformat()
+        incomplete = [phase for phase, _ in PHASES if not phase_success(phase, run_date)]
+    return list(incomplete)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -322,12 +387,33 @@ def main() -> int:
         help="Allow a manually triggered recovery run from 07:00 through 11:59 JST.",
     )
     args = parser.parse_args()
-    log_deploy_revision("boatrace-race-detail-cron")
+    log_deploy_revision(CRON_JOB_NAME)
     now = jst_now()
     result = run_tick(now, allow_recovery=args.allow_recovery)
     print("[maintenance] " + json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
-    # Missing/late inputs are expected retry states. Persist the failed phase
-    # but keep Render healthy so the next ten-minute tick can resume it.
+    # Missing/late inputs are expected retry states: mid-window ticks return 0
+    # so the next ten-minute tick can resume the failed phase. The final tick
+    # of the automatic window has no retries left, so incomplete phases become
+    # a real cron failure: exit non-zero, record system_status, mail the admin.
+    incomplete = final_window_failure(now, result)
+    if incomplete:
+        run_date = now.date().isoformat()
+        message = "maintenance window ended degraded: " + ", ".join(incomplete)
+        detail = {
+            "incomplete_phases": incomplete,
+            "tick_status": result.get("status"),
+            "date": run_date,
+        }
+        _write_window_status(run_date, "error", message, detail)
+        try:
+            notify_cron_failure(CRON_JOB_NAME, message, detail=detail)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[maintenance] failure mail skipped: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+        print(f"[maintenance] final-tick failure incomplete={incomplete}", flush=True)
+        return 1
     return 0
 
 

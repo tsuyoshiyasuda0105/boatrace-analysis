@@ -130,6 +130,36 @@
       {% endfor %}
     </section>
 
+    <section class="health-cards admin-data-cards" style="margin-top:16px;">
+      <article class="health-strategy-card status-{{ 'warning' if snapshot.signal_eval_failures else 'healthy' }}">
+        <header class="health-card-header">
+          <h3>戦略評価エラー</h3>
+          <span class="health-status-pill status-{{ 'warning' if snapshot.signal_eval_failures else 'healthy' }}">
+            {{ '注意' if snapshot.signal_eval_failures else '正常' }}
+          </span>
+        </header>
+        <p class="health-description">
+          _safe_signal_eval で握りつぶされた戦略評価の失敗 (対象日: {{ snapshot.target_date }})。
+          失敗した戦略は「条件不成立」として扱われるため、ここで気づく必要があります。
+        </p>
+        {% if snapshot.signal_eval_failures %}
+        <div class="health-reasons">
+          <ul>
+            {% for f in snapshot.signal_eval_failures %}
+            <li>
+              <strong>{{ f.name }}</strong>: {{ f.count }} 件
+              {% if f.last_error %} / 最終エラー: {{ f.last_error }}{% endif %}
+              {% if f.last_at %} ({{ f.last_at }}){% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% else %}
+        <p class="health-description">なし (当日の戦略評価エラーは記録されていません)</p>
+        {% endif %}
+      </article>
+    </section>
+
     <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
       <a href="{{ url_for('admin_memberships') }}" class="account-btn account-btn-public-roi">会員管理へ</a>
       <a href="{{ url_for('admin_cache_clear') }}" class="account-btn account-btn-login">キャッシュ管理へ</a>

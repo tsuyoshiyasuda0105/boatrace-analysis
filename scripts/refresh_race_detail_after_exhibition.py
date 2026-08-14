@@ -126,6 +126,40 @@ def _record_task(task_name: str, run_date: str, status: str, detail: str | None 
         print(f"[task_runs] write failed: {type(exc).__name__}: {exc}", flush=True)
 
 
+def _record_cron_skip(task_name: str, run_date: str, detail: str | None = None) -> None:
+    """多重実行スキップを正直に記録する (P0-2 タスク5)。
+
+    - 「やっていないのに success」を書かない (success_at も更新しない)。
+    - 並行実行中の 'running' 行は上書きしない。上書きすると
+      _exhibition_refresh_recently_running の多重実行検知が壊れ、
+      次の tick が並走してしまうため。
+    """
+    now_iso = datetime.now(JST).replace(tzinfo=None).isoformat(timespec="seconds")
+    try:
+        with db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO task_runs
+                    (task_name, run_date, status, run_count, started_at, finished_at,
+                     success_at, trigger, detail)
+                VALUES (?, ?, 'skipped', 0, ?, ?, NULL,
+                        'render-exhibition-detail-refresh', ?)
+                ON CONFLICT (task_name, run_date) DO UPDATE SET
+                    status = CASE WHEN task_runs.status = 'running'
+                                  THEN task_runs.status ELSE 'skipped' END,
+                    finished_at = CASE WHEN task_runs.status = 'running'
+                                       THEN task_runs.finished_at
+                                       ELSE EXCLUDED.finished_at END,
+                    detail = CASE WHEN task_runs.status = 'running'
+                                  THEN task_runs.detail ELSE EXCLUDED.detail END
+                """,
+                (task_name, run_date, now_iso, now_iso, detail),
+            )
+            conn.commit()
+    except Exception as exc:
+        print(f"[task_runs] skip write failed: {type(exc).__name__}: {exc}", flush=True)
+
+
 def _signal_refresh_recent_activity(target_date: str, now: datetime) -> tuple[bool, str]:
     since = (now - timedelta(minutes=SIGNAL_REFRESH_MIN_GAP_MIN)).replace(
         tzinfo=None,
@@ -609,7 +643,8 @@ def main() -> int:
             f"[exhibition-detail-refresh] skip overlapping run reason={running_reason}",
             flush=True,
         )
-        record_cron_run(task_name, args.date, "success", detail=detail)
+        # やっていないのに success を書かない (P0-2 タスク5): skipped として記録
+        _record_cron_skip(task_name, args.date, detail=detail)
         return 0
 
     record_cron_run(task_name, args.date, "running")

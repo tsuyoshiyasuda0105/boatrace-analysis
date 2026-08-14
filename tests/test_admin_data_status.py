@@ -8,10 +8,16 @@ from src.web import app as web_app
 
 
 def test_admin_data_status_labels_match_render_schedules():
+    # P0-2 タスク4: 表記は _CRON_SCHEDULE_LABELS の1箇所に集約し、
+    # render.yaml の実スケジュールと一致させる (旧「毎日 04:00 JST」は誤表記)。
     source = Path(web_app.__file__).read_text(encoding="utf-8")
 
-    assert '"毎日 04:00 JST"' in source
-    assert '"08:00〜22:59 JST・5分ごと"' in source
+    assert "_CRON_SCHEDULE_LABELS" in source
+    labels = web_app._CRON_SCHEDULE_LABELS
+    assert labels["boatrace-race-detail-cron"].startswith("04:00〜07:00 JST")
+    assert labels["boatrace-regular-cron"] == "08:00〜22:59 JST・5分ごと"
+    assert labels["boatrace-program-bootstrap-cron"] == "23:00〜09:59 JST・10分ごと"
+    assert '"毎日 04:00 JST"' not in source
 
 
 class _ConnCtx:

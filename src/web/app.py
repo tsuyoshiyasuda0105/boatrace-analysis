@@ -15,6 +15,7 @@ import hashlib
 import logging
 import os
 import re
+import threading
 import time
 from datetime import date, datetime
 from functools import lru_cache
@@ -1413,6 +1414,142 @@ def _count_existing_cache_keys(conn: Any, keys: list[str]) -> int:
     return found
 
 
+# === 戦略評価の失敗カウンタ (P0-2 タスク1) ==================================
+# _safe_signal_eval が例外を握りつぶして None を返す従来動作は維持しつつ、
+# プロセス内カウンタ + system_status (当日初回のみ) に失敗を記録する。
+SIGNAL_EVAL_FAILURE_CHECK = "signal_eval_failure"
+_SIGNAL_EVAL_FAILURES: dict[str, dict[str, Any]] = {}
+_SIGNAL_EVAL_STATUS_MARKED: set[tuple[str, str]] = set()
+_signal_eval_failures_lock = threading.Lock()
+
+
+def _note_signal_eval_failure(name: str, exc: BaseException, target_date: str | None) -> None:
+    """戦略評価の失敗を記録する。決して例外を外へ出さない。
+
+    - プロセス内カウンタ {strategy_name: {count, last_error, last_at}} を更新
+    - 同一 (日付, strategy_name) の初回失敗時のみ system_status へ warning を記録
+      (PK は (check_name, check_date) なので同日分は strategies を merge して upsert)
+    """
+    now_iso = _now_jst().isoformat(timespec="seconds")
+    err = f"{type(exc).__name__}: {exc}"[:300]
+    day = str(target_date or _today_jst_iso())
+    with _signal_eval_failures_lock:
+        entry = _SIGNAL_EVAL_FAILURES.setdefault(
+            name, {"count": 0, "last_error": None, "last_at": None, "last_date": None}
+        )
+        entry["count"] = int(entry.get("count") or 0) + 1
+        entry["last_error"] = err
+        entry["last_at"] = now_iso
+        entry["last_date"] = day
+        first_today = (day, name) not in _SIGNAL_EVAL_STATUS_MARKED
+        if first_today:
+            _SIGNAL_EVAL_STATUS_MARKED.add((day, name))
+    if not first_today:
+        return
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT detail_json FROM system_status WHERE check_name=? AND check_date=?",
+                (SIGNAL_EVAL_FAILURE_CHECK, day),
+            ).fetchone()
+            strategies: dict[str, Any] = {}
+            if row:
+                detail = _safe_json_loads(row[0])
+                if isinstance(detail.get("strategies"), dict):
+                    strategies = dict(detail["strategies"])
+            if name in strategies:
+                # 別プロセス/再起動前に記録済み → 同日同戦略の重複記録はしない
+                return
+            strategies[name] = {"count": 1, "last_error": err, "last_at": now_iso}
+            message = (
+                "戦略評価エラー: "
+                + ", ".join(sorted(strategies))
+                + f" (最新: {name} {type(exc).__name__})"
+            )
+            payload = json.dumps({"strategies": strategies}, ensure_ascii=False, default=str)
+            if row:
+                conn.execute(
+                    """
+                    UPDATE system_status
+                       SET status=?, message=?, detail_json=?, checked_at=?
+                     WHERE check_name=? AND check_date=?
+                    """,
+                    ("warning", message, payload, now_iso, SIGNAL_EVAL_FAILURE_CHECK, day),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO system_status
+                        (check_name, check_date, status, message, detail_json, checked_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (SIGNAL_EVAL_FAILURE_CHECK, day, "warning", message, payload, now_iso),
+                )
+            conn.commit()
+    except Exception as status_exc:  # noqa: BLE001
+        logger.warning(
+            "signal eval failure status write failed [%s]: %s", name, status_exc
+        )
+
+
+def _signal_eval_guard(name: str, fn: Any, target_date: str | None, *args: Any, **kwargs: Any) -> Any:
+    """戦略評価を防御的に実行する。失敗時は従来どおり None を返しつつ記録する。"""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("signal eval failed [%s]: %s", name, e)
+        try:
+            _note_signal_eval_failure(name, e, target_date)
+        except Exception as note_exc:  # noqa: BLE001
+            logger.warning("signal eval failure note failed [%s]: %s", name, note_exc)
+        return None
+
+
+def _signal_eval_failure_rows(
+    signal_eval_check: Optional[dict[str, Any]], target_date: str
+) -> list[dict[str, Any]]:
+    """system_status 行とプロセス内カウンタを merge して admin 表示用の行にする。"""
+    merged: dict[str, dict[str, Any]] = {}
+    detail = (signal_eval_check or {}).get("detail_json") or {}
+    if isinstance(detail, dict) and isinstance(detail.get("strategies"), dict):
+        for name, ent in detail["strategies"].items():
+            if isinstance(ent, dict):
+                merged[str(name)] = {
+                    "count": int(ent.get("count") or 0),
+                    "last_error": ent.get("last_error"),
+                    "last_at": ent.get("last_at"),
+                }
+    with _signal_eval_failures_lock:
+        for name, ent in _SIGNAL_EVAL_FAILURES.items():
+            if ent.get("last_date") != target_date:
+                continue
+            row = merged.setdefault(
+                str(name), {"count": 0, "last_error": None, "last_at": None}
+            )
+            row["count"] = max(int(row.get("count") or 0), int(ent.get("count") or 0))
+            row["last_error"] = ent.get("last_error") or row.get("last_error")
+            row["last_at"] = ent.get("last_at") or row.get("last_at")
+    return [
+        {"name": name, **values} for name, values in sorted(merged.items())
+    ]
+
+
+# === cron スケジュール表記 (P0-2 タスク4) ===================================
+# render.yaml が正。表記はここ 1 箇所に集約し、複数行へのコピペを避ける。
+_CRON_SCHEDULE_LABELS: dict[str, str] = {
+    "boatrace-race-detail-cron": "04:00〜07:00 JST・10分ごと (夜間メンテ統括)",
+    "boatrace-program-bootstrap-cron": "23:00〜09:59 JST・10分ごと",
+    "boatrace-regular-cron": "08:00〜22:59 JST・5分ごと",
+    "boatrace-exhibition-detail-cron": "08:00〜22:59 JST・5分ごと",
+    "boatrace-odds-cron": "08:00〜22:59 JST・5分ごと",
+    "boatrace-accident-external-check-cron": "毎日 06:50 JST",
+}
+
+
+def _cron_schedule_label(cron_name: str) -> str:
+    return _CRON_SCHEDULE_LABELS.get(cron_name, "-")
+
+
 def _format_status_label(status: str) -> str:
     return {
         "healthy": "正常",
@@ -1518,11 +1655,16 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         race_detail_run = _load_task_run_exact(conn, "render_race_detail_all", target_date)
         exhibition_run = _load_task_run_exact(conn, "render_exhibition_detail_refresh", target_date)
         accident_run = _load_task_run_latest_like(conn, "render_accident_refresh%", target_date)
+        maintenance_run = _load_task_run_latest_like(conn, "render_maintenance_%", target_date)
+        bootstrap_run = _load_task_run_latest_like(conn, "render_program_bootstrap_%", target_date)
 
         detail_cache_check = _load_system_status_exact(conn, "post_run_detail_cache", target_date)
         detail_rows_check = _load_system_status_exact(conn, "post_run_detail_rows", target_date)
         motor_cache_check = _load_system_status_exact(conn, "post_run_motor_cache", target_date)
         accident_check = _load_system_status_exact(conn, "post_run_accident", target_date)
+        maintenance_check = _load_system_status_exact(conn, "maintenance_window", target_date)
+        bootstrap_check = _load_system_status_exact(conn, "program_source_bootstrap", target_date)
+        signal_eval_check = _load_system_status_exact(conn, SIGNAL_EVAL_FAILURE_CHECK, target_date)
 
     items: list[dict[str, Any]] = []
 
@@ -1530,7 +1672,6 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         slug: str,
         name: str,
         cron_name: str,
-        schedule: str,
         task_run: Optional[dict[str, Any]],
         check_row: Optional[dict[str, Any]],
         expected_count: Optional[int],
@@ -1552,7 +1693,8 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
                 "slug": slug,
                 "name": name,
                 "cron_name": cron_name,
-                "schedule": schedule,
+                # スケジュール表記は _CRON_SCHEDULE_LABELS (render.yaml が正) に集約
+                "schedule": _cron_schedule_label(cron_name),
                 "status": status,
                 "status_label": _format_status_label(status),
                 "runtime_status": _format_runtime_status(task_run.get("status") if task_run else None),
@@ -1578,7 +1720,6 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "race_detail",
         "レース詳細HTML",
         "boatrace-race-detail-cron",
-        "毎日 04:00 JST",
         race_detail_run,
         detail_cache_check or detail_rows_check,
         race_count,
@@ -1607,7 +1748,6 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "motor_history",
         "モーター履歴",
         "boatrace-race-detail-cron",
-        "毎日 04:00 JST",
         race_detail_run,
         motor_cache_check,
         race_count * 6,
@@ -1619,7 +1759,6 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "racer_detail",
         "選手情報",
         "boatrace-race-detail-cron",
-        "毎日 04:00 JST",
         race_detail_run,
         None,
         race_count * 6,
@@ -1631,7 +1770,6 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "accident",
         "事故情報",
         "boatrace-regular-cron",
-        "毎日 07:30 JST 付近",
         accident_run,
         accident_check,
         None,
@@ -1642,12 +1780,31 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "exhibition_refresh",
         "展示後詳細更新",
         "boatrace-exhibition-detail-cron",
-        "08:00〜22:59 JST・5分ごと",
         exhibition_run,
         None,
         None,
         None,
-        "展示取得後の詳細再生成とシグナル更新の実行状況。",
+        "展示取得後の詳細再生成とシグナル更新の実行状況。多重実行スキップは skipped と表示されます。",
+    )
+    append_item(
+        "maintenance",
+        "夜間メンテ統括",
+        "boatrace-race-detail-cron",
+        maintenance_run,
+        maintenance_check,
+        None,
+        None,
+        "04:00〜07:00 の夜間メンテフェーズ (accident/program/motor/detail/snapshot/integrity) の最新実行状態。窓終了時に未完フェーズがあれば error。",
+    )
+    append_item(
+        "program_bootstrap",
+        "番組表ブートストラップ",
+        "boatrace-program-bootstrap-cron",
+        bootstrap_run,
+        bootstrap_check,
+        None,
+        None,
+        "前夜〜朝の番組表ソース取得 (official/openapi/gate)。07:30 時点で未解決なら error。",
     )
 
     for item in items:
@@ -1673,6 +1830,8 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "race_count": race_count,
         "items": items,
         "summary": summary,
+        # 戦略評価エラー (P0-2 タスク1): 当日の失敗戦略名・件数・最終エラー
+        "signal_eval_failures": _signal_eval_failure_rows(signal_eval_check, target_date),
         "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
     }
 
@@ -14048,11 +14207,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 })
 
         def _safe_signal_eval(name, fn, *args, **kwargs):
-            try:
-                return fn(*args, **kwargs)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("signal eval failed [%s]: %s", name, e)
-                return None
+            # 従来どおり失敗は None (=条件不成立) に落とすが、失敗カウンタと
+            # system_status に記録して admin から見えるようにする (P0-2 タスク1)。
+            return _signal_eval_guard(name, fn, target_date, *args, **kwargs)
 
         try:
             with db_connect() as wall_conn:
