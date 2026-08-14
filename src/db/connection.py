@@ -79,24 +79,40 @@ def assert_safe_production_write(
     )
 
 
-def _placeholder_pg(sql: str) -> str:
+def _placeholder_pg(sql: str, *, escape_percent: bool = False) -> str:
     """SQLite の `?` プレースホルダを Postgres の `%s` に変換。
     クォート内の '?' は触らない (素朴な実装)。"""
     out = []
     in_str = False
     quote = ""
-    for ch in sql:
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
         if not in_str and ch in ("'", '"'):
             in_str = True
             quote = ch
             out.append(ch)
         elif in_str and ch == quote:
-            in_str = False
             out.append(ch)
+            if i + 1 < len(sql) and sql[i + 1] == quote:
+                out.append(sql[i + 1])
+                i += 1
+            else:
+                in_str = False
         elif not in_str and ch == "?":
             out.append("%s")
+        elif escape_percent and ch == "%":
+            if not in_str and i + 1 < len(sql) and sql[i + 1] in ("s", "%"):
+                out.extend((ch, sql[i + 1]))
+                i += 1
+            elif in_str and i + 1 < len(sql) and sql[i + 1] == "%":
+                out.extend((ch, sql[i + 1]))
+                i += 1
+            else:
+                out.append("%%")
         else:
             out.append(ch)
+        i += 1
     return "".join(out)
 
 
@@ -115,32 +131,76 @@ _TABLE_PRIMARY_KEYS = {
     "odds_trifecta": ["race_id", "combination", "recorded_at"],
     "predictions": ["race_id", "boat_number", "model_version"],
     "value_bets": ["race_id", "bet_type", "combination", "model_version"],
+    "l4_daily_summary": ["date"],
     "l4_daily_stats_cache": ["race_date"],
+    "course1_stats_cache": ["racer_number", "as_of_date"],
+    "decay_factor": ["bucket"],
+    "paper_trades": ["id"],
+    "alert_sent": ["email_hash", "race_id", "alert_type"],
     "roi_race_history": ["race_id", "strategy_key"],
     "derived_start_stats": ["race_id", "boat_number"],
     "racer_accident_point_rules": ["rule_version", "event_code", "applies_from"],
     "racer_accident_events": ["race_id", "racer_number", "event_code", "rule_version"],
     "racer_accident_kraw_unmatched": ["file_name", "line_number", "rule_version"],
-    "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "period_end", "rule_version", "source_kind"],
+    "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "rule_version", "source_kind"],
     "racer_accident_period_adjustments": ["racer_number", "period_start", "period_end", "rule_version", "source_kind"],
     "racer_accident_external_snapshots": ["snapshot_date", "racer_number", "source_kind"],
     "racer_accident_rank_snapshots": ["period_start", "racer_number"],
+    "racer_entry_change_snapshots": ["snapshot_date", "racer_number"],
     "motor_preinspection_stats": ["stadium_number", "race_date", "source_name", "motor_number", "racer_number"],
 }
 
 
-def _build_upsert(table: str, columns: list[str]) -> str:
+def _build_upsert(table: str, columns: list[str], kind: str) -> str:
     """ON CONFLICT (pk) DO UPDATE SET col=EXCLUDED.col の SQL 末尾を生成。"""
-    pk = _TABLE_PRIMARY_KEYS.get(table)
-    if not pk:
-        # 主キーが不明なテーブルは ON CONFLICT DO NOTHING (重複は無視)
+    kind = kind.upper()
+    if kind == "IGNORE":
         return " ON CONFLICT DO NOTHING"
+    if kind != "REPLACE":
+        raise ValueError(f"Unsupported SQLite INSERT OR kind: {kind}")
+    pk = _TABLE_PRIMARY_KEYS.get(table.lower())
+    if not pk:
+        # REPLACE must never silently degrade to DO NOTHING.
+        raise ValueError(
+            f"INSERT OR REPLACE target table '{table}' is missing from "
+            "_TABLE_PRIMARY_KEYS"
+        )
     non_pk = [c for c in columns if c not in pk]
     if not non_pk:
         # 全列が主キー → DO NOTHING
         return f" ON CONFLICT ({', '.join(pk)}) DO NOTHING"
     set_clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in non_pk)
     return f" ON CONFLICT ({', '.join(pk)}) DO UPDATE SET {set_clause}"
+
+
+def _strip_trailing_line_comment(sql: str) -> str:
+    """Remove only a terminal SQL `--` comment."""
+    in_str = False
+    quote = ""
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if in_str:
+            if ch == quote:
+                if i + 1 < len(sql) and sql[i + 1] == quote:
+                    i += 2
+                    continue
+                in_str = False
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            in_str = True
+            quote = ch
+            i += 1
+            continue
+        if ch == "-" and i + 1 < len(sql) and sql[i + 1] == "-":
+            newline = sql.find("\n", i + 2)
+            if newline < 0 or not sql[newline + 1:].strip():
+                return sql[:i].rstrip()
+            i = newline + 1
+            continue
+        i += 1
+    return sql.rstrip()
 
 
 _INSERT_PATTERN = re.compile(
@@ -164,13 +224,10 @@ def _rewrite_sqlite_specific(sql: str) -> str:
     cols_raw = m.group(3)
     cols = [c.strip() for c in cols_raw.split(",") if c.strip()]
     head = f"INSERT INTO {table} ({cols_raw})"
-    if kind == "IGNORE":
-        tail = " ON CONFLICT DO NOTHING"
-    else:
-        tail = _build_upsert(table, cols)
+    tail = _build_upsert(table, cols, kind)
     rewritten = sql[:m.start()] + head + sql[m.end():]
     # 末尾セミコロンの前に ON CONFLICT を挿入
-    rewritten = rewritten.rstrip()
+    rewritten = _strip_trailing_line_comment(rewritten)
     if rewritten.endswith(";"):
         rewritten = rewritten[:-1].rstrip() + tail + ";"
     else:
@@ -276,13 +333,19 @@ class _PgConnection:
         self._kind = "postgres"
 
     def execute(self, sql: str, params: Optional[tuple] = None):
-        sql2 = _placeholder_pg(_rewrite_sqlite_specific(sql))
+        sql2 = _placeholder_pg(
+            _rewrite_sqlite_specific(sql),
+            escape_percent=params is not None,
+        )
         cur = self._conn.cursor()
-        cur.execute(sql2, params or ())
+        if params is None:
+            cur.execute(sql2)
+        else:
+            cur.execute(sql2, params)
         return cur
 
     def executemany(self, sql: str, seq):
-        sql2 = _placeholder_pg(_rewrite_sqlite_specific(sql))
+        sql2 = _placeholder_pg(_rewrite_sqlite_specific(sql), escape_percent=True)
         cur = self._conn.cursor()
         cur.executemany(sql2, list(seq))
         return cur
