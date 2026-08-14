@@ -197,8 +197,9 @@ def test_morning_watch_badge_is_prominent_in_today_picks():
     index = _read("src/web/templates/index.html")
     assert "isMorningWatch" in index
     assert "startsWith('l4-morning_watch_')" in index
+    # 朝監視は is-watch 行クラス + pendingConfirmation 状態で強調 (旧 excShort は廃止)
     assert "rowClass += ' is-watch'" in index
-    assert "excShort = '朝監視'" in index
+    assert "pendingConfirmation" in index
 
     css = _read("src/web/static/style.css")
     assert ".l4-badge.l4-morning_watch_G1" in css
@@ -232,13 +233,18 @@ def test_portfolio_strong_badge_is_prominent_in_today_picks():
 
 
 def test_today_high_roi_hides_female_mixed_and_general_references():
-    """高ROI一覧では女性混合と一般参考を表示しないこと。"""
+    """高ROI一覧では女性混合と一般参考を「採用」表示しないこと。
+
+    現行は getStrategyUiState の unadopted 判定で除外する方式
+    (旧: renderTodaysPicks 内の early-return + classList チェックは廃止)。
+    女性混合 = isFemaleExclusion、一般参考の圏外 = isMorningOutOfRange。
+    """
     index = _read("src/web/templates/index.html")
-    assert "if (isFemaleExclusion || isGeneralReference) return;" in index
-    assert "l4.classList.contains('l4-morning_general')" in index
-    assert "l4.classList.contains('l4-morning_default')" in index
-    assert "L4参考|一般" in index
-    assert "女性混合と一般参考は高ROI一覧から非表示" in index
+    # 女性混合と一般参考(圏外)が unadopted (= 採用リスト外) に落ちること
+    assert "isFemaleExclusion" in index
+    assert "|| pick.isFemaleExclusion" in index
+    assert "|| pick.isMorningOutOfRange" in index
+    assert "const unadopted = Boolean(" in index
 
 
 def test_monthly_roi_start_is_first_of_previous_month():
@@ -468,7 +474,7 @@ def test_reference_market_signals_are_not_today_roi_candidates():
     assert 'if l4.get("is_reference") and level in ("morning_general", "general"):' not in block
 
     template = _read("src/web/templates/index.html")
-    start = template.index("function renderTodaysPicks()")
+    start = template.index("renderTodaysPicks = function()")
     end = template.index("function renderPickRows", start)
     block = template[start:end]
     assert "if (isRef) {" in block
