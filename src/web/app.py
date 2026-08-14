@@ -998,8 +998,22 @@ def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]]
             )
             previous_badges = previous_market.get("race_badges")
             previous_watch = previous_market.get("accident_watch")
+            # 軽量フォールバックのスナップショットは、既存の詳しいバッジを
+            # 上書きして貧relにしてはいけない (事故率/エースモーター/騎乗注意 等の
+            # 種類別バッジを残す)。source で判定し、既存値をレース×種類単位で優先。
+            lightweight = snapshot.get("source") == "web-lightweight-fallback"
             if needs_badge_preserve and isinstance(previous_badges, dict) and previous_badges:
                 incoming_market["race_badges"] = dict(previous_badges)
+            elif lightweight and isinstance(incoming_badges, dict) and isinstance(previous_badges, dict):
+                merged_badges = dict(incoming_badges)
+                for rid, prev_race in previous_badges.items():
+                    if not isinstance(prev_race, dict):
+                        continue
+                    inc_race = merged_badges.get(rid)
+                    inc_race = inc_race if isinstance(inc_race, dict) else {}
+                    # 既存 (prev) を優先: 軽量値で既存の種類を潰さない
+                    merged_badges[rid] = {**inc_race, **prev_race}
+                incoming_market["race_badges"] = merged_badges
             elif isinstance(incoming_badges, dict) and isinstance(previous_badges, dict):
                 merged_badges = dict(previous_badges)
                 merged_badges.update(incoming_badges)

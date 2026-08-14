@@ -661,7 +661,11 @@ def test_race_grid_badges_payload_hydrates_cache_only_payload(monkeypatch):
         allow_expensive_fallback=True,
     )
 
-    assert payload["race_badges"]["202607300101"]["accident"]["label"] == "ACCIDENT BADGE"
+    # hydrate の結果が採用され、対象レースの事故率バッジが載ること。
+    # ラベルは _normalize_race_badge_labels が構造化データから再生成するため、
+    # 生の "ACCIDENT BADGE" ではなく正規化済みの "事故率0.50+..." になる。
+    assert "202607300101" in payload["race_badges"]
+    assert payload["race_badges"]["202607300101"]["accident"]["label"].startswith("事故率0.50+")
 
 def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
     monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
