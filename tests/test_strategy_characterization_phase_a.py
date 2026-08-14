@@ -311,4 +311,3 @@ def test_niche_signal_exact_ultra_output():
             "warning": "n=41 のサンプル。実運用は要慎重",
         }
     ]
-
