@@ -52,11 +52,16 @@ def test_newly_registered_primary_keys_match_verified_definitions():
     assert {table: _TABLE_PRIMARY_KEYS.get(table) for table in expected} == expected
 
 
-def test_accident_period_stats_map_matches_live_sqlite_primary_key():
+def test_accident_period_stats_map_matches_production_postgres_primary_key():
+    # ON CONFLICT 変換は Postgres 専用。マップは本番 Postgres の実 PK に
+    # 一致させること (本番の PK は period_end を含む。ローカル SQLite は
+    # 旧スキーマで period_end を欠くが、そちらに合わせると本番で ON CONFLICT が
+    # 制約に一致せず事故率パイプラインが壊れる)。2026-08-14 本番 PK で検証済み。
     assert _TABLE_PRIMARY_KEYS["racer_accident_period_stats"] == [
         "racer_number",
         "period_year",
         "period_half",
+        "period_end",
         "rule_version",
         "source_kind",
     ]

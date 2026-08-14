@@ -142,7 +142,10 @@ _TABLE_PRIMARY_KEYS = {
     "racer_accident_point_rules": ["rule_version", "event_code", "applies_from"],
     "racer_accident_events": ["race_id", "racer_number", "event_code", "rule_version"],
     "racer_accident_kraw_unmatched": ["file_name", "line_number", "rule_version"],
-    "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "rule_version", "source_kind"],
+    # 本番 Postgres の実 PK は period_end を含む。ON CONFLICT 変換は Postgres 専用
+    # なので、ローカル SQLite ではなく本番 Postgres の PK に一致させること
+    # (period_end を外すと ON CONFLICT が制約に一致せず事故率パイプラインが壊れる)。
+    "racer_accident_period_stats": ["racer_number", "period_year", "period_half", "period_end", "rule_version", "source_kind"],
     "racer_accident_period_adjustments": ["racer_number", "period_start", "period_end", "rule_version", "source_kind"],
     "racer_accident_external_snapshots": ["snapshot_date", "racer_number", "source_kind"],
     "racer_accident_rank_snapshots": ["period_start", "racer_number"],
