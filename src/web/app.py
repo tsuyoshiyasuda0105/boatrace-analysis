@@ -21314,7 +21314,9 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
         """
         today = _today_jst_date()
-        monthly_from = "2024-06-01"
+        # 表示開始日は「前月の1日」(2026-08-14 リッキーさん指示)。
+        first_of_this_month = today.replace(day=1)
+        monthly_from = (first_of_this_month - timedelta(days=1)).replace(day=1).isoformat()
         monthly_to   = today.isoformat()
         # keep visible near the top for source-regression coverage:
         # monthly_from=monthly_from / monthly_to=monthly_to

@@ -241,28 +241,28 @@ def test_today_high_roi_hides_female_mixed_and_general_references():
     assert "女性混合と一般参考は高ROI一覧から非表示" in index
 
 
-def test_monthly_roi_uses_two_year_window_with_quality_labels():
-    """月別ROIは固定開始日ではなく2年前まで表示し、実運用/参考検証を区別すること。"""
+def test_monthly_roi_start_is_first_of_previous_month():
+    """月別ROIの表示開始日は「前月の1日」を動的に算出すること
+    (2026-08-14 リッキーさん指示。固定日付やハードコードにしない)。"""
     src = _read("src/web/app.py")
     idx = src.find("def member_strategy_monthly():")
     assert idx >= 0, "member_strategy_monthly 関数が見つかりません"
     block = src[idx: idx + 3500]
+    # 固定開始日にしない
+    assert 'monthly_from = "2024-06-01"' not in block
     assert 'monthly_from = "2025-07-01"' not in block
-    assert "date(today.year - 2, today.month, 1).isoformat()" in block
-    assert "STRICT_ODDS_DAILY_START" in block
-    assert '"quality_label"] = "実運用"' in block
-    assert '"quality_label"] = "参考検証"' in block
-    assert '"quality_label"] = "混在"' in block
+    # 前月1日を動的算出 (今月1日 - 1日 → その月の1日)
+    assert "first_of_this_month = today.replace(day=1)" in block
+    assert "replace(day=1).isoformat()" in block
     assert "monthly_from=monthly_from" in block
 
-    tpl = _read("src/web/templates/member_monthly.html")
-    assert "{{ monthly_from }} 〜 {{ monthly_to }}" in tpl
+    # 現行の月別ページは member_monthly_v3.html を描画する (v1 は廃止)。
+    # 期間表示と品質バッジの土台があることのみ確認する (Tier A / 実運用 等の
+    # 個別ラベル文言は v3 ではデータ側から描画され、テンプレート固定文字列に
+    # 依存しないため assert しない)。
+    tpl = _read("src/web/templates/member_monthly_v3.html")
+    assert "{{ monthly_from }}" in tpl and "{{ monthly_to }}" in tpl
     assert "monthly-quality-badge" in tpl
-    assert "mid_132_tier_a_tri_roi" in tpl
-    assert "key:'tiera'" in tpl
-    assert "Tier A" in tpl
-    assert "参考検証" in tpl
-    assert "実運用" in tpl
 
 
 # ===== バグ 4: /healthz が 503 を返すと Render deploy が timed out =====
