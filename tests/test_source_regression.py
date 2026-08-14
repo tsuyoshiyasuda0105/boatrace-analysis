@@ -382,10 +382,16 @@ def test_market_signals_cache_accepts_recent_generation_during_rollout():
 
 
 def test_market_signals_recent_cache_miss_self_heals():
-    """直近日の全キャッシュ欠損は空応答で固定せず再生成する。"""
+    """直近日の全キャッシュ欠損を「空の確定応答」で固定しないこと。
+
+    旧: Web リクエスト内で再計算 (self-heal) していたが、重い再計算で
+    リクエストが固まる/DBプールを枯渇させるため、現在は pending 応答を返して
+    Render Cron 側で再生成させる方式に変更 (空応答での固定を防ぐ点は同じ)。
+    """
     src = _read("src/web/app.py")
-    assert 'logger.warning("market-signals cache missing; self-healing %s"' in src
-    assert "force_recompute = True" in src
+    assert 'logger.warning(' in src
+    assert '"market-signals cache miss; return pending payload for %s"' in src
+    assert "pending_payload = {" in src
 
 
 def test_market_signals_recent_empty_cache_self_heals():
@@ -393,7 +399,7 @@ def test_market_signals_recent_empty_cache_self_heals():
     src = _read("src/web/app.py")
     assert "def _is_empty_market_signals_payload" in src
     assert "and _is_empty_market_signals_payload(cached_payload)" in src
-    assert "and _is_empty_market_signals_payload(stale_payload)" in src
+    assert "and _is_empty_market_signals_payload(last_good_payload)" in src  # stale→last_good に改名
     assert "and _is_empty_market_signals_payload(compat_payload)" in src
 
 
@@ -516,7 +522,8 @@ def test_render_jobs_build_derived_start_stats_before_roi_signals():
 def test_race_detail_fl_counts_fallback_to_external_accident_codes():
     source = _read("src/web/app.py")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v11"' in source
+    # 版数は改修で上がる (v11→v15…) ため固定値ではなく存在のみ確認する
+    assert "RACE_DETAIL_PAGE_CACHE_VERSION =" in source
     assert "accident_codes_raw" in source
     assert 'codes.count("F")' in source
     assert 'codes.count("L")' in source

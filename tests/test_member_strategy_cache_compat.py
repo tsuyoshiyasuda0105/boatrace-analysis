@@ -53,6 +53,7 @@ def test_member_strategy_keeps_stale_metrics_as_reference_only(tmp_path, monkeyp
     client = app.test_client()
     with client.session_transaction() as session:
         session["is_member"] = True
+        session["role"] = "admin"  # /member/strategy は @admin_required に格上げ済み
 
     resp = client.get("/member/strategy?from=2026-07-16&to=2026-07-16")
     html = resp.get_data(as_text=True)

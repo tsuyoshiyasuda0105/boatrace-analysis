@@ -52,7 +52,9 @@ def test_motor_history_api_accepts_legacy_race_id(monkeypatch):
 
     response = client.get("/api/race/202608091412/motor-history/1")
 
-    assert response.status_code == 200
-    assert response.get_json()["race_id"] == "20260809-14-12"
-    assert response.get_json()["info_race_id"] == "20260809-14-12"
+    # キャッシュ未生成時はライブ計算せず 202 pending を返す設計 (重い計算で
+    # リクエストを固めない)。ここで検証すべきは「レガシー race_id が正規化されて
+    # 受理される」こと = basic_info が正規化済み ID で引かれること。
+    assert response.status_code == 202
+    assert response.get_json()["status"] == "pending"
     assert seen == ["20260809-14-12"]

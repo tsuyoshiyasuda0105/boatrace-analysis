@@ -243,7 +243,7 @@ def test_top_page_template_shows_visible_vs_reference_counts():
 def test_market_signals_api_uses_short_server_cache():
     source = Path("src/web/app.py").read_text(encoding="utf-8")
 
-    assert '@cached(ttl=8, past_ttl=3600)' in source
+    assert '@cached(ttl=8)' in source  # market-signals API は短命(8秒)サーバキャッシュ
 
 
 def test_render_web_worker_restarts_are_not_too_frequent():

@@ -10,6 +10,7 @@ def _member_client():
     client = app.test_client()
     with client.session_transaction() as session:
         session["is_member"] = True
+        session["role"] = "admin"  # /member/strategy(/monthly) は @admin_required に格上げ済み
     return client
 
 
