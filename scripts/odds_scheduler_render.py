@@ -32,8 +32,13 @@ from src.deploy_info import log_deploy_revision  # noqa: E402
 
 LOCK_NAME = "boatrace-odds-scheduler-v1"
 
+# tolerance は cron 間隔の半分 (2.5分) にする。
+# render.yaml のオッズ cron は 5 分間隔 (*/5)。締切5分前を狙う T-5min の許容窓を
+# ±2.5分にすると各レースの [close-7.5, close-2.5] の5分窓に必ず1回だけ tick が入り、
+# 取りこぼしがなくなる (重複は (race_id, snapshot_label) dedup が防ぐ)。
+# 旧値 0.5 (窓幅1分) は 5分間隔と噛み合わず大半を取り逃していた (2026-08-12 障害)。
 RENDER_SNAPSHOT_RULES = [
-    ("T-5min", 5, 0.5),
+    ("T-5min", 5, 2.5),
 ]
 
 

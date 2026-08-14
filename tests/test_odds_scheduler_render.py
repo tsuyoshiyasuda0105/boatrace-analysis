@@ -4,8 +4,10 @@ from pathlib import Path
 def test_render_odds_scheduler_limits_snapshot_labels():
     source = (Path("scripts") / "odds_scheduler_render.py").read_text(encoding="utf-8")
 
-    assert '("T-5min", 5, 0.5)' in source
-    assert '("T-1d", 24 * 60, 5)' in source
+    # tolerance は 5分cron に合わせ 2.5分に拡張 (2026-08-12 取りこぼし障害の修正)。
+    # 旧値 0.5 は 5分間隔と噛み合わず大半を取り逃していた。
+    assert '("T-5min", 5, 2.5)' in source
+    assert '("T-5min", 5, 0.5)' not in source
     assert "T-120min" not in source
     assert "T-4min" not in source
     assert "T-3min" not in source
