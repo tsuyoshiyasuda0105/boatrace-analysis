@@ -30,6 +30,11 @@ from src.db.connection import (  # noqa: E402
     assert_safe_production_write,
     connect as db_connect,
 )
+from src.db.cron_runtime import (  # noqa: E402
+    advisory_lock,
+    ensure_task_runs_table,
+    record_task_run,
+)
 from src.parsers.official_b import parse_b_text  # noqa: E402
 from src.deploy_info import log_deploy_revision  # noqa: E402
 from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
@@ -65,25 +70,13 @@ def _ensure_tables() -> None:
     if _TABLES_READY:
         return
     with db_connect() as conn:
+        ensure_task_runs_table(conn)
         if getattr(conn, "_kind", "sqlite") == "postgres":
-            conn.execute("SELECT 1 FROM task_runs LIMIT 0")
             conn.execute("SELECT 1 FROM system_status LIMIT 0")
             _TABLES_READY = True
             return
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS task_runs (
-              task_name TEXT NOT NULL,
-              run_date TEXT NOT NULL,
-              status TEXT NOT NULL,
-              run_count INTEGER NOT NULL DEFAULT 0,
-              started_at TEXT,
-              finished_at TEXT,
-              success_at TEXT,
-              trigger TEXT,
-              detail TEXT,
-              PRIMARY KEY (task_name, run_date)
-            );
             CREATE TABLE IF NOT EXISTS system_status (
               check_name TEXT NOT NULL,
               check_date TEXT NOT NULL,
@@ -102,18 +95,10 @@ def _ensure_tables() -> None:
 @contextmanager
 def _run_lock() -> Iterator[bool]:
     conn = db_connect()
-    locked = True
-    is_postgres = getattr(conn, "_kind", "sqlite") == "postgres"
     try:
-        if is_postgres:
-            row = conn.execute(
-                "SELECT pg_try_advisory_lock(hashtext(?))", (LOCK_NAME,)
-            ).fetchone()
-            locked = bool(row and row[0])
-        yield locked
+        with advisory_lock(conn, LOCK_NAME) as locked:
+            yield locked
     finally:
-        if is_postgres and locked:
-            conn.execute("SELECT pg_advisory_unlock(hashtext(?))", (LOCK_NAME,))
         conn.close()
 
 
@@ -149,36 +134,16 @@ def _write_task(
     *,
     increment: bool = True,
 ) -> None:
-    now_iso = jst_now().replace(tzinfo=None).isoformat(timespec="seconds")
-    success_at = now_iso if status == "success" else None
     with db_connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO task_runs
-                (task_name, run_date, status, run_count, started_at, finished_at,
-                 success_at, trigger, detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'render-program-bootstrap', ?)
-            ON CONFLICT (task_name, run_date) DO UPDATE SET
-                status = EXCLUDED.status,
-                run_count = task_runs.run_count + EXCLUDED.run_count,
-                started_at = EXCLUDED.started_at,
-                finished_at = EXCLUDED.finished_at,
-                success_at = COALESCE(EXCLUDED.success_at, task_runs.success_at),
-                trigger = EXCLUDED.trigger,
-                detail = EXCLUDED.detail
-            """,
-            (
-                task_name,
-                target.isoformat(),
-                status,
-                1 if increment else 0,
-                now_iso,
-                now_iso,
-                success_at,
-                json.dumps(detail, ensure_ascii=True, sort_keys=True),
-            ),
+        record_task_run(
+            conn,
+            task_name,
+            target.isoformat(),
+            status,
+            detail=json.dumps(detail, ensure_ascii=True, sort_keys=True),
+            increment=increment,
+            trigger="render-program-bootstrap",
         )
-        conn.commit()
 
 
 def _write_status(target: date, status: str, message: str, detail: dict[str, Any]) -> None:

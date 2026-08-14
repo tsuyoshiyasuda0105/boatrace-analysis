@@ -23,6 +23,7 @@ def test_daily_detail_data_is_built_in_requested_order():
 
 def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     source = (ROOT / "scripts" / "refresh_race_detail_after_exhibition.py").read_text(encoding="utf-8")
+    runtime = (ROOT / "src" / "db" / "cron_runtime.py").read_text(encoding="utf-8")
 
     assert "delay_seconds: int = 60" in source
     assert "def collect_live_exhibition" in source
@@ -31,9 +32,10 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert "POST_RACE_INCOMPLETE_PAST_MIN = 36 * 60" in source
     assert "POST_RACE_INCOMPLETE_FUTURE_MIN = 0" in source
     assert "post_race_incomplete_due" in source
-    assert "COUNT(DISTINCT oe.boat_number) AS original_rows" in source
-    assert "COUNT(DISTINCT CASE" in source
-    assert "metric_partly_missing" in source
+    assert "find_missing_original_exhibition_races" in source
+    assert "COUNT(DISTINCT oe.boat_number) AS original_rows" in runtime
+    assert "COUNT(DISTINCT CASE" in runtime
+    assert "all(count >= 6 for count in metric_counts)" in runtime
     assert "original_exhibition_collector.collect_for_races" in source
     assert '["scripts/render_cache_predictions.py", "--date", target_date]' in source
     assert '["scripts/generate_start_predictions.py", "--date", target_date]' in source
@@ -217,7 +219,7 @@ def test_dedicated_detail_crons_persist_health_records():
 
     assert 'record_cron_run(task_name, args.date, "running")' in daily
     assert '"success" if succeeded else "failure"' in daily
-    assert 'record_cron_run(task_name, args.date, "running")' in exhibition
+    assert '_record_task(task_name, args.date, "running")' in exhibition
     assert '"success" if succeeded else "failure"' in exhibition
     assert '"signal_refresh_triggered"' in exhibition
     assert '"signal_refresh_ok"' in exhibition

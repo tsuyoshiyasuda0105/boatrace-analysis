@@ -27,6 +27,7 @@ if __name__ == "__main__":
 
 from scripts import odds_scheduler as base  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
+from src.db.cron_runtime import advisory_lock  # noqa: E402
 from src.deploy_info import log_deploy_revision  # noqa: E402
 
 
@@ -50,21 +51,14 @@ def odds_lock() -> Iterator[bool]:
     success は記録しない (偽装成功パターンの再現禁止)。
     """
     conn = db_connect()
-    locked = True
-    is_postgres = getattr(conn, "_kind", "sqlite") == "postgres"
     try:
-        if is_postgres:
-            row = conn.execute(
-                "SELECT pg_try_advisory_lock(hashtext(?))", (LOCK_NAME,)
-            ).fetchone()
-            locked = bool(row and row[0])
-        yield locked
+        with advisory_lock(
+            conn,
+            LOCK_NAME,
+            suppress_unlock_errors=True,
+        ) as locked:
+            yield locked
     finally:
-        if is_postgres and locked:
-            try:
-                conn.execute("SELECT pg_advisory_unlock(hashtext(?))", (LOCK_NAME,))
-            except Exception:  # noqa: BLE001
-                pass
         conn.close()
 
 

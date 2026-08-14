@@ -518,7 +518,9 @@ def test_render_jobs_build_derived_start_stats_before_roi_signals():
     assert '"scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date' in refresh
     assert refresh.index('"scripts/build_derived_start_stats.py"') < refresh.index('"scripts/generate_start_predictions.py"')
     exhibition_signal_start = refresh.index("def refresh_market_signals_if_needed(")
-    exhibition_signal_end = refresh.index("def _parse_race_close_jst", exhibition_signal_start)
+    exhibition_signal_end = refresh.index(
+        "def _find_missing_original_exhibition_races", exhibition_signal_start
+    )
     exhibition_signal_block = refresh[exhibition_signal_start:exhibition_signal_end]
     assert exhibition_signal_block.index('"scripts/build_derived_start_stats.py"') < exhibition_signal_block.index(
         '"scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date'

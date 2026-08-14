@@ -22,6 +22,7 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-maintenance")
 
 from scripts import render_regular_scheduler as regular  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
+from src.db.cron_runtime import advisory_lock  # noqa: E402
 from src.deploy_info import log_deploy_revision  # noqa: E402
 from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
 
@@ -58,18 +59,10 @@ def jst_now() -> datetime:
 @contextmanager
 def maintenance_lock() -> Iterator[bool]:
     conn = db_connect()
-    locked = True
-    is_postgres = getattr(conn, "_kind", "sqlite") == "postgres"
     try:
-        if is_postgres:
-            row = conn.execute(
-                "SELECT pg_try_advisory_lock(hashtext(?))", (LOCK_NAME,)
-            ).fetchone()
-            locked = bool(row and row[0])
-        yield locked
+        with advisory_lock(conn, LOCK_NAME) as locked:
+            yield locked
     finally:
-        if is_postgres and locked:
-            conn.execute("SELECT pg_advisory_unlock(hashtext(?))", (LOCK_NAME,))
         conn.close()
 
 

@@ -20,21 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 import config
-
-_DDL = """
-CREATE TABLE IF NOT EXISTS task_runs (
-  task_name   TEXT NOT NULL,
-  run_date    TEXT NOT NULL,
-  status      TEXT NOT NULL,
-  run_count   INTEGER NOT NULL DEFAULT 0,
-  started_at  TEXT,
-  finished_at TEXT,
-  success_at  TEXT,
-  trigger     TEXT,
-  detail      TEXT,
-  PRIMARY KEY (task_name, run_date)
-);
-"""
+from src.db.cron_runtime import ensure_task_runs_table, record_task_run
 
 _COLUMNS = ["task_name", "run_date", "status", "run_count",
             "started_at", "finished_at", "success_at", "trigger", "detail"]
@@ -44,7 +30,7 @@ def _conn() -> sqlite3.Connection:
     """ローカル SQLite 接続を返す (DATABASE_URL を無視)。テーブルは自動生成。"""
     conn = sqlite3.connect(config.DB_PATH, timeout=config.SQLITE_CONNECT_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={config.SQLITE_BUSY_TIMEOUT_MS};")
-    conn.execute(_DDL)
+    ensure_task_runs_table(conn)
     return conn
 
 
@@ -63,30 +49,17 @@ def record(task_name: str, status: str, *,
     """
     now = datetime.now()
     rd = run_date or now.strftime("%Y-%m-%d")
-    now_iso = now.isoformat(timespec="seconds")
-    success_at = now_iso if status == "success" else None
-
     conn = _conn()
     try:
-        cur = conn.execute(
-            "SELECT run_count FROM task_runs WHERE task_name=? AND run_date=?",
-            (task_name, rd),
+        record_task_run(
+            conn,
+            task_name,
+            rd,
+            status,
+            detail=detail,
+            increment=True,
+            trigger=trigger,
         )
-        if cur.fetchone():
-            conn.execute(
-                "UPDATE task_runs SET status=?, run_count=run_count+1, finished_at=?, "
-                "success_at=COALESCE(?, success_at), trigger=?, detail=? "
-                "WHERE task_name=? AND run_date=?",
-                (status, now_iso, success_at, trigger, detail, task_name, rd),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO task_runs "
-                "(task_name, run_date, status, run_count, started_at, finished_at, success_at, trigger, detail) "
-                "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
-                (task_name, rd, status, now_iso, now_iso, success_at, trigger, detail),
-            )
-        conn.commit()
     finally:
         conn.close()
 

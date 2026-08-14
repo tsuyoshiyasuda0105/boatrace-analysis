@@ -28,6 +28,9 @@ def test_beforeinfo_persists_progress_in_small_batches(monkeypatch):
 
     monkeypatch.setattr(live, "write_updates", fake_write_updates)
     monkeypatch.setattr(tide, "refresh_tides_for_races", lambda _race_ids: {})
+    monkeypatch.setattr(
+        scheduler, "find_missing_original_exhibition_races", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(original_exhibition, "collect_for_races", lambda *_args, **_kwargs: {
         "races_targeted": 0,
         "pages_fetched": 0,
@@ -48,6 +51,9 @@ def test_beforeinfo_fails_when_due_pages_cannot_be_saved(monkeypatch):
     monkeypatch.setattr(live, "find_recent_incomplete_races", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(live, "scrape_one_race", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(tide, "refresh_tides_for_races", lambda _race_ids: {})
+    monkeypatch.setattr(
+        scheduler, "find_missing_original_exhibition_races", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr(original_exhibition, "collect_for_races", lambda *_args, **_kwargs: {
         "races_targeted": 0,
         "pages_fetched": 0,

@@ -29,8 +29,8 @@ def test_running_increments_attempt_and_final_status_does_not(monkeypatch):
     cron_run_log.record_cron_run("detail", "2026-08-02", "running")
     cron_run_log.record_cron_run("detail", "2026-08-02", "success", detail="ok")
 
-    assert "run_count = task_runs.run_count + 1" in fake.calls[0][0]
-    assert "run_count = task_runs.run_count + 1" not in fake.calls[1][0]
+    assert fake.calls[0][1][2] == 1
+    assert fake.calls[1][1][3] == 0
     assert fake.calls[1][1][2] == "success"
     assert fake.commits == 2
 

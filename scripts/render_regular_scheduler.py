@@ -16,6 +16,12 @@ if __name__ == "__main__":
     os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-cron")
 
 from src.db.connection import connect as db_connect
+from src.db.cron_runtime import (
+    ensure_task_runs_table as ensure_task_runs_table_on_connection,
+    find_missing_original_exhibition_races as find_missing_original_exhibition_races_common,
+    parse_race_close_jst as _parse_race_close_jst,
+    record_task_run,
+)
 from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature
 from src.deploy_info import log_deploy_revision
 import config
@@ -153,22 +159,6 @@ def run_program_source_gate(run_date: str, *, allow_official_fallback: bool = Fa
     return ok
 
 
-def _parse_race_close_jst(closed_at, race_date: str) -> datetime | None:
-    if isinstance(closed_at, datetime):
-        return closed_at.replace(tzinfo=JST) if closed_at.tzinfo is None else closed_at
-    if not isinstance(closed_at, str):
-        return None
-    try:
-        if " " in closed_at and len(closed_at) >= 16:
-            dt = datetime.fromisoformat(closed_at)
-        else:
-            time_part = closed_at if len(closed_at) >= 5 else f"{closed_at}:00"
-            dt = datetime.fromisoformat(f"{race_date} {time_part}")
-    except (TypeError, ValueError):
-        return None
-    return dt.replace(tzinfo=JST)
-
-
 def find_missing_original_exhibition_races(
     now: datetime,
     *,
@@ -177,48 +167,14 @@ def find_missing_original_exhibition_races(
     future_min: int = ORIGINAL_EXHIBITION_RECOVERY_FUTURE_MIN,
     limit: int = ORIGINAL_EXHIBITION_RECOVERY_LIMIT,
 ) -> list[tuple[str, int, int, datetime]]:
-    from src.collectors import original_exhibition as original_exhibition_collector
-
-    supported = sorted(
-        int(stadium)
-        for stadium, patterns in original_exhibition_collector.SOURCE_PATTERNS.items()
-        if patterns
+    return find_missing_original_exhibition_races_common(
+        now,
+        target_date=target_date,
+        past_min=past_min,
+        future_min=future_min,
+        limit=limit,
+        connect=db_connect,
     )
-    if not supported:
-        return []
-
-    target_date = target_date or now.date().isoformat()
-    placeholders = ",".join("?" for _ in supported)
-    with db_connect() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
-                   COUNT(oe.race_id) AS original_rows
-              FROM races r
-              LEFT JOIN race_original_exhibitions oe ON oe.race_id = r.race_id
-             WHERE r.race_date = ?
-               AND r.stadium_number IN ({placeholders})
-               AND r.race_closed_at IS NOT NULL
-             GROUP BY r.race_id, r.stadium_number, r.race_number, r.race_closed_at
-             ORDER BY r.race_closed_at
-            """,
-            (target_date, *supported),
-        ).fetchall()
-
-    due: list[tuple[str, int, int, datetime]] = []
-    for race_id, stadium, race_no, closed_at, original_rows in rows:
-        if int(original_rows or 0) > 0:
-            continue
-        close = _parse_race_close_jst(closed_at, target_date)
-        if close is None:
-            continue
-        mins_until = (close - now).total_seconds() / 60.0
-        if mins_until < -abs(past_min) or mins_until > future_min:
-            continue
-        due.append((race_id, int(stadium), int(race_no), close))
-        if limit > 0 and len(due) >= limit:
-            break
-    return due
 
 
 def original_exhibition_daily_counts(target_date: str) -> dict[str, int]:
@@ -349,52 +305,22 @@ def ensure_task_runs_table() -> None:
     if _TASK_RUNS_SCHEMA_READY:
         return
     with db_connect() as conn:
-        if getattr(conn, "_kind", "sqlite") == "postgres":
-            conn.execute("SELECT 1 FROM task_runs LIMIT 0")
-            _TASK_RUNS_SCHEMA_READY = True
-            return
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS task_runs (
-              task_name TEXT NOT NULL,
-              run_date TEXT NOT NULL,
-              status TEXT NOT NULL,
-              run_count INTEGER NOT NULL DEFAULT 0,
-              started_at TEXT,
-              finished_at TEXT,
-              success_at TEXT,
-              trigger TEXT,
-              detail TEXT,
-              PRIMARY KEY (task_name, run_date)
-            );
-            ALTER TABLE task_runs ENABLE ROW LEVEL SECURITY;
-        """)
-        conn.commit()
+        ensure_task_runs_table_on_connection(conn)
     _TASK_RUNS_SCHEMA_READY = True
 
 
 def record_task(task_name: str, run_date: str, status: str, detail: str | None = None) -> None:
-    now_iso = jst_now().replace(tzinfo=None).isoformat(timespec="seconds")
-    success_at = now_iso if status == "success" else None
     try:
         with db_connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO task_runs
-                    (task_name, run_date, status, run_count, started_at, finished_at,
-                     success_at, trigger, detail)
-                VALUES (?, ?, ?, 1, ?, ?, ?, 'render-cron', ?)
-                ON CONFLICT (task_name, run_date) DO UPDATE SET
-                    status = EXCLUDED.status,
-                    run_count = task_runs.run_count + 1,
-                    started_at = EXCLUDED.started_at,
-                    finished_at = EXCLUDED.finished_at,
-                    success_at = COALESCE(EXCLUDED.success_at, task_runs.success_at),
-                    trigger = EXCLUDED.trigger,
-                    detail = EXCLUDED.detail
-                """,
-                (task_name, run_date, status, now_iso, now_iso, success_at, detail),
+            record_task_run(
+                conn,
+                task_name,
+                run_date,
+                status,
+                detail=detail,
+                increment=True,
+                trigger="render-cron",
             )
-            conn.commit()
     except Exception as exc:
         print(f"[task_runs] write failed: {type(exc).__name__}: {exc}", flush=True)
 

@@ -25,8 +25,12 @@ os.environ.setdefault("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 import config  # noqa: E402
 from scripts import scrape_beforeinfo_live as live_beforeinfo  # noqa: E402
 from src.collectors import original_exhibition as original_exhibition_collector  # noqa: E402
-from src.db.cron_run_log import record_cron_run  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
+from src.db.cron_runtime import (  # noqa: E402
+    ensure_task_runs_table as ensure_task_runs_table_on_connection,
+    find_missing_original_exhibition_races,
+    record_task_run,
+)
 from src.deploy_info import log_deploy_revision  # noqa: E402
 
 
@@ -74,54 +78,22 @@ def _ensure_task_runs_table() -> None:
     if _TASK_RUNS_SCHEMA_READY:
         return
     with db_connect() as conn:
-        if getattr(conn, "_kind", "sqlite") == "postgres":
-            conn.execute("SELECT 1 FROM task_runs LIMIT 0")
-            _TASK_RUNS_SCHEMA_READY = True
-            return
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS task_runs (
-              task_name TEXT NOT NULL,
-              run_date TEXT NOT NULL,
-              status TEXT NOT NULL,
-              run_count INTEGER NOT NULL DEFAULT 0,
-              started_at TEXT,
-              finished_at TEXT,
-              success_at TEXT,
-              trigger TEXT,
-              detail TEXT,
-              PRIMARY KEY (task_name, run_date)
-            );
-            ALTER TABLE task_runs ENABLE ROW LEVEL SECURITY;
-            """
-        )
-        conn.commit()
+        ensure_task_runs_table_on_connection(conn)
     _TASK_RUNS_SCHEMA_READY = True
 
 
 def _record_task(task_name: str, run_date: str, status: str, detail: str | None = None) -> None:
-    now_iso = datetime.now(JST).replace(tzinfo=None).isoformat(timespec="seconds")
-    success_at = now_iso if status == "success" else None
     try:
         with db_connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO task_runs
-                    (task_name, run_date, status, run_count, started_at, finished_at,
-                     success_at, trigger, detail)
-                VALUES (?, ?, ?, 1, ?, ?, ?, 'render-exhibition-detail-refresh', ?)
-                ON CONFLICT (task_name, run_date) DO UPDATE SET
-                    status = EXCLUDED.status,
-                    run_count = task_runs.run_count + 1,
-                    started_at = EXCLUDED.started_at,
-                    finished_at = EXCLUDED.finished_at,
-                    success_at = COALESCE(EXCLUDED.success_at, task_runs.success_at),
-                    trigger = EXCLUDED.trigger,
-                    detail = EXCLUDED.detail
-                """,
-                (task_name, run_date, status, now_iso, now_iso, success_at, detail),
+            record_task_run(
+                conn,
+                task_name,
+                run_date,
+                status,
+                detail=detail,
+                increment=True,
+                trigger="render-exhibition-detail-refresh",
             )
-            conn.commit()
     except Exception as exc:
         print(f"[task_runs] write failed: {type(exc).__name__}: {exc}", flush=True)
 
@@ -134,28 +106,17 @@ def _record_cron_skip(task_name: str, run_date: str, detail: str | None = None) 
       _exhibition_refresh_recently_running の多重実行検知が壊れ、
       次の tick が並走してしまうため。
     """
-    now_iso = datetime.now(JST).replace(tzinfo=None).isoformat(timespec="seconds")
     try:
         with db_connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO task_runs
-                    (task_name, run_date, status, run_count, started_at, finished_at,
-                     success_at, trigger, detail)
-                VALUES (?, ?, 'skipped', 0, ?, ?, NULL,
-                        'render-exhibition-detail-refresh', ?)
-                ON CONFLICT (task_name, run_date) DO UPDATE SET
-                    status = CASE WHEN task_runs.status = 'running'
-                                  THEN task_runs.status ELSE 'skipped' END,
-                    finished_at = CASE WHEN task_runs.status = 'running'
-                                       THEN task_runs.finished_at
-                                       ELSE EXCLUDED.finished_at END,
-                    detail = CASE WHEN task_runs.status = 'running'
-                                  THEN task_runs.detail ELSE EXCLUDED.detail END
-                """,
-                (task_name, run_date, now_iso, now_iso, detail),
+            record_task_run(
+                conn,
+                task_name,
+                run_date,
+                "skipped",
+                detail=detail,
+                increment=False,
+                trigger="render-exhibition-detail-refresh",
             )
-            conn.commit()
     except Exception as exc:
         print(f"[task_runs] skip write failed: {type(exc).__name__}: {exc}", flush=True)
 
@@ -283,22 +244,6 @@ def refresh_market_signals_if_needed(target_date: str, collect_summary: dict, re
     return summary
 
 
-def _parse_race_close_jst(closed_at: object, race_date: str) -> datetime | None:
-    if isinstance(closed_at, datetime):
-        return closed_at.replace(tzinfo=JST) if closed_at.tzinfo is None else closed_at
-    if not isinstance(closed_at, str):
-        return None
-    try:
-        if " " in closed_at and len(closed_at) >= 16:
-            dt = datetime.fromisoformat(closed_at)
-        else:
-            time_part = closed_at if len(closed_at) >= 5 else f"{closed_at}:00"
-            dt = datetime.fromisoformat(f"{race_date} {time_part}")
-    except (TypeError, ValueError):
-        return None
-    return dt.replace(tzinfo=JST)
-
-
 def _find_missing_original_exhibition_races(
     now: datetime,
     *,
@@ -307,61 +252,14 @@ def _find_missing_original_exhibition_races(
     future_min: int = ORIGINAL_EXHIBITION_FUTURE_MIN,
     limit: int = ORIGINAL_EXHIBITION_LIMIT,
 ) -> list[tuple[str, int, int, datetime]]:
-    supported = sorted(
-        int(stadium)
-        for stadium, patterns in original_exhibition_collector.SOURCE_PATTERNS.items()
-        if patterns
+    return find_missing_original_exhibition_races(
+        now,
+        target_date=target_date,
+        past_min=past_min,
+        future_min=future_min,
+        limit=limit,
+        connect=db_connect,
     )
-    if not supported:
-        return []
-
-    placeholders = ",".join("?" for _ in supported)
-    with db_connect() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT r.race_id, r.stadium_number, r.race_number, r.race_closed_at,
-                   COUNT(DISTINCT oe.boat_number) AS original_rows,
-                   COUNT(DISTINCT CASE
-                       WHEN oe.lap_time IS NOT NULL AND oe.lap_time != 0
-                       THEN oe.boat_number
-                   END) AS lap_rows,
-                   COUNT(DISTINCT CASE
-                       WHEN oe.turn_time IS NOT NULL AND oe.turn_time != 0
-                       THEN oe.boat_number
-                   END) AS turn_rows,
-                   COUNT(DISTINCT CASE
-                       WHEN oe.straight_time IS NOT NULL AND oe.straight_time != 0
-                       THEN oe.boat_number
-                   END) AS straight_rows
-              FROM races r
-              LEFT JOIN race_original_exhibitions oe ON oe.race_id = r.race_id
-             WHERE r.race_date = ?
-               AND r.stadium_number IN ({placeholders})
-               AND r.race_closed_at IS NOT NULL
-             GROUP BY r.race_id, r.stadium_number, r.race_number, r.race_closed_at
-             ORDER BY r.race_closed_at
-            """,
-            (target_date, *supported),
-        ).fetchall()
-
-    due: list[tuple[str, int, int, datetime]] = []
-    for race_id, stadium, race_no, closed_at, original_rows, lap_rows, turn_rows, straight_rows in rows:
-        original_count = int(original_rows or 0)
-        metric_counts = [int(lap_rows or 0), int(turn_rows or 0), int(straight_rows or 0)]
-        metric_partly_missing = any(0 < count < 6 for count in metric_counts)
-        no_useful_metric_rows = original_count > 0 and all(count == 0 for count in metric_counts)
-        if original_count >= 6 and not metric_partly_missing and not no_useful_metric_rows:
-            continue
-        close = _parse_race_close_jst(closed_at, target_date)
-        if close is None:
-            continue
-        mins_until = (close - now).total_seconds() / 60.0
-        if mins_until < -abs(past_min) or mins_until > future_min:
-            continue
-        due.append((str(race_id), int(stadium), int(race_no), close))
-        if limit > 0 and len(due) >= limit:
-            break
-    return due
 
 
 def _collect_original_exhibition(
@@ -647,7 +545,6 @@ def main() -> int:
         _record_cron_skip(task_name, args.date, detail=detail)
         return 0
 
-    record_cron_run(task_name, args.date, "running")
     _record_task(task_name, args.date, "running")
     collect_summary: dict = {"skipped": True}
     signal_summary: dict = {"triggered": False, "ok": True, "reason": "not-run"}
@@ -677,12 +574,6 @@ def main() -> int:
         signal_summary = refresh_market_signals_if_needed(args.date, collect_summary, summary)
     except Exception as exc:
         _record_task(task_name, args.date, "failure", detail=f"{type(exc).__name__}: {exc}"[:1000])
-        record_cron_run(
-            task_name,
-            args.date,
-            "failure",
-            detail=f"{type(exc).__name__}: {exc}"[:1000],
-        )
         raise
 
     succeeded = summary["failed"] == 0 and (
@@ -702,12 +593,6 @@ def main() -> int:
             "signal_refresh_reason": signal_summary.get("reason"),
         },
         ensure_ascii=False,
-    )
-    record_cron_run(
-        task_name,
-        args.date,
-        "success" if succeeded else "failure",
-        detail=detail,
     )
     _record_task(task_name, args.date, "success" if succeeded else "failure", detail=detail)
     return 0 if succeeded else 1

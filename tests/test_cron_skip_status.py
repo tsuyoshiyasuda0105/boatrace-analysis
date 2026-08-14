@@ -79,7 +79,6 @@ def test_skip_keeps_earlier_success_timestamp(task_db):
 
 
 def test_main_skip_path_does_not_record_success(task_db, monkeypatch):
-    cron_calls = []
     skip_calls = []
     monkeypatch.setattr(refresh_mod, "log_deploy_revision", lambda *_a, **_k: None)
     monkeypatch.setattr(refresh_mod, "_ensure_task_runs_table", lambda: None)
@@ -87,11 +86,6 @@ def test_main_skip_path_does_not_record_success(task_db, monkeypatch):
         refresh_mod,
         "_exhibition_refresh_recently_running",
         lambda _date, _now: (True, "recent-running:test"),
-    )
-    monkeypatch.setattr(
-        refresh_mod,
-        "record_cron_run",
-        lambda *args, **kwargs: cron_calls.append((args, kwargs)),
     )
     monkeypatch.setattr(
         refresh_mod,
@@ -103,8 +97,6 @@ def test_main_skip_path_does_not_record_success(task_db, monkeypatch):
     )
 
     assert refresh_mod.main() == 0
-    # 偽装 success (record_cron_run(..., "success")) は書かれない
-    assert cron_calls == []
     # skipped として記録される
     assert len(skip_calls) == 1
     assert skip_calls[0][0][:2] == (TASK, RUN_DATE)
