@@ -571,10 +571,80 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
         record_task(attempt_task, today, "failure", detail="signal_refresh_failed")
         return False
 
+    detail_selfheal_ok = run_detail_pages_selfheal(now)
+    if not detail_selfheal_ok:
+        record_task(task, today, "failure", detail="detail_selfheal_failed")
+        record_task(attempt_task, today, "failure", detail="detail_selfheal_failed")
+        return False
+
     snapshot_ok = run_top_page_snapshot(now, lightweight=True)
     ok &= snapshot_ok
     record_task(task, today, "success" if ok else "failure")
     record_task(attempt_task, today, "success" if ok else "failure")
+    return ok
+
+
+def race_detail_page_cache_coverage(run_date: str) -> dict[str, int]:
+    """Count races covered by the current version of the detail-page cache."""
+    from src.web.app import RACE_DETAIL_PAGE_CACHE_VERSION
+
+    key_prefix = f"race_detail_page:{RACE_DETAIL_PAGE_CACHE_VERSION}:"
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS race_count,
+                   SUM(CASE WHEN EXISTS (
+                       SELECT 1
+                         FROM page_html_cache p
+                        WHERE p.cache_key = ? || r.race_id
+                   ) THEN 1 ELSE 0 END) AS covered_races
+              FROM races r
+             WHERE r.race_date = ?
+            """,
+            (key_prefix, run_date),
+        ).fetchone()
+    return {
+        "races": int(row[0] or 0) if row else 0,
+        "covered": int(row[1] or 0) if row else 0,
+    }
+
+
+def run_detail_pages_selfheal(now: datetime) -> bool:
+    """Warm today's detail caches once when current-version coverage is below 50%."""
+    today = now.date().isoformat()
+    task = "render_detail_pages_selfheal"
+    if task_success_exists(task, today):
+        return True
+    try:
+        coverage = race_detail_page_cache_coverage(today)
+    except Exception as exc:
+        print(f"[detail-selfheal] coverage check failed: {type(exc).__name__}: {exc}", flush=True)
+        record_task(task, today, "failure", detail="coverage_check_failed")
+        return False
+
+    races = coverage["races"]
+    covered = coverage["covered"]
+    if races <= 0:
+        record_task(task, today, "failure", detail="race_count=0")
+        return False
+    if covered * 2 >= races:
+        record_task(task, today, "success", detail=f"skip:coverage={covered}/{races}")
+        return True
+
+    print(f"[detail-selfheal] low coverage={covered}/{races} -> prewarm", flush=True)
+    tags_ok = run_py(
+        ["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900
+    )
+    pages_ok = run_py(
+        ["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800
+    )
+    ok = bool(tags_ok and pages_ok)
+    record_task(
+        task,
+        today,
+        "success" if ok else "failure",
+        detail=f"coverage={covered}/{races} tags_ok={tags_ok} pages_ok={pages_ok}",
+    )
     return ok
 
 

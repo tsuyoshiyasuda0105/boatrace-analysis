@@ -27,7 +27,7 @@ def test_maintenance_rebuilds_today_tags_before_today_pages():
     assert tags_idx < pages_idx
 
 
-def test_daytime_bootstrap_keeps_full_detail_materialization_out():
+def test_daytime_bootstrap_runs_bounded_detail_selfheal_after_source_gate():
     src = (REPO / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
     start = src.index("def run_lite_daytime_bootstrap(")
     end = src.index("def tide_refresh_needed(", start)
@@ -35,10 +35,9 @@ def test_daytime_bootstrap_keeps_full_detail_materialization_out():
 
     source_idx = bootstrap.index('source_recovery_ok = task_success_exists("render_program_source_gate_v1", today)')
     signal_idx = bootstrap.index("ok = run_signal_refresh_slot(now, source_gate_verified=True)")
+    selfheal_idx = bootstrap.index("detail_selfheal_ok = run_detail_pages_selfheal(now)")
 
-    assert source_idx < signal_idx
-    assert "prewarm_race_detail_tags.py" not in bootstrap
-    assert "prewarm_race_detail_pages.py" not in bootstrap
+    assert source_idx < signal_idx < selfheal_idx
 
 
 def test_race_detail_cron_is_the_overnight_maintenance_coordinator():

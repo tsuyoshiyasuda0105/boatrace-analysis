@@ -8,12 +8,14 @@ PROGRAM_BOOTSTRAP = ROOT / "scripts" / "render_program_bootstrap_scheduler.py"
 MAINTENANCE = ROOT / "scripts" / "render_maintenance_scheduler.py"
 
 
-def test_daily_tag_prewarm_is_owned_by_maintenance_not_regular_cron():
+def test_daily_tag_prewarm_has_maintenance_owner_and_bounded_daytime_selfheal():
     source = SCHEDULER.read_text(encoding="utf-8")
 
     bootstrap = source.split("def run_lite_daytime_bootstrap", 1)[1].split("def tide_refresh_needed", 1)[0]
     maintenance = MAINTENANCE.read_text(encoding="utf-8")
-    assert '"scripts/prewarm_race_detail_tags.py", "--date", today' not in bootstrap
+    assert "def run_detail_pages_selfheal" in bootstrap
+    assert '"scripts/prewarm_race_detail_tags.py", "--date", today' in bootstrap
+    assert '"render_detail_pages_selfheal"' in bootstrap
     assert '["scripts/prewarm_race_detail_tags.py", "--date", today]' in maintenance
     assert "def run_nightly(" not in source
     assert '["scripts/prewarm_race_detail_pages.py", "--date", today]' in maintenance

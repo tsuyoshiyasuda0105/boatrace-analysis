@@ -11,6 +11,8 @@
 - Failure log: the required baseline `.venv/Scripts/python.exe -m pytest tests/ -q` collected 650 tests but ended `608 passed / 42 setup errors` because pytest could not write to the shared Windows temporary directory. No product assertion failed. Prevention: rerun the same full suite with repository-local `--basetemp .pytest_tmp_morning_fixes_20260815` and use that isolated path for subsequent full runs.
 - Cleanup target created by this task: `C:\boat_project\boatrace-analysis\.pytest_tmp_morning_fixes_20260815` only. It is generated pytest scratch data inside the canonical worktree; no source, report, cache, database, or production data is a deletion target.
 - Task 1 complete: `run_detail_phase()` now always executes tags, pages, and a final scoped integrity check. Phase success depends on page generation plus final cache/data integrity with `--warnings-ok`, so new-motor all-zero/history-not-established warnings remain persisted without opening the circuit, while actual cache gaps still fail. Focused tests passed 20/20; full suite passed 651/651.
+- Task 1 local commit: `355b597` (`Keep detail prewarm running through motor warnings`).
+- Task 2 complete: the lite daytime path checks current-version race-detail page coverage using `RACE_DETAIL_PAGE_CACHE_VERSION`. Below 50% it runs bounded tags then pages prewarm under the shared `record_task_run`/`task_success_exists` path; sufficient coverage or an existing same-day success avoids duplicate work. Focused tests passed 53/53; full suite passed 655/655.
 
 ## Active task (2026-08-13 production login outage investigation)
 
