@@ -360,3 +360,15 @@ def test_attach_race_detail_display_facts_skips_db_when_preds_are_already_comple
     web_app._attach_race_detail_display_facts("20260804-01-01", preds)
 
     assert preds[0]["national_course_top3_rate"] == 71.4
+
+
+def test_race_detail_serves_stale_cache_for_today_instead_of_live_recompute():
+    """今日のレース詳細でも、fresh(180秒)が切れたら stale を即返し、
+    13秒のライブ再計算をさせないこと (「レース詳細が開けない」対策)。"""
+    source = APP_SOURCE.read_text(encoding="utf-8")
+    start = source.index("def race_detail(race_id: str):")
+    end = source.index("@app.route", start)
+    route = source[start:end]
+    # fresh miss + today のときに stale フォールバックする分岐
+    assert "if not cached_html and use_fresh_page_cache:" in route
+    assert "race_detail stale-cache served" in route

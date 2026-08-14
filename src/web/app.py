@@ -6992,6 +6992,18 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 if use_fresh_page_cache
                 else _read_page_html_cache_stale(page_cache_key)
             )
+            if not cached_html and use_fresh_page_cache:
+                # 今日のページでも、期限切れ(180秒超)キャッシュがあれば 13 秒の
+                # ライブ再計算をさせず stale を即返す。「レース詳細が開けない」
+                # (毎回13秒) の対策。prewarm/背景ジョブが随時 fresh に更新する。
+                cached_html = _read_page_html_cache_stale(page_cache_key)
+                if cached_html:
+                    logger.info(
+                        "race_detail stale-cache served race_id=%s elapsed=%.3fs",
+                        race_id,
+                        time.perf_counter() - started_at,
+                    )
+                    return cached_html
             if cached_html:
                 logger.info(
                     "race_detail page-cache hit race_id=%s elapsed=%.3fs",
