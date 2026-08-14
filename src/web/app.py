@@ -1534,6 +1534,113 @@ def _signal_eval_failure_rows(
     ]
 
 
+# === 遅いリクエストの記録 (現行犯逮捕) ======================================
+# 「たまにアクセスすると固まる」の原因特定用。閾値 (デフォルト 3 秒) を超えた
+# リクエストをプロセス内バッファに集め、60 秒に 1 回だけ system_status へ
+# merge して書き出す (DB 渋滞が原因のときに記録自体が渋滞へ加担しないため)。
+SLOW_REQUEST_CHECK = "slow_request"
+_SLOW_REQUEST_KEEP = 20          # system_status に残す当日の遅いリクエスト上位件数
+_SLOW_REQUEST_BUFFER_MAX = 100   # プロセス内バッファ上限
+_SLOW_REQUEST_FLUSH_INTERVAL_SEC = 60.0
+_SLOW_REQUESTS: list[dict[str, Any]] = []
+_slow_requests_lock = threading.Lock()
+_slow_requests_last_flush = 0.0
+
+
+def _slow_request_threshold_ms() -> float:
+    try:
+        return float(os.environ.get("BOATRACE_SLOW_REQUEST_MS", "3000"))
+    except (TypeError, ValueError):
+        return 3000.0
+
+
+def _record_slow_request(entry: dict[str, Any]) -> None:
+    """遅いリクエストをバッファし、間隔を空けて system_status へ書き出す。
+
+    決して例外を外へ出さない。DB へ書けない場合もリクエスト処理は続行する。
+    """
+    global _slow_requests_last_flush
+    now = time.monotonic()
+    with _slow_requests_lock:
+        if len(_SLOW_REQUESTS) < _SLOW_REQUEST_BUFFER_MAX:
+            _SLOW_REQUESTS.append(entry)
+        due = (now - _slow_requests_last_flush) >= _SLOW_REQUEST_FLUSH_INTERVAL_SEC
+        if due:
+            _slow_requests_last_flush = now
+            pending = list(_SLOW_REQUESTS)
+            _SLOW_REQUESTS.clear()
+        else:
+            pending = []
+    if pending:
+        _flush_slow_requests(pending)
+
+
+def _flush_slow_requests(pending: list[dict[str, Any]]) -> None:
+    day = str(pending[-1].get("date") or _today_jst_iso())
+    now_iso = _now_jst().isoformat(timespec="seconds")
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT detail_json FROM system_status WHERE check_name=? AND check_date=?",
+                (SLOW_REQUEST_CHECK, day),
+            ).fetchone()
+            count = 0
+            requests_kept: list[dict[str, Any]] = []
+            if row:
+                detail = _safe_json_loads(row[0])
+                if isinstance(detail, dict):
+                    count = int(detail.get("count") or 0)
+                    if isinstance(detail.get("requests"), list):
+                        requests_kept = [r for r in detail["requests"] if isinstance(r, dict)]
+            count += len(pending)
+            requests_kept.extend(pending)
+            requests_kept.sort(key=lambda r: float(r.get("elapsed_ms") or 0), reverse=True)
+            requests_kept = requests_kept[:_SLOW_REQUEST_KEEP]
+            worst = requests_kept[0] if requests_kept else {}
+            message = (
+                f"遅いリクエスト {count}件 "
+                f"(最遅 {worst.get('path', '-')}: {float(worst.get('elapsed_ms') or 0)/1000:.1f}秒)"
+            )
+            payload = json.dumps(
+                {"count": count, "requests": requests_kept},
+                ensure_ascii=False,
+                default=str,
+            )
+            if row:
+                conn.execute(
+                    """
+                    UPDATE system_status
+                       SET status=?, message=?, detail_json=?, checked_at=?
+                     WHERE check_name=? AND check_date=?
+                    """,
+                    ("warning", message, payload, now_iso, SLOW_REQUEST_CHECK, day),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO system_status
+                        (check_name, check_date, status, message, detail_json, checked_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (SLOW_REQUEST_CHECK, day, "warning", message, payload, now_iso),
+                )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("slow request flush failed: %s", exc)
+
+
+def _slow_request_rows(slow_check: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    """admin 表示用: system_status の記録とプロセス内バッファを merge。"""
+    rows: list[dict[str, Any]] = []
+    detail = (slow_check or {}).get("detail_json") or {}
+    if isinstance(detail, dict) and isinstance(detail.get("requests"), list):
+        rows = [r for r in detail["requests"] if isinstance(r, dict)]
+    with _slow_requests_lock:
+        rows = rows + list(_SLOW_REQUESTS)
+    rows.sort(key=lambda r: float(r.get("elapsed_ms") or 0), reverse=True)
+    return rows[:_SLOW_REQUEST_KEEP]
+
+
 # === cron スケジュール表記 (P0-2 タスク4) ===================================
 # render.yaml が正。表記はここ 1 箇所に集約し、複数行へのコピペを避ける。
 _CRON_SCHEDULE_LABELS: dict[str, str] = {
@@ -1665,6 +1772,7 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         maintenance_check = _load_system_status_exact(conn, "maintenance_window", target_date)
         bootstrap_check = _load_system_status_exact(conn, "program_source_bootstrap", target_date)
         signal_eval_check = _load_system_status_exact(conn, SIGNAL_EVAL_FAILURE_CHECK, target_date)
+        slow_request_check = _load_system_status_exact(conn, SLOW_REQUEST_CHECK, target_date)
 
     items: list[dict[str, Any]] = []
 
@@ -1832,6 +1940,7 @@ def _admin_data_status_snapshot(target_date: str) -> dict[str, Any]:
         "summary": summary,
         # 戦略評価エラー (P0-2 タスク1): 当日の失敗戦略名・件数・最終エラー
         "signal_eval_failures": _signal_eval_failure_rows(signal_eval_check, target_date),
+        "slow_requests": _slow_request_rows(slow_request_check),
         "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
     }
 
@@ -5823,11 +5932,46 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.before_request
     def start_response_profile():
+        # 経過時間は常時計測する (遅いリクエストの現行犯記録に使う)。
+        # SQL 内訳の計測は従来どおり BOATRACE_PROFILE_HTTP で opt-in。
+        g._boatrace_request_started_at = time.perf_counter()
         if not _is_response_profiling_enabled():
             return
-        g._boatrace_request_started_at = time.perf_counter()
         g._boatrace_sql_query_count = 0
         g._boatrace_sql_time_ms = 0.0
+
+    @app.after_request
+    def record_slow_request_hook(response):
+        started = getattr(g, "_boatrace_request_started_at", None)
+        if started is None:
+            return response
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        if elapsed_ms < _slow_request_threshold_ms():
+            return response
+        path = request.path
+        if path == "/healthz" or path.startswith("/static/"):
+            return response
+        try:
+            entry = {
+                "at": _now_jst().isoformat(timespec="seconds"),
+                "date": _today_jst_iso(),
+                "method": request.method,
+                "path": path,
+                "query": (request.query_string or b"").decode("utf-8", "replace")[:120],
+                "status": int(response.status_code),
+                "elapsed_ms": round(elapsed_ms, 1),
+                "db_queries": int(getattr(g, "_boatrace_sql_query_count", 0) or 0),
+                "db_time_ms": round(float(getattr(g, "_boatrace_sql_time_ms", 0.0) or 0.0), 1),
+            }
+            logger.warning(
+                "slow request: %s %s %.1fms (db %.1fms/%d queries)",
+                entry["method"], path, elapsed_ms,
+                entry["db_time_ms"], entry["db_queries"],
+            )
+            _record_slow_request(entry)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("slow request record failed: %s", exc)
+        return response
 
     # ===== gzip 圧縮 (速度改善: HTML を 70-80% 圧縮) =====
     @app.after_request

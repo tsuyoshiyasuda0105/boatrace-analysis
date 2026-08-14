@@ -158,6 +158,35 @@
         <p class="health-description">なし (当日の戦略評価エラーは記録されていません)</p>
         {% endif %}
       </article>
+
+      <article class="health-strategy-card status-{{ 'warning' if snapshot.slow_requests else 'healthy' }}">
+        <header class="health-card-header">
+          <h3>遅いリクエスト</h3>
+          <span class="health-status-pill status-{{ 'warning' if snapshot.slow_requests else 'healthy' }}">
+            {{ '注意' if snapshot.slow_requests else '正常' }}
+          </span>
+        </header>
+        <p class="health-description">
+          応答に {{ '3秒' }}以上かかったリクエスト (対象日: {{ snapshot.target_date }}、遅い順上位)。
+          「たまに固まる」の原因特定用の現行犯記録です。
+        </p>
+        {% if snapshot.slow_requests %}
+        <div class="health-reasons">
+          <ul>
+            {% for r in snapshot.slow_requests %}
+            <li>
+              <strong>{{ r.path }}</strong>{% if r.query %}?{{ r.query }}{% endif %}
+              : {{ '%.1f'|format((r.elapsed_ms or 0) / 1000) }}秒
+              {% if r.db_queries %} (DB {{ '%.1f'|format((r.db_time_ms or 0) / 1000) }}秒 / {{ r.db_queries }}クエリ){% endif %}
+              {% if r.at %} — {{ r.at }}{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% else %}
+        <p class="health-description">なし (当日の遅いリクエストは記録されていません)</p>
+        {% endif %}
+      </article>
     </section>
 
     <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
