@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -47,6 +48,80 @@ def _coerce_jst_naive(value) -> datetime | None:
 
 # boatrace.jp 結果ページ URL
 RESULT_URL = "https://www.boatrace.jp/owpc/pc/race/raceresult?rno={rno}&jcd={jcd:02d}&hd={date}"
+
+# 決まり手バックフィルの 1 レースあたり再試行上限。
+# パーサーが決まり手を返せないページ (欠場成立レース等) を 5 分毎の cron が
+# 24 時間再取得し続けるのを防ぐ (P0-3 止血)。上限到達後は当日対象から除外。
+KIMARITE_MAX_ATTEMPTS = 5
+_KIMARITE_ATTEMPT_KEY = "kimarite_retry:{race_id}"
+
+
+def _ensure_attempt_table(conn) -> None:
+    """page_html_cache (汎用 KV) が無いローカル/テスト DB でも動くようにする。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS page_html_cache (
+            cache_key TEXT PRIMARY KEY,
+            html TEXT NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+
+
+def _kimarite_attempt_counts(conn, race_ids: list[str]) -> dict[str, int]:
+    """決まり手バックフィルの試行回数を page_html_cache から読む。
+
+    読めない場合は {} を返す (フィルタ無し = 従来動作)。上限判定は
+    best-effort だが、記録側が動いていれば有限回で収束する。
+    """
+    if not race_ids:
+        return {}
+    try:
+        _ensure_attempt_table(conn)
+        placeholders = ",".join("?" for _ in race_ids)
+        rows = conn.execute(
+            f"SELECT cache_key, html FROM page_html_cache WHERE cache_key IN ({placeholders})",
+            tuple(_KIMARITE_ATTEMPT_KEY.format(race_id=rid) for rid in race_ids),
+        ).fetchall()
+        counts: dict[str, int] = {}
+        for cache_key, raw in rows:
+            rid = str(cache_key).split(":", 1)[1]
+            try:
+                counts[rid] = int(str(raw).strip() or 0)
+            except (TypeError, ValueError):
+                counts[rid] = 0
+        return counts
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kimarite attempt count read failed: %s", exc)
+        return {}
+
+
+def _record_kimarite_attempt(conn, race_id: str) -> None:
+    """決まり手が取れなかった試行を 1 回分カウントアップ (best-effort)。"""
+    try:
+        _ensure_attempt_table(conn)
+        key = _KIMARITE_ATTEMPT_KEY.format(race_id=race_id)
+        row = conn.execute(
+            "SELECT html FROM page_html_cache WHERE cache_key = ?", (key,)
+        ).fetchone()
+        try:
+            current = int(str(row[0]).strip() or 0) if row else 0
+        except (TypeError, ValueError):
+            current = 0
+        conn.execute(
+            """
+            INSERT INTO page_html_cache (cache_key, html, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                html = excluded.html,
+                updated_at = excluded.updated_at
+            """,
+            (key, str(current + 1), time.time()),
+        )
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kimarite attempt record failed for %s: %s", race_id, exc)
 
 
 def _market_signal_candidate_ids(conn, target_date: date) -> set[str]:
@@ -195,6 +270,7 @@ def scrape_results_for_pending_races(
     # の全レースを対象 = SG/G1/G2/G3 採用、F1 採用、一般戦観察 (gen_tri)、
     # L4-prime/12R 観察 全てカバー。
     l4_candidate_ids: set[str] = set()
+    candidate_lookup_failed = False
     if l4_only:
         EXCLUDE_B = (2, 4, 7, 8, 10, 19, 21, 24)
         try:
@@ -216,8 +292,14 @@ def scrape_results_for_pending_races(
             l4_candidate_ids.update(_market_signal_candidate_ids(conn, target_date))
             logger.info("L4 候補 (採用+観察) for %s: %d races", target_date, len(l4_candidate_ids))
         except Exception as e:
-            logger.warning("L4 candidate lookup failed (%s) → falling back to all races", e)
-            l4_only = False  # safety net
+            # fail-closed (P0-3): 候補が特定できないパスでは対象を広げない。
+            # 以前はここで l4_only=False (全レース取得) にフォールバックしており、
+            # DB 不調時ほど boatrace.jp へのリクエストが激増していた。
+            candidate_lookup_failed = True
+            logger.warning(
+                "L4 candidate lookup failed (%s) → fail-closed: "
+                "skipping non-candidate races this pass", e
+            )
 
     # === 締切から 5 分以上経過し、まだ race_payouts (trifecta) が無いレース ===
     cur = conn.execute(
@@ -246,6 +328,9 @@ def scrape_results_for_pending_races(
             continue
         # 現時刻より 24h 以上前のものは別途バッチ処理で扱うのでスキップ
         if now > close_dt + timedelta(hours=24):
+            continue
+        # fail-closed: 候補特定に失敗したパスでは候補以外を一切取得しない
+        if candidate_lookup_failed and race_id not in l4_candidate_ids:
             continue
         if (
             l4_only
@@ -276,8 +361,16 @@ def scrape_results_for_pending_races(
         (target_date.isoformat(),),
     )
     seen = set(pending)
-    for race_id, closed_at in cur.fetchall():
+    kimarite_rows = cur.fetchall()
+    kimarite_attempts = _kimarite_attempt_counts(
+        conn, [race_id for race_id, _ in kimarite_rows]
+    )
+    kimarite_targets: set[str] = set()
+    for race_id, closed_at in kimarite_rows:
         if race_id in seen:
+            continue
+        # 再試行上限 (P0-3): 決まり手が取れないレースを永久に再取得しない
+        if kimarite_attempts.get(race_id, 0) >= KIMARITE_MAX_ATTEMPTS:
             continue
         close_dt = _coerce_jst_naive(closed_at)
         if close_dt is None:
@@ -285,6 +378,8 @@ def scrape_results_for_pending_races(
         if now < close_dt + timedelta(minutes=5):
             continue
         if now > close_dt + timedelta(hours=24):
+            continue
+        if candidate_lookup_failed and race_id not in l4_candidate_ids:
             continue
         if (
             l4_only
@@ -294,6 +389,7 @@ def scrape_results_for_pending_races(
             continue
         pending.append(race_id)
         seen.add(race_id)
+        kimarite_targets.add(race_id)
 
     if l4_only:
         candidates = [race_id for race_id in pending if race_id in l4_candidate_ids]
@@ -335,8 +431,16 @@ def scrape_results_for_pending_races(
                             race_id, len(payload["payouts"].get("trifecta", [])))
             else:
                 failed.append(race_id)
+            # 決まり手バックフィル対象で決まり手が得られなかった場合のみカウント。
+            # 上限 (KIMARITE_MAX_ATTEMPTS) 到達で当日の再取得対象から外れる。
+            if race_id in kimarite_targets and (
+                not payload or not payload.get("race_kimarite")
+            ):
+                _record_kimarite_attempt(conn, race_id)
         except Exception as e:
             failed.append(race_id)
+            if race_id in kimarite_targets:
+                _record_kimarite_attempt(conn, race_id)
             logger.warning("scrape failed for %s: %s", race_id, e)
 
     return {

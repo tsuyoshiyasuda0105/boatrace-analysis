@@ -76,17 +76,32 @@ def _upsert_parts(
     boat_number: int,
     parts: Iterable[str],
 ) -> int:
-    """1艇の部品交換情報を upsert（既存は全削除 → INSERT）"""
+    """1艇の部品交換情報を upsert（既存は全削除 → INSERT）。
+
+    P0-3 ガード: パース結果が空の場合は DELETE を行わずスキップする。
+    HTML 構造変化などでパーサーが空を返したとき、既存の正常データを
+    空で上書きして再取得ループを誘発するのを防ぐ。
+    """
+    rows = [(race_id, boat_number, p) for p in dict.fromkeys(parts)]
+    if not rows:
+        existing = conn.execute(
+            "SELECT COUNT(*) FROM race_parts WHERE race_id = ? AND boat_number = ?",
+            (race_id, boat_number),
+        ).fetchone()
+        if existing and existing[0]:
+            logger.warning(
+                "parts parse returned empty for %s boat %d; keeping %d existing rows",
+                race_id, boat_number, existing[0],
+            )
+        return 0
     conn.execute(
         "DELETE FROM race_parts WHERE race_id = ? AND boat_number = ?",
         (race_id, boat_number),
     )
-    rows = [(race_id, boat_number, p) for p in dict.fromkeys(parts)]
-    if rows:
-        conn.executemany(
-            "INSERT INTO race_parts (race_id, boat_number, part_code) VALUES (?, ?, ?)",
-            rows,
-        )
+    conn.executemany(
+        "INSERT INTO race_parts (race_id, boat_number, part_code) VALUES (?, ?, ?)",
+        rows,
+    )
     return len(rows)
 
 

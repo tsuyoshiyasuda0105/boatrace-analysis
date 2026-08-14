@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-import time
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -21,11 +20,15 @@ from typing import Optional
 import requests
 
 import config
+from src.collectors._http import _rate_limit_host, _wait_interval
 
 logger = logging.getLogger(__name__)
 
 SEVEN_ZIP = Path(r"C:\Program Files\7-Zip\7z.exe")
-DOWNLOAD_INTERVAL = 1.5  # 秒、サーバ負荷軽減
+# ダウンロード間隔は _http.py の共有リミッタ (REQUEST_INTERVAL_SECONDS = 2.0s)
+# に一本化 (P0-3)。fetch_range の interval_seconds 引数は後方互換のため残すが
+# 追加 sleep には使わない。
+DOWNLOAD_INTERVAL = 0.0
 
 
 def _file_url(kind: str, target_date: date) -> str:
@@ -53,6 +56,9 @@ def download_lzh(kind: str, target_date: date, force: bool = False) -> Optional[
     if out.exists() and not force:
         return out
     url = _file_url(kind, target_date)
+    # 共有レートリミッタ経由 (mbrace.or.jp 単位)。fetch_one / download_lzh の
+    # 直呼びでも間隔制御が効くよう、リクエスト直前で必ず待つ (P0-3)。
+    _wait_interval(_rate_limit_host(url))
     try:
         resp = requests.get(
             url,
@@ -174,7 +180,7 @@ def fetch_range(kind: str, start: date, end: date,
             continue
         if not already:
             summary["downloaded"] += 1
-            time.sleep(interval_seconds)
+            # 間隔制御は download_lzh 内の共有リミッタに一本化 (独自 sleep 廃止)
         txt = extract_txt(path)
         if txt:
             summary["extracted"] += 1

@@ -21,6 +21,10 @@ ZEN_TO_HALF = {
     "１": 1, "２": 2, "３": 3, "４": 4, "５": 5, "６": 6,
 }
 
+# 公式の決まり手 6 種。これ以外の文字列は誤検出とみなして採用しない。
+# 「まくり差し」は「まくり」「差し」を含むため、最長一致になるよう先頭に置く。
+KIMARITE_VALUES = ("まくり差し", "まくり", "逃げ", "差し", "抜き", "恵まれ")
+
 # boatrace.jp 表記 → Open API bet_type 名 (race_payouts.bet_type に保存される名前)
 BET_TYPE_MAP = {
     "3連単": "trifecta",
@@ -43,6 +47,43 @@ def _parse_int(s: str) -> Optional[int]:
 def _normalize_combination(s: str) -> str:
     """boatrace.jp の '1-3-2' / '1=2=3' をそのまま返す (Open API 互換)。"""
     return re.sub(r"\s+", "", s)
+
+
+def parse_kimarite(soup: BeautifulSoup) -> Optional[str]:
+    """結果ページから決まり手 (逃げ/差し/まくり/まくり差し/抜き/恵まれ) を抽出。
+
+    boatrace.jp の raceresult ページでは、以下のような小テーブルで表示される:
+
+        <table class="is-w243 h-mt10">
+          <thead><tr><th>決まり手</th></tr></thead>
+          <tbody><tr><td>逃げ</td></tr></tbody>
+        </table>
+
+    安全弁: どんな HTML でも例外を投げず、確実に抽出できた場合のみ
+    KIMARITE_VALUES のいずれかを返す。それ以外は None。
+    """
+    try:
+        for t in soup.find_all("table"):
+            thead = t.find("thead")
+            if not thead or "決まり手" not in thead.get_text():
+                continue
+            body = t.find("tbody") or t
+            for cell in body.find_all("td"):
+                text = cell.get_text(strip=True)
+                for value in KIMARITE_VALUES:
+                    if text == value:
+                        return value
+        # フォールバック: テーブル構造が変わった場合はテキスト近傍から抽出
+        page_text = soup.get_text(" ", strip=True)
+        m = re.search(
+            r"決まり手\s*(" + "|".join(KIMARITE_VALUES) + r")",
+            page_text,
+        )
+        if m:
+            return m.group(1)
+    except Exception as exc:  # noqa: BLE001 — パース失敗でも結果取得全体は続行
+        logger.warning("kimarite parse failed: %s", exc)
+    return None
 
 
 def parse_result_html(html: str) -> Optional[dict]:
@@ -197,6 +238,6 @@ def parse_result_html(html: str) -> Optional[dict]:
     return {
         "boats": boats,
         "payouts": payouts,
-        "race_kimarite": None,
+        "race_kimarite": parse_kimarite(soup),
         "weather": weather,
     }
