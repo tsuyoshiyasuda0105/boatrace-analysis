@@ -1,6 +1,13 @@
 """Pure market-signal evaluators extracted from the web application."""
 
 
+def _evaluate_l4_general_200(stadium, grade, cls, natl_1=None,
+                             boat2_top2=None, boat2_exhibition_time=None,
+                             boat3_exhibition_time=None, ex_st=None):
+    """Retired L4 general-race watch; kept as a no-op compatibility hook."""
+    return None
+
+
 def _compute_tetsuban(base: dict, race_no: int) -> tuple[int, str]:
     """鉄板度スコア (1-6) と表示ラベルを計算 (backlog item 11)。
 

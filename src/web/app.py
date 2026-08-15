@@ -90,7 +90,11 @@ from src.evaluation.accident_dent_strategy import (
     iter_backtest_matches as iter_accident_dent_backtest_matches,
     live_matches as load_accident_dent_live_matches,
 )
-from src.strategies.signals import _compute_tetsuban, _detect_niche_signals
+from src.strategies.signals import (
+    _compute_tetsuban,
+    _detect_niche_signals,
+    _evaluate_l4_general_200,
+)
 from src.web.auth import (
     admin_required, current_auth_provider, current_role, is_admin, is_member,
     is_supabase_auth_enabled, login_required, member_only_api, register_auth_routes,
@@ -9804,12 +9808,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 base["tetsuban_label"] = "強監視 5★"
             return base
 
-
-        def _evaluate_l4_general_200(stadium, grade, cls, natl_1=None,
-                                     boat2_top2=None, boat2_exhibition_time=None,
-                                     boat3_exhibition_time=None, ex_st=None):
-            """Retired L4 general-race watch; kept as a no-op compatibility hook."""
-            return None
 
         def _apply_l4_general_200(base, general200):
             if not general200:

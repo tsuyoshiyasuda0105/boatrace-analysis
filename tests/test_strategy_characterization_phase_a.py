@@ -15,7 +15,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.strategies.signals import _compute_tetsuban, _detect_niche_signals
+from src.strategies.signals import (
+    _compute_tetsuban,
+    _detect_niche_signals,
+    _evaluate_l4_general_200,
+)
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "web" / "app.py"
@@ -288,9 +292,7 @@ def test_tetsuban_score_compresses_all_current_bonuses_to_five_stars():
 
 
 def test_retired_general200_evaluator_remains_a_noop():
-    evaluate = _load_local_function("_evaluate_l4_general_200")
-
-    assert evaluate(1, 5, 1, 7.5, 45.0, 6.70, 6.80, 0.10) is None
+    assert _evaluate_l4_general_200(1, 5, 1, 7.5, 45.0, 6.70, 6.80, 0.10) is None
 
 
 def test_niche_signal_exact_ultra_output():

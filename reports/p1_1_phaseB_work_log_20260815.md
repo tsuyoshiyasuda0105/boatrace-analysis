@@ -36,3 +36,12 @@
 - `src/web/app.py` は同名関数をモジュールimportし、既存呼び出し引数 `(base, rn)` は変更なし。
 - 閉包依存: なし。
 - Phase Aテストは呼び出し元だけを新モジュールimportへ変更。golden期待値は不変。
+- コミット: `d3b632e`。
+- コミット後全テスト: `687 passed`。
+
+### `_evaluate_l4_general_200`
+
+- 互換用の常時 `None` evaluatorを本体そのままで `src/strategies/signals.py` に移動。
+- `src/web/app.py` は同名関数をモジュールimport。現行app内に呼び出しはなく、互換hookの公開位置だけを置換。
+- 閉包依存: なし。
+- Phase Aテストは呼び出し元だけを新モジュールimportへ変更。golden期待値は不変。
