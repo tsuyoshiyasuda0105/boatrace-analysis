@@ -38,6 +38,15 @@ class _FakePool:
         return {"pool_size": 1, "pool_available": 0}
 
 
+class _ClosablePool(_FakePool):
+    def __init__(self):
+        super().__init__()
+        self.closed = 0
+
+    def close(self):
+        self.closed += 1
+
+
 def test_pg_connection_returns_connection_to_pool_once(monkeypatch):
     pool = _FakePool()
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
@@ -98,6 +107,191 @@ def test_pg_pool_default_has_headroom_for_nested_web_queries():
     assert 'os.getenv("BOATRACE_DB_POOL_MIN_SIZE", str(default_min_size))' in source
     assert 'os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)' in source
     assert 'os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5")' in source
+
+
+def test_web_pool_has_finite_wait_queue_matching_configured_max(monkeypatch):
+    import psycopg_pool
+
+    captured = {}
+
+    class _CapturingPool:
+        check_connection = object()
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setenv("BOATRACE_DB_POOL_SIZE", "8")
+    monkeypatch.delenv("BOATRACE_DB_POOL_MAX_WAITING", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", None)
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _CapturingPool)
+
+    connection._get_pg_pool("postgresql://unused")
+
+    assert captured["max_size"] == 8
+    assert captured["max_waiting"] == 8
+
+
+def test_web_pool_zero_max_waiting_cannot_restore_unbounded_queue(monkeypatch):
+    import psycopg_pool
+
+    captured = {}
+
+    class _CapturingPool:
+        check_connection = object()
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setenv("BOATRACE_DB_POOL_MAX_WAITING", "0")
+    monkeypatch.setattr(connection, "_PG_POOL", None)
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _CapturingPool)
+
+    connection._get_pg_pool("postgresql://unused")
+
+    assert captured["max_waiting"] == 1
+
+
+def test_cron_pool_configuration_keeps_wait_queue_unbounded(monkeypatch):
+    import psycopg_pool
+
+    captured = {}
+
+    class _CapturingPool:
+        check_connection = object()
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-cron")
+    monkeypatch.delenv("BOATRACE_DB_POOL_MAX_WAITING", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", None)
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _CapturingPool)
+
+    connection._get_pg_pool("postgresql://unused")
+
+    assert captured["max_waiting"] == 0
+
+
+def test_pool_queue_overflow_is_transient():
+    from psycopg_pool import TooManyRequests
+
+    assert connection.is_transient_db_error(TooManyRequests("queue is full"))
+
+
+def test_pool_queue_overflow_fails_immediately_without_retry_sleep(monkeypatch):
+    from psycopg_pool import TooManyRequests
+
+    class _FullQueuePool(_FakePool):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def getconn(self):
+            self.calls += 1
+            raise TooManyRequests("queue is full")
+
+    pool = _FullQueuePool()
+    sleeps = []
+    monkeypatch.setattr(connection.time, "sleep", sleeps.append)
+
+    try:
+        connection._acquire_pg_connection(
+            "postgresql://unused", direct=False, pool=pool
+        )
+    except TooManyRequests:
+        pass
+    else:
+        raise AssertionError("a full wait queue must fail immediately")
+
+    assert pool.calls == 1
+    assert sleeps == []
+
+
+def test_watchdog_rebuilds_only_after_sustained_failed_exhaustion(monkeypatch):
+    pool = _ClosablePool()
+    stats = {"pool_available": 0, "requests_waiting": 8}
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", None)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 0)
+    monkeypatch.setattr(connection, "_PG_POOL_LAST_REBUILD_AT", None)
+
+    assert not connection._maybe_rebuild_exhausted_pg_pool(
+        pool, stats, now=100.0, exhaustion_sec=90.0, cooldown_sec=60.0
+    )
+    assert not connection._maybe_rebuild_exhausted_pg_pool(
+        pool, stats, now=189.9, exhaustion_sec=90.0, cooldown_sec=60.0
+    )
+    assert connection._maybe_rebuild_exhausted_pg_pool(
+        pool, stats, now=190.0, exhaustion_sec=90.0, cooldown_sec=60.0
+    )
+    assert connection._PG_POOL is None
+    assert pool.closed == 1
+
+
+def test_watchdog_does_not_rebuild_for_momentary_saturation(monkeypatch):
+    pool = _ClosablePool()
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", None)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 0)
+    monkeypatch.setattr(connection, "_PG_POOL_LAST_REBUILD_AT", None)
+
+    assert not connection._maybe_rebuild_exhausted_pg_pool(
+        pool,
+        {"pool_available": 0, "requests_waiting": 3},
+        now=100.0,
+        exhaustion_sec=90.0,
+        cooldown_sec=60.0,
+    )
+    connection._note_pg_pool_checkout_success(pool)
+    assert not connection._maybe_rebuild_exhausted_pg_pool(
+        pool,
+        {"pool_available": 0, "requests_waiting": 2},
+        now=300.0,
+        exhaustion_sec=90.0,
+        cooldown_sec=60.0,
+    )
+    assert connection._PG_POOL is pool
+    assert pool.closed == 0
+
+
+def test_watchdog_respects_rebuild_cooldown(monkeypatch):
+    pool = _ClosablePool()
+    stats = {"pool_available": 0, "requests_waiting": 4}
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 200.0)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 1)
+    monkeypatch.setattr(connection, "_PG_POOL_LAST_REBUILD_AT", 190.0)
+
+    assert not connection._maybe_rebuild_exhausted_pg_pool(
+        pool, stats, now=220.0, exhaustion_sec=10.0, cooldown_sec=60.0
+    )
+    assert connection._maybe_rebuild_exhausted_pg_pool(
+        pool, stats, now=250.0, exhaustion_sec=10.0, cooldown_sec=60.0
+    )
+    assert pool.closed == 1
+
+
+def test_watchdog_is_disabled_for_cron_processes(monkeypatch):
+    pool = _ClosablePool()
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-cron")
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 0.0)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 9)
+
+    assert not connection._maybe_rebuild_exhausted_pg_pool(
+        pool,
+        {"pool_available": 0, "requests_waiting": 99},
+        now=999.0,
+        exhaustion_sec=1.0,
+        cooldown_sec=0.0,
+    )
+    assert connection._PG_POOL is pool
+    assert pool.closed == 0
 
 
 def test_pg_pool_checkout_failure_logs_non_secret_stats(monkeypatch, caplog):

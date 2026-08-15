@@ -32,10 +32,15 @@ logger = logging.getLogger(__name__)
 _PG_POOL = None
 _PG_POOL_LOCK = threading.Lock()
 _TRANSIENT_DB_RETRY_STATE = threading.local()
+_PG_POOL_EXHAUSTED_SINCE = None
+_PG_POOL_EXHAUSTION_FAILURES = 0
+_PG_POOL_LAST_REBUILD_AT = None
 
 _DEFAULT_CONNECT_RETRY_DELAYS = (0.2, 0.5)
 _MAX_CONNECT_RETRIES = 2
 _MAX_CONNECT_RETRY_DELAY_SEC = 0.5
+_DEFAULT_POOL_EXHAUSTION_SEC = 90.0
+_DEFAULT_POOL_REBUILD_COOLDOWN_SEC = 60.0
 
 
 def _sqlstate_from_exception(exc: BaseException) -> str:
@@ -63,9 +68,9 @@ def is_transient_db_error(exc: BaseException) -> bool:
         if state.startswith("08") or state in {"57P01", "57P02", "57P03"}:
             return True
         try:
-            from psycopg_pool import PoolTimeout
+            from psycopg_pool import PoolTimeout, TooManyRequests
 
-            if isinstance(current, PoolTimeout):
+            if isinstance(current, (PoolTimeout, TooManyRequests)):
                 return True
         except (ImportError, TypeError):
             pass
@@ -90,6 +95,15 @@ def is_transient_db_error(exc: BaseException) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+def _is_pool_queue_overflow(exc: BaseException) -> bool:
+    try:
+        from psycopg_pool import TooManyRequests
+
+        return isinstance(exc, TooManyRequests)
+    except (ImportError, TypeError):
+        return False
 
 
 def _connect_retry_delays() -> tuple[float, ...]:
@@ -126,9 +140,19 @@ def _acquire_pg_connection(dsn: str, *, direct: bool, pool=None):
     _TRANSIENT_DB_RETRY_STATE.event = None
     for attempt in range(len(delays) + 1):
         try:
-            return _open_direct_pg_connection(dsn) if direct else pool.getconn()
+            conn = _open_direct_pg_connection(dsn) if direct else pool.getconn()
+            if not direct:
+                _note_pg_pool_checkout_success(pool)
+            return conn
         except Exception as exc:
-            if not is_transient_db_error(exc) or attempt >= len(delays):
+            # max_waiting is the fail-fast boundary. Do not turn an immediate
+            # queue rejection into the normal connection retry backoff; the Web
+            # fallback layer should receive it immediately.
+            if (
+                _is_pool_queue_overflow(exc)
+                or not is_transient_db_error(exc)
+                or attempt >= len(delays)
+            ):
                 raise
             delay = delays[attempt]
             _TRANSIENT_DB_RETRY_STATE.event = {
@@ -145,6 +169,120 @@ def _acquire_pg_connection(dsn: str, *, direct: bool, pool=None):
                 type(exc).__name__,
             )
             time.sleep(delay)
+
+
+def _pool_watchdog_seconds(env_name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(env_name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    # A bad production setting must not turn a momentary saturation into a
+    # rebuild loop. Tests pass explicit durations to the watchdog helper.
+    return max(30.0, value)
+
+
+def _note_pg_pool_checkout_success(pool) -> None:
+    """Clear a pending exhaustion window after any successful checkout."""
+    global _PG_POOL_EXHAUSTED_SINCE, _PG_POOL_EXHAUSTION_FAILURES
+    with _PG_POOL_LOCK:
+        if _PG_POOL is pool:
+            _PG_POOL_EXHAUSTED_SINCE = None
+            _PG_POOL_EXHAUSTION_FAILURES = 0
+
+
+def _maybe_rebuild_exhausted_pg_pool(
+    pool,
+    stats: dict[str, object],
+    *,
+    now: Optional[float] = None,
+    exhaustion_sec: Optional[float] = None,
+    cooldown_sec: Optional[float] = None,
+) -> bool:
+    """Retire a persistently exhausted Web pool after failed checkouts.
+
+    This is called only from the final checkout failure path. A rebuild needs
+    at least two failed observations, continuous zero availability with queued
+    callers, the configured duration, and an elapsed rebuild cooldown.
+    """
+    global _PG_POOL, _PG_POOL_EXHAUSTED_SINCE
+    global _PG_POOL_EXHAUSTION_FAILURES, _PG_POOL_LAST_REBUILD_AT
+
+    if os.getenv("BOATRACE_TASK_TRIGGER", "").strip():
+        return False
+    try:
+        available = int(stats.get("pool_available", -1))
+        waiting = int(stats.get("requests_waiting", 0))
+    except (TypeError, ValueError):
+        available, waiting = -1, 0
+    if available != 0 or waiting <= 0:
+        with _PG_POOL_LOCK:
+            if _PG_POOL is pool:
+                _PG_POOL_EXHAUSTED_SINCE = None
+                _PG_POOL_EXHAUSTION_FAILURES = 0
+        return False
+
+    observed_at = time.monotonic() if now is None else now
+    required_sec = (
+        _pool_watchdog_seconds(
+            "BOATRACE_DB_POOL_EXHAUSTION_SEC", _DEFAULT_POOL_EXHAUSTION_SEC
+        )
+        if exhaustion_sec is None
+        else max(0.0, exhaustion_sec)
+    )
+    required_cooldown = (
+        _pool_watchdog_seconds(
+            "BOATRACE_DB_POOL_REBUILD_COOLDOWN_SEC",
+            _DEFAULT_POOL_REBUILD_COOLDOWN_SEC,
+        )
+        if cooldown_sec is None
+        else max(0.0, cooldown_sec)
+    )
+
+    with _PG_POOL_LOCK:
+        if _PG_POOL is not pool:
+            return False
+        if _PG_POOL_EXHAUSTED_SINCE is None:
+            _PG_POOL_EXHAUSTED_SINCE = observed_at
+            _PG_POOL_EXHAUSTION_FAILURES = 1
+            logger.warning(
+                "postgres pool exhaustion detected; waiting=%d available=%d",
+                waiting,
+                available,
+            )
+            return False
+
+        _PG_POOL_EXHAUSTION_FAILURES += 1
+        exhausted_for = max(0.0, observed_at - _PG_POOL_EXHAUSTED_SINCE)
+        cooldown_elapsed = (
+            _PG_POOL_LAST_REBUILD_AT is None
+            or observed_at - _PG_POOL_LAST_REBUILD_AT >= required_cooldown
+        )
+        if (
+            _PG_POOL_EXHAUSTION_FAILURES < 2
+            or exhausted_for < required_sec
+            or not cooldown_elapsed
+        ):
+            return False
+
+        logger.error(
+            "rebuilding exhausted postgres pool; exhausted_sec=%.1f failures=%d "
+            "waiting=%d cooldown_sec=%.1f",
+            exhausted_for,
+            _PG_POOL_EXHAUSTION_FAILURES,
+            waiting,
+            required_cooldown,
+        )
+        _PG_POOL = None
+        _PG_POOL_EXHAUSTED_SINCE = None
+        _PG_POOL_EXHAUSTION_FAILURES = 0
+        _PG_POOL_LAST_REBUILD_AT = observed_at
+        try:
+            pool.close()
+        except Exception as exc:
+            logger.warning(
+                "retired postgres pool close failed; type=%s", type(exc).__name__
+            )
+        return True
 
 
 def _is_postgres_url(url: str) -> bool:
@@ -389,6 +527,19 @@ def _get_pg_pool(dsn: str):
             trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
             default_pool_size = "1" if trigger else "4"
             default_min_size = 0 if trigger else 1
+            max_size = max(
+                1,
+                int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),
+            )
+            default_max_waiting = "0" if trigger else str(max_size)
+            max_waiting = max(
+                0 if trigger else 1,
+                int(
+                    os.getenv(
+                        "BOATRACE_DB_POOL_MAX_WAITING", default_max_waiting
+                    )
+                ),
+            )
 
             _PG_POOL = ConnectionPool(
                 conninfo=dsn,
@@ -399,10 +550,8 @@ def _get_pg_pool(dsn: str):
                 # Supavisor has a finite client budget shared by web and cron
                 # processes. Reserve four Web connections while cron processes
                 # open at most one on demand and return to zero when idle.
-                max_size=max(
-                    1,
-                    int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),
-                ),
+                max_size=max_size,
+                max_waiting=max_waiting,
                 timeout=max(1, int(os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5"))),
                 max_lifetime=900,
                 max_idle=120,
@@ -453,6 +602,7 @@ class _PgConnection:
                 except Exception:
                     pass
                 logger.error("postgres pool checkout failed stats=%s", stats)
+                _maybe_rebuild_exhausted_pg_pool(self._pool, stats)
                 raise
         self._conn.autocommit = True
         self._kind = "postgres"
