@@ -101,9 +101,44 @@
 - `src/web/app.py` の旧定義位置で `partial(..., EXCLUDE_B_VENUES=EXCLUDE_B_VENUES)` として従来値を束縛。既存呼び出し引数・順序は変更なし。隣接watchとdaily側重複は未変更。
 - Phase Aテストは新モジュール関数へ同じ除外集合を明示注入。採用dict・除外境界のgolden期待値は不変。
 - 9関数すべてが新モジュールimportになったため、テスト専用ASTローダーを削除。
+- コミット: `1a5256e`。
+- コミット後全テスト: `687 passed`。
 
 ## 最終監査
 
 - フェーズA直前 `b3b8f54:src/web/app.py` と新 `src/strategies/signals.py` の関数本体をAST比較。
 - 初回比較で `_compute_tetsuban` と `_prefer_adopted_signal_over_general200` の複数行docstring内の字下げだけが不一致だった。ネスト解除に伴う `__doc__` の空白差も挙動差として扱い、旧文字列と完全一致する字下げへ復元。
 - 実行文のロジック差は検出されなかった。復元後に9関数すべての本体AST完全一致を再確認する。
+- docstring復元コミット: `74ea060`。
+- 復元後、9関数すべて `body_ast_equal=True`。同コミット後全テスト: `687 passed`。
+
+## app.py 差し替え
+
+- `src/web/app.py:93` 付近に `src.strategies.signals` の9関数importを追加。
+- `_detect_niche_signals`、`_compute_tetsuban`、`_evaluate_l4_general_200`、`_evaluate_candidate_134_signal`、`_prefer_adopted_signal_over_general200`、`_evaluate_g23_optb_signal` は同名importを既存呼び出しがそのまま利用。
+- `_pick_best_market_signal` は旧定義跡地（現 `src/web/app.py:9846` 付近）で `ACCIDENT_DENT_STRATEGIES` をpartial束縛。
+- `_allow_market_signal_with_female` は旧定義跡地（現 `src/web/app.py:9851` 付近）で `ROI_STRATEGY_KEYS` をpartial束縛。
+- `_evaluate_general_c_signal` は旧定義跡地（現 `src/web/app.py:10702` 付近）で `EXCLUDE_B_VENUES` をpartial束縛。
+- 呼び出し順、既存の位置引数・キーワード引数、返り値の利用方法は変更していない。
+
+## テスト・スコープ結果
+
+- Phase A特性化: 17/17 passed。期待dict・境界期待値の変更なし。
+- Phase Aの `assert ... == {期待dict}` 右辺5件を `b3b8f54` とAST比較し、全件一致。
+- 各関数コミット後（docstring完全一致の追補を含む）に全687件を実行し、最終状態は `687 passed`。
+- 最終AST監査: フェーズA直前 `b3b8f54` の旧9関数本体と新9関数本体がすべて一致。
+- 変更ファイルは `src/web/app.py`、`src/strategies/`、読込元を変えたPhase Aテスト、移設に追随したcourse-fit source-location assertion、作業ログ、handoffのみ。
+- 危険地帯のロジック、スキーマ、ROI数値、予測、`render.yaml`、cron、通知は未変更。push・deployなし。
+
+## 関数コミット一覧
+
+- `397dd1e` `_detect_niche_signals`
+- `d3b632e` `_compute_tetsuban`
+- `f6178dd` `_evaluate_l4_general_200`
+- `b720d41` `_evaluate_candidate_134_signal`
+- `2230eed` `_pick_best_market_signal`
+- `90b85c5` `_allow_market_signal_with_female`
+- `2bb8ea7` `_prefer_adopted_signal_over_general200`
+- `bf35137` `_evaluate_g23_optb_signal`
+- `1a5256e` `_evaluate_general_c_signal`
+- `74ea060` docstring値の完全一致追補
