@@ -2,6 +2,9 @@
 {% block title %}{{ target_date }} のレース一覧{% endblock %}
 {% block content %}
   <h2>{{ target_date }} のレース</h2>
+  {% if stale_data_notice %}
+  <p class="notice-box" role="status">{{ stale_data_notice }}</p>
+  {% endif %}
 
   <!-- マーク凡例 (折りたたみ) -->
   <details class="badge-legend" hidden>

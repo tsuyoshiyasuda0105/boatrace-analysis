@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="{{ retry_after_seconds }}">
+  <meta name="robots" content="noindex">
+  <title>ただいま準備中 | BOATRACE WEB</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: #f4f7fb; color: #17324d; }
+    main { max-width: 38rem; margin: 12vh auto; padding: 2rem; }
+    section { background: #fff; border-radius: 14px; padding: 2rem; box-shadow: 0 8px 28px rgba(21, 52, 83, .10); }
+    h1 { margin-top: 0; font-size: 1.45rem; }
+    p { line-height: 1.8; }
+    a { color: #075ca8; }
+  </style>
+</head>
+<body>
+  <main>
+    <section aria-live="polite">
+      <h1>ただいま混み合っています</h1>
+      <p>表示の準備をしています。数十秒後に自動で再読込します。</p>
+      <p>そのままお待ちいただくか、しばらくしてからもう一度お試しください。</p>
+      <p><a href="{{ retry_url }}">今すぐ再読込する</a></p>
+    </section>
+  </main>
+</body>
+</html>

@@ -18,7 +18,7 @@ import re
 import threading
 import time
 from datetime import date, datetime
-from functools import lru_cache, partial
+from functools import lru_cache, partial, wraps
 from typing import Optional, Any
 from zoneinfo import ZoneInfo
 
@@ -64,7 +64,11 @@ from flask import Flask, abort, g, has_request_context, jsonify, make_response, 
 
 import config
 from src.collectors import openapi
-from src.db.connection import connect as _raw_db_connect
+from src.db.connection import (
+    connect as _raw_db_connect,
+    consume_transient_db_retry_event,
+    is_transient_db_error,
+)
 from src.deploy_info import deploy_revision
 from src.roi_contract import (
     MARKET_SIGNALS_CACHE_VERSION,
@@ -165,9 +169,48 @@ class _ProfiledConnection:
 
 def db_connect(*args, **kwargs):
     conn = _raw_db_connect(*args, **kwargs)
+    retry_event = consume_transient_db_retry_event()
+    if retry_event and "_note_transient_db_error" in globals():
+        _note_transient_db_error(
+            "connection_retry_recovered",
+            RuntimeError(str(retry_event.get("last_error") or "transient connection failure")),
+            detail=retry_event,
+            conn=conn,
+        )
+    elif "_flush_pending_transient_db_errors" in globals():
+        _flush_pending_transient_db_errors(conn)
     if has_request_context() and _is_response_profiling_enabled():
         return _ProfiledConnection(conn)
     return conn
+
+
+def _with_transient_db_fallback(
+    primary: Any,
+    stale: Any,
+    unavailable: Any,
+    *,
+    context: str,
+) -> Any:
+    """Run DB-backed work and degrade only for transient connection errors."""
+    try:
+        return primary()
+    except Exception as exc:
+        if not is_transient_db_error(exc):
+            raise
+        logger.warning("transient DB fallback context=%s: %s", context, exc)
+        _note_transient_db_error(context, exc)
+        try:
+            stale_value = stale()
+        except Exception as stale_exc:  # noqa: BLE001
+            logger.warning(
+                "transient DB stale fallback failed context=%s: %s",
+                context,
+                stale_exc,
+            )
+            stale_value = None
+        if stale_value is not None:
+            return stale_value
+        return unavailable()
 
 
 # ============================================================
@@ -1232,7 +1275,9 @@ def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
             for k, _ in items[:1000]:
                 _PAGE_HTML_MEM_CACHE.pop(k, None)
         return html
-    except Exception:
+    except Exception as exc:
+        if is_transient_db_error(exc):
+            _note_transient_db_error("page_cache_fresh", exc)
         logger.exception("failed to read page_html_cache: %s", cache_key)
         return None
 
@@ -1280,7 +1325,9 @@ def _read_page_html_cache_stale(cache_key: str) -> Optional[str]:
         html, updated_at = row[0], float(row[1] or 0)
         _PAGE_HTML_MEM_CACHE[cache_key] = (updated_at, html)
         return html
-    except Exception:
+    except Exception as exc:
+        if is_transient_db_error(exc):
+            _note_transient_db_error("page_cache_stale", exc)
         logger.exception("failed to read stale page cache: %s", cache_key)
         return None
 
@@ -1328,7 +1375,9 @@ def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
             return None
         _PAGE_HTML_MEM_CACHE[cache_key] = (float(row[1] or 0), raw)
         return json.loads(raw)
-    except Exception:
+    except Exception as exc:
+        if is_transient_db_error(exc):
+            _note_transient_db_error("json_cache_stale", exc)
         logger.exception("failed to read stale json cache: %s", cache_key)
         return None
 
@@ -1345,6 +1394,129 @@ def _safe_json_loads(raw: Any) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+# Transient connection failures are buffered and merged at most once a minute.
+# A failed status write never changes the user response and the buffer is kept
+# for a later recovery attempt.  The existing system_status table is reused.
+TRANSIENT_DB_ERROR_CHECK = "transient_db_error"
+_TRANSIENT_DB_ERROR_BUFFER_MAX = 50
+_TRANSIENT_DB_ERROR_FLUSH_INTERVAL_SEC = 60.0
+_TRANSIENT_DB_ERRORS: list[dict[str, Any]] = []
+_transient_db_errors_lock = threading.Lock()
+_transient_db_errors_last_flush = 0.0
+
+
+def _note_transient_db_error(
+    context: str,
+    exc: BaseException,
+    *,
+    detail: Optional[dict[str, Any]] = None,
+    conn: Any = None,
+) -> None:
+    """Best-effort visibility for transient DB pressure; never raises."""
+    event = {
+        "at": _now_jst().isoformat(timespec="seconds"),
+        "context": str(context)[:80],
+        "error_type": str((detail or {}).get("error_type") or type(exc).__name__)[:80],
+        "retry_count": int((detail or {}).get("retry_count") or 0),
+    }
+    with _transient_db_errors_lock:
+        if len(_TRANSIENT_DB_ERRORS) < _TRANSIENT_DB_ERROR_BUFFER_MAX:
+            _TRANSIENT_DB_ERRORS.append(event)
+    # A failed acquisition has no safe connection to write with.  Keep the
+    # event in memory; the next successful checkout flushes it using that same
+    # connection, so observability never adds another blocking checkout.
+    if conn is not None:
+        _flush_pending_transient_db_errors(conn)
+
+
+def _flush_pending_transient_db_errors(conn: Any) -> None:
+    global _transient_db_errors_last_flush
+    now = time.monotonic()
+    with _transient_db_errors_lock:
+        due = bool(_TRANSIENT_DB_ERRORS) and (
+            now - _transient_db_errors_last_flush
+            >= _TRANSIENT_DB_ERROR_FLUSH_INTERVAL_SEC
+        )
+        if not due:
+            return
+        _transient_db_errors_last_flush = now
+        pending = list(_TRANSIENT_DB_ERRORS)
+        _TRANSIENT_DB_ERRORS.clear()
+    if not pending:
+        return
+    if not _flush_transient_db_errors(pending, conn=conn):
+        with _transient_db_errors_lock:
+            remaining = _TRANSIENT_DB_ERROR_BUFFER_MAX - len(_TRANSIENT_DB_ERRORS)
+            if remaining > 0:
+                _TRANSIENT_DB_ERRORS[:0] = pending[-remaining:]
+
+
+def _flush_transient_db_errors(
+    pending: list[dict[str, Any]],
+    *,
+    conn: Any = None,
+) -> bool:
+    day = _today_jst_iso()
+    now_iso = _now_jst().isoformat(timespec="seconds")
+
+    def write_status(active_conn: Any) -> None:
+        row = active_conn.execute(
+            "SELECT detail_json FROM system_status WHERE check_name=? AND check_date=?",
+            (TRANSIENT_DB_ERROR_CHECK, day),
+        ).fetchone()
+        previous = _safe_json_loads(row[0]) if row else {}
+        count = int(previous.get("count") or 0) + len(pending)
+        recent = previous.get("recent") if isinstance(previous.get("recent"), list) else []
+        recent = [item for item in recent if isinstance(item, dict)]
+        recent.extend(pending)
+        recent = recent[-10:]
+        retry_recovered = int(previous.get("retry_recovered") or 0) + sum(
+            1 for item in pending if item.get("context") == "connection_retry_recovered"
+        )
+        payload = json.dumps(
+            {
+                "count": count,
+                "retry_recovered": retry_recovered,
+                "recent": recent,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        message = f"一時DB接続エラー {count}件 (直近 {pending[-1]['context']})"
+        if row:
+            active_conn.execute(
+                """
+                UPDATE system_status
+                   SET status=?, message=?, detail_json=?, checked_at=?
+                 WHERE check_name=? AND check_date=?
+                """,
+                ("warning", message, payload, now_iso, TRANSIENT_DB_ERROR_CHECK, day),
+            )
+        else:
+            active_conn.execute(
+                """
+                INSERT INTO system_status
+                    (check_name, check_date, status, message, detail_json, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (TRANSIENT_DB_ERROR_CHECK, day, "warning", message, payload, now_iso),
+            )
+        active_conn.commit()
+
+    try:
+        if conn is None:
+            # Primarily for finite maintenance/tests. Request-path calls always
+            # provide an already-acquired connection via db_connect().
+            with _raw_db_connect(direct=True) as owned_conn:
+                write_status(owned_conn)
+        else:
+            write_status(conn)
+        return True
+    except Exception as status_exc:  # noqa: BLE001
+        logger.warning("transient DB status write failed: %s", status_exc)
+        return False
 
 
 def _task_run_to_dict(row: Any) -> Optional[dict[str, Any]]:
@@ -6083,40 +6255,133 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     except Exception as e:
         logger.warning("subscriber routes not registered: %s", e)
 
-    # グローバルエラーハンドラ (500 を親切メッセージへ)
+    def _temporary_page_response(status_code: int = 500):
+        # Render Jinja directly: Flask context processors include a
+        # system_status query, which must never run while handling a 500.
+        html = app.jinja_env.get_template("error_temporary.html").render(
+            retry_after_seconds=30,
+            retry_url=request.full_path.rstrip("?") or "/races",
+        )
+        response = make_response(html, status_code)
+        response.headers["Retry-After"] = "30"
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+    def _top_snapshot_response(
+        snapshot: dict[str, Any],
+        target_date: str,
+        *,
+        stale: bool = False,
+    ):
+        context = {
+            "target_date": target_date,
+            "today_iso": _today_jst_iso(),
+            "today_iso_global": _today_jst_iso(),
+            "stadium_groups": snapshot.get("stadium_groups") or [],
+            "market_signal_supported_levels": MARKET_SIGNAL_SUPPORTED_LEVELS,
+            "market_signal_supported_class_prefixes": MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
+            "market_signals_cache_version": MARKET_SIGNALS_CACHE_VERSION,
+            "initial_market_signals": _lightweight_top_page_market_payload(
+                snapshot.get("initial_market_signals"),
+                target_date,
+            ),
+            "roi_picks_visible": False,
+            "empty": bool(snapshot.get("empty")),
+            "stale_data_notice": (
+                "一時的な混雑のため、直近に保存した内容を表示しています。最新ではない可能性があります。"
+                if stale
+                else None
+            ),
+            "system_warnings": [],
+            "static_version": app.jinja_env.globals.get("static_version", ""),
+        }
+        if stale:
+            # Avoid the DB-backed global context processor on the degradation path.
+            html = app.jinja_env.get_template("index.html").render(**context)
+        else:
+            html = render_template("index.html", **context)
+        response = make_response(html, 200)
+        response.headers["Cache-Control"] = (
+            "no-store, max-age=0" if stale
+            else "private, max-age=30, stale-while-revalidate=300"
+        )
+        if stale:
+            response.headers["X-Boatrace-Data-Stale"] = "1"
+        return response
+
+    def _stale_detail_response(html: str):
+        notice = (
+            '<p class="notice-box" role="status">一時的な混雑のため、直近に保存した内容を表示しています。'
+            "最新ではない可能性があります。</p>"
+        )
+        if "<main" in html:
+            marker_end = html.find(">", html.find("<main")) + 1
+            html = html[:marker_end] + notice + html[marker_end:]
+        response = make_response(html, 200)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["X-Boatrace-Data-Stale"] = "1"
+        return response
+
+    def _race_preparing_page_response(race_id: str):
+        html = app.jinja_env.get_template("race_preparing.html").render(
+            race_id=race_id,
+            retry_after_seconds=30,
+            today_iso_global=_today_jst_iso(),
+        )
+        response = make_response(html, 200)
+        response.headers["Retry-After"] = "30"
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+    def _guard_races_transient_db(fn):
+        @wraps(fn)
+        def guarded(*args, **kwargs):
+            target_date = request.args.get("date") or _today_jst_iso()
+
+            def stale_response():
+                snapshot = _read_top_page_snapshot(target_date)
+                return (
+                    _top_snapshot_response(snapshot, target_date, stale=True)
+                    if snapshot is not None
+                    else None
+                )
+
+            return _with_transient_db_fallback(
+                lambda: fn(*args, **kwargs),
+                stale_response,
+                lambda: _temporary_page_response(200),
+                context="races",
+            )
+
+        return guarded
+
+    def _guard_race_detail_transient_db(fn):
+        @wraps(fn)
+        def guarded(race_id: str, *args, **kwargs):
+            canonical = _canonicalize_race_id(race_id)
+            cache_key = _race_detail_page_cache_key(canonical)
+
+            def stale_response():
+                html = _read_page_html_cache_stale(cache_key)
+                return _stale_detail_response(html) if html else None
+
+            return _with_transient_db_fallback(
+                lambda: fn(race_id, *args, **kwargs),
+                stale_response,
+                lambda: _race_preparing_page_response(canonical),
+                context="race_detail",
+            )
+
+        return guarded
+
+    # グローバルエラーハンドラ (見た目は穏当、監視用 status は 500 のまま)
     @app.errorhandler(500)
     def handle_500(err):
-        logger.exception("500 error: %s", err)
-        err_str = str(err.original_exception) if hasattr(err, "original_exception") and err.original_exception else str(err)
-        if "No space left on device" in err_str:
-            return render_template(
-                "race.html",
-                info={"race_id": "", "race_date": "", "stadium_number": 0,
-                      "race_number": 0, "stadium_name": "Error"},
-                error="サーバー容量制限のためご利用いただけません (Supabase Free 制約)。少し時間をおいてから再度お試しください。",
-                preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
-                conditions={},
-                venue_environment={},
-            ), 500
-        if "connection" in err_str.lower() or "timeout" in err_str.lower():
-            return render_template(
-                "race.html",
-                info={"race_id": "", "race_date": "", "stadium_number": 0,
-                      "race_number": 0, "stadium_name": "Error"},
-                error="DB 接続エラー。30秒後に再度アクセスしてください。",
-                preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
-                conditions={},
-                venue_environment={},
-            ), 500
-        return render_template(
-            "race.html",
-            info={"race_id": "", "race_date": "", "stadium_number": 0,
-                  "race_number": 0, "stadium_name": "Error"},
-            error=f"サーバーエラー: {err_str[:200]}",
-            preds=[], racer_names={}, trifecta_pw=[], trifecta_unified=[],
-            conditions={},
-            venue_environment={},
-        ), 500
+        original = getattr(err, "original_exception", None) or err
+        logger.error("500 error: %s", original, exc_info=original)
+        if is_transient_db_error(original):
+            _note_transient_db_error("handle_500", original)
+        return _temporary_page_response(500)
 
     # テンプレートから is_member() を呼べるように
     @app.errorhandler(403)
@@ -6656,6 +6921,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @app.route("/races")
     @login_required
     @cached(ttl=30, past_ttl=3600)  # 今日30秒/過去日1時間キャッシュ
+    @_guard_races_transient_db
     # backlog item 11: 旧 60s → 120s。レース予定の動的要素は results_count のみで
     # poll_results が 5分間隔なので 120s 化しても表示遅延ほぼ無し。Cloudflare
     # CDN ヒット率が大幅向上し、ユーザ体感速度が改善する。
@@ -6663,31 +6929,30 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or _today_jst_iso()
         snapshot = _read_top_page_snapshot(target_date)
         if snapshot is not None:
-            initial_market_signals = _lightweight_top_page_market_payload(
-                snapshot.get("initial_market_signals"),
-                target_date,
-            )
-            resp = make_response(render_template(
-                "index.html",
-                target_date=target_date,
-                today_iso=_today_jst_iso(),
-                stadium_groups=snapshot.get("stadium_groups") or [],
-                market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
-                market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
-                market_signals_cache_version=MARKET_SIGNALS_CACHE_VERSION,
-                initial_market_signals=initial_market_signals,
-                roi_picks_visible=False,
-                empty=bool(snapshot.get("empty")),
-            ))
-            resp.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=300"
-            return resp
+            return _top_snapshot_response(snapshot, target_date)
 
-        with db_connect() as conn:
-            races_list = _races_for_date(target_date, conn=conn)
-            venue_environment = _venue_environment_summaries_for_date(
-                target_date,
-                conn=conn,
-            )
+        def _load_live_top_data():
+            with db_connect() as conn:
+                return (
+                    _races_for_date(target_date, conn=conn),
+                    _venue_environment_summaries_for_date(target_date, conn=conn),
+                )
+
+        def _load_stale_top_response():
+            stale_snapshot = _read_top_page_snapshot(target_date)
+            if stale_snapshot is None:
+                return None
+            return _top_snapshot_response(stale_snapshot, target_date, stale=True)
+
+        live_data = _with_transient_db_fallback(
+            _load_live_top_data,
+            _load_stale_top_response,
+            lambda: _temporary_page_response(200),
+            context="races",
+        )
+        if not isinstance(live_data, tuple):
+            return live_data
+        races_list, venue_environment = live_data
         if not races_list:
             today_iso = _today_jst_iso()
             should_self_heal = (
@@ -6906,6 +7171,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
     @app.route("/race/<race_id>")
     @login_required
     @cached(ttl=300, past_ttl=21600)
+    @_guard_race_detail_transient_db
     def race_detail(race_id: str):
         canonical_race_id = _canonicalize_race_id(race_id)
         if canonical_race_id != race_id:
@@ -6917,53 +7183,52 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         race_date = _race_date_from_race_id(race_id)
         use_fresh_page_cache = race_date >= _today_jst_iso()
         if not force_recompute:
-            cached_html = (
-                _read_page_html_cache(page_cache_key, 180)
-                if use_fresh_page_cache
-                else _read_page_html_cache_stale(page_cache_key)
-            )
-            if not cached_html and use_fresh_page_cache:
-                # 今日のページでも、期限切れ(180秒超)キャッシュがあれば 13 秒の
-                # ライブ再計算をさせず stale を即返す。「レース詳細が開けない」
-                # (毎回13秒) の対策。prewarm/背景ジョブが随時 fresh に更新する。
-                cached_html = _read_page_html_cache_stale(page_cache_key)
+            def _preparing_response():
+                response = _race_preparing_page_response(race_id)
+                logger.info(
+                    "race_detail preparing served race_id=%s elapsed=%.3fs",
+                    race_id,
+                    time.perf_counter() - started_at,
+                )
+                return response
+
+            def _cached_or_preparing_response():
+                cached_html = (
+                    _read_page_html_cache(page_cache_key, 180)
+                    if use_fresh_page_cache
+                    else _read_page_html_cache_stale(page_cache_key)
+                )
+                if not cached_html and use_fresh_page_cache:
+                    # 今日のページでも期限切れキャッシュを即返す。背景ジョブが
+                    # fresh に更新するまで request thread で再計算しない。
+                    cached_html = _read_page_html_cache_stale(page_cache_key)
+                    if cached_html:
+                        logger.info(
+                            "race_detail stale-cache served race_id=%s elapsed=%.3fs",
+                            race_id,
+                            time.perf_counter() - started_at,
+                        )
+                        return cached_html
                 if cached_html:
                     logger.info(
-                        "race_detail stale-cache served race_id=%s elapsed=%.3fs",
+                        "race_detail page-cache hit race_id=%s elapsed=%.3fs",
                         race_id,
                         time.perf_counter() - started_at,
                     )
                     return cached_html
-            if cached_html:
-                logger.info(
-                    "race_detail page-cache hit race_id=%s elapsed=%.3fs",
-                    race_id,
-                    time.perf_counter() - started_at,
-                )
-                return cached_html
-            # An ordinary browser request must never build a complete race
-            # detail page in its request thread.  Dedicated prewarm/cron jobs
-            # set an approved task trigger and request recompute=1, so only
-            # those existing background paths continue below.
-            # Render through Jinja directly so Flask's global context
-            # processors (including the system-status DB banner query) do not
-            # run on this intentionally DB-free fallback.
-            preparing_html = app.jinja_env.get_template(
-                "race_preparing.html"
-            ).render(
-                race_id=race_id,
-                retry_after_seconds=30,
-                today_iso_global=_today_jst_iso(),
+                # Only approved prewarm/cron requests continue to live build.
+                return _preparing_response()
+
+            def _stale_detail_fallback():
+                stale_html = _read_page_html_cache_stale(page_cache_key)
+                return _stale_detail_response(stale_html) if stale_html else None
+
+            return _with_transient_db_fallback(
+                _cached_or_preparing_response,
+                _stale_detail_fallback,
+                _preparing_response,
+                context="race_detail",
             )
-            response = make_response(preparing_html, 200)
-            response.headers["Retry-After"] = "30"
-            response.headers["Cache-Control"] = "no-store, max-age=0"
-            logger.info(
-                "race_detail preparing served race_id=%s elapsed=%.3fs",
-                race_id,
-                time.perf_counter() - started_at,
-            )
-            return response
         info = _race_basic_info(race_id)
         if not info:
             abort(404)
