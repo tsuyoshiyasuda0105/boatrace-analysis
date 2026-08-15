@@ -1,6 +1,112 @@
 """Pure market-signal evaluators extracted from the web application."""
 
 
+def _evaluate_candidate_134_signal(
+    stadium,
+    grade,
+    race_number,
+    natl_1=None,
+    age=None,
+    course1=None,
+    boat2_motor_top2=None,
+    avg_st=None,
+    avg_st_n=None,
+    weather=None,
+    n_female=0,
+    target_date_iso=None,
+):
+    try:
+        month = int(str(target_date_iso)[5:7]) if target_date_iso else 0
+    except (TypeError, ValueError):
+        month = 0
+    try:
+        rn = int(race_number) if race_number is not None else 0
+    except (TypeError, ValueError):
+        rn = 0
+    try:
+        n1 = float(natl_1) if natl_1 is not None else 0.0
+    except (TypeError, ValueError):
+        n1 = 0.0
+    try:
+        a1 = int(age) if age is not None else None
+    except (TypeError, ValueError):
+        a1 = None
+    try:
+        c1 = int(course1) if course1 is not None else 0
+    except (TypeError, ValueError):
+        c1 = 0
+    try:
+        m2 = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+    except (TypeError, ValueError):
+        m2 = 0.0
+    try:
+        dst1 = float(avg_st) if avg_st is not None else None
+    except (TypeError, ValueError):
+        dst1 = None
+    try:
+        dstn1 = int(avg_st_n) if avg_st_n is not None else 0
+    except (TypeError, ValueError):
+        dstn1 = 0
+
+    female_count = int(n_female or 0)
+    cand1 = (
+        female_count == 0
+        and c1 in (1, 2)
+        and stadium in (5, 12, 13)
+        and month in (2, 5, 6, 11, 12)
+        and 7.5 <= n1 < 8.5
+        and a1 is not None and 40 <= a1 <= 49
+    )
+    cand3 = (
+        female_count == 0
+        and c1 in (1, 2)
+        and stadium in (1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23)
+        and 10 <= rn <= 12
+        and 7.5 <= n1 < 8.5
+        and a1 is not None and 40 <= a1 <= 49
+        and m2 >= 45.0
+    )
+    highgrade_or_f1 = grade in (1, 2, 3, 4) or (grade == 5 and n1 >= 7.0 and m2 >= 40.0)
+    cand4 = (
+        female_count == 0
+        and highgrade_or_f1
+        and 9 <= rn <= 11
+        and dst1 is not None and dst1 < 0.160
+        and dstn1 >= 6
+        and a1 is not None and 40 <= a1 <= 49
+        and 7.5 <= n1 < 8.5
+        and m2 >= 50.0
+        and weather != 3
+        and stadium in (1, 5, 6, 9, 11, 12, 13, 16, 17, 18, 23)
+    )
+    matched = []
+    if cand1:
+        matched.append(("cand1", "候補1", 204.0, 1189))
+    if cand3:
+        matched.append(("cand3", "候補3", 259.3, 150))
+    if cand4:
+        matched.append(("cand4", "候補4", 293.3, 9))
+    if not matched:
+        return None
+    primary = matched[-1]
+    return {
+        "level": primary[0],
+        "label": primary[1],
+        "recovery": primary[2],
+        "bet": "3連単 1-2-3",
+        "n": primary[3],
+        "rank": primary[0],
+        "rank_label": primary[1],
+        "natl_1": natl_1,
+        "local_1": None,
+        "is_reference": False,
+        "candidate_keys": [m[0] for m in matched],
+        "candidate_labels": [m[1] for m in matched],
+        "tetsuban_score": 5 if primary[0] == "cand4" else (4 if primary[0] == "cand3" else 3),
+        "tetsuban_label": primary[1],
+    }
+
+
 def _evaluate_l4_general_200(stadium, grade, cls, natl_1=None,
                              boat2_top2=None, boat2_exhibition_time=None,
                              boat3_exhibition_time=None, ex_st=None):

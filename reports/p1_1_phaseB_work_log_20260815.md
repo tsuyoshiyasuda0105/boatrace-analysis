@@ -45,3 +45,12 @@
 - `src/web/app.py` は同名関数をモジュールimport。現行app内に呼び出しはなく、互換hookの公開位置だけを置換。
 - 閉包依存: なし。
 - Phase Aテストは呼び出し元だけを新モジュールimportへ変更。golden期待値は不変。
+- コミット: `f6178dd`。
+- コミット後全テスト: `687 passed`。
+
+### `_evaluate_candidate_134_signal`
+
+- ネスト定義を本体そのままで `src/strategies/signals.py` に移動。
+- `src/web/app.py` は同名関数をモジュールimportし、既存の全呼び出し引数は変更なし。
+- 閉包依存: なし。
+- Phase Aテストは呼び出し元だけを新モジュールimportへ変更。候補1/3/4の重複golden期待値は不変。

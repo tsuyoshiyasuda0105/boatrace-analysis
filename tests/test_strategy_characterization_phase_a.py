@@ -18,6 +18,7 @@ import pytest
 from src.strategies.signals import (
     _compute_tetsuban,
     _detect_niche_signals,
+    _evaluate_candidate_134_signal,
     _evaluate_l4_general_200,
 )
 
@@ -104,9 +105,7 @@ def test_g23_optb_current_exclusion_boundaries(field, value):
 
 
 def test_candidate_134_overlap_prefers_last_matching_candidate():
-    evaluate = _load_local_function("_evaluate_candidate_134_signal")
-
-    assert evaluate(
+    assert _evaluate_candidate_134_signal(
         stadium=5,
         grade=1,
         race_number=10,
