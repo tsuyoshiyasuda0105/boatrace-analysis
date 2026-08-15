@@ -1,5 +1,26 @@
 # Handoff
 
+## Active task (2026-08-15 race detail no live recompute)
+
+- Task: implement `reports/race_detail_no_live_recompute_plan_20260815.md` so ordinary human race-detail requests never enter live heavy recomputation on a cache miss, while existing expensive recompute triggers retain live generation and fresh/stale cache behavior remains unchanged.
+- Skill: `project-ops-guard`.
+- Expected edit files: `src/web/app.py`, a lightweight template under `src/web/templates/`, `tests/test_race_detail_page_prewarm.py`, `reports/race_detail_no_live_recompute_work_log_20260815.md`, and `docs/handoff.md` only.
+- Conflict avoidance: no active entry claims the exact race-detail source/template/test targets. Preserve every unrelated tracked or untracked file; stage only the five declared paths.
+- Prohibited surfaces: push, deployment, ROI/strategy logic, prediction logic, database schema/data writes, new tables, `render.yaml`, worker configuration, cron schedules, and production writers.
+- Running processes: none. Only finite source inspection, pytest, compilation, and local Git commands are planned; no server, scheduler, browser, watcher, or production writer will be started.
+- Planned cleanup target: `C:\boat_project\boatrace-analysis\.pytest_tmp_race_detail_no_live_recompute_20260815` only, if pytest creates it. No source, report, cache, database, fixture, or production data is a deletion target.
+- Failure log: a read-only `rg` command reported Windows error 123 for the literal path argument `tests/test_race_detail*`; the other searches completed and no file was changed by that command. Root cause: PowerShell passed the wildcard-containing path to ripgrep as an invalid Windows filename. Prevention: search the confirmed `tests` directory with `-g 'test_race_detail*.py'` instead of using a wildcard path argument.
+- Failure log: the first focused test run did not finish promptly and was terminated after 33 seconds; an initial missing mock for three detail-tag attachment helpers was corrected. The rerun and then an isolated human-cache-miss test still waited and were terminated, identifying the actual remaining cause: normal Flask `render_template` executes the global `system_status` context processor, which performs a DB query even for the preparing template. No assertion result or DB write occurred. Prevention: render this one intentionally DB-free fallback through the app's Jinja environment with the required lightweight context explicitly supplied, and make the regression test fail on any `db_connect` call.
+- Completed: ordinary race-detail cache misses now return a DB-free HTTP 200 preparing page before `_race_basic_info` or any detail-generation dependency. It auto-refreshes after 30 seconds, advertises `Retry-After: 30`, and uses `no-store`; the view TTL cache honors `no-store` so a completed prewarm page becomes visible on the next reload.
+- Background path: the existing `_effective_force_recompute()` gate remains the sole authorization. `render-detail-prewarm` and `render-cron` with `recompute=1` still execute the original live-build and persistent-cache path. Existing all-page/missing-only prewarm and cache-coverage self-heal naturally include page-cache gaps, so no request-path write or new table was added.
+- Cache regression: today's 180-second fresh cache, today's stale fallback, and past stale cache retain their original ordering and return behavior.
+- Tests: baseline full suite passed 702/702; final focused race-detail suite passed 20/20; final full suite passed 709/709 (existing 702 plus seven new cases). Python compilation and `git diff --check` passed. The only warning was the pre-existing unwritable `.pytest_cache` nodeids path.
+- Scope verification: changes are limited to `src/web/app.py`, `src/web/templates/race_preparing.html`, `tests/test_race_detail_page_prewarm.py`, `reports/race_detail_no_live_recompute_work_log_20260815.md`, and this handoff. No ROI/strategy, prediction, schema/data, new-table, `render.yaml`, worker, cron schedule, production writer, push, or deployment change occurred.
+- Cleanup complete: the exact pre-recorded repository-local `.pytest_tmp_race_detail_no_live_recompute_20260815` directory was removed. No source, report, cache, database, fixture, or production data was removed.
+- Operations checklist closeout: repository status/conflicts and root cause were checked; the smallest route/template/cache fix, focused/full tests, compilation, and diff checks passed. Result ingestion, accident snapshot, and ROI ledger checks are not applicable because none of those paths or data changed. No local scheduler, server, browser, watcher, or production writer was started; running processes are none.
+- Commit: one local `main` commit contains only the five declared files; its ID is reported in the delivery message. Push and deployment did not occur.
+- Next action: await explicit deployment approval; after deployment, monitor `/race/...` `slow_request` frequency/latency and `race_detail preparing served` volume.
+
 ## Active task (2026-08-15 stale running reaper follow-up)
 
 - Task: implement `reports/stale_running_reaper_fix_plan_20260815.md` by reaping old `status='running'` rows regardless of whether `finished_at` is already set, while preserving the strict `started_at` threshold live-task protection.

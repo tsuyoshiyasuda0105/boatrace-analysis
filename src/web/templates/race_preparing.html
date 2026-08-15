@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}レース詳細を準備中 | BOATRACE WEB{% endblock %}
+{% block head_extra %}
+  <meta http-equiv="refresh" content="{{ retry_after_seconds }}">
+  <meta name="robots" content="noindex">
+{% endblock %}
+{% block content %}
+<section class="auth-message-panel" aria-live="polite">
+  <h2>レース詳細を準備しています</h2>
+  <p>このレースの最新情報を準備しています。数十秒後に自動で更新されます。</p>
+  <p>そのままお待ちいただくか、レース一覧へ戻ってからもう一度お試しください。</p>
+  <p><a href="{{ url_for('races', date=today_iso_global) }}" class="account-btn account-btn-login">レース一覧へ戻る</a></p>
+</section>
+{% endblock %}

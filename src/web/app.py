@@ -1145,6 +1145,14 @@ def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
                 if now - ts < effective_ttl:
                     return val
             val = fn(*args, **kwargs)
+            # A no-store response is intentionally transient (for example a
+            # lightweight "preparing" page).  Keeping it here would hide a
+            # page completed by the background prewarmer until this TTL ends.
+            try:
+                if val.cache_control.no_store:
+                    return val
+            except AttributeError:
+                pass
             _CACHE[key] = (now, val)
             # 簡易 GC (最大 1000 エントリ)
             if len(_CACHE) > 1000:
@@ -6933,6 +6941,29 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     time.perf_counter() - started_at,
                 )
                 return cached_html
+            # An ordinary browser request must never build a complete race
+            # detail page in its request thread.  Dedicated prewarm/cron jobs
+            # set an approved task trigger and request recompute=1, so only
+            # those existing background paths continue below.
+            # Render through Jinja directly so Flask's global context
+            # processors (including the system-status DB banner query) do not
+            # run on this intentionally DB-free fallback.
+            preparing_html = app.jinja_env.get_template(
+                "race_preparing.html"
+            ).render(
+                race_id=race_id,
+                retry_after_seconds=30,
+                today_iso_global=_today_jst_iso(),
+            )
+            response = make_response(preparing_html, 200)
+            response.headers["Retry-After"] = "30"
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            logger.info(
+                "race_detail preparing served race_id=%s elapsed=%.3fs",
+                race_id,
+                time.perf_counter() - started_at,
+            )
+            return response
         info = _race_basic_info(race_id)
         if not info:
             abort(404)
