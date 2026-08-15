@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from typing import Iterator
 from zoneinfo import ZoneInfo
@@ -40,6 +40,73 @@ def ensure_task_runs_table(conn) -> None:
         """
     )
     conn.commit()
+
+
+def _naive_jst(value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        value = value.astimezone(JST).replace(tzinfo=None)
+    return value
+
+
+def reap_stale_running_tasks(
+    conn,
+    *,
+    older_than_hours: int = 6,
+    now: datetime | None = None,
+) -> int:
+    """Mark only unfinished running rows older than the safety threshold failed."""
+    if isinstance(older_than_hours, bool) or older_than_hours <= 0:
+        raise ValueError("older_than_hours must be a positive number")
+
+    now_naive = _naive_jst(now or datetime.now(JST)).replace(microsecond=0)
+    threshold = now_naive - timedelta(hours=older_than_hours)
+    rows = conn.execute(
+        """
+        SELECT task_name, run_date, started_at
+          FROM task_runs
+         WHERE status = 'running'
+           AND finished_at IS NULL
+           AND started_at IS NOT NULL
+        """
+    ).fetchall()
+
+    stale_rows: list[tuple[str, str, object]] = []
+    for task_name, run_date, started_at in rows:
+        try:
+            parsed_start = (
+                started_at
+                if isinstance(started_at, datetime)
+                else datetime.fromisoformat(str(started_at))
+            )
+            parsed_start = _naive_jst(parsed_start)
+        except (TypeError, ValueError):
+            continue
+        if parsed_start < threshold:
+            stale_rows.append((str(task_name), str(run_date), started_at))
+
+    if not stale_rows:
+        return 0
+
+    finished_at = now_naive.isoformat(timespec="seconds")
+    reaped = 0
+    for task_name, run_date, started_at in stale_rows:
+        cursor = conn.execute(
+            """
+            UPDATE task_runs
+               SET status = 'failure',
+                   finished_at = ?,
+                   detail = 'stale_running_reaped'
+             WHERE task_name = ?
+               AND run_date = ?
+               AND status = 'running'
+               AND finished_at IS NULL
+               AND started_at = ?
+            """,
+            (finished_at, task_name, run_date, started_at),
+        )
+        reaped += max(int(cursor.rowcount), 0)
+    conn.commit()
+    return reaped
 
 
 def record_task_run(

@@ -20,6 +20,7 @@ from src.db.cron_runtime import (
     ensure_task_runs_table as ensure_task_runs_table_on_connection,
     find_missing_original_exhibition_races as find_missing_original_exhibition_races_common,
     parse_race_close_jst as _parse_race_close_jst,
+    reap_stale_running_tasks,
     record_task_run,
 )
 from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature
@@ -54,6 +55,19 @@ def render_daytime_lite_mode() -> bool:
         "yes",
         "on",
     }
+
+
+def reap_stale_task_runs(now: datetime) -> int:
+    """Best-effort cleanup; a cleanup failure must not stop the regular tick."""
+    try:
+        with db_connect() as conn:
+            reaped = reap_stale_running_tasks(conn, now=now)
+    except Exception as exc:
+        print(f"[render-regular] stale-running reaper warning: {exc}", flush=True)
+        return 0
+    if reaped:
+        print(f"[render-regular] stale-running reaped={reaped}", flush=True)
+    return reaped
 
 
 @contextmanager
@@ -1073,6 +1087,7 @@ def main() -> int:
     if not os.getenv("DATABASE_URL", "").strip():
         raise RuntimeError("DATABASE_URL is required for Render regular scheduler")
     ensure_task_runs_table()
+    reap_stale_task_runs(now)
     lite_mode = render_daytime_lite_mode()
     exit_code = 0
 

@@ -2,6 +2,8 @@ from datetime import datetime
 import sqlite3
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from src.collectors import original_exhibition
 from src.db import cron_runtime
 
@@ -63,6 +65,78 @@ def test_skipped_transition_does_not_destroy_running_row(monkeypatch):
         None,
         "active",
     )
+
+
+def test_reap_stale_running_tasks_updates_only_strictly_old_unfinished_running_rows():
+    conn = sqlite3.connect(":memory:")
+    cron_runtime.ensure_task_runs_table(conn)
+    rows = [
+        ("stale", "running", "2026-08-15T05:59:59", None),
+        ("boundary", "running", "2026-08-15 06:00:00", None),
+        ("recent", "running", "2026-08-15T11:59:00", None),
+        (
+            "finished-running",
+            "running",
+            "2026-08-14T00:00:00",
+            "2026-08-14T01:00:00",
+        ),
+        ("success", "success", "2026-08-14T00:00:00", "2026-08-14T01:00:00"),
+        ("skipped", "skipped", "2026-08-14T00:00:00", "2026-08-14T01:00:00"),
+        ("failure", "failure", "2026-08-14T00:00:00", "2026-08-14T01:00:00"),
+        ("missing-start", "running", None, None),
+        ("invalid-start", "running", "not-an-iso-time", None),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO task_runs
+            (task_name, run_date, status, run_count, started_at, finished_at, detail)
+        VALUES (?, '2026-08-15', ?, 1, ?, ?, 'original')
+        """,
+        rows,
+    )
+    conn.commit()
+
+    reaped = cron_runtime.reap_stale_running_tasks(
+        conn,
+        now=datetime(2026, 8, 15, 12, 0, 0),
+    )
+
+    assert reaped == 1
+    assert conn.execute(
+        "SELECT status, finished_at, detail FROM task_runs WHERE task_name='stale'"
+    ).fetchone() == (
+        "failure",
+        "2026-08-15T12:00:00",
+        "stale_running_reaped",
+    )
+    untouched = conn.execute(
+        """
+        SELECT task_name, status, finished_at, detail
+          FROM task_runs
+         WHERE task_name <> 'stale'
+         ORDER BY task_name
+        """
+    ).fetchall()
+    assert all(detail == "original" for _, _, _, detail in untouched)
+
+
+def test_reap_stale_running_tasks_is_idempotent_and_validates_threshold():
+    conn = sqlite3.connect(":memory:")
+    cron_runtime.ensure_task_runs_table(conn)
+    conn.execute(
+        """
+        INSERT INTO task_runs
+            (task_name, run_date, status, run_count, started_at)
+        VALUES ('stale', '2026-08-15', 'running', 1, '2026-08-14T00:00:00')
+        """
+    )
+    now = datetime(2026, 8, 15, 12, 0, 0, tzinfo=JST)
+
+    assert cron_runtime.reap_stale_running_tasks(conn, now=now) == 1
+    assert cron_runtime.reap_stale_running_tasks(conn, now=now) == 0
+
+    with pytest.raises(ValueError):
+        cron_runtime.reap_stale_running_tasks(conn, older_than_hours=0, now=now)
 
 
 class _PgLockConnection:

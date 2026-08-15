@@ -575,6 +575,7 @@ def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(scheduler, "jst_now", lambda: now)
     monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
+    monkeypatch.setattr(scheduler, "reap_stale_task_runs", lambda _now: 0)
     monkeypatch.setattr(scheduler, "_regular_run_lock", unlocked)
     monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: True)
     monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
@@ -599,6 +600,7 @@ def test_main_does_not_contain_heavy_accident_refresh(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://test")
     monkeypatch.setattr(scheduler, "jst_now", lambda: now)
     monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
+    monkeypatch.setattr(scheduler, "reap_stale_task_runs", lambda _now: 0)
     monkeypatch.setattr(scheduler, "_regular_run_lock", unlocked)
     monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: True)
     monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
@@ -607,6 +609,51 @@ def test_main_does_not_contain_heavy_accident_refresh(monkeypatch):
 
     assert scheduler.main() == 0
     assert not hasattr(scheduler, "run_accident_self_heal")
+
+
+def test_main_reaps_stale_tasks_before_regular_tick_work(monkeypatch):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def unlocked():
+        yield True
+
+    calls = []
+    now = scheduler.datetime(2026, 8, 15, 10, 10, tzinfo=scheduler.JST)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(scheduler, "jst_now", lambda: now)
+    monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
+    monkeypatch.setattr(scheduler, "_regular_run_lock", unlocked)
+    monkeypatch.setattr(
+        scheduler,
+        "reap_stale_task_runs",
+        lambda received_now: calls.append(("reap", received_now)) or 2,
+    )
+    monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: calls.append(("work", None)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_top_page_snapshot",
+        lambda *_args, **_kwargs: calls.append(("snapshot", None)) or True,
+    )
+
+    assert scheduler.main() == 0
+    assert calls[0] == ("reap", now)
+
+
+def test_stale_task_reaper_failure_is_nonfatal(monkeypatch, capsys):
+    monkeypatch.setattr(
+        scheduler,
+        "db_connect",
+        lambda: (_ for _ in ()).throw(RuntimeError("temporary-db-error")),
+    )
+
+    assert scheduler.reap_stale_task_runs(scheduler.jst_now()) == 0
+    assert "stale-running reaper warning: temporary-db-error" in capsys.readouterr().out
 
 
 def test_main_skips_safely_when_previous_regular_run_is_active(monkeypatch):

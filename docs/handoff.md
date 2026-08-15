@@ -452,3 +452,19 @@
 - `pc_nightly_prepare` default target date now switches at noon (current day before 12:00), fixing the nightly 01:00 failure that targeted an unpublished next-day program.
 - Post-deploy verification: `/healthz` 200 revision `6c05d27beb3e`; `/login-supabase` renders; `/` 302 in 0.22s; `/login` 200 in 0.15s. Focused tests 34/34, full suite 545 passed / 16 pre-existing failures.
 - Follow-up watch: real login during evening racing peak and tomorrow 04:00-07:00; tonight's 01:00 `BoatracePcNightlyPrepare` should now exit 0.
+
+## 2026-08-15 stale running task reaper (completed)
+
+- Task: implement the approved stale `task_runs` recovery helper and invoke it early on every regular-scheduler tick.
+- Active files: `src/db/cron_runtime.py`, `scripts/render_regular_scheduler.py`, `tests/test_cron_runtime.py`, scheduler-focused tests as needed, `reports/stale_running_reaper_work_log_20260815.md`, and `docs/handoff.md`.
+- Conflict avoidance: no active handoff entry claims these exact files for concurrent work; preserve all unrelated tracked and untracked work.
+- Guardrails: no push, no schema/ROI/prediction/render.yaml/cron-schedule changes, no existing API changes, no local scheduler, and no production writer.
+- Running tools/processes: none.
+- Failure log: one combined `rg` command and one inline Python command failed because nested PowerShell quotes terminated early; root cause was shell quoting, not product code. Prevention: use single-quoted `rg` patterns and a PowerShell here-string for read-only Python SQL. A subsequent `Get-Command sqlite3` returned no executable; prevention: use the repository virtualenv's SQLite module in read-only URI mode.
+- Cleanup target approved by task workflow: `C:\boat_project\boatrace-analysis\.pytest-tmp-stale-reaper-full` (pytest-only temporary directory created by this task). No product or user data is included.
+- Outcome: implementation complete. The shared helper parses timestamps as datetimes, uses a strict six-hour boundary, rechecks row state during UPDATE, and the regular scheduler calls it before normal tick work with best-effort error handling.
+- Verification: targeted 57/57 passed; full suite 701/701 passed (697 existing plus four new tests); Python compilation and `git diff --check` passed. Local SQLite integrity was queried read-only; no scheduler or writer ran.
+- Cleanup: the recorded pytest temporary directory was removed. Running tools/processes remain none.
+- Next action: deploy only after owner approval; the next successful regular tick will automatically reap the two documented stale rows. No manual DB update is required.
+- Open decisions: none for implementation. Push remains prohibited for this task.
+- Commit failure: repository-scoped `git add` could not create `.git/index.lock` (`Permission denied`) under the managed sandbox. Root cause is sandbox write protection on `.git`, not a repository/content failure. Prevention: retry only the same explicit file list with repository-scoped elevated Git permission; do not broaden staging.
