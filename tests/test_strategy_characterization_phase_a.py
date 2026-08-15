@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.strategies.signals import (
+    _allow_market_signal_with_female,
     _compute_tetsuban,
     _detect_niche_signals,
     _evaluate_candidate_134_signal,
@@ -221,16 +222,12 @@ def test_pick_best_prefers_adopted_level_over_higher_recovery_generic():
 
 
 def test_female_gate_keeps_only_explicit_or_adopted_strategy_families():
-    allow = _load_local_function(
-        "_allow_market_signal_with_female",
-        ROI_STRATEGY_KEYS=("g23_optb_tri",),
-    )
-
-    assert not allow({"level": "generic"}, 1)
-    assert allow({"level": "generic", "is_exacta_niche": True}, 1)
-    assert allow({"level": "g23_optb_tri"}, 1)
-    assert allow({"level": "generic", "allow_female_market_signal": True}, 1)
-    assert allow({"level": "generic"}, 0)
+    kwargs = {"ROI_STRATEGY_KEYS": ("g23_optb_tri",)}
+    assert not _allow_market_signal_with_female({"level": "generic"}, 1, **kwargs)
+    assert _allow_market_signal_with_female({"level": "generic", "is_exacta_niche": True}, 1, **kwargs)
+    assert _allow_market_signal_with_female({"level": "g23_optb_tri"}, 1, **kwargs)
+    assert _allow_market_signal_with_female({"level": "generic", "allow_female_market_signal": True}, 1, **kwargs)
+    assert _allow_market_signal_with_female({"level": "generic"}, 0, **kwargs)
 
 
 def test_general200_overlay_yields_to_adopted_and_preserves_overlay_metadata():

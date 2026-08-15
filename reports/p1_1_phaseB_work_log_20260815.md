@@ -64,3 +64,12 @@
 - `src/web/app.py` の旧定義位置で `partial(..., ACCIDENT_DENT_STRATEGIES=ACCIDENT_DENT_STRATEGIES)` として従来値を束縛。危険地帯内の既存呼び出し引数・順序は変更なし。
 - Phase Aテストは新モジュール関数へ同じ依存値を明示注入。golden期待値は不変。
 - 既存のcourse-fit source-location assertionは、採用キー集合の新配置に合わせて `app.py` と `signals.py` の合算を検査するよう変更。venue-mapのapp固有assertionは不変。
+- コミット: `2230eed`。
+- コミット後全テスト: `687 passed`。
+
+### `_allow_market_signal_with_female`
+
+- ネスト定義を本体そのままで `src/strategies/signals.py` に移動。
+- 閉包依存 `ROI_STRATEGY_KEYS` は同名のキーワード専用引数（既定値は空tuple）にした。
+- `src/web/app.py` の旧定義位置で `partial(..., ROI_STRATEGY_KEYS=ROI_STRATEGY_KEYS)` として従来値を束縛。既存呼び出し引数・順序は変更なし。
+- Phase Aテストは新モジュール関数へ同じ依存値を明示注入。golden期待値は不変。

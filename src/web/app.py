@@ -91,6 +91,7 @@ from src.evaluation.accident_dent_strategy import (
     live_matches as load_accident_dent_live_matches,
 )
 from src.strategies.signals import (
+    _allow_market_signal_with_female as _allow_market_signal_with_female_impl,
     _compute_tetsuban,
     _detect_niche_signals,
     _evaluate_candidate_134_signal,
@@ -9844,21 +9845,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             ACCIDENT_DENT_STRATEGIES=ACCIDENT_DENT_STRATEGIES,
         )
 
-        def _allow_market_signal_with_female(signal, n_female_count: int) -> bool:
-            """Gate live ROI candidates before they reach the betting list."""
-            if not signal:
-                return False
-            if int(n_female_count or 0) <= 0:
-                return True
-            level = str(signal.get("level") or "")
-            if (
-                signal.get("is_exacta_niche")
-                or signal.get("is_trifecta_niche")
-                or signal.get("is_win_niche")
-                or level in set(ROI_STRATEGY_KEYS)
-            ):
-                return True
-            return bool(signal.get("allow_female_market_signal"))
+        _allow_market_signal_with_female = partial(
+            _allow_market_signal_with_female_impl,
+            ROI_STRATEGY_KEYS=ROI_STRATEGY_KEYS,
+        )
 
         def _prefer_adopted_signal_over_general200(selected, adopted):
             """Keep adopted strategy labels visible when general200 also matches.

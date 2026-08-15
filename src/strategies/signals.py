@@ -1,6 +1,23 @@
 """Pure market-signal evaluators extracted from the web application."""
 
 
+def _allow_market_signal_with_female(signal, n_female_count: int, *, ROI_STRATEGY_KEYS=()) -> bool:
+    """Gate live ROI candidates before they reach the betting list."""
+    if not signal:
+        return False
+    if int(n_female_count or 0) <= 0:
+        return True
+    level = str(signal.get("level") or "")
+    if (
+        signal.get("is_exacta_niche")
+        or signal.get("is_trifecta_niche")
+        or signal.get("is_win_niche")
+        or level in set(ROI_STRATEGY_KEYS)
+    ):
+        return True
+    return bool(signal.get("allow_female_market_signal"))
+
+
 def _pick_best_market_signal(*signals, ACCIDENT_DENT_STRATEGIES=()):
     adopted_priority_levels = {
         "a1_ace_motor_123_corr_tri", "g23_optb_tri", "gmkf_132_tri",
