@@ -217,6 +217,31 @@ def test_same_day_compare_null_is_pending(
     assert result["pending"][0]["undetermined_columns"] == ["b2_ex_time"]
 
 
+def test_odds_condition_is_confirmed_when_present_and_pending_when_missing(
+    search_db: Path, strategy_db: Path
+) -> None:
+    with sqlite3.connect(search_db) as connection:
+        connection.execute(
+            "CREATE TABLE odds_snapshot (race_id TEXT, combination TEXT, snapshot TEXT, odds REAL, "
+            "PRIMARY KEY (race_id, combination, snapshot))"
+        )
+        connection.executemany(
+            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'final', ?)",
+            [("confirmed", 10.0), ("prior-miss", 20.0), ("prior-null", 20.0)],
+        )
+
+    result = match_races(
+        {"bet": BET, "odds": {"snapshot": "final", "min": 5, "max": 15}},
+        "2026-08-16",
+        search_db,
+        strategy_db,
+    )
+
+    assert [item["race_id"] for item in result["matched"]] == ["confirmed"]
+    assert [item["race_id"] for item in result["pending"]] == ["pending"]
+    assert result["pending"][0]["undetermined_columns"] == ["odds"]
+
+
 def test_no_races_on_date_is_safe(search_db: Path, strategy_db: Path) -> None:
     result = match_races({"bet": BET}, "2026-08-17", search_db, strategy_db)
 

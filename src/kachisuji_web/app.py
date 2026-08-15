@@ -38,6 +38,7 @@ def _user_validation_message(error: ValueError) -> str:
         "選手名には",
         "買い目は",
         "艇間比較は",
+        "オッズ条件は",
         "バックテスト結果は",
     )
     if message.startswith(user_message_prefixes):

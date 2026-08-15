@@ -42,7 +42,7 @@ body {
   font-size: 14px;
   line-height: 1.7;
 }
-.app { max-width: 1080px; margin: 0 auto; padding: 28px 18px 80px; }
+.app { max-width: 1080px; margin: 0 auto; padding: 28px 18px 132px; }
 .top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
 .logo { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: 26px; font-weight: 600; letter-spacing: .02em; }
 .logo .mark { color: var(--accent); }
@@ -98,6 +98,9 @@ button.wchip.on { border-color: var(--accent); background: var(--accent-soft); c
 .cond.limited { margin-left: -8px; padding: 3px 8px; border-radius: 6px; background: var(--warn-soft); }
 .cond.limited2 { margin-left: -8px; padding: 3px 8px; border-radius: 6px; background: var(--crit-soft); }
 .compare-help { margin: 0 0 8px; color: var(--ink-3); font-size: 11.5px; }
+.odds-fieldset { background: var(--surface); }
+.odds-toggle { display: inline-flex; min-width: auto !important; gap: 6px; align-items: center; font-weight: 700; }
+.odds-note { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--warn-soft); color: var(--warn); font-size: 11.5px; }
 #compareRows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .compare-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px; border-radius: 7px; background: var(--surface-2); }
 .compare-row select, .compare-row input { padding: 4px 6px; font-size: 12px; }
@@ -109,6 +112,7 @@ button { padding: 10px 22px; border: 1px solid var(--line); border-radius: 8px; 
 button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
 button.primary:hover { filter: brightness(1.06); }
 button:disabled { cursor: not-allowed; opacity: .45; }
+button.is-loading::before { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; content: ""; animation: spin .8s linear infinite; }
 .empty { padding: 60px 10px; color: var(--ink-3); text-align: center; font-size: 13.5px; }
 .loading::before { display: inline-block; width: 10px; height: 10px; margin-right: 9px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; content: ""; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -134,13 +138,32 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .yeartbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
 .yeartbl th:first-child, .yeartbl td:first-child { text-align: left; }
 .roi-pos { color: var(--good); font-weight: 700; }.roi-neg { color: var(--crit); font-weight: 700; }
+.actionbar { position: fixed; z-index: 100; right: 0; bottom: 0; left: 0; border-top: 1px solid var(--line); background: var(--surface); box-shadow: 0 -6px 24px rgba(18, 30, 40, .14); }
+.actionbar-inner { display: flex; max-width: 1080px; min-height: 76px; margin: 0 auto; padding: 12px 18px; gap: 10px; align-items: center; }
+.actionbar button { padding: 9px 17px; }
+.condition-count { padding: 5px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.mini-kpi { margin-left: auto; border-color: var(--good); background: var(--good-soft); color: var(--good); font-variant-numeric: tabular-nums; }
+.bar-reset { padding-inline: 12px !important; font-size: 12px; }
+.result-updated { animation: result-flash .75s ease-out; }
+@keyframes result-flash { from { background: var(--accent-soft); box-shadow: 0 0 0 5px var(--accent-soft); } to { background: transparent; box-shadow: none; } }
 
+@media (min-width: 881px) {
+  .results { position: sticky; top: 12px; max-height: calc(100vh - 100px); overflow: auto; }
+}
 @media (max-width: 880px) {
   .cols { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
-  .app { padding-inline: 10px; }
+  .app { padding: 18px 10px 150px; }
   .panel { padding-inline: 12px; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conds { padding-left: 12px; }
+  .actionbar-inner { min-height: 92px; padding: 9px 10px; gap: 7px; flex-wrap: wrap; }
+  .actionbar button { padding: 8px 12px; }
+  .mini-kpi { order: 5; width: 100%; margin-left: 0; padding-block: 5px !important; }
+  .bar-reset { margin-left: auto; }
+  .compare-row { align-items: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }

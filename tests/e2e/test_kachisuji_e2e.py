@@ -116,6 +116,28 @@ def test_s1_search_renders_result_kpis(page):
     expect(page.locator("#btnSaveStrategy")).to_be_enabled()
 
 
+@pytest.mark.parametrize("width", [1280, 390])
+def test_s7_sticky_action_bar_keeps_search_visible_at_page_bottom(page, width):
+    page.set_viewport_size({"width": width, "height": 800})
+    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+
+    expect(page.locator("#btnSearch")).to_be_in_viewport()
+    expect(page.locator("#btnSearch")).to_be_enabled()
+
+
+def test_s7_mobile_search_scrolls_results_into_view_and_mini_kpi_matches(page):
+    page.set_viewport_size({"width": 390, "height": 800})
+    page.locator("#fast").check()
+    page.locator("#venue").select_option("1")
+    page.locator("#btnSearch").click()
+    expect(page.locator(".kpis")).to_be_visible(timeout=30_000)
+    expect(page.locator("#resultsPanel")).to_be_in_viewport()
+
+    roi = page.locator(".kpi").nth(0).locator(".v").inner_text()
+    n = page.locator(".kpi").nth(2).locator(".v").inner_text()
+    expect(page.locator("#miniKpi")).to_have_text(f"回収率 {roi} / N {n}")
+
+
 # S2: ticket validation and unused legs.
 def test_s2_duplicate_ticket_is_rejected_with_visible_guidance(page):
     page.locator("#pos2").select_option("1")

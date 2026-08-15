@@ -305,6 +305,73 @@ def test_compare_ge_le_margin_boundary_is_inclusive(
     assert result["excluded"]["condition_null"] == 0
 
 
+def test_compare_omitted_margin_is_equivalent_to_zero(tmp_path: Path) -> None:
+    db = _make_db(tmp_path / "compare-zero.db", [_row("equal", "2026-01-01", b2_age=30)])
+    base = {"metric": "age", "boat": 1, "op": "ge", "other": 2}
+
+    omitted = search_roi(db, {"compare": [base]}, fast=True)
+    explicit = search_roi(db, {"compare": [{**base, "margin": 0}]}, fast=True)
+
+    assert omitted == explicit
+
+
+def test_final_odds_range_is_inclusive_and_missing_rows_are_condition_null(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "odds.db",
+        [
+            _row("lower", "2026-05-02"),
+            _row("upper", "2026-05-02"),
+            _row("outside", "2026-05-02"),
+            _row("missing", "2026-05-02"),
+        ],
+    )
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "CREATE TABLE odds_snapshot (race_id TEXT, combination TEXT, snapshot TEXT, odds REAL, "
+            "PRIMARY KEY (race_id, combination, snapshot))"
+        )
+        connection.executemany(
+            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'final', ?)",
+            [("lower", 5.0), ("upper", 15.0), ("outside", 15.1)],
+        )
+
+    result = search_roi(
+        db,
+        {"odds": {"snapshot": "final", "min": 5.0, "max": 15.0}},
+        fast=True,
+    )
+
+    assert result["n"] == 2
+    assert result["excluded"] == {"result_missing": 0, "condition_null": 1}
+
+
+def test_odds_snapshot_switch_and_no_condition_join_isolation(tmp_path: Path) -> None:
+    db = _make_db(tmp_path / "odds-switch.db", [_row("race", "2026-05-02")])
+    baseline = search_roi(db, {}, fast=True)
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "CREATE TABLE odds_snapshot (race_id TEXT, combination TEXT, snapshot TEXT, odds REAL, "
+            "PRIMARY KEY (race_id, combination, snapshot))"
+        )
+        connection.executemany(
+            "INSERT INTO odds_snapshot VALUES ('race', '1-2-3', ?, ?)",
+            [("final", 20.0), ("T-5min", 10.0)],
+        )
+
+    assert search_roi(db, {}, fast=True) == baseline
+    assert search_roi(db, {"odds": {"snapshot": "final", "max": 15}}, fast=True)["n"] == 0
+    assert search_roi(db, {"odds": {"snapshot": "T-5min", "max": 15}}, fast=True)["n"] == 1
+
+
+@pytest.mark.parametrize("kind", ["tansho", "nirentan"])
+def test_odds_condition_rejects_non_trifecta_bets(fixture_db: Path, kind: str) -> None:
+    bet = {"type": kind, "first": 1}
+    if kind == "nirentan":
+        bet["second"] = 2
+    with pytest.raises(ValueError, match="オッズ条件は現在3連単のみ対応しています"):
+        search_roi(fixture_db, {"bet": bet, "odds": {"min": 5}}, fast=True)
+
+
 @pytest.mark.parametrize(
     ("comparison", "overrides"),
     [

@@ -38,6 +38,7 @@
       <span><span class="chip live">⏱ 直前確定</span> 天候・風・展示</span>
       <span><span class="chip lim">📅 2023/5〜</span> 決まり手・事故率</span>
       <span><span class="chip lim2">📅 2024/12〜</span> 展示順位・展示タイム・展示ST</span>
+      <span><span class="chip live">⏱</span> <span class="chip lim">📅 確定 2026/4〜5</span> 3連単オッズ</span>
     </div>
 
     <div class="cols">
@@ -114,6 +115,25 @@
             </div>
           </fieldset>
 
+          <fieldset class="odds-fieldset">
+            <legend>3連単オッズ条件</legend>
+            <div class="row">
+              <label class="odds-toggle"><input type="checkbox" id="oddsEnabled"> オッズ帯を使う</label>
+              <span class="chip live">⏱</span>
+              <span class="chip lim" id="oddsPeriod">📅 2026/4〜2026/5</span>
+            </div>
+            <div class="row">
+              <label for="oddsSnapshot">時点</label>
+              <select id="oddsSnapshot">
+                <option value="final" selected>確定オッズ（既定）</option>
+                <option value="T-5min">締切5分前</option>
+              </select>
+              <input type="number" id="oddsMin" value="5.0" min="0" step="0.1" aria-label="オッズ下限"><span class="unit">倍以上</span>
+              <input type="number" id="oddsMax" value="15.0" min="0" step="0.1" aria-label="オッズ上限"><span class="unit">倍以下</span>
+            </div>
+            <p class="odds-note" id="oddsNote">確定オッズは締切前には分かりません。過去検証・傾向分析用の条件です。当日照合では未確定扱いになります。</p>
+          </fieldset>
+
           <fieldset>
             <legend>番組・市場条件</legend>
             <div class="row">
@@ -157,20 +177,13 @@
             <label class="fast-option"><input type="checkbox" id="fast"> 高速計算（正規近似95%CI）</label>
           </fieldset>
 
-          <div class="btnrow">
-            <button class="primary" id="btnSearch" type="submit">🔍 この条件で検索</button>
-            <button id="btnReset" type="reset">条件をリセット</button>
-          </div>
         </form>
       </section>
 
-      <section class="panel results" aria-labelledby="results-title">
+      <section class="panel results" id="resultsPanel" aria-labelledby="results-title">
         <h1 id="results-title">検索結果</h1>
         <div id="resultArea" aria-live="polite">
           <div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>
-        </div>
-        <div class="btnrow">
-          <button id="btnSaveStrategy" type="button" disabled>★ この条件をマイ手法として保存</button>
         </div>
         <div id="strategyMessage" class="section-message" role="status" aria-live="polite"></div>
 
@@ -197,6 +210,16 @@
       </section>
     </div>
   </main>
+
+  <div class="actionbar" role="region" aria-label="検索操作">
+    <div class="actionbar-inner">
+      <button class="primary" id="btnSearch" type="submit" form="searchForm">🔍 検索</button>
+      <button id="btnSaveStrategy" type="button" disabled>★ 保存</button>
+      <span class="condition-count" id="conditionCount" aria-live="polite">条件 1個</span>
+      <button class="mini-kpi" id="miniKpi" type="button" hidden>回収率 — / N —</button>
+      <button class="bar-reset" id="btnReset" type="reset" form="searchForm">リセット</button>
+    </div>
+  </div>
 
   <script>
   (function () {
@@ -266,9 +289,9 @@
       return '<div class="compare-row">' +
         '<select class="compare-boat" aria-label="比較する艇">' + optionList(boatNumbers, 1) + '</select><span class="unit">号艇の</span>' +
         '<select class="compare-metric">' + metricOptions + '</select><span class="unit">が</span>' +
-        '<select class="compare-other" aria-label="比較相手の艇">' + optionList(boatNumbers, 2) + '</select><span class="unit">号艇より</span>' +
-        '<input class="compare-margin" type="number" value="0" min="0" step="0.01" aria-label="差"><span class="compare-unit unit"></span>' +
-        '<select class="compare-op"><option value="ge">以上高い</option><option value="le">以上低い</option></select>' +
+        '<select class="compare-other" aria-label="比較相手の艇">' + optionList(boatNumbers, 2) + '</select><span class="unit">号艇</span>' +
+        '<select class="compare-op"><option value="ge">以上</option><option value="le">以下</option></select>' +
+        '<span class="unit">差:</span><input class="compare-margin" type="number" min="0" step="0.01" placeholder="任意（0）" aria-label="差（任意）"><span class="compare-unit unit"></span>' +
         '<button type="button" class="remove-compare compact-button" aria-label="比較条件を削除">削除</button></div>';
     }
     function updateCompareUnit(row) {
@@ -304,6 +327,16 @@
     }
     byId('betType').addEventListener('change', refreshBetUI);
     refreshBetUI();
+
+    function refreshOddsHelp() {
+      var finalOdds = byId('oddsSnapshot').value === 'final';
+      byId('oddsPeriod').textContent = finalOdds ? '📅 2026/4〜2026/5' : '📅 2024/6〜';
+      byId('oddsNote').textContent = finalOdds
+        ? '確定オッズは締切前には分かりません。過去検証・傾向分析用の条件です。当日照合では未確定扱いになります。'
+        : '締切5分前オッズは締切直前に判定できます。収集済み期間だけが検索対象です。';
+    }
+    byId('oddsSnapshot').addEventListener('change', refreshOddsHelp);
+    refreshOddsHelp();
 
     function addRange(target, key, cmpId, valueId) {
       var direction = byId(cmpId).value;
@@ -362,6 +395,11 @@
         if (byId(pair[0]).value) result[pair[1]] = byId(pair[0]).value;
       });
       if (byId('female').value) result.female_present = Number(byId('female').value);
+      if (byId('oddsEnabled').checked) {
+        result.odds = {snapshot: byId('oddsSnapshot').value};
+        if (byId('oddsMin').value.trim()) result.odds.min = Number(byId('oddsMin').value);
+        if (byId('oddsMax').value.trim()) result.odds.max = Number(byId('oddsMax').value);
+      }
       if (byId('dateFrom').value) result.date_from = byId('dateFrom').value;
       if (byId('dateTo').value) result.date_to = byId('dateTo').value;
       var boats = {};
@@ -375,13 +413,38 @@
           boat: Number(row.querySelector('.compare-boat').value),
           op: row.querySelector('.compare-op').value,
           other: Number(row.querySelector('.compare-other').value),
-          margin: Number(row.querySelector('.compare-margin').value)
+          margin: row.querySelector('.compare-margin').value.trim()
+            ? Number(row.querySelector('.compare-margin').value) : 0
         };
       }).filter(Boolean);
       if (comparisons.length) result.compare = comparisons;
       if (byId('fast').checked) result.fast = true;
       return result;
     }
+
+    function activeConditionCount() {
+      var conditions = collectConditions();
+      var count = 1;
+      Object.keys(conditions).forEach(function (key) {
+        if (key === 'bet' || key === 'fast') return;
+        if (key === 'boats') {
+          Object.keys(conditions.boats).forEach(function (boat) {
+            count += Object.keys(conditions.boats[boat]).length;
+          });
+        } else if (key === 'compare') {
+          count += conditions.compare.length;
+        } else {
+          count += 1;
+        }
+      });
+      return count;
+    }
+    function refreshConditionCount() {
+      byId('conditionCount').textContent = '条件 ' + activeConditionCount() + '個';
+    }
+    byId('searchForm').addEventListener('input', refreshConditionCount);
+    byId('searchForm').addEventListener('change', refreshConditionCount);
+    byId('searchForm').addEventListener('click', function () { window.setTimeout(refreshConditionCount, 0); });
 
     function escapeHtml(value) {
       var node = document.createElement('span'); node.textContent = String(value); return node.innerHTML;
@@ -407,6 +470,17 @@
         warnings +
         '<div class="exclusions"><h2>除外の内訳</h2><dl><div><dt>結果・払戻欠損</dt><dd>' + data.excluded.result_missing + '件</dd></div><div class="condition-null"><dt>条件判定不能で除外した件数</dt><dd>' + data.excluded.condition_null + '件</dd></div></dl></div>' +
         '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年</th><th>N</th><th>的中</th><th>回収率</th></tr></thead><tbody>' + years + '</tbody></table>';
+      byId('miniKpi').hidden = false;
+      byId('miniKpi').textContent = '回収率 ' + data.roi.toFixed(1) + '% / N ' + data.n;
+      byId('resultArea').classList.remove('result-updated');
+      void byId('resultArea').offsetWidth;
+      byId('resultArea').classList.add('result-updated');
+    }
+
+    function showResultsOnMobile() {
+      if (!window.matchMedia('(max-width: 879px)').matches) return;
+      var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      byId('resultsPanel').scrollIntoView({behavior: reduced ? 'auto' : 'smooth', block: 'start'});
     }
 
     async function requestJson(url, options) {
@@ -462,7 +536,7 @@
 
     byId('searchForm').addEventListener('submit', async function (event) {
       event.preventDefault();
-      var button = byId('btnSearch'); button.disabled = true; button.textContent = '検索中…';
+      var button = byId('btnSearch'); button.disabled = true; button.classList.add('is-loading'); button.textContent = '検索中…';
       byId('resultArea').innerHTML = '<div class="empty loading">データを集計しています…</div>';
       try {
         var conditions = collectConditions();
@@ -471,21 +545,27 @@
         lastConditions = conditions;
         lastBacktest = data;
         byId('btnSaveStrategy').disabled = false;
+        showResultsOnMobile();
       } catch (error) {
         byId('resultArea').innerHTML = '<div class="errorbox" role="alert"></div>';
         byId('resultArea').querySelector('.errorbox').textContent = error.message;
       } finally {
-        button.disabled = false; button.textContent = '🔍 この条件で検索';
+        button.disabled = false; button.classList.remove('is-loading'); button.textContent = '🔍 検索';
       }
     });
     byId('searchForm').addEventListener('reset', function () {
       window.setTimeout(function () {
         document.querySelectorAll('.wchip.on').forEach(function (chip) { chip.classList.remove('on'); chip.setAttribute('aria-pressed', 'false'); });
         byId('compareRows').innerHTML = '';
-        refreshBetUI(); refreshBoatSummaries();
+        refreshBetUI(); refreshOddsHelp(); refreshBoatSummaries(); refreshConditionCount();
         lastConditions = null; lastBacktest = null; byId('btnSaveStrategy').disabled = true;
+        byId('miniKpi').hidden = true;
         byId('resultArea').innerHTML = '<div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>';
       }, 0);
+    });
+
+    byId('miniKpi').addEventListener('click', function () {
+      byId('resultsPanel').scrollIntoView({behavior: 'smooth', block: 'start'});
     });
 
     byId('btnSaveStrategy').addEventListener('click', async function () {
@@ -536,6 +616,7 @@
     byId('matchDate').value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0')].join('-');
     loadStrategies();
     refreshBoatSummaries();
+    refreshConditionCount();
   }());
   </script>
 </body>

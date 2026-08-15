@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 import config
 from src.db.connection import connect
 from src.features.asof_builder import build_features, coverage_rows, verify_features
+from src.features.odds_sync import sync_odds
 
 
 DEFAULT_OUTPUT = ROOT / "data" / "kachisuji_search.db"
@@ -26,6 +27,7 @@ def parser() -> argparse.ArgumentParser:
     mode.add_argument("--daily", action="store_true")
     mode.add_argument("--verify", action="store_true")
     mode.add_argument("--coverage", action="store_true")
+    mode.add_argument("--sync-odds", action="store_true")
     result.add_argument("--date-from")
     result.add_argument("--date-to")
     result.add_argument("--rebuild", action="store_true")
@@ -58,6 +60,20 @@ def main(argv: list[str] | None = None) -> int:
 
     source = _source_connection()
     try:
+        if args.sync_odds:
+            if not args.date_from or not args.date_to:
+                print("--sync-odds requires --date-from and --date-to", file=sys.stderr)
+                return 2
+            result = sync_odds(
+                source,
+                args.output,
+                args.date_from,
+                args.date_to,
+                rebuild=args.rebuild,
+            )
+            print("sync-odds " + " ".join(f"{key}={value}" for key, value in result.items()))
+            return 0
+
         if args.verify:
             result = verify_features(
                 source,

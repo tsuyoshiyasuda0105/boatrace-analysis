@@ -125,6 +125,10 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="raceNoFrom"',
         'id="boats"',
         'id="compareRows"',
+        'id="oddsEnabled"',
+        'id="oddsSnapshot"',
+        'id="conditionCount"',
+        'id="miniKpi"',
         "全国2連対率",
         "⚖ 艇間比較",
         'id="dateFrom"',
@@ -132,6 +136,16 @@ def test_index_renders_major_condition_fields(client) -> None:
         "条件判定不能で除外した件数",
     ):
         assert marker in html
+
+
+def test_api_rejects_odds_for_non_trifecta_with_japanese_guidance(client) -> None:
+    response = client.post(
+        "/api/search",
+        json={"bet": {"type": "tansho", "first": 1}, "odds": {"min": 5}},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "オッズ条件は現在3連単のみ対応しています（単勝・2連単のオッズは未収集）"
 
 
 def test_search_returns_expected_step2_json_structure(client) -> None:
