@@ -1,6 +1,94 @@
 """Pure market-signal evaluators extracted from the web application."""
 
 
+def _evaluate_general_c_signal(
+    stadium,
+    grade,
+    cls,
+    min_payout,
+    l4_band_ok=None,
+    natl_1=None,
+    local_1=None,
+    boat1_motor_top2=None,
+    boat2_motor_top2=None,
+    boat3_natl_1=None,
+    weather=None,
+    n_female=0,
+    *,
+    EXCLUDE_B_VENUES=(),
+):
+    try:
+        payout = int(min_payout) if min_payout is not None else None
+    except (TypeError, ValueError):
+        payout = None
+    try:
+        n1 = float(natl_1) if natl_1 is not None else 0.0
+    except (TypeError, ValueError):
+        n1 = 0.0
+    try:
+        l1 = float(local_1) if local_1 is not None else 0.0
+    except (TypeError, ValueError):
+        l1 = 0.0
+    try:
+        b1m = float(boat1_motor_top2) if boat1_motor_top2 is not None else 0.0
+    except (TypeError, ValueError):
+        b1m = 0.0
+    try:
+        b2m = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
+    except (TypeError, ValueError):
+        b2m = 0.0
+    try:
+        b3n1 = float(boat3_natl_1) if boat3_natl_1 is not None else 0.0
+    except (TypeError, ValueError):
+        b3n1 = 0.0
+
+    in_l4_band = False
+    if l4_band_ok is True:
+        in_l4_band = True
+    elif payout is not None:
+        # Keep live-list behaviour aligned with daily ROI aggregation:
+        # when the precomputed odds-window flag is missing or false, fall
+        # back to the latest available payout band for retrospective
+        # same-day checks and cache regeneration.
+        in_l4_band = 500 <= payout < 1000
+
+    if not (
+        grade == 5
+        and cls == 1
+        and stadium not in EXCLUDE_B_VENUES
+        and weather != 3
+        and n_female == 0
+        and in_l4_band
+        and n1 >= 7.0
+        and l1 >= 7.0
+        and b1m >= 35.0
+        and b2m < 35.0
+        and b3n1 >= 5.0
+    ):
+        return None
+
+    return {
+        "level": "general_c_tri",
+        "label": "1号艇強+2号艇M弱+3号艇強",
+        "recovery": 240.8,
+        "n": 62,
+        "bet": "3連単 1-2-3",
+        "rank": "trifecta_niche",
+        "rank_label": "1-2-3採用",
+        "rank_emoji": "採用",
+        "natl_1": natl_1,
+        "local_1": local_1,
+        "is_reference": False,
+        "is_trifecta_niche": True,
+        "trifecta_niche_name": "1号艇強+2号艇M弱+3号艇強 1-2-3",
+        "trifecta_niche_tag": "一般戦 + 1号艇全国1着率>=7 + 当地1着率>=7 + 1号艇モーター>=35 + 2号艇モーター<35 + 3号艇全国1着率>=5",
+        "trifecta_niche_hit_rate": 19.4,
+        "trifecta_niche_recovery": 240.8,
+        "tetsuban_score": 6,
+        "tetsuban_label": "1-2-3採用",
+    }
+
+
 def _evaluate_g23_optb_signal(stadium, grade, cls, min_payout, natl_1=None, local_1=None,
                               avg_st=None, age=None, ex_st=None, boat2_motor_top2=None,
                               weather=None, n_female=0):

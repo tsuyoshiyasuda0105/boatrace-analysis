@@ -91,3 +91,13 @@
 - `src/web/app.py` は同名関数をモジュールimportし、既存呼び出し引数・順序は変更なし。隣接するwatch evaluatorは未変更。
 - 閉包依存: なし。
 - Phase Aテストは呼び出し元だけを新モジュールimportへ変更。採用dictと除外境界のgolden期待値は不変。
+- コミット: `bf35137`。
+- コミット後全テスト: `687 passed`。
+
+### `_evaluate_general_c_signal`
+
+- ネスト定義を一般Cの払戻帯fallback・B会場除外・motor閾値を含め本体そのままで `src/strategies/signals.py` に移動。
+- 閉包依存 `EXCLUDE_B_VENUES` は同名のキーワード専用引数（既定値は空tuple）にした。
+- `src/web/app.py` の旧定義位置で `partial(..., EXCLUDE_B_VENUES=EXCLUDE_B_VENUES)` として従来値を束縛。既存呼び出し引数・順序は変更なし。隣接watchとdaily側重複は未変更。
+- Phase Aテストは新モジュール関数へ同じ除外集合を明示注入。採用dict・除外境界のgolden期待値は不変。
+- 9関数すべてが新モジュールimportになったため、テスト専用ASTローダーを削除。

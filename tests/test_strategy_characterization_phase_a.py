@@ -8,9 +8,6 @@ today's behaviour; they are not claims that the rules are correct.
 
 from __future__ import annotations
 
-import ast
-import textwrap
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,29 +18,11 @@ from src.strategies.signals import (
     _detect_niche_signals,
     _evaluate_candidate_134_signal,
     _evaluate_g23_optb_signal,
+    _evaluate_general_c_signal,
     _evaluate_l4_general_200,
     _pick_best_market_signal,
     _prefer_adopted_signal_over_general200,
 )
-
-
-APP_PATH = Path(__file__).resolve().parents[1] / "src" / "web" / "app.py"
-
-
-def _load_local_function(name: str, **injected_globals):
-    source = APP_PATH.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    matches = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == name
-    ]
-    assert len(matches) == 1, f"expected one app.py definition for {name}, got {len(matches)}"
-    function_source = ast.get_source_segment(source, matches[0])
-    namespace = dict(injected_globals)
-    exec(compile(textwrap.dedent(function_source), str(APP_PATH), "exec"), namespace)
-    return namespace[name]
 
 
 def test_g23_optb_adopted_signal_exact_output():
@@ -138,12 +117,7 @@ def test_candidate_134_overlap_prefers_last_matching_candidate():
 
 
 def test_general_c_adopted_signal_exact_output():
-    evaluate = _load_local_function(
-        "_evaluate_general_c_signal",
-        EXCLUDE_B_VENUES={2, 4, 7, 8, 10, 19, 21, 24},
-    )
-
-    assert evaluate(
+    assert _evaluate_general_c_signal(
         stadium=1,
         grade=5,
         cls=1,
@@ -156,6 +130,7 @@ def test_general_c_adopted_signal_exact_output():
         boat3_natl_1=5.0,
         weather=1,
         n_female=0,
+        EXCLUDE_B_VENUES={2, 4, 7, 8, 10, 19, 21, 24},
     ) == {
         "level": "general_c_tri",
         "label": "1号艇強+2号艇M弱+3号艇強",
@@ -183,12 +158,7 @@ def test_general_c_adopted_signal_exact_output():
     [(2, 1, 0), (1, 3, 0), (1, 1, 1)],
 )
 def test_general_c_current_b_venue_rain_and_female_gates(stadium, weather, n_female):
-    evaluate = _load_local_function(
-        "_evaluate_general_c_signal",
-        EXCLUDE_B_VENUES={2, 4, 7, 8, 10, 19, 21, 24},
-    )
-
-    assert evaluate(
+    assert _evaluate_general_c_signal(
         stadium=stadium,
         grade=5,
         cls=1,
@@ -200,6 +170,7 @@ def test_general_c_current_b_venue_rain_and_female_gates(stadium, weather, n_fem
         boat3_natl_1=5.0,
         weather=weather,
         n_female=n_female,
+        EXCLUDE_B_VENUES={2, 4, 7, 8, 10, 19, 21, 24},
     ) is None
 
 
