@@ -95,6 +95,7 @@ from src.strategies.signals import (
     _compute_tetsuban,
     _detect_niche_signals,
     _evaluate_candidate_134_signal,
+    _evaluate_g23_optb_signal,
     _evaluate_l4_general_200,
     _pick_best_market_signal as _pick_best_market_signal_impl,
     _prefer_adopted_signal_over_general200,
@@ -10619,49 +10620,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 "is_after_exhibition_out": has_exhibition and not display_confirmed,
                 "tetsuban_score": 4,
                 "tetsuban_label": "朝監視 尼崎 1-4-3",
-            }
-
-        def _evaluate_g23_optb_signal(stadium, grade, cls, min_payout, natl_1=None, local_1=None,
-                                     avg_st=None, age=None, ex_st=None, boat2_motor_top2=None,
-                                     weather=None, n_female=0):
-            try:
-                _natl1 = float(natl_1) if natl_1 is not None else 0.0
-                _local1 = float(local_1) if local_1 is not None else 0.0
-                _avg_st = float(avg_st) if avg_st is not None else None
-                _age = int(age) if age is not None else None
-                _ex_st = float(ex_st) if ex_st is not None else None
-                _b2m = float(boat2_motor_top2) if boat2_motor_top2 is not None else 0.0
-                _min_pay = int(float(min_payout)) if min_payout is not None else None
-            except (TypeError, ValueError):
-                return None
-            g23_caps = {11: 35.0, 12: 35.0, 16: 40.0, 20: 30.0, 22: 35.0, 23: 40.0}
-            if not (
-                stadium in g23_caps
-                and grade in (3, 4)
-                and cls == 1
-                and n_female == 0
-                and weather != 3
-                and _natl1 >= 7.0
-                and _local1 >= 6.0
-                and _age is not None and 30 <= _age <= 49
-                and _avg_st is not None and _avg_st < 0.155
-                and _ex_st is not None and _ex_st < 0.18
-                and _b2m <= g23_caps[stadium]
-                and _min_pay is not None and 500 <= _min_pay < 1000
-            ):
-                return None
-            return {
-                "level": "g23_optb_tri",
-                "label": "G2/G3 1-2-3",
-                "recovery": 204.0,
-                "n": 1189,
-                "bet": "3連単 1-2-3",
-                "rank": "trifecta_niche",
-                "rank_label": "3連単ニッチ",
-                "rank_emoji": "🎯",
-                "is_reference": False,
-                "tetsuban_score": 4,
-                "tetsuban_label": "G2/G3 1-2-3",
             }
 
         def _evaluate_g23_optb_watch(stadium, grade, cls, natl_1=None, local_1=None,

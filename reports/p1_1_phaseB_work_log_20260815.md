@@ -82,3 +82,12 @@
 - `src/web/app.py` は同名関数をモジュールimportし、既存呼び出し引数・順序は変更なし。
 - 閉包依存: なし。
 - Phase Aテストは呼び出し元だけを新モジュールimportへ変更。overlay metadataを含むgolden期待値は不変。
+- コミット: `2bb8ea7`。
+- コミット後全テスト: `687 passed`。
+
+### `_evaluate_g23_optb_signal`
+
+- ネスト定義を会場別motor上限・ST・年齢・払戻帯を含め本体そのままで `src/strategies/signals.py` に移動。
+- `src/web/app.py` は同名関数をモジュールimportし、既存呼び出し引数・順序は変更なし。隣接するwatch evaluatorは未変更。
+- 閉包依存: なし。
+- Phase Aテストは呼び出し元だけを新モジュールimportへ変更。採用dictと除外境界のgolden期待値は不変。

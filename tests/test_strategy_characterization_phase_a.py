@@ -20,6 +20,7 @@ from src.strategies.signals import (
     _compute_tetsuban,
     _detect_niche_signals,
     _evaluate_candidate_134_signal,
+    _evaluate_g23_optb_signal,
     _evaluate_l4_general_200,
     _pick_best_market_signal,
     _prefer_adopted_signal_over_general200,
@@ -46,9 +47,7 @@ def _load_local_function(name: str, **injected_globals):
 
 
 def test_g23_optb_adopted_signal_exact_output():
-    evaluate = _load_local_function("_evaluate_g23_optb_signal")
-
-    assert evaluate(
+    assert _evaluate_g23_optb_signal(
         stadium=16,
         grade=3,
         cls=1,
@@ -87,7 +86,6 @@ def test_g23_optb_adopted_signal_exact_output():
     ],
 )
 def test_g23_optb_current_exclusion_boundaries(field, value):
-    evaluate = _load_local_function("_evaluate_g23_optb_signal")
     inputs = {
         "stadium": 16,
         "grade": 3,
@@ -104,7 +102,7 @@ def test_g23_optb_current_exclusion_boundaries(field, value):
     }
     inputs[field] = value
 
-    assert evaluate(**inputs) is None
+    assert _evaluate_g23_optb_signal(**inputs) is None
 
 
 def test_candidate_134_overlap_prefers_last_matching_candidate():
