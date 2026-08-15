@@ -34,6 +34,9 @@ TICK_INTERVAL_MINUTES = 10
 LOCK_NAME = "boatrace-maintenance-scheduler-v1"
 MAX_PHASE_ATTEMPTS = 3
 SCHEDULER_VERSION = "v2"
+DETAIL_TAG_BUDGET_SEC = 600
+DETAIL_PAGE_BUDGET_SEC = 600
+DETAIL_PREWARM_TIMEOUT_SEC = 900
 PHASES: tuple[tuple[str, time], ...] = (
     ("accident", time(4, 0)),
     ("program", time(4, 30)),
@@ -190,13 +193,24 @@ def run_motor_phase(now: datetime) -> tuple[bool, dict]:
 def run_detail_phase(now: datetime) -> tuple[bool, dict]:
     today = now.date().isoformat()
     tags_ok = regular.run_py(
-        ["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900
+        [
+            "scripts/prewarm_race_detail_tags.py",
+            "--date", today,
+            "--budget-sec", str(DETAIL_TAG_BUDGET_SEC),
+        ],
+        timeout=DETAIL_PREWARM_TIMEOUT_SEC,
     )
     # A partial tag refresh must not prevent the primary page prewarm. The final
     # integrity check below distinguishes a real cache gap from an acceptable
     # new-motor warning, so always give every page a chance to render first.
     pages_ok = regular.run_py(
-        ["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800
+        [
+            "scripts/prewarm_race_detail_pages.py",
+            "--date", today,
+            "--missing-only",
+            "--budget-sec", str(DETAIL_PAGE_BUDGET_SEC),
+        ],
+        timeout=DETAIL_PREWARM_TIMEOUT_SEC,
     )
     integrity_ok = regular.run_py(
         [
@@ -209,11 +223,28 @@ def run_detail_phase(now: datetime) -> tuple[bool, dict]:
         ],
         timeout=300,
     )
-    return bool(pages_ok and integrity_ok), {
+    coverage: dict[str, int] | None = None
+    try:
+        coverage = regular.race_detail_page_cache_coverage(today)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[maintenance-detail] coverage check failed: {type(exc).__name__}: {exc}", flush=True)
+    remaining = (
+        max(0, coverage["races"] - coverage["covered"])
+        if coverage is not None
+        else None
+    )
+    partial = bool(tags_ok and pages_ok and remaining is not None and remaining > 0)
+    # Budget exhaustion is an expected partial success. Keep the integrity
+    # result visible, but do not block snapshot/integrity phases while the
+    # regular self-heal owns the remaining page coverage.
+    ok = bool(pages_ok and (integrity_ok or partial))
+    return ok, {
         "date": today,
         "tags_ok": bool(tags_ok),
         "pages_ok": bool(pages_ok),
         "integrity_ok": bool(integrity_ok),
+        "partial": partial,
+        "remaining": remaining,
     }
 
 

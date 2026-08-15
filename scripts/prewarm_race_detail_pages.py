@@ -80,7 +80,10 @@ def prewarm(
     limit: int | None = None,
     missing_only: bool = False,
     retry_missing: int = 1,
+    budget_sec: float | None = None,
 ) -> dict:
+    if budget_sec is not None and budget_sec <= 0:
+        raise ValueError("budget_sec must be positive")
     _require_postgres()
     requested_ids = _race_ids(target_date, race_id, None)
     ids = (
@@ -99,6 +102,8 @@ def prewarm(
     started = time.perf_counter()
     durations: list[float] = []
     failures_by_race: dict[str, dict[str, object]] = {}
+    processed_ids: list[str] = []
+    budget_exhausted = False
 
     def generate(rid: str, index_label: str) -> None:
         race_started = time.perf_counter()
@@ -116,8 +121,12 @@ def prewarm(
 
     for index, rid in enumerate(ids, 1):
         generate(rid, f"{index}/{len(ids)}")
+        processed_ids.append(rid)
+        if budget_sec is not None and time.perf_counter() - started >= budget_sec:
+            budget_exhausted = len(processed_ids) < len(ids)
+            break
 
-    persistent_missing = _missing_persistent_page_ids(ids)
+    persistent_missing = _missing_persistent_page_ids(processed_ids)
     for retry in range(1, max(0, retry_missing) + 1):
         if not persistent_missing:
             break
@@ -127,10 +136,15 @@ def prewarm(
             flush=True,
         )
         for index, rid in enumerate(persistent_missing, 1):
+            if budget_sec is not None and time.perf_counter() - started >= budget_sec:
+                budget_exhausted = True
+                break
             web_app._CACHE.clear()
             web_app._PAGE_HTML_MEM_CACHE.clear()
             generate(rid, f"retry-{retry}:{index}/{len(persistent_missing)}")
         persistent_missing = _missing_persistent_page_ids(persistent_missing)
+        if budget_exhausted:
+            break
 
     for rid in persistent_missing:
         failures_by_race[rid] = {
@@ -140,10 +154,12 @@ def prewarm(
 
     total = time.perf_counter() - started
     failures = list(failures_by_race.values())
-    success_count = len(ids) - len(failures)
+    success_count = len(processed_ids) - len(failures)
+    remaining_count = (len(ids) - len(processed_ids)) + len(persistent_missing)
     cache_read_samples: list[dict[str, object]] = []
     sample_ids = list(dict.fromkeys(
-        [ids[0], ids[len(ids) // 2], ids[-1]] if ids else []
+        [processed_ids[0], processed_ids[len(processed_ids) // 2], processed_ids[-1]]
+        if processed_ids else []
     ))
     for rid in sample_ids:
         # Force this verification through the persistent page cache rather than
@@ -166,9 +182,12 @@ def prewarm(
         "requested_races": len(requested_ids),
         "skipped_existing": len(requested_ids) - len(ids) if missing_only else 0,
         "races": len(ids),
+        "attempted": len(processed_ids),
         "succeeded": success_count,
         "failed": len(failures),
-        "persistent_missing": len(persistent_missing),
+        "persistent_missing": remaining_count,
+        "remaining": remaining_count,
+        "budget_exhausted": budget_exhausted,
         "elapsed_seconds": round(total, 3),
         "average_seconds": round(statistics.mean(durations), 3) if durations else 0.0,
         "median_seconds": round(statistics.median(durations), 3) if durations else 0.0,
@@ -188,6 +207,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--missing-only", action="store_true")
     parser.add_argument("--retry-missing", type=int, default=1)
+    parser.add_argument("--budget-sec", type=float)
     parser.add_argument("--report")
     args = parser.parse_args()
     summary = prewarm(
@@ -196,6 +216,7 @@ def main() -> int:
         limit=args.limit,
         missing_only=args.missing_only,
         retry_missing=args.retry_missing,
+        budget_sec=args.budget_sec,
     )
     if args.report:
         report_path = Path(args.report)

@@ -40,6 +40,10 @@ ORIGINAL_EXHIBITION_RECOVERY_LIMIT = 48
 ORIGINAL_EXHIBITION_CATCHUP_PAST_MIN = 36 * 60
 ORIGINAL_EXHIBITION_CATCHUP_FUTURE_MIN = 30
 ORIGINAL_EXHIBITION_CATCHUP_LIMIT = 96
+DETAIL_SELFHEAL_TAG_BUDGET_SEC = 240
+DETAIL_SELFHEAL_PAGE_BUDGET_SEC = 240
+DETAIL_SELFHEAL_TIMEOUT_SEC = 360
+DETAIL_SELFHEAL_MIN_INTERVAL_MINUTES = 30
 REGULAR_RUN_LOCK_NAME = "boatrace-regular-scheduler-v1"
 _TASK_RUNS_SCHEMA_READY = False
 
@@ -552,7 +556,10 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
         record_task(attempt_task, today, "failure", detail="results_backfill_failed")
         return False
     if task_success_exists(task, today):
-        return True
+        # The broad bootstrap may already be complete while budgeted detail
+        # prewarm still has remaining races. Coverage + cooldown inside this
+        # helper decide whether another bounded slice is due.
+        return run_detail_pages_selfheal(now)
     if task_attempt_exists(attempt_task, today):
         print(f"[lite-bootstrap] hourly attempt already completed hour={now.hour:02d}", flush=True)
         return True
@@ -649,11 +656,9 @@ def run_yesterday_results_backfill(now: datetime) -> bool:
 
 
 def run_detail_pages_selfheal(now: datetime) -> bool:
-    """Warm today's detail caches once when current-version coverage is below 50%."""
+    """Resume today's detail caches in bounded slices until coverage is complete."""
     today = now.date().isoformat()
     task = "render_detail_pages_selfheal"
-    if task_success_exists(task, today):
-        return True
     try:
         coverage = race_detail_page_cache_coverage(today)
     except Exception as exc:
@@ -666,23 +671,57 @@ def run_detail_pages_selfheal(now: datetime) -> bool:
     if races <= 0:
         record_task(task, today, "failure", detail="race_count=0")
         return False
-    if covered * 2 >= races:
+    if covered >= races:
         record_task(task, today, "success", detail=f"skip:coverage={covered}/{races}")
         return True
 
-    print(f"[detail-selfheal] low coverage={covered}/{races} -> prewarm", flush=True)
+    if task_attempt_recently_finished(
+        task,
+        today,
+        now,
+        min_interval_minutes=DETAIL_SELFHEAL_MIN_INTERVAL_MINUTES,
+    ):
+        print(
+            f"[detail-selfheal] cooldown coverage={covered}/{races} "
+            f"min_interval={DETAIL_SELFHEAL_MIN_INTERVAL_MINUTES}m",
+            flush=True,
+        )
+        return True
+
+    print(f"[detail-selfheal] incomplete coverage={covered}/{races} -> prewarm", flush=True)
     tags_ok = run_py(
-        ["scripts/prewarm_race_detail_tags.py", "--date", today], timeout=900
+        [
+            "scripts/prewarm_race_detail_tags.py",
+            "--date", today,
+            "--budget-sec", str(DETAIL_SELFHEAL_TAG_BUDGET_SEC),
+        ],
+        timeout=DETAIL_SELFHEAL_TIMEOUT_SEC,
     )
     pages_ok = run_py(
-        ["scripts/prewarm_race_detail_pages.py", "--date", today], timeout=1800
+        [
+            "scripts/prewarm_race_detail_pages.py",
+            "--date", today,
+            "--missing-only",
+            "--budget-sec", str(DETAIL_SELFHEAL_PAGE_BUDGET_SEC),
+        ],
+        timeout=DETAIL_SELFHEAL_TIMEOUT_SEC,
     )
     ok = bool(tags_ok and pages_ok)
+    try:
+        after = race_detail_page_cache_coverage(today)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[detail-selfheal] post-coverage failed: {type(exc).__name__}: {exc}", flush=True)
+        after = coverage
+    remaining = max(0, after["races"] - after["covered"])
     record_task(
         task,
         today,
         "success" if ok else "failure",
-        detail=f"coverage={covered}/{races} tags_ok={tags_ok} pages_ok={pages_ok}",
+        detail=(
+            f"coverage={covered}/{races} after={after['covered']}/{after['races']} "
+            f"remaining={remaining} partial={remaining > 0} "
+            f"tags_ok={tags_ok} pages_ok={pages_ok}"
+        ),
     )
     return ok
 
@@ -794,6 +833,39 @@ def task_attempt_exists(task_name: str, run_date: str) -> bool:
         return bool(row and int(row[0] or 0) > 0)
     except Exception as exc:
         print(f"[task_runs] attempt read failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+
+
+def task_attempt_recently_finished(
+    task_name: str,
+    run_date: str,
+    now: datetime,
+    *,
+    min_interval_minutes: int,
+) -> bool:
+    """Return True while a completed attempt is inside its cooldown window."""
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT finished_at, started_at
+                  FROM task_runs
+                 WHERE task_name = ?
+                   AND run_date = ?
+                """,
+                (task_name, run_date),
+            ).fetchone()
+        raw = (row[0] or row[1]) if row else None
+        if not raw:
+            return False
+        attempted_at = raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+        if attempted_at.tzinfo is None:
+            attempted_at = attempted_at.replace(tzinfo=JST)
+        else:
+            attempted_at = attempted_at.astimezone(JST)
+        return now - attempted_at < timedelta(minutes=min_interval_minutes)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[task_runs] cooldown read failed: {type(exc).__name__}: {exc}", flush=True)
         return False
 
 
