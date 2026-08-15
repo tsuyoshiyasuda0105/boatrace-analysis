@@ -315,7 +315,7 @@ def test_compare_omitted_margin_is_equivalent_to_zero(tmp_path: Path) -> None:
     assert omitted == explicit
 
 
-def test_final_odds_range_is_inclusive_and_missing_rows_are_condition_null(tmp_path: Path) -> None:
+def test_t5_odds_range_is_inclusive_and_missing_rows_are_condition_null(tmp_path: Path) -> None:
     db = _make_db(
         tmp_path / "odds.db",
         [
@@ -331,13 +331,13 @@ def test_final_odds_range_is_inclusive_and_missing_rows_are_condition_null(tmp_p
             "PRIMARY KEY (race_id, combination, snapshot))"
         )
         connection.executemany(
-            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'final', ?)",
+            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'T-5min', ?)",
             [("lower", 5.0), ("upper", 15.0), ("outside", 15.1)],
         )
 
     result = search_roi(
         db,
-        {"odds": {"snapshot": "final", "min": 5.0, "max": 15.0}},
+        {"odds": {"snapshot": "T-5min", "min": 5.0, "max": 15.0}},
         fast=True,
     )
 
@@ -345,7 +345,7 @@ def test_final_odds_range_is_inclusive_and_missing_rows_are_condition_null(tmp_p
     assert result["excluded"] == {"result_missing": 0, "condition_null": 1}
 
 
-def test_odds_snapshot_switch_and_no_condition_join_isolation(tmp_path: Path) -> None:
+def test_odds_defaults_to_t5_and_no_condition_join_isolation(tmp_path: Path) -> None:
     db = _make_db(tmp_path / "odds-switch.db", [_row("race", "2026-05-02")])
     baseline = search_roi(db, {}, fast=True)
     with sqlite3.connect(db) as connection:
@@ -359,8 +359,18 @@ def test_odds_snapshot_switch_and_no_condition_join_isolation(tmp_path: Path) ->
         )
 
     assert search_roi(db, {}, fast=True) == baseline
-    assert search_roi(db, {"odds": {"snapshot": "final", "max": 15}}, fast=True)["n"] == 0
+    assert search_roi(db, {"odds": {"max": 15}}, fast=True)["n"] == 1
     assert search_roi(db, {"odds": {"snapshot": "T-5min", "max": 15}}, fast=True)["n"] == 1
+
+
+@pytest.mark.parametrize("snapshot", ["final", "T-1min", ""])
+def test_odds_rejects_snapshots_other_than_t5_with_japanese_guidance(
+    fixture_db: Path, snapshot: str
+) -> None:
+    with pytest.raises(
+        ValueError, match=r"オッズ条件は5分前オッズ\(T-5min\)のみ対応しています"
+    ):
+        search_roi(fixture_db, {"odds": {"snapshot": snapshot, "min": 5}}, fast=True)
 
 
 @pytest.mark.parametrize("kind", ["tansho", "nirentan"])

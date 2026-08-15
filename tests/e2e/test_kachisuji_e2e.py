@@ -97,6 +97,14 @@ def test_s1_top_sections_and_default_state(page):
     expect(page.locator("#pos3wrap")).to_be_visible()
 
 
+def test_s8_odds_snapshot_is_fixed_to_t5(page):
+    expect(page.locator("#oddsSnapshot")).to_have_count(0)
+    expect(page.locator("select option[value='final']")).to_have_count(0)
+    expect(page.locator(".odds-fieldset")).to_contain_text("5分前・T-5")
+    expect(page.locator("#oddsPeriod")).to_have_text("📅 2024/6〜")
+    expect(page.locator("#oddsNote")).to_contain_text("締切前に分かる値")
+
+
 @pytest.mark.parametrize(
     ("kind", "second_visible", "third_visible"),
     [("tansho", False, False), ("nirentan", True, False), ("sanrentan", True, True)],

@@ -223,9 +223,9 @@ def _compile_conditions(
         _known_keys(raw_odds, ODDS_KEYS, "odds")
         if bet.kind != "sanrentan":
             raise ValueError("オッズ条件は現在3連単のみ対応しています（単勝・2連単のオッズは未収集）")
-        snapshot = raw_odds.get("snapshot", "final")
-        if snapshot not in {"T-5min", "final"}:
-            raise ValueError("odds.snapshot must be T-5min or final")
+        snapshot = raw_odds.get("snapshot", "T-5min")
+        if snapshot != "T-5min":
+            raise ValueError("オッズ条件は5分前オッズ(T-5min)のみ対応しています")
         minimum = (
             _number(raw_odds["min"], "odds.min")
             if raw_odds.get("min") is not None

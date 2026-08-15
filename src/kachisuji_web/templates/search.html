@@ -116,22 +116,17 @@
           </fieldset>
 
           <fieldset class="odds-fieldset">
-            <legend>3連単オッズ条件</legend>
+            <legend>3連単オッズ（5分前・T-5）</legend>
             <div class="row">
               <label class="odds-toggle"><input type="checkbox" id="oddsEnabled"> オッズ帯を使う</label>
               <span class="chip live">⏱</span>
-              <span class="chip lim" id="oddsPeriod">📅 2026/4〜2026/5</span>
+              <span class="chip lim" id="oddsPeriod">📅 2024/6〜</span>
             </div>
             <div class="row">
-              <label for="oddsSnapshot">時点</label>
-              <select id="oddsSnapshot">
-                <option value="final" selected>確定オッズ（既定）</option>
-                <option value="T-5min">締切5分前</option>
-              </select>
               <input type="number" id="oddsMin" value="5.0" min="0" step="0.1" aria-label="オッズ下限"><span class="unit">倍以上</span>
               <input type="number" id="oddsMax" value="15.0" min="0" step="0.1" aria-label="オッズ上限"><span class="unit">倍以下</span>
             </div>
-            <p class="odds-note" id="oddsNote">確定オッズは締切前には分かりません。過去検証・傾向分析用の条件です。当日照合では未確定扱いになります。</p>
+            <p class="odds-note" id="oddsNote">5分前オッズで絞り込みます。締切前に分かる値なので当日照合でも使えます。データは2024年6月以降です。</p>
           </fieldset>
 
           <fieldset>
@@ -328,16 +323,6 @@
     byId('betType').addEventListener('change', refreshBetUI);
     refreshBetUI();
 
-    function refreshOddsHelp() {
-      var finalOdds = byId('oddsSnapshot').value === 'final';
-      byId('oddsPeriod').textContent = finalOdds ? '📅 2026/4〜2026/5' : '📅 2024/6〜';
-      byId('oddsNote').textContent = finalOdds
-        ? '確定オッズは締切前には分かりません。過去検証・傾向分析用の条件です。当日照合では未確定扱いになります。'
-        : '締切5分前オッズは締切直前に判定できます。収集済み期間だけが検索対象です。';
-    }
-    byId('oddsSnapshot').addEventListener('change', refreshOddsHelp);
-    refreshOddsHelp();
-
     function addRange(target, key, cmpId, valueId) {
       var direction = byId(cmpId).value;
       if (direction) target[key] = Object.fromEntries([[direction, Number(byId(valueId).value)]]);
@@ -396,7 +381,7 @@
       });
       if (byId('female').value) result.female_present = Number(byId('female').value);
       if (byId('oddsEnabled').checked) {
-        result.odds = {snapshot: byId('oddsSnapshot').value};
+        result.odds = {snapshot: 'T-5min'};
         if (byId('oddsMin').value.trim()) result.odds.min = Number(byId('oddsMin').value);
         if (byId('oddsMax').value.trim()) result.odds.max = Number(byId('oddsMax').value);
       }
@@ -557,7 +542,7 @@
       window.setTimeout(function () {
         document.querySelectorAll('.wchip.on').forEach(function (chip) { chip.classList.remove('on'); chip.setAttribute('aria-pressed', 'false'); });
         byId('compareRows').innerHTML = '';
-        refreshBetUI(); refreshOddsHelp(); refreshBoatSummaries(); refreshConditionCount();
+        refreshBetUI(); refreshBoatSummaries(); refreshConditionCount();
         lastConditions = null; lastBacktest = null; byId('btnSaveStrategy').disabled = true;
         byId('miniKpi').hidden = true;
         byId('resultArea').innerHTML = '<div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>';

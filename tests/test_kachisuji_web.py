@@ -126,7 +126,6 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="boats"',
         'id="compareRows"',
         'id="oddsEnabled"',
-        'id="oddsSnapshot"',
         'id="conditionCount"',
         'id="miniKpi"',
         "全国2連対率",
@@ -136,6 +135,24 @@ def test_index_renders_major_condition_fields(client) -> None:
         "条件判定不能で除外した件数",
     ):
         assert marker in html
+    assert 'id="oddsSnapshot"' not in html
+    assert 'value="final"' not in html
+    assert "3連単オッズ（5分前・T-5）" in html
+    assert "5分前オッズで絞り込みます" in html
+
+
+@pytest.mark.parametrize("endpoint", ["/api/search", "/api/strategies"])
+def test_api_rejects_final_odds_snapshot_with_japanese_guidance(client, endpoint: str) -> None:
+    conditions = {
+        "bet": {"type": "sanrentan", "first": 1, "second": 2, "third": 3},
+        "odds": {"snapshot": "final", "min": 5},
+    }
+    payload = conditions if endpoint == "/api/search" else {"name": "確定オッズ手法", "conditions": conditions}
+
+    response = client.post(endpoint, json=payload)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "オッズ条件は5分前オッズ(T-5min)のみ対応しています"
 
 
 def test_api_rejects_odds_for_non_trifecta_with_japanese_guidance(client) -> None:

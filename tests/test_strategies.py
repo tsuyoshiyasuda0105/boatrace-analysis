@@ -226,12 +226,12 @@ def test_odds_condition_is_confirmed_when_present_and_pending_when_missing(
             "PRIMARY KEY (race_id, combination, snapshot))"
         )
         connection.executemany(
-            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'final', ?)",
+            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'T-5min', ?)",
             [("confirmed", 10.0), ("prior-miss", 20.0), ("prior-null", 20.0)],
         )
 
     result = match_races(
-        {"bet": BET, "odds": {"snapshot": "final", "min": 5, "max": 15}},
+        {"bet": BET, "odds": {"snapshot": "T-5min", "min": 5, "max": 15}},
         "2026-08-16",
         search_db,
         strategy_db,
@@ -240,6 +240,38 @@ def test_odds_condition_is_confirmed_when_present_and_pending_when_missing(
     assert [item["race_id"] for item in result["matched"]] == ["confirmed"]
     assert [item["race_id"] for item in result["pending"]] == ["pending"]
     assert result["pending"][0]["undetermined_columns"] == ["odds"]
+
+
+def test_legacy_saved_final_strategy_stays_listed_but_match_is_rejected_with_guidance(
+    search_db: Path, strategy_db: Path
+) -> None:
+    strategy_id = save_strategy(
+        "旧確定オッズ手法",
+        {"bet": BET, "odds": {"snapshot": "T-5min", "min": 5}},
+        db_path=strategy_db,
+    )
+    legacy_conditions = json.dumps(
+        {"bet": BET, "odds": {"snapshot": "final", "min": 5}},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    with sqlite3.connect(strategy_db) as connection:
+        connection.execute(
+            "UPDATE strategies SET conditions_json = ? WHERE id = ?",
+            (legacy_conditions, strategy_id),
+        )
+
+    app = create_app(search_db, strategy_db)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+
+    listed = client.get("/api/strategies")
+    matched = client.get(f"/api/strategies/{strategy_id}/matches?date=2026-08-16")
+
+    assert listed.status_code == 200
+    assert listed.get_json()[0]["conditions"]["odds"]["snapshot"] == "final"
+    assert matched.status_code == 400
+    assert matched.get_json()["error"] == "オッズ条件は5分前オッズ(T-5min)のみ対応しています"
 
 
 def test_no_races_on_date_is_safe(search_db: Path, strategy_db: Path) -> None:
