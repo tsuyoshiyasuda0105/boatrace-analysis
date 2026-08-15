@@ -1,5 +1,28 @@
 # Handoff
 
+## Active task (2026-08-16 Kachisuji Playwright bug hunt round 1)
+
+- Task: execute `reports/kachisuji_bughunt_round1_spec_20260815.md` as a bug-discovery-only round against `src/kachisuji_web/`; create Playwright coverage and reports, with no product-code fixes.
+- Skills: `project-ops-guard`, `webapp-testing`.
+- Expected edit files: `tests/e2e/conftest.py`, `tests/e2e/test_kachisuji_e2e.py`, `reports/kachisuji_bug_list_20260815.md`, `docs/kachisuji_bughunt_round1_result_20260815.md`, and `docs/handoff.md` only.
+- Conflict avoidance: preserve all existing untracked reports and `.serena/`; no current handoff entry claims the five files above. Stage and commit only these files.
+- Prohibited actions/surfaces: any product-code edit, `data/boatrace.db` access, strategy production-DB writes, DDL against operational databases, external network, local scheduler, deployment, and push.
+- Test isolation: port 8090 only; `KACHISUJI_DB=data/kachisuji_search.db` is read-only test input; every run uses a pytest temporary `KACHISUJI_STRATEGY_DB`; the fixture owns the subprocess and must terminate/kill it in teardown.
+- Running processes: finite `.venv/Scripts/python.exe -m pytest tests/e2e` verification started; its session fixture exclusively owns `scripts/run_kachisuji_web.py --port 8090` and records/terminates that subprocess before pytest exits.
+- Failure log: the first specification read omitted explicit UTF-8 and displayed Japanese as mojibake. Root cause: PowerShell default decoding. Prevention: use `Get-Content -Encoding UTF8` for Japanese files.
+- Failure log: the `webapp-testing` skill's documented `scripts/with_server.py` was absent at the skill path, and the broad discovery command also returned nonzero because `tests/e2e` does not yet exist. No product or data file changed. Prevention: use the repository helper only for `--help` discovery, then implement the specification-required subprocess lifecycle directly in the pytest fixture; probe optional paths with `Test-Path` before `rg`.
+- Failure log: one source-discovery `rg` pattern used nested PowerShell double quotes and was split at `|`, causing PowerShell to try to execute `function`. No source was changed. Prevention: quote `rg` alternations with single quotes in PowerShell.
+- Failure log: the first 46-case Playwright run had 33 failures because `page.request` does not resolve root-relative URLs against the navigated page, and expected HTTP 400 responses appear as Chromium resource console errors. Root cause: test harness URL/console assumptions, not product behavior. Prevention: construct absolute request URLs from `page.url` and exclude only the known Chromium 400 resource diagnostic while still failing on JS errors and 500 resource errors. The run still proved fixture cleanup (`PORT_8090_LISTENERS=0`) and `data/boatrace.db` immutability.
+- Failure log: an exploratory strict-xfail assumed NULL same-day fields were discarded before pending classification, but the test XPASSed because the compiler correctly preserves those rows for pending handling. Root cause: inference from the outer SQL shape without accounting for the compiler's NULL-aware predicate. Prevention: require an executed expectation failure before registering a bug; the pending case remains as an ordinary passing regression scenario and is not reported as a bug.
+- Final test result: 49 scenarios collected; 46 passed and three BUG-ID-linked expectations xfailed in 51.36 seconds. `data/boatrace.db` timestamps were unchanged and port 8090 had zero listeners after teardown.
+- Detected bugs: BUG-001 duplicate-ticket internal English error exposure (Medium); BUG-002 same-boat comparison internal field/error exposure (Medium); BUG-003 non-object strategy backtest accepted and stored (Medium). No Critical, High, or Low bugs were found.
+- Cleanup deletion targets (task-created pytest data only): `C:\boat_project\boatrace-analysis\.pytest-tmp-kachisuji-round1`, `C:\boat_project\boatrace-analysis\.pytest-tmp-kachisuji-round1-rerun`, `C:\boat_project\boatrace-analysis\.pytest-tmp-kachisuji-round1-final`, and `C:\boat_project\boatrace-analysis\.pytest-tmp-kachisuji-round1-final2`. Each must resolve under the repository before removal. Do not remove `.pytest_cache` or any other path.
+- Cleanup complete: all four recorded pytest temporary directories were resolved under the repository and removed; port 8090 still had zero listeners. Compilation created `C:\boat_project\boatrace-analysis\tests\e2e\__pycache__`; this task-created cache is the only additional deletion target and must be path-validated before removal.
+- Verification: Python compilation, 49-test collection, and `git diff --check` passed. Scope inspection shows no product-code path in the diff. The only pytest warning is the pre-existing inaccessible `.pytest_cache`.
+- Running processes: none. No server, browser, scheduler, watcher, or production writer remains.
+- Completed: Playwright suite and both reports are ready. Commit locally with the exact requested message, staging only the five declared task files; push remains prohibited.
+- Planned verification: scenario-labelled S1-S7 tests, subprocess cleanup/port check, strategy temporary-DB containment, targeted pytest result, `git diff --check`, scoped local commit, and final process check.
+
 ## Active task (2026-08-15 DB pool self-heal and fail-fast)
 
 - Task: implement `reports/db_pool_selfheal_plan_20260815.md`: bound the Web PostgreSQL pool wait queue, classify overflow as transient, and rebuild a persistently exhausted pool without restarting the instance.
