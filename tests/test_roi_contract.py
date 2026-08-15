@@ -1,18 +1,84 @@
 import json
 from pathlib import Path
+import re
+import shutil
+
+import pytest
 
 from scripts import prewarm_strategy_pages as prewarm
 from scripts import render_regular_scheduler as scheduler
+from src import roi_contract
 from src.roi_contract import ROI_DAILY_CACHE_VERSION
 
 
 APP_SOURCE = Path("src/web/app.py")
 
 
+def _copy_strategy_sources(destination: Path) -> None:
+    for relative_path in roi_contract.STRATEGY_DEFINITION_SOURCE_PATHS:
+        target = destination / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(relative_path, target)
+
+
 def test_all_roi_workers_share_one_cache_version():
     assert scheduler.ROI_DAILY_CACHE_VERSION == ROI_DAILY_CACHE_VERSION
     assert prewarm.ROI_DAILY_CACHE_VERSION == ROI_DAILY_CACHE_VERSION
     assert "ADOPTED_DAILY_SELECT_VERSION = ROI_DAILY_CACHE_VERSION" in APP_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("relative_path", roi_contract.STRATEGY_DEFINITION_SOURCE_PATHS)
+def test_strategy_signature_changes_with_strategy_source(tmp_path, relative_path):
+    original_root = tmp_path / "original"
+    changed_root = tmp_path / "changed"
+    _copy_strategy_sources(original_root)
+    _copy_strategy_sources(changed_root)
+
+    target = changed_root / relative_path
+    target.write_bytes(target.read_bytes() + b"\n# signature test change\n")
+
+    assert roi_contract.strategy_definition_signature(
+        original_root
+    ) != roi_contract.strategy_definition_signature(changed_root)
+
+
+@pytest.mark.parametrize(
+    "constant_name",
+    (
+        "ROI_DAILY_CACHE_VERSION",
+        "MARKET_SIGNALS_CACHE_VERSION",
+        "STRATEGY_PAGE_CACHE_VERSION",
+    ),
+)
+def test_strategy_signature_changes_with_cache_version(monkeypatch, tmp_path, constant_name):
+    _copy_strategy_sources(tmp_path)
+    before = roi_contract.strategy_definition_signature(tmp_path)
+
+    monkeypatch.setattr(roi_contract, constant_name, "signature-test-version")
+
+    assert roi_contract.strategy_definition_signature(tmp_path) != before
+
+
+def test_strategy_signature_ignores_adopted_strategy_document(tmp_path):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    _copy_strategy_sources(first_root)
+    _copy_strategy_sources(second_root)
+    (first_root / "adopted_strategies.md").write_text("first", encoding="utf-8")
+    (second_root / "adopted_strategies.md").write_text("second", encoding="utf-8")
+
+    assert roi_contract.strategy_definition_signature(
+        first_root
+    ) == roi_contract.strategy_definition_signature(second_root)
+
+
+def test_strategy_signature_is_deterministic_when_sources_are_missing(tmp_path):
+    first = roi_contract.strategy_definition_signature(tmp_path)
+    second = roi_contract.strategy_definition_signature(tmp_path)
+
+    assert first == second
+    assert first != "nosig"
+    assert re.fullmatch(r"[0-9a-f]{10}", first)
 
 
 def test_scheduler_accepts_current_version_and_strategy_signature(monkeypatch):

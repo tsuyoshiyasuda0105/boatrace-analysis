@@ -1,5 +1,22 @@
 # Handoff
 
+## Active task (2026-08-15 P1-2 code-derived cache signature)
+
+- Implement `reports/p1_2_cache_signature_plan_20260815.md`: derive `strategy_definition_signature()` from the five strategy source modules plus the three cache-version constant values, eliminating `adopted_strategies.md` as the signature authority. Keep the public zero-argument string-returning API unchanged. Push and deployment are prohibited.
+- Skill: `project-ops-guard`.
+- Expected edit files: `src/roi_contract.py`, one focused cache-signature test file under `tests/`, new `reports/p1_2_cache_signature_work_log_20260815.md`, and `docs/handoff.md` only.
+- Conflict avoidance: the declared source/test targets are clean at task start. Preserve all existing untracked `.serena/` and `reports/` files, especially the untracked instruction plan; stage only the four explicit P1-2 paths.
+- Prohibited surfaces: strategy behavior, ROI values, prediction behavior, database schema/data, `render.yaml`, cron schedules/call sites, production writers, deployment, and push.
+- Running processes: none. Only finite repository inspection, pytest, and local Git commands are planned; no server, scheduler, browser, watcher, or production writer will be started.
+- Planned cleanup target: `C:\boat_project\boatrace-analysis\.pytest_tmp_p1_2_20260815` only, after all test runs. No source, report, cache, database, fixture, or production data is a deletion target.
+- Completed: the signature is now derived in fixed order from the five declared executable strategy modules and the named values of all three cache-version constants. Framed labels and lengths avoid ambiguous concatenation; unreadable source files are skipped, while constants keep the fallback deterministic and prevent an erroneous `nosig` result. The calculation is process-memoized.
+- Tests: baseline full suite `687 passed`; focused ROI-contract suite `13 passed` including 10 new cases; final full suite `697 passed`. Two independent Python processes both produced `37ba2789bd`; `git diff --check` passed. The sole warning was the pre-existing unwritable `.pytest_cache` nodeids path.
+- Scope verification: only `src/roi_contract.py`, `tests/test_roi_contract.py`, this handoff, and `reports/p1_2_cache_signature_work_log_20260815.md` changed. No strategy behavior, ROI value, prediction, schema/data, `render.yaml`, cron schedule/call site, production writer, scheduler, server, browser, push, or deployment change occurred.
+- Deployment note: the signature changes once on rollout, so signature-keyed caches will miss and rebuild on first access/prewarm until self-heal converges. Verify the deployed signature is a 10-character hex value and not `nosig`.
+- Commit: one local P1-2 commit; its ID is reported in the delivery message. No push or deployment.
+- Operations checklist closeout: repository conflicts were checked; the smallest scoped fix and focused/full tests passed. Result ingestion, accident freshness, ROI-ledger, and production-data checks are not applicable because no related logic/data or cron surface changed. No background tool was started; running processes remain none.
+- Cleanup complete: the pre-recorded `C:\boat_project\boatrace-analysis\.pytest_tmp_p1_2_20260815` path was resolved to the exact expected repository-local directory and removed. No source, report, fixture, cache, database, or production data was removed.
+
 ## Active task (2026-08-15 P1-1 Phase B pure evaluator extraction)
 
 - Implement `reports/p1_1_phaseB_extract_pinned_plan_20260815.md`: move only the nine Phase A-characterized pure evaluator functions from `src/web/app.py` into `src/strategies/` without changing behavior. Phase A golden expectations are immutable. Push and deployment are prohibited.
