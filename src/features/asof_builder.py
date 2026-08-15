@@ -28,6 +28,7 @@ from typing import Any, Iterable, Sequence
 
 
 SCHEMA_VERSION = 2
+SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
 KIMARITE_LABELS = {
@@ -128,6 +129,28 @@ def _rows(conn: Any, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any
     cursor = conn.execute(sql, tuple(params))
     names = [item[0] for item in cursor.description]
     return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+
+def _rows_for_ids(
+    conn: Any,
+    sql_template: str,
+    ids: Sequence[Any],
+    params: Sequence[Any] = (),
+) -> list[dict[str, Any]]:
+    """Run an ``IN`` query in batches below SQLite's variable limit."""
+
+    result: list[dict[str, Any]] = []
+    for offset in range(0, len(ids), SQLITE_VARIABLE_CHUNK_SIZE):
+        chunk = ids[offset : offset + SQLITE_VARIABLE_CHUNK_SIZE]
+        placeholders = ",".join("?" for _ in chunk)
+        result.extend(
+            _rows(
+                conn,
+                sql_template.format(placeholders=placeholders),
+                [*params, *chunk],
+            )
+        )
+    return result
 
 
 def _one(conn: Any, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
@@ -262,23 +285,23 @@ def _load_histories(
     racer_ids: Iterable[int] | None = None,
 ) -> dict[int, RacerHistory]:
     params: list[Any] = [window_start, window_end]
-    racer_filter = ""
     ids = sorted({int(value) for value in racer_ids or []})
-    if ids:
-        racer_filter = f" AND e.racer_number IN ({','.join('?' for _ in ids)})"
-        params.extend(ids)
-    rows = _rows(
-        source,
-        """SELECT e.racer_number, r.race_date, rr.kimarite, rr.remarks
+    sql = """SELECT e.racer_number, r.race_date, rr.kimarite, rr.remarks
              FROM races r
              JOIN race_entries e ON e.race_id = r.race_id
              JOIN race_results rr
                ON rr.race_id = e.race_id AND rr.boat_number = e.boat_number
-            WHERE r.race_date BETWEEN ? AND ?"""
-        + racer_filter
-        + " ORDER BY e.racer_number, r.race_date, r.race_id",
-        params,
-    )
+            WHERE r.race_date BETWEEN ? AND ?{racer_filter}
+            ORDER BY e.racer_number, r.race_date, r.race_id"""
+    if ids:
+        rows = _rows_for_ids(
+            source,
+            sql.format(racer_filter=" AND e.racer_number IN ({placeholders})"),
+            ids,
+            params,
+        )
+    else:
+        rows = _rows(source, sql.format(racer_filter=""), params)
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         if row["racer_number"] is not None:
@@ -531,33 +554,32 @@ def build_features(
         return {"selected": len(races), "inserted": 0, "skipped_existing": len(races), "warnings": 0}
 
     race_ids = [str(race["race_id"]) for race in pending]
-    placeholders = ",".join("?" for _ in race_ids)
-    entry_rows = _rows(
+    entry_rows = _rows_for_ids(
         source,
-        f"""SELECT e.*, rc.gender FROM race_entries e
+        """SELECT e.*, rc.gender FROM race_entries e
           LEFT JOIN racers rc ON rc.racer_number=e.racer_number
                WHERE e.race_id IN ({placeholders})
             ORDER BY e.race_id,e.boat_number""",
         race_ids,
     )
-    preview_rows = _rows(
+    preview_rows = _rows_for_ids(
         source,
-        f"SELECT * FROM race_previews WHERE race_id IN ({placeholders}) ORDER BY race_id,boat_number",
+        "SELECT * FROM race_previews WHERE race_id IN ({placeholders}) ORDER BY race_id,boat_number",
         race_ids,
     )
-    tide_rows = _rows(
+    tide_rows = _rows_for_ids(
         source,
-        f"SELECT race_id,tide_phase,is_high_tide_zone,is_low_tide_zone FROM race_tides WHERE race_id IN ({placeholders})",
+        "SELECT race_id,tide_phase,is_high_tide_zone,is_low_tide_zone FROM race_tides WHERE race_id IN ({placeholders})",
         race_ids,
     )
-    payout_rows = _rows(
+    payout_rows = _rows_for_ids(
         source,
-        f"SELECT race_id,bet_type,combination,payout FROM race_payouts WHERE race_id IN ({placeholders})",
+        "SELECT race_id,bet_type,combination,payout FROM race_payouts WHERE race_id IN ({placeholders})",
         race_ids,
     )
-    result_rows = _rows(
+    result_rows = _rows_for_ids(
         source,
-        f"SELECT DISTINCT race_id FROM race_results WHERE race_id IN ({placeholders}) AND finishing_position IS NOT NULL",
+        "SELECT DISTINCT race_id FROM race_results WHERE race_id IN ({placeholders}) AND finishing_position IS NOT NULL",
         race_ids,
     )
     by_entries: dict[str, list[dict[str, Any]]] = defaultdict(list)

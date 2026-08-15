@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 import io
 import sqlite3
 
@@ -330,6 +331,53 @@ def test_append_only_rerun_skips_and_preserves_row(tmp_path):
     assert second == {"selected": 1, "inserted": 0, "skipped_existing": 1, "warnings": 0}
     assert row["b1_avg_st"] == pytest.approx(0.11)
     assert row["built_at"] == "first"
+
+
+def test_large_backfill_chunks_sql_variables_and_remains_append_only(tmp_path):
+    source = _source()
+    first_date = date(2020, 1, 1)
+    race_count = 1001
+    for index in range(race_count):
+        race_date = (first_date + timedelta(days=index)).isoformat()
+        race_id = f"large-{index:04d}"
+        _race(source, race_id, race_date)
+        _entry(source, race_id, 1, 10000 + index)
+    source.commit()
+    source.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+
+    output = tmp_path / "features.db"
+    date_to = (first_date + timedelta(days=race_count - 1)).isoformat()
+    first = build_features(
+        source,
+        output,
+        first_date.isoformat(),
+        date_to,
+        built_at="first",
+        progress_stream=io.StringIO(),
+    )
+    second = build_features(
+        source,
+        output,
+        first_date.isoformat(),
+        date_to,
+        built_at="second",
+        progress_stream=io.StringIO(),
+    )
+
+    assert first == {
+        "selected": race_count,
+        "inserted": race_count,
+        "skipped_existing": 0,
+        "warnings": 0,
+    }
+    assert second == {
+        "selected": race_count,
+        "inserted": 0,
+        "skipped_existing": race_count,
+        "warnings": 0,
+    }
+    assert _read_row(output, "large-0000")["built_at"] == "first"
+    assert _read_row(output, "large-1000")["b1_racer_id"] == 11000
 
 
 def test_missing_exhibition_keeps_nulls_but_creates_row(tmp_path):
