@@ -116,3 +116,70 @@ def test_pg_pool_checkout_failure_logs_non_secret_stats(monkeypatch, caplog):
 
     assert "pool_size" in caplog.text
     assert "postgresql://unused" not in caplog.text
+
+
+def test_pg_pool_timeout_retries_twice_with_bounded_backoff(monkeypatch):
+    class _TransientPool(_FakePool):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def getconn(self):
+            self.calls += 1
+            if self.calls <= 2:
+                raise TimeoutError("couldn't get a connection after 5.00 sec")
+            return self.raw
+
+    pool = _TransientPool()
+    sleeps = []
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.delenv("BOATRACE_DB_CONNECT_RETRIES", raising=False)
+    monkeypatch.delenv("BOATRACE_DB_CONNECT_RETRY_DELAYS_SEC", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection.time, "sleep", sleeps.append)
+
+    conn = connection._PgConnection("postgresql://unused")
+    event = connection.consume_transient_db_retry_event()
+    conn.close()
+
+    assert pool.calls == 3
+    assert sleeps == [0.2, 0.5]
+    assert event["retry_count"] == 2
+
+
+def test_pg_connect_retry_configuration_is_hard_capped(monkeypatch):
+    monkeypatch.setenv("BOATRACE_DB_CONNECT_RETRIES", "99")
+    monkeypatch.setenv("BOATRACE_DB_CONNECT_RETRY_DELAYS_SEC", "10,20,30")
+
+    assert connection._connect_retry_delays() == (0.5, 0.5)
+
+
+def test_permanent_authentication_error_is_not_retried(monkeypatch):
+    class AuthenticationFailure(Exception):
+        sqlstate = "28P01"
+
+    class _PermanentPool(_FakePool):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def getconn(self):
+            self.calls += 1
+            raise AuthenticationFailure("password authentication failed")
+
+    pool = _PermanentPool()
+    sleeps = []
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection.time, "sleep", sleeps.append)
+
+    try:
+        connection._PgConnection("postgresql://unused")
+    except AuthenticationFailure:
+        pass
+    else:
+        raise AssertionError("permanent authentication failure must be raised")
+
+    assert pool.calls == 1
+    assert sleeps == []
+    assert connection.consume_transient_db_retry_event() is None

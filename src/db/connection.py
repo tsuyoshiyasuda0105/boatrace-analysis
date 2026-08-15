@@ -22,6 +22,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from typing import Optional, Union
 
 import config
@@ -30,6 +31,120 @@ import config
 logger = logging.getLogger(__name__)
 _PG_POOL = None
 _PG_POOL_LOCK = threading.Lock()
+_TRANSIENT_DB_RETRY_STATE = threading.local()
+
+_DEFAULT_CONNECT_RETRY_DELAYS = (0.2, 0.5)
+_MAX_CONNECT_RETRIES = 2
+_MAX_CONNECT_RETRY_DELAY_SEC = 0.5
+
+
+def _sqlstate_from_exception(exc: BaseException) -> str:
+    return str(
+        getattr(exc, "sqlstate", "")
+        or getattr(exc, "pgcode", "")
+        or ""
+    ).upper()
+
+
+def is_transient_db_error(exc: BaseException) -> bool:
+    """Return whether *exc* is a short-lived connection acquisition failure.
+
+    Authentication/configuration failures are deliberately excluded.  The
+    message fallback is only for driver/wrapper exceptions that do not expose
+    SQLSTATE (notably psycopg_pool.PoolTimeout and some network timeouts).
+    """
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        state = _sqlstate_from_exception(current)
+        if state.startswith(("28", "3D")):
+            return False
+        if state.startswith("08") or state in {"57P01", "57P02", "57P03"}:
+            return True
+        try:
+            from psycopg_pool import PoolTimeout
+
+            if isinstance(current, PoolTimeout):
+                return True
+        except (ImportError, TypeError):
+            pass
+        if isinstance(current, (TimeoutError, ConnectionError)):
+            return True
+        message = str(current).lower()
+        if any(
+            marker in message
+            for marker in (
+                "pooltimeout",
+                "pool timeout",
+                "couldn't get a connection",
+                "connection timed out",
+                "connection timeout",
+                "connection refused",
+                "connection reset",
+                "server closed the connection",
+                "the database system is starting up",
+                "the database system is shutting down",
+            )
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _connect_retry_delays() -> tuple[float, ...]:
+    try:
+        retries = int(os.getenv("BOATRACE_DB_CONNECT_RETRIES", "2"))
+    except (TypeError, ValueError):
+        retries = 2
+    retries = max(0, min(_MAX_CONNECT_RETRIES, retries))
+    raw = os.getenv("BOATRACE_DB_CONNECT_RETRY_DELAYS_SEC", "0.2,0.5")
+    parsed: list[float] = []
+    for item in str(raw).split(","):
+        try:
+            parsed.append(
+                max(0.0, min(_MAX_CONNECT_RETRY_DELAY_SEC, float(item.strip())))
+            )
+        except (TypeError, ValueError):
+            continue
+    if not parsed:
+        parsed = list(_DEFAULT_CONNECT_RETRY_DELAYS)
+    while len(parsed) < retries:
+        parsed.append(parsed[-1])
+    return tuple(parsed[:retries])
+
+
+def consume_transient_db_retry_event() -> Optional[dict[str, object]]:
+    """Return and clear the retry event for the current thread, if any."""
+    event = getattr(_TRANSIENT_DB_RETRY_STATE, "event", None)
+    _TRANSIENT_DB_RETRY_STATE.event = None
+    return dict(event) if isinstance(event, dict) else None
+
+
+def _acquire_pg_connection(dsn: str, *, direct: bool, pool=None):
+    delays = _connect_retry_delays()
+    _TRANSIENT_DB_RETRY_STATE.event = None
+    for attempt in range(len(delays) + 1):
+        try:
+            return _open_direct_pg_connection(dsn) if direct else pool.getconn()
+        except Exception as exc:
+            if not is_transient_db_error(exc) or attempt >= len(delays):
+                raise
+            delay = delays[attempt]
+            _TRANSIENT_DB_RETRY_STATE.event = {
+                "retry_count": attempt + 1,
+                "error_type": type(exc).__name__,
+                "last_error": str(exc)[:200],
+                "direct": bool(direct),
+            }
+            logger.warning(
+                "transient postgres connection failure; retry=%d/%d delay=%.3fs type=%s",
+                attempt + 1,
+                len(delays),
+                delay,
+                type(exc).__name__,
+            )
+            time.sleep(delay)
 
 
 def _is_postgres_url(url: str) -> bool:
@@ -322,11 +437,15 @@ class _PgConnection:
         trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
         self._pool = None
         if trigger or direct:
-            self._conn = _open_direct_pg_connection(dsn)
+            self._conn = _acquire_pg_connection(dsn, direct=True)
         else:
             self._pool = _get_pg_pool(dsn)
             try:
-                self._conn = self._pool.getconn()
+                self._conn = _acquire_pg_connection(
+                    dsn,
+                    direct=False,
+                    pool=self._pool,
+                )
             except Exception:
                 stats = {}
                 try:
