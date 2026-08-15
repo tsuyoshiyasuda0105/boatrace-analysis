@@ -233,12 +233,13 @@ def test_lite_daytime_bootstrap_runs_lightweight_snapshot_once(monkeypatch):
 
 def test_detail_pages_selfheal_prewarms_when_coverage_is_low(monkeypatch):
     calls = []
-    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
+    coverage = iter(({"races": 10, "covered": 4}, {"races": 10, "covered": 7}))
     monkeypatch.setattr(
         scheduler,
         "race_detail_page_cache_coverage",
-        lambda _run_date: {"races": 10, "covered": 4},
+        lambda _run_date: next(coverage),
     )
+    monkeypatch.setattr(scheduler, "task_attempt_recently_finished", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         scheduler,
         "run_py",
@@ -255,8 +256,8 @@ def test_detail_pages_selfheal_prewarms_when_coverage_is_low(monkeypatch):
     now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
     assert scheduler.run_detail_pages_selfheal(now)
     assert calls[:2] == [
-        (("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21"), 900),
-        (("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21"), 1800),
+        (("scripts/prewarm_race_detail_tags.py", "--date", "2026-07-21", "--budget-sec", "240"), 360),
+        (("scripts/prewarm_race_detail_pages.py", "--date", "2026-07-21", "--missing-only", "--budget-sec", "240"), 360),
     ]
     assert calls[-1][1:4] == (
         "render_detail_pages_selfheal",
@@ -296,11 +297,10 @@ def test_detail_page_coverage_uses_the_web_cache_version(monkeypatch):
 
 def test_detail_pages_selfheal_skips_when_coverage_is_sufficient(monkeypatch):
     records = []
-    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: False)
     monkeypatch.setattr(
         scheduler,
         "race_detail_page_cache_coverage",
-        lambda _run_date: {"races": 10, "covered": 5},
+        lambda _run_date: {"races": 10, "covered": 10},
     )
     monkeypatch.setattr(
         scheduler,
@@ -324,18 +324,53 @@ def test_detail_pages_selfheal_skips_when_coverage_is_sufficient(monkeypatch):
     )
 
 
-def test_detail_pages_selfheal_does_not_run_twice_after_same_day_success(monkeypatch):
-    monkeypatch.setattr(scheduler, "task_success_exists", lambda *_args: True)
+def test_detail_pages_selfheal_respects_minimum_retry_interval(monkeypatch):
     monkeypatch.setattr(
         scheduler,
         "race_detail_page_cache_coverage",
-        lambda *_args: (_ for _ in ()).throw(
-            AssertionError("same-day success must skip the coverage query")
+        lambda *_args: {"races": 10, "covered": 5},
+    )
+    monkeypatch.setattr(scheduler, "task_attempt_recently_finished", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("cooldown must prevent another prewarm")
         ),
     )
 
     now = scheduler.datetime(2026, 7, 21, 8, 10, tzinfo=scheduler.JST)
     assert scheduler.run_detail_pages_selfheal(now)
+
+
+def test_detail_selfheal_cooldown_boundary_is_strict(monkeypatch):
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, *_args):
+            return self
+
+        def fetchone(self):
+            return ("2026-07-21T08:00:00", "2026-07-21T07:59:00")
+
+    monkeypatch.setattr(scheduler, "db_connect", _Connection)
+
+    assert scheduler.task_attempt_recently_finished(
+        "render_detail_pages_selfheal",
+        "2026-07-21",
+        scheduler.datetime(2026, 7, 21, 8, 29, tzinfo=scheduler.JST),
+        min_interval_minutes=30,
+    )
+    assert not scheduler.task_attempt_recently_finished(
+        "render_detail_pages_selfheal",
+        "2026-07-21",
+        scheduler.datetime(2026, 7, 21, 8, 30, tzinfo=scheduler.JST),
+        min_interval_minutes=30,
+    )
 
 
 def test_yesterday_results_backfill_runs_once_in_the_eight_oclock_hour(monkeypatch):

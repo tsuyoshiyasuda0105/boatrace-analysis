@@ -240,6 +240,11 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
         return True
 
     monkeypatch.setattr(scheduler.regular, "run_py", fake_run_py)
+    monkeypatch.setattr(
+        scheduler.regular,
+        "race_detail_page_cache_coverage",
+        lambda _date: {"races": 192, "covered": 192},
+    )
 
     ok, detail = scheduler.run_detail_phase(_now(6, 0))
 
@@ -249,6 +254,8 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
         "tags_ok": False,
         "pages_ok": True,
         "integrity_ok": True,
+        "partial": False,
+        "remaining": 0,
     }
     assert [call[0] for call in calls] == [
         "scripts/prewarm_race_detail_tags.py",
@@ -259,6 +266,34 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
     assert ("--scope", "detail_rows") == calls[-1][3:5]
     assert ("--scope", "motor_cache") == calls[-1][5:7]
     assert ("--scope", "detail_cache") == calls[-1][7:9]
+
+
+def test_detail_phase_accepts_budgeted_partial_and_still_runs_pages(monkeypatch):
+    calls = []
+
+    def fake_run_py(args, **_kwargs):
+        calls.append(tuple(args))
+        return args[0] != "scripts/check_post_run_integrity.py"
+
+    monkeypatch.setattr(scheduler.regular, "run_py", fake_run_py)
+    monkeypatch.setattr(
+        scheduler.regular,
+        "race_detail_page_cache_coverage",
+        lambda _date: {"races": 192, "covered": 80},
+    )
+
+    ok, detail = scheduler.run_detail_phase(_now(6, 0))
+
+    assert ok is True
+    assert detail["partial"] is True
+    assert detail["remaining"] == 112
+    assert [call[0] for call in calls] == [
+        "scripts/prewarm_race_detail_tags.py",
+        "scripts/prewarm_race_detail_pages.py",
+        "scripts/check_post_run_integrity.py",
+    ]
+    assert "--budget-sec" in calls[0]
+    assert "--missing-only" in calls[1]
 
 
 def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatch):

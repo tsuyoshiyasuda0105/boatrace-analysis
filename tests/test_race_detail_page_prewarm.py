@@ -89,6 +89,65 @@ def test_prewarm_fails_when_http_200_page_is_not_persisted(monkeypatch):
     ]
 
 
+def test_page_prewarm_budget_saves_each_page_and_resumes_missing(monkeypatch):
+    cached = {"race-1"}
+    clock = {"value": 0.0}
+
+    class Session:
+        def __enter__(self):
+            return {}
+
+        def __exit__(self, *_args):
+            return False
+
+    class Response:
+        status_code = 200
+        data = b"ok"
+
+    class Client:
+        def session_transaction(self):
+            return Session()
+
+        def get(self, url):
+            if "?recompute=1" in url:
+                cached.add(url.split("/race/", 1)[1].split("?", 1)[0])
+                clock["value"] += 2.0
+            return Response()
+
+    class App:
+        testing = False
+
+        def test_client(self):
+            return Client()
+
+    monkeypatch.setattr(page_prewarm, "_require_postgres", lambda: None)
+    monkeypatch.setattr(page_prewarm, "_race_ids", lambda *_args: ["race-1", "race-2", "race-3"])
+    monkeypatch.setattr(
+        page_prewarm,
+        "_missing_persistent_page_ids",
+        lambda race_ids: [race_id for race_id in race_ids if race_id not in cached],
+    )
+    monkeypatch.setattr(page_prewarm.time, "perf_counter", lambda: clock["value"])
+    monkeypatch.setattr(page_prewarm.web_app, "create_app", lambda **_kwargs: App())
+
+    first = page_prewarm.prewarm(
+        "2026-08-16", missing_only=True, retry_missing=0, budget_sec=1
+    )
+    assert first["skipped_existing"] == 1
+    assert first["succeeded"] == 1
+    assert first["remaining"] == 1
+    assert first["budget_exhausted"] is True
+    assert cached == {"race-1", "race-2"}
+
+    second = page_prewarm.prewarm(
+        "2026-08-16", missing_only=True, retry_missing=0
+    )
+    assert second["skipped_existing"] == 2
+    assert second["succeeded"] == 1
+    assert second["remaining"] == 0
+    assert cached == {"race-1", "race-2", "race-3"}
+
+
 def test_race_detail_venue_environment_uses_date_cache_wrapper():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
