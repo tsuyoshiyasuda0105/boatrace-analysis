@@ -73,3 +73,12 @@
 - 閉包依存 `ROI_STRATEGY_KEYS` は同名のキーワード専用引数（既定値は空tuple）にした。
 - `src/web/app.py` の旧定義位置で `partial(..., ROI_STRATEGY_KEYS=ROI_STRATEGY_KEYS)` として従来値を束縛。既存呼び出し引数・順序は変更なし。
 - Phase Aテストは新モジュール関数へ同じ依存値を明示注入。golden期待値は不変。
+- コミット: `90b85c5`。
+- コミット後全テスト: `687 passed`。
+
+### `_prefer_adopted_signal_over_general200`
+
+- ネスト定義をmetadata統合処理ごと本体そのままで `src/strategies/signals.py` に移動。
+- `src/web/app.py` は同名関数をモジュールimportし、既存呼び出し引数・順序は変更なし。
+- 閉包依存: なし。
+- Phase Aテストは呼び出し元だけを新モジュールimportへ変更。overlay metadataを含むgolden期待値は不変。

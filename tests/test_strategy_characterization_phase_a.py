@@ -22,6 +22,7 @@ from src.strategies.signals import (
     _evaluate_candidate_134_signal,
     _evaluate_l4_general_200,
     _pick_best_market_signal,
+    _prefer_adopted_signal_over_general200,
 )
 
 
@@ -231,7 +232,6 @@ def test_female_gate_keeps_only_explicit_or_adopted_strategy_families():
 
 
 def test_general200_overlay_yields_to_adopted_and_preserves_overlay_metadata():
-    prefer = _load_local_function("_prefer_adopted_signal_over_general200")
     selected = {
         "level": "l4_general_200",
         "label": "general200",
@@ -256,7 +256,7 @@ def test_general200_overlay_yields_to_adopted_and_preserves_overlay_metadata():
         "recovery": 204.0,
     }
 
-    assert prefer(selected, adopted) == {
+    assert _prefer_adopted_signal_over_general200(selected, adopted) == {
         **adopted,
         "matched_levels": ["l4_general_200", "g23_optb_tri"],
         "matched_labels": ["general200", "adopted"],

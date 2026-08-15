@@ -97,6 +97,7 @@ from src.strategies.signals import (
     _evaluate_candidate_134_signal,
     _evaluate_l4_general_200,
     _pick_best_market_signal as _pick_best_market_signal_impl,
+    _prefer_adopted_signal_over_general200,
 )
 from src.web.auth import (
     admin_required, current_auth_provider, current_role, is_admin, is_member,
@@ -9849,74 +9850,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             _allow_market_signal_with_female_impl,
             ROI_STRATEGY_KEYS=ROI_STRATEGY_KEYS,
         )
-
-        def _prefer_adopted_signal_over_general200(selected, adopted):
-            """Keep adopted strategy labels visible when general200 also matches.
-
-            `l4_general_200` is a useful overlay, but it is not part of the
-            current adopted-strategy set shown in ROI pages. When both match the
-            same race, prefer the adopted strategy for consistency between the
-            ROI dashboard and the live "ROIが高いレース" list.
-            """
-            if not selected or not adopted:
-                return selected
-            selected_level = str(selected.get("level") or "")
-            if selected_level not in {"l4_general_200", "morning_watch_l4_general_200"}:
-                return selected
-
-            merged = dict(adopted)
-            matched_levels = []
-            for level in (
-                *(selected.get("matched_levels") or []),
-                selected.get("level"),
-                *(adopted.get("matched_levels") or []),
-                adopted.get("level"),
-            ):
-                if level and level not in matched_levels:
-                    matched_levels.append(level)
-            matched_labels = []
-            for label in (
-                *(selected.get("matched_labels") or []),
-                selected.get("label"),
-                *(adopted.get("matched_labels") or []),
-                adopted.get("label"),
-            ):
-                if label and label not in matched_labels:
-                    matched_labels.append(label)
-            matched_bets = []
-            for bet in (
-                *(selected.get("matched_bets") or []),
-                selected.get("bet"),
-                *(adopted.get("matched_bets") or []),
-                adopted.get("bet"),
-            ):
-                if bet and bet not in matched_bets:
-                    matched_bets.append(bet)
-            matched_recoveries = []
-            for recovery in (
-                *(selected.get("matched_recoveries") or []),
-                selected.get("recovery"),
-                *(adopted.get("matched_recoveries") or []),
-                adopted.get("recovery"),
-            ):
-                if recovery is not None and recovery not in matched_recoveries:
-                    matched_recoveries.append(recovery)
-
-            merged["matched_levels"] = matched_levels
-            merged["matched_labels"] = matched_labels
-            merged["matched_bets"] = matched_bets
-            merged["matched_recoveries"] = matched_recoveries
-            merged["is_l4_general_200"] = bool(selected.get("is_l4_general_200"))
-            merged["general200_hit_rate"] = selected.get("general200_hit_rate")
-            merged["general200_recovery"] = selected.get("general200_recovery")
-            merged["general200_n"] = selected.get("general200_n")
-            merged["general200_boat2_top2"] = selected.get("general200_boat2_top2")
-            merged["general200_boat2_exhibition_time"] = selected.get("general200_boat2_exhibition_time")
-            merged["general200_boat3_exhibition_time"] = selected.get("general200_boat3_exhibition_time")
-            merged["general200_boat2_faster"] = selected.get("general200_boat2_faster")
-            merged["general200_ex_st"] = selected.get("general200_ex_st")
-            merged["general200_ex_st_good"] = selected.get("general200_ex_st_good")
-            return merged
 
         def _evaluate_boat3_trifecta_niche(ctx: dict | None):
             if not ctx:
