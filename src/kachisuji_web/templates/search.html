@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>勝ち筋サーチ</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='kachisuji.css') }}">
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <div class="logo"><span class="mark">◤</span> 勝ち筋サーチ</div>
+      <div class="tagline">条件を組む → 過去データで答え合わせ</div>
+    </header>
+    <div class="demo-note">ローカル検索版 — Step 2 の読み取り専用検索エンジンで実データを集計します。</div>
+
+    <div class="legendbar">
+      <span><span class="chip day">📋 前日確定</span> 番組表・前日までの集計・潮汐計算</span>
+      <span><span class="chip live">⏱ 直前確定</span> 天候・風・展示</span>
+      <span><span class="chip lim">📅 2023/5〜</span> 決まり手・事故率</span>
+      <span><span class="chip lim2">📅 2024/12〜</span> 展示順位・展示タイム・展示ST</span>
+    </div>
+
+    <div class="cols">
+      <section class="panel" aria-labelledby="conditions-title">
+        <h1 id="conditions-title">検索条件</h1>
+        <form id="searchForm">
+          <fieldset>
+            <legend>レース条件</legend>
+            <div class="row">
+              <label for="venue">会場</label>
+              <select id="venue" name="venue">
+                <option value="">全会場</option>
+                <option value="1">桐生</option><option value="2">戸田</option>
+                <option value="3">江戸川</option><option value="4">平和島</option>
+                <option value="5">多摩川</option><option value="6">浜名湖</option>
+                <option value="7">蒲郡</option><option value="8">常滑</option>
+                <option value="9">津</option><option value="10">三国</option>
+                <option value="11">びわこ</option><option value="12">住之江</option>
+                <option value="13">尼崎</option><option value="14">鳴門</option>
+                <option value="15">丸亀</option><option value="16">児島</option>
+                <option value="17">宮島</option><option value="18">徳山</option>
+                <option value="19">下関</option><option value="20">若松</option>
+                <option value="21">芦屋</option><option value="22">福岡</option>
+                <option value="23">唐津</option><option value="24">大村</option>
+              </select>
+            </div>
+            <div class="row">
+              <label for="betType">買い目</label>
+              <select id="betType" name="bet_type">
+                <option value="sanrentan">3連単</option>
+                <option value="nirentan">2連単</option>
+                <option value="tansho">単勝</option>
+              </select>
+              <span class="unit">1着</span><select id="pos1" aria-label="1着艇番"></select>
+              <span id="pos2wrap"><span class="unit">2着</span><select id="pos2" aria-label="2着艇番"></select></span>
+              <span id="pos3wrap"><span class="unit">3着</span><select id="pos3" aria-label="3着艇番"></select></span>
+              <span class="unit">号艇</span>
+            </div>
+            <div class="row">
+              <span class="field-label">天候 <span class="chip live">⏱</span></span>
+              <div class="wchips" id="weatherChips">
+                <button type="button" class="wchip" data-value="晴" aria-pressed="false">☀ 晴</button>
+                <button type="button" class="wchip" data-value="曇" aria-pressed="false">☁ 曇</button>
+                <button type="button" class="wchip" data-value="雨" aria-pressed="false">☔ 雨</button>
+              </div>
+            </div>
+            <div class="row">
+              <label for="windDirection">風向き <span class="chip live">⏱</span></label>
+              <select id="windDirection" disabled title="Step 2検索エンジンでは未対応です">
+                <option>指定なし（未対応）</option>
+              </select>
+              <label for="windStrength" class="short-label">強さ</label>
+              <select id="windStrength">
+                <option value="">指定なし</option>
+                <option value="0,1">無風（0〜1m）</option>
+                <option value="2,3">弱風（2〜3m）</option>
+                <option value="4,5">中風（4〜5m）</option>
+                <option value="6,">強風（6m以上）</option>
+              </select>
+            </div>
+            <div class="row">
+              <label for="tide">潮 <span class="chip day">📋</span></label>
+              <select id="tide">
+                <option value="">指定なし</option><option>満潮前後</option><option>干潮前後</option>
+                <option>上げ潮</option><option>下げ潮</option>
+              </select>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>番組・市場条件</legend>
+            <div class="row">
+              <label for="female">性別構成 <span class="chip day">📋</span></label>
+              <select id="female"><option value="">指定なし</option><option value="0">男性のみ</option><option value="1">女性選手あり</option></select>
+            </div>
+            <div class="row">
+              <label for="classMix">級別構成 <span class="chip day">📋</span></label>
+              <select id="classMix">
+                <option value="">指定なし</option><option value="A1単騎">1号艇のみA1（A1単騎）</option>
+                <option value="1号艇A1">1号艇A1</option><option value="A1が2人以上">A1が2人以上</option>
+              </select>
+            </div>
+            <div class="row">
+              <label for="dayIndex">開催日程 <span class="chip day">📋</span></label>
+              <select id="dayIndex"><option value="">指定なし</option><option>初日</option><option>中日</option><option>最終日</option></select>
+              <select id="daypart" aria-label="時間帯"><option value="">時間帯指定なし</option><option>モーニング</option><option>デイ</option><option>ナイター</option></select>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>艇別条件（1〜6号艇）</legend>
+            <div id="boats"></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>検索期間</legend>
+            <div class="row">
+              <label for="dateFrom">開始日</label><input type="date" id="dateFrom" name="date_from">
+            </div>
+            <div class="row">
+              <label for="dateTo">終了日</label><input type="date" id="dateTo" name="date_to">
+            </div>
+            <label class="fast-option"><input type="checkbox" id="fast"> 高速計算（正規近似95%CI）</label>
+          </fieldset>
+
+          <div class="btnrow">
+            <button class="primary" id="btnSearch" type="submit">🔍 この条件で検索</button>
+            <button id="btnReset" type="reset">条件をリセット</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel results" aria-labelledby="results-title">
+        <h1 id="results-title">検索結果</h1>
+        <div id="resultArea" aria-live="polite">
+          <div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+  (function () {
+    'use strict';
+    var byId = function (id) { return document.getElementById(id); };
+    var boatNumbers = [1, 2, 3, 4, 5, 6];
+    var classNames = ['A1', 'A2', 'B1', 'B2'];
+    var kimarite = [['', '指定なし'], ['nige', '逃げ'], ['sashi', '差し'], ['makuri', 'まくり'], ['makurizashi', 'まくり差し'], ['nuki', '抜き'], ['megumare', '恵まれ']];
+
+    function optionList(values, selected) {
+      return values.map(function (value) {
+        return '<option value="' + value + '"' + (String(value) === String(selected) ? ' selected' : '') + '>' + value + '</option>';
+      }).join('');
+    }
+    function compareSelect(id) {
+      return '<select id="' + id + '"><option value="">指定なし</option><option value="min">以上</option><option value="max">以下</option></select>';
+    }
+    function boatBlock(i) {
+      var classes = classNames.map(function (name) {
+        return '<button type="button" class="wchip" data-value="' + name + '" aria-pressed="false">' + name + '</button>';
+      }).join('');
+      var kimOptions = kimarite.map(function (item) { return '<option value="' + item[0] + '">' + item[1] + '</option>'; }).join('');
+      return '<details class="boatdet" id="boat' + i + '"' + (i === 1 ? ' open' : '') + '>' +
+        '<summary><span class="bnum b' + i + '">' + i + '</span>' + i + '号艇 <span class="bsum" id="boatSummary' + i + '">条件なし</span></summary>' +
+        '<div class="conds">' +
+        '<div class="cond">級別 <span class="chip day">📋</span><span class="wchips boat-classes" id="b' + i + 'Classes">' + classes + '</span><span class="unit">複数選択可</span></div>' +
+        '<div class="cond">選手 <span class="chip day">📋</span><input type="text" id="b' + i + 'Racer" inputmode="numeric" placeholder="例: 4320 または 4320 峰竜太"><span class="unit">番号で検索</span></div>' +
+        '<div class="cond">平均ST <span class="chip day">📋</span>' + compareSelect('b' + i + 'AvgStCmp') + '<input type="number" id="b' + i + 'AvgSt" value="0.15" min="0" max="0.5" step="0.01"><span class="unit">秒</span></div>' +
+        '<div class="cond">全国勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'NationalCmp') + '<input type="number" id="b' + i + 'National" value="6.00" min="0" max="10" step="0.1"></div>' +
+        '<div class="cond">当地勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'LocalCmp') + '<input type="number" id="b' + i + 'Local" value="6.00" min="0" max="10" step="0.1"></div>' +
+        '<div class="cond">モーター2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'MotorCmp') + '<input type="number" id="b' + i + 'Motor" value="35" min="0" max="100" step="1"><span class="unit">%</span></div>' +
+        '<div class="cond limited2">展示順位 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExFrom"><option value="">指定なし</option>' + optionList(boatNumbers, '') + '</select><span class="unit">〜</span><select id="b' + i + 'ExTo">' + optionList(boatNumbers, 3) + '</select></div>' +
+        '<div class="cond limited2">展示タイム 会場平均比 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExDevDir"><option value="">指定なし</option><option value="faster_by">平均より速い</option><option value="slower_by">平均より遅い</option></select><input type="number" id="b' + i + 'ExDev" value="0.10" min="0" max="1" step="0.05"><span class="unit">秒以上</span></div>' +
+        '<div class="cond limited2">展示ST <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span>' + compareSelect('b' + i + 'ExStCmp') + '<input type="number" id="b' + i + 'ExSt" value="0.10" min="-0.1" max="0.5" step="0.01"><span class="unit">秒</span></div>' +
+        '<div class="cond limited">決まり手 <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span><select id="b' + i + 'Kimarite">' + kimOptions + '</select><span class="unit">勝率</span><input type="number" id="b' + i + 'KimariteRate" value="50" min="0" max="100" step="5"><span class="unit">%以上</span></div>' +
+        '<div class="cond limited">事故率 <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span>' + compareSelect('b' + i + 'AccidentCmp') + '<input type="number" id="b' + i + 'Accident" value="0.30" min="0" max="5" step="0.05"><span class="unit">%</span></div>' +
+        '</div></details>';
+    }
+
+    byId('pos1').innerHTML = optionList(boatNumbers, 1);
+    byId('pos2').innerHTML = optionList(boatNumbers, 2);
+    byId('pos3').innerHTML = optionList(boatNumbers, 3);
+    byId('boats').innerHTML = boatNumbers.map(boatBlock).join('');
+
+    document.addEventListener('click', function (event) {
+      var chip = event.target.closest('.wchip');
+      if (!chip) return;
+      var active = chip.getAttribute('aria-pressed') !== 'true';
+      chip.setAttribute('aria-pressed', String(active));
+      chip.classList.toggle('on', active);
+      refreshBoatSummaries();
+    });
+
+    function refreshBetUI() {
+      var kind = byId('betType').value;
+      byId('pos2wrap').hidden = kind === 'tansho';
+      byId('pos3wrap').hidden = kind !== 'sanrentan';
+    }
+    byId('betType').addEventListener('change', refreshBetUI);
+    refreshBetUI();
+
+    function addRange(target, key, cmpId, valueId) {
+      var direction = byId(cmpId).value;
+      if (direction) target[key] = Object.fromEntries([[direction, Number(byId(valueId).value)]]);
+    }
+    function collectBoat(i) {
+      var boat = {};
+      var classes = Array.from(document.querySelectorAll('#b' + i + 'Classes .wchip.on')).map(function (chip) { return chip.dataset.value; });
+      if (classes.length) boat.class = classes;
+      var racer = byId('b' + i + 'Racer').value.trim();
+      if (racer) boat.racer_id = racer;
+      addRange(boat, 'avg_st', 'b' + i + 'AvgStCmp', 'b' + i + 'AvgSt');
+      addRange(boat, 'national_rate', 'b' + i + 'NationalCmp', 'b' + i + 'National');
+      addRange(boat, 'local_rate', 'b' + i + 'LocalCmp', 'b' + i + 'Local');
+      addRange(boat, 'motor_rate2', 'b' + i + 'MotorCmp', 'b' + i + 'Motor');
+      addRange(boat, 'ex_st', 'b' + i + 'ExStCmp', 'b' + i + 'ExSt');
+      addRange(boat, 'accident_rate', 'b' + i + 'AccidentCmp', 'b' + i + 'Accident');
+      var exFrom = byId('b' + i + 'ExFrom').value;
+      if (exFrom) boat.ex_rank = {min: Number(exFrom), max: Number(byId('b' + i + 'ExTo').value)};
+      var exDirection = byId('b' + i + 'ExDevDir').value;
+      if (exDirection) boat.ex_dev = Object.fromEntries([[exDirection, Number(byId('b' + i + 'ExDev').value)]]);
+      var technique = byId('b' + i + 'Kimarite').value;
+      if (technique) boat.kimarite = {name: technique, rate_min: Number(byId('b' + i + 'KimariteRate').value)};
+      return boat;
+    }
+    function refreshBoatSummaries() {
+      boatNumbers.forEach(function (i) {
+        var count = Object.keys(collectBoat(i)).length;
+        byId('boatSummary' + i).textContent = count ? '条件 ' + count + ' 個' : '条件なし';
+      });
+    }
+    byId('boats').addEventListener('change', refreshBoatSummaries);
+    byId('boats').addEventListener('input', refreshBoatSummaries);
+
+    function collectConditions() {
+      var result = {bet: {type: byId('betType').value, first: Number(byId('pos1').value)}};
+      if (result.bet.type !== 'tansho') result.bet.second = Number(byId('pos2').value);
+      if (result.bet.type === 'sanrentan') result.bet.third = Number(byId('pos3').value);
+      if (byId('venue').value) result.venue = Number(byId('venue').value);
+      var weather = Array.from(document.querySelectorAll('#weatherChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
+      if (weather.length) result.weather = weather;
+      var wind = byId('windStrength').value;
+      if (wind) {
+        var bounds = wind.split(','); result.wind_speed = {};
+        if (bounds[0]) result.wind_speed.min = Number(bounds[0]);
+        if (bounds[1]) result.wind_speed.max = Number(bounds[1]);
+      }
+      [['tide', 'tide_phase'], ['classMix', 'class_mix'], ['dayIndex', 'day_index'], ['daypart', 'daypart']].forEach(function (pair) {
+        if (byId(pair[0]).value) result[pair[1]] = byId(pair[0]).value;
+      });
+      if (byId('female').value) result.female_present = Number(byId('female').value);
+      if (byId('dateFrom').value) result.date_from = byId('dateFrom').value;
+      if (byId('dateTo').value) result.date_to = byId('dateTo').value;
+      var boats = {};
+      boatNumbers.forEach(function (i) { var boat = collectBoat(i); if (Object.keys(boat).length) boats[String(i)] = boat; });
+      if (Object.keys(boats).length) result.boats = boats;
+      if (byId('fast').checked) result.fast = true;
+      return result;
+    }
+
+    function escapeHtml(value) {
+      var node = document.createElement('span'); node.textContent = String(value); return node.innerHTML;
+    }
+    function renderResult(data) {
+      var roiClass = data.roi >= 110 ? 'roi-good' : (data.roi >= 90 ? 'roi-mid' : 'roi-bad');
+      var warnings = data.warnings.map(function (warning) {
+        var level = warning.indexOf('n<30') === 0 ? 'critical' : 'warning';
+        return '<div class="warnbox ' + level + '">⚠ ' + escapeHtml(warning) + '</div>';
+      }).join('');
+      if (!warnings) warnings = '<div class="okbox">✓ 小標本警告はありません。</div>';
+      var years = data.yearly.map(function (year) {
+        return '<tr><td>' + year.year + '年</td><td>' + year.n + '</td><td>' + year.hits + '</td><td class="' + (year.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + year.roi.toFixed(1) + '%</td></tr>';
+      }).join('') || '<tr><td colspan="4">対象データなし</td></tr>';
+      var range = data.effective_date_range[0] ? escapeHtml(data.effective_date_range[0]) + ' 〜 ' + escapeHtml(data.effective_date_range[1]) : '対象データなし';
+      var excludedTotal = data.excluded.result_missing + data.excluded.condition_null;
+      byId('resultArea').innerHTML =
+        '<div class="kpis">' +
+        '<div class="kpi"><div class="v ' + roiClass + '">' + data.roi.toFixed(1) + '%</div><div class="l">回収率</div><div class="ci">95%CI ' + data.roi_ci_low.toFixed(1) + '〜' + data.roi_ci_high.toFixed(1) + '%</div></div>' +
+        '<div class="kpi"><div class="v">' + data.hit_rate.toFixed(1) + '%</div><div class="l">的中率</div><div class="ci">' + data.hits + ' / ' + data.n + ' 本</div></div>' +
+        '<div class="kpi"><div class="v">' + data.n + '</div><div class="l">合致レース数 N</div><div class="ci">' + range + '</div></div>' +
+        '<div class="kpi"><div class="v">' + excludedTotal + '</div><div class="l">除外件数</div><div class="ci">結果欠損 ' + data.excluded.result_missing + '件</div></div></div>' +
+        warnings +
+        '<div class="exclusions"><h2>除外の内訳</h2><dl><div><dt>結果・払戻欠損</dt><dd>' + data.excluded.result_missing + '件</dd></div><div class="condition-null"><dt>条件判定不能で除外した件数</dt><dd>' + data.excluded.condition_null + '件</dd></div></dl></div>' +
+        '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年</th><th>N</th><th>的中</th><th>回収率</th></tr></thead><tbody>' + years + '</tbody></table>';
+    }
+
+    byId('searchForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var button = byId('btnSearch'); button.disabled = true; button.textContent = '検索中…';
+      byId('resultArea').innerHTML = '<div class="empty loading">データを集計しています…</div>';
+      try {
+        var response = await fetch('/api/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(collectConditions())});
+        var data = await response.json();
+        if (!response.ok) throw new Error(data.error || '検索に失敗しました');
+        renderResult(data);
+      } catch (error) {
+        byId('resultArea').innerHTML = '<div class="errorbox" role="alert"></div>';
+        byId('resultArea').querySelector('.errorbox').textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = '🔍 この条件で検索';
+      }
+    });
+    byId('searchForm').addEventListener('reset', function () {
+      window.setTimeout(function () {
+        document.querySelectorAll('.wchip.on').forEach(function (chip) { chip.classList.remove('on'); chip.setAttribute('aria-pressed', 'false'); });
+        refreshBetUI(); refreshBoatSummaries();
+        byId('resultArea').innerHTML = '<div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>';
+      }, 0);
+    });
+    refreshBoatSummaries();
+  }());
+  </script>
+</body>
+</html>
