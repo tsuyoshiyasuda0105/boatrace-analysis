@@ -1,5 +1,23 @@
 # Handoff
 
+## Active task (2026-08-15 DB pool self-heal and fail-fast)
+
+- Task: implement `reports/db_pool_selfheal_plan_20260815.md`: bound the Web PostgreSQL pool wait queue, classify overflow as transient, and rebuild a persistently exhausted pool without restarting the instance.
+- Skills: `project-ops-guard`, `bug-resistant-programming` (the latter contains only an unfinished template, so it adds no project-specific rules).
+- Expected edit files: `src/db/connection.py`, `tests/test_db_connection_pool.py`, `reports/db_pool_selfheal_work_log_20260815.md`, and `docs/handoff.md` only.
+- Conflict avoidance: preserve all unrelated worktree changes and untracked files; stage only the four files above. No current handoff entry claims this self-heal task.
+- Prohibited surfaces/actions: push, deployment, ROI/strategy logic, prediction logic, DB schema/data, new tables, `render.yaml`, cron schedules, production writers, and local schedulers.
+- Running processes: none. Only finite source inspection, pytest, compilation/static checks, and local Git commands are planned.
+- Failure log: the first plan read used the PowerShell default encoding and displayed UTF-8 Japanese as mojibake. No file changed. Root cause: `Get-Content` omitted `-Encoding UTF8`. Prevention: all Japanese plan/log reads for this task use explicit UTF-8.
+- Planned verification: focused pool tests, graceful-degradation regression, then the full `tests/` suite using a repository-scoped temporary directory if needed. No source or data deletion is planned.
+- Cleanup target: `C:\boat_project\boatrace-analysis\.pytest_tmp_db_pool_selfheal_20260815` only, created by this task's pytest runs. It may be removed after verifying the resolved path is inside this repository; no other deletion is authorized.
+- Completed: Web `max_waiting` now defaults to the configured pool maximum and cannot become unbounded through a zero setting. Queue overflow is transient for graceful fallback and bypasses retry sleeps for true fail-fast behavior.
+- Completed: the watchdog rebuilds only after `available=0`, queued waiters, at least two failed checkout observations, and 90 seconds of uninterrupted exhaustion. Any successful checkout resets the window; rebuilds have a 60-second cooldown. Production configuration values are clamped to at least 30 seconds.
+- Completed: `BOATRACE_TASK_TRIGGER` processes retain direct, short-lived connections; the watchdog is disabled and the fallback pool setting remains unlimited for cron/batch isolation.
+- Verification: pool/graceful tests passed 23/23; the complete suite passed 811/811 (the prior 802 plus nine new tests). Python compilation and `git diff --check` passed. The only warning was the pre-existing inaccessible `.pytest_cache`; the repository-scoped basetemp worked and was removed after its exact resolved path was checked.
+- Scope confirmation: no ROI, prediction, schema, table, data, `render.yaml`, cron schedule, deployment, production write, or push action occurred. No local server/scheduler/watcher remains running.
+- Implementation commit: `e06e673`. Work log: `reports/db_pool_selfheal_work_log_20260815.md`. Documentation is committed locally; deployment requires separate user authorization.
+
 ## Active task (2026-08-15 graceful DB degradation)
 
 - Task: implement `reports/graceful_db_degradation_plan_20260815.md` so transient DB connection failures never expose an error-looking page on `/races` or `/race/<race_id>`, using bounded retries, shared stale/preparing fallback, a DB-free lightweight 500 template, and best-effort `system_status` visibility.
