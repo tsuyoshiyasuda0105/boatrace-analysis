@@ -1,5 +1,17 @@
 # Handoff
 
+## Active task (2026-08-15 P1-1 Phase B pure evaluator extraction)
+
+- Implement `reports/p1_1_phaseB_extract_pinned_plan_20260815.md`: move only the nine Phase A-characterized pure evaluator functions from `src/web/app.py` into `src/strategies/` without changing behavior. Phase A golden expectations are immutable. Push and deployment are prohibited.
+- Skill: `project-ops-guard`.
+- Expected edit files: `src/web/app.py`, new `src/strategies/__init__.py` and strategy module(s), `tests/test_strategy_characterization_phase_a.py` (loader/import source only), new `reports/p1_1_phaseB_work_log_20260815.md`, and `docs/handoff.md`.
+- Conflict avoidance: the target files are clean at task start. Preserve all existing untracked `.serena/` and `reports/` files; stage only the explicit function-specific source/test paths and required work-log/handoff updates. Do not modify golden expected dictionaries.
+- Prohibited surfaces: `market_signals_for_date` body, `_l4_daily_stats`, `_l4_races_for_date`, `_detect_market_inefficiency`, `_evaluate_l4`, `_evaluate_morning_l4`, tide/original-exhibition/Fukuoka-exhibition/kimarite/current-motor/1-3/non-exhibition-core/boat-2-wall/Tsu-Suminoe/Shimonoseki logic, schema, ROI values, predictions, `render.yaml`, cron, and notifications.
+- Commit/test discipline: one extracted function per local commit as the baseline; run `.venv/Scripts/python.exe -m pytest tests/ -q` after every commit and proceed only on green.
+- Running processes: none. Only finite repository inspection, pytest, and local Git commands are planned; no server, scheduler, browser, production writer, push, or deployment will be started.
+- Failure log: the first baseline `.venv/Scripts/python.exe -m pytest tests/ -q` collected all 687 tests but ended `644 passed / 43 setup errors`; the errors were `PermissionError` failures when tests attempted to use the shared Windows temporary area. No product assertion failed. Root cause: the environment cannot write the shared temp location. Prevention: rerun the identical suite with repository-local `--basetemp .pytest_tmp_p1_1_phaseB_20260815` and use that isolated path for every required full-suite run.
+- Planned cleanup target: `C:\boat_project\boatrace-analysis\.pytest_tmp_p1_1_phaseB_20260815` only, after all test runs. No source, report, cache, database, fixture, or production data is a deletion target.
+
 ## Active task (2026-08-15 parser fixture tests)
 
 - Implement `reports/parser_fixture_tests_plan_20260815.md` for `official_k`, `official_f`, `beforeinfo`, `odds`, `original_exhibition`, and `result_html`, with parser-by-parser local `main` commits only. Push is prohibited.

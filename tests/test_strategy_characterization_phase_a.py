@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.web.app import _detect_niche_signals
+from src.strategies.signals import _detect_niche_signals
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "web" / "app.py"
