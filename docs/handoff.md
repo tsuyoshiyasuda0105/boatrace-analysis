@@ -1,5 +1,25 @@
 # Handoff
 
+## Active task (2026-08-15 stale running reaper follow-up)
+
+- Task: implement `reports/stale_running_reaper_fix_plan_20260815.md` by reaping old `status='running'` rows regardless of whether `finished_at` is already set, while preserving the strict `started_at` threshold live-task protection.
+- Skill: `project-ops-guard`.
+- Expected edit files: `src/db/cron_runtime.py`, `tests/test_cron_runtime.py`, `reports/stale_running_reaper_work_log_20260815.md`, and `docs/handoff.md` only.
+- Conflict avoidance: no other active entry claims the exact source/test files for concurrent work. Preserve all unrelated tracked and untracked files; stage only the four explicit paths above.
+- Prohibited surfaces: push, deployment, database schema/data writes, ROI, prediction behavior, `render.yaml`, cron schedules/call sites, and existing public APIs.
+- Running processes: none. Only finite repository inspection, pytest, compilation, read-only local data-integrity checks, and local Git commands are planned; no server, scheduler, browser, watcher, or production writer will be started.
+- Planned cleanup target: `C:\boat_project\boatrace-analysis\.pytest_tmp_stale_reaper_followup_20260815` only, after all test runs. No source, report, cache, database, fixture, or production data is a deletion target.
+- Failure log: the first combined read-only verification command failed before returning results with PowerShell `TerminatorExpectedAtEndOfString`; no source or data operation ran as part of the malformed search. Root cause: an embedded double quote in the `rg` pattern terminated the PowerShell command string. Prevention: use separate commands and single-quoted, simplified search patterns; rerun compilation and every verification independently.
+- Failure log: the next DB-path search returned exit 1 because `src/config.py` does not exist, although it safely returned matches from the other named paths. Root cause: an assumed configuration-file location. Prevention: locate the actual configuration file with `rg --files` first, then query only confirmed paths and run verification commands separately so one expected search miss cannot mask other results.
+- Completed: SELECT and UPDATE no longer require `finished_at IS NULL`; stale selection remains limited to `status='running'` rows whose parsed `started_at` is strictly older than the configured threshold, and UPDATE still rechecks `status` plus the selected `started_at` value.
+- Tests: focused `tests/test_cron_runtime.py` passed 8/8, including the new finished-at-set stale-running regression and recent-row protection; the full suite passed 702/702. Python compilation and `git diff --check` passed. The only pytest warning was the pre-existing unwritable `.pytest_cache` nodeids path.
+- Read-only integrity check: local SQLite `race_results` natural-key duplicates were 0; the 2026-08-15 accident rank snapshot contained 1621 rows; same-day ROI history contained 2 rows, both unsettled. No database write occurred.
+- Scope verification: only the four declared files changed. No schema, ROI, prediction, `render.yaml`, cron schedule/call site, existing API, production data, scheduler, writer, server, deployment, or push change occurred.
+- Cleanup complete: the pre-recorded `C:\boat_project\boatrace-analysis\.pytest_tmp_stale_reaper_followup_20260815` path resolved to the exact expected repository-local directory and was removed. No source, report, cache, database, fixture, or production data was removed.
+- Running processes: none. All finite inspection, pytest, compilation, and read-only SQLite commands completed; no local tool or server remains open.
+- Operations checklist closeout: repository conflicts and scope were checked; the smallest fix, focused/full tests, compilation, diff check, and relevant read-only data-integrity checks passed. Result ingestion and ROI data remained intact; no accident/ROI/cron production writer was started.
+- Commit plan: one local commit will contain only the four declared files; its ID is reported in the delivery message. Push and deployment remain prohibited.
+
 ## Active task (2026-08-15 P1-2 code-derived cache signature)
 
 - Implement `reports/p1_2_cache_signature_plan_20260815.md`: derive `strategy_definition_signature()` from the five strategy source modules plus the three cache-version constant values, eliminating `adopted_strategies.md` as the signature authority. Keep the public zero-argument string-returning API unchanged. Push and deployment are prohibited.

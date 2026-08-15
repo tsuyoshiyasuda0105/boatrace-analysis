@@ -33,3 +33,25 @@
 - 読み取り専用調査コマンド2件がPowerShellの入れ子引用符で失敗した。単一引用符の `rg` パターンとPowerShell here-stringへ切り替えて再実行した。
 - `sqlite3` CLIは未導入だったため、リポジトリvirtualenvのPython SQLiteをread-only URIで使用した。
 - pytest一時ディレクトリは削除対象を `docs/handoff.md` に明記してから削除した。
+
+## 追補修正: `finished_at` セット済み running の回収
+
+- 追補指示書 `stale_running_reaper_fix_plan_20260815.md` に従い、SELECTとUPDATE再チェックの両方から `finished_at IS NULL` 条件を削除した。
+- 回収条件は `status='running'` かつ `started_at` が `now - older_than_hours` より厳密に古いこと。`started_at` の選択時値をUPDATEで再確認する競合防止と、6時間ちょうどを回収しないlive保護は維持した。
+- `render_signal_refresh_16_4` 相当の、`finished_at` がセット済みでも古いrunning行を回収する専用回帰テストを追加した。
+- 直近のrunning行は `finished_at` の有無にかかわらず触らず、既存の境界・冪等・閾値検証もgreenであることを確認した。
+
+### 追補検証結果
+
+- 対象テスト `tests/test_cron_runtime.py`: 8 passed。
+- 全テスト: 702 passed（基準701件 + 追補回帰1件）。
+- Pythonコンパイル: 成功。
+- `git diff --check`: 成功。
+- ローカルSQLiteをread-only URIで確認し、`race_results` の自然キー重複は0件。2026-08-15事故ランクスナップショットは1621行、同日ROI行は2件（2件とも未settle）。データ更新は行っていない。
+- DBスキーマ、ROI、予測、`render.yaml`、cronスケジュール/呼び出し、既存APIは変更していない。ローカルscheduler・本番writer・serverは起動していない。pushも行っていない。
+- 事前登録したpytest一時ディレクトリだけを検証後に削除した。
+
+### 追補作業中の失敗と対策
+
+- read-only監査用の複合PowerShellコマンドが、検索パターン内の引用符不整合で構文エラーになった。検索パターンを単純化し、検証コマンドを個別実行して全項目を再確認した。
+- DB設定の検索で存在しない `src/config.py` を指定してexit 1になった。`data/boatrace.db` の実在を確認してから、repository virtualenvのSQLiteをread-only URIで直接照会した。

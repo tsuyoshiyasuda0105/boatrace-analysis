@@ -54,7 +54,7 @@ def reap_stale_running_tasks(
     older_than_hours: int = 6,
     now: datetime | None = None,
 ) -> int:
-    """Mark only unfinished running rows older than the safety threshold failed."""
+    """Mark running rows older than the safety threshold failed."""
     if isinstance(older_than_hours, bool) or older_than_hours <= 0:
         raise ValueError("older_than_hours must be a positive number")
 
@@ -65,7 +65,6 @@ def reap_stale_running_tasks(
         SELECT task_name, run_date, started_at
           FROM task_runs
          WHERE status = 'running'
-           AND finished_at IS NULL
            AND started_at IS NOT NULL
         """
     ).fetchall()
@@ -99,7 +98,6 @@ def reap_stale_running_tasks(
              WHERE task_name = ?
                AND run_date = ?
                AND status = 'running'
-               AND finished_at IS NULL
                AND started_at = ?
             """,
             (finished_at, task_name, run_date, started_at),

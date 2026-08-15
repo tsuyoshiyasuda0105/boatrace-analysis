@@ -67,7 +67,7 @@ def test_skipped_transition_does_not_destroy_running_row(monkeypatch):
     )
 
 
-def test_reap_stale_running_tasks_updates_only_strictly_old_unfinished_running_rows():
+def test_reap_stale_running_tasks_updates_only_strictly_old_running_rows():
     conn = sqlite3.connect(":memory:")
     cron_runtime.ensure_task_runs_table(conn)
     rows = [
@@ -75,10 +75,10 @@ def test_reap_stale_running_tasks_updates_only_strictly_old_unfinished_running_r
         ("boundary", "running", "2026-08-15 06:00:00", None),
         ("recent", "running", "2026-08-15T11:59:00", None),
         (
-            "finished-running",
+            "recent-finished-running",
             "running",
-            "2026-08-14T00:00:00",
-            "2026-08-14T01:00:00",
+            "2026-08-15T11:58:00",
+            "2026-08-15T11:59:00",
         ),
         ("success", "success", "2026-08-14T00:00:00", "2026-08-14T01:00:00"),
         ("skipped", "skipped", "2026-08-14T00:00:00", "2026-08-14T01:00:00"),
@@ -118,6 +118,45 @@ def test_reap_stale_running_tasks_updates_only_strictly_old_unfinished_running_r
         """
     ).fetchall()
     assert all(detail == "original" for _, _, _, detail in untouched)
+
+
+def test_reap_stale_running_tasks_reaps_old_row_with_finished_at_set():
+    conn = sqlite3.connect(":memory:")
+    cron_runtime.ensure_task_runs_table(conn)
+    conn.execute(
+        """
+        INSERT INTO task_runs
+            (task_name, run_date, status, run_count, started_at, finished_at, detail)
+        VALUES (
+            'render_signal_refresh_16_4',
+            '2026-08-11',
+            'running',
+            1,
+            '2026-08-11T16:04:00',
+            '2026-08-11T16:04:00',
+            'original'
+        )
+        """
+    )
+    conn.commit()
+
+    reaped = cron_runtime.reap_stale_running_tasks(
+        conn,
+        now=datetime(2026, 8, 15, 12, 0, 0),
+    )
+
+    assert reaped == 1
+    assert conn.execute(
+        """
+        SELECT status, finished_at, detail
+          FROM task_runs
+         WHERE task_name = 'render_signal_refresh_16_4'
+        """
+    ).fetchone() == (
+        "failure",
+        "2026-08-15T12:00:00",
+        "stale_running_reaped",
+    )
 
 
 def test_reap_stale_running_tasks_is_idempotent_and_validates_threshold():
