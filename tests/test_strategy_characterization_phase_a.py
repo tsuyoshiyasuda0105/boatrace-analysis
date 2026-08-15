@@ -20,6 +20,7 @@ from src.strategies.signals import (
     _detect_niche_signals,
     _evaluate_candidate_134_signal,
     _evaluate_l4_general_200,
+    _pick_best_market_signal,
 )
 
 
@@ -203,14 +204,14 @@ def test_general_c_current_b_venue_rain_and_female_gates(stadium, weather, n_fem
 
 
 def test_pick_best_prefers_adopted_level_over_higher_recovery_generic():
-    pick = _load_local_function(
-        "_pick_best_market_signal",
-        ACCIDENT_DENT_STRATEGIES=[SimpleNamespace(key="accident_demo")],
-    )
     generic = {"level": "generic_demo", "label": "generic", "bet": "単勝 6", "recovery": 999.0}
     adopted = {"level": "g23_optb_tri", "label": "adopted", "bet": "3連単 1-2-3", "recovery": 204.0}
 
-    assert pick(generic, adopted) == {
+    assert _pick_best_market_signal(
+        generic,
+        adopted,
+        ACCIDENT_DENT_STRATEGIES=[SimpleNamespace(key="accident_demo")],
+    ) == {
         **adopted,
         "matched_levels": ["generic_demo", "g23_optb_tri"],
         "matched_labels": ["generic", "adopted"],

@@ -1,6 +1,90 @@
 """Pure market-signal evaluators extracted from the web application."""
 
 
+def _pick_best_market_signal(*signals, ACCIDENT_DENT_STRATEGIES=()):
+    adopted_priority_levels = {
+        "a1_ace_motor_123_corr_tri", "g23_optb_tri", "gmkf_132_tri",
+        "shimonoseki_123_tri", "tsu_124_tri", "amagasaki_143_tri",
+        "amagasaki_13_exa", "omura_13_exa", "ashiya_boat4_exa",
+        "hamanako_14_exa", "omura_14_exa", "tokuyama_123_tri",
+        "tokuyama_13_exa", "shimonoseki_132_tri", "kojima_124_tri",
+        "kojima_13_exa", "marugame_123_tri", "omura_123_tri",
+        "omura_132_tri", "tsu_123_tri", "suminoe_123_tri",
+        "miyajima_tide_132_tri", "gamagori_tide_132_tri", "marugame_tide_123_tri",
+        "fukuoka_tide_132_tri", "fukuoka_ex12_b_exa", "fukuoka_tri124_c",
+        "fukuoka_123_late_foot_tri", "gamagori_123_general_practical_tri",
+        "gamagori_13_exa", "tokuyama_12a_exa", "tokoname_12_late_a_exa",
+        "tokoname_14_winter_exa", "tokoname_123_late_exst_tri", "toda_123_tri",
+        "tsu_143_tri", "kojima_123_tri", "gamagori_123_tri", "naruto_123_tri",
+        "karatsu_132_tri", "tri134_acc2_ex3_tri", "omura_132_weak2_ex3_tri",
+        "wakamatsu_13_weak2_strong3_exa", "heiwajima_13_acc2_late_exa",
+        "tamagawa_13_weak_sashi2_exa", "tamagawa_13_acc2n30_m3_40_exa",
+        "tamagawa_123_fl3_n3_30_m2_35_tri", "hamanako_12_pts3_m23_exa",
+        "kojima_12_acc3_m3_n23_exa", "edogawa_13_acc2_n23_m3_exa",
+        "kiryu_13_fl2_n23_exa", "ashiya_13_pts2_m23_exa",
+        "amagasaki_12_acc3_fl3_exa", "omura_13_acc2_fl2_m23_exa",
+        "marugame_13_pts2_m23_exa", "tokoname_coursefit_boat2_win",
+        "tokoname_coursefit_boat3_general_win", "biwako_coursefit_boat4_gap10_general_win",
+        "shimonoseki_coursefit_boat2_win", "biwako_coursefit_boat4_gap5_general_win",
+        "biwako_coursefit_boat4_rank1_general_win", "biwako_coursefit_boat4_gap10_all_win",
+    }
+    adopted_priority_levels.update(
+        strategy.key for strategy in ACCIDENT_DENT_STRATEGIES
+    )
+    adopted_priority_levels.update({
+        "morning_watch_SG", "morning_watch_G1", "morning_watch_G2",
+        "morning_watch_st_SG", "morning_watch_st_G1", "morning_watch_st_G2",
+        "morning_watch_g23_optb", "morning_watch_shimonoseki_123_tri",
+        "morning_watch_ashiya_boat4_lift", "morning_watch_tokoname_123_late_exst_tri",
+        "morning_watch_omura_123_tri", "morning_watch_tri143_a12",
+        "morning_watch_gmkf_132_tri", "morning_watch_gamagori_adopted",
+        "morning_watch_tri134_acc2_ex3_tri", "morning_watch_omura_132_weak2_ex3_tri",
+        "morning_watch_fukuoka_tide_132_tri", "morning_watch_miyajima_tide_132_tri",
+        "morning_watch_gamagori_tide_132_tri", "morning_watch_marugame_tide_123_tri",
+        "morning_watch_tsu_123_tri", "morning_watch_suminoe_123_tri",
+        "morning_watch_tamagawa_13_acc2n30_m3_40_exa",
+        "morning_watch_tamagawa_123_fl3_n3_30_m2_35_tri",
+        "morning_watch_hamanako_12_pts3_m23_exa",
+        "morning_watch_kojima_12_acc3_m3_n23_exa",
+        "morning_watch_edogawa_13_acc2_n23_m3_exa",
+        "morning_watch_kiryu_13_fl2_n23_exa", "morning_watch_ashiya_13_pts2_m23_exa",
+        "morning_watch_amagasaki_12_acc3_fl3_exa", "morning_watch_omura_13_acc2_fl2_m23_exa",
+        "morning_watch_marugame_13_pts2_m23_exa",
+    })
+
+    def _is_adopted_priority_signal(sig):
+        level = sig.get("level") if sig else None
+        return level in adopted_priority_levels
+
+    valid = []
+    best = None
+    best_recovery = float("-inf")
+    for sig in signals:
+        if not sig:
+            continue
+        valid.append(sig)
+    if not valid:
+        return None
+    preferred = [sig for sig in valid if _is_adopted_priority_signal(sig)]
+    candidate_pool = preferred or valid
+    for sig in candidate_pool:
+        try:
+            rec = float(sig.get("recovery")) if sig.get("recovery") is not None else float("-inf")
+        except (TypeError, ValueError):
+            rec = float("-inf")
+        if best is None or rec > best_recovery:
+            best = sig
+            best_recovery = rec
+    if best is None:
+        return None
+    merged = dict(best)
+    merged["matched_levels"] = [s.get("level") for s in valid if s.get("level")]
+    merged["matched_labels"] = [s.get("label") for s in valid if s.get("label")]
+    merged["matched_bets"] = [s.get("bet") for s in valid if s.get("bet")]
+    merged["matched_recoveries"] = [s.get("recovery") for s in valid if s.get("recovery") is not None]
+    return merged
+
+
 def _evaluate_candidate_134_signal(
     stadium,
     grade,

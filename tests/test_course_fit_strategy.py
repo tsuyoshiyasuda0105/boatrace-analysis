@@ -60,8 +60,9 @@ def test_selection_does_not_use_current_result():
 
 def test_app_registers_every_course_fit_key_and_venue():
     app_source = Path("src/web/app.py").read_text(encoding="utf-8")
+    strategy_source = Path("src/strategies/signals.py").read_text(encoding="utf-8")
     for strategy in COURSE_FIT_STRATEGIES:
-        assert app_source.count(f'"{strategy.key}"') >= 3
+        assert (app_source + strategy_source).count(f'"{strategy.key}"') >= 3
     assert '"tokoname_coursefit_boat2_win": "tokoname"' in app_source
     assert '"biwako_coursefit_boat4_gap10_general_win": "biwako"' in app_source
     assert '"shimonoseki_coursefit_boat2_win": "shimonoseki"' in app_source

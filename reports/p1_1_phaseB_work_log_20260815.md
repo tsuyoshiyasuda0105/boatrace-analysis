@@ -54,3 +54,13 @@
 - `src/web/app.py` は同名関数をモジュールimportし、既存の全呼び出し引数は変更なし。
 - 閉包依存: なし。
 - Phase Aテストは呼び出し元だけを新モジュールimportへ変更。候補1/3/4の重複golden期待値は不変。
+- コミット: `b720d41`。
+- コミット後全テスト: `687 passed`。
+
+### `_pick_best_market_signal`
+
+- ネスト定義を内部の採用集合・選択順・metadata統合処理ごと `src/strategies/signals.py` に移動。
+- 閉包依存 `ACCIDENT_DENT_STRATEGIES` は同名のキーワード専用引数（既定値は空tuple）にした。
+- `src/web/app.py` の旧定義位置で `partial(..., ACCIDENT_DENT_STRATEGIES=ACCIDENT_DENT_STRATEGIES)` として従来値を束縛。危険地帯内の既存呼び出し引数・順序は変更なし。
+- Phase Aテストは新モジュール関数へ同じ依存値を明示注入。golden期待値は不変。
+- 既存のcourse-fit source-location assertionは、採用キー集合の新配置に合わせて `app.py` と `signals.py` の合算を検査するよう変更。venue-mapのapp固有assertionは不変。
