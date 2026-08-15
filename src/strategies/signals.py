@@ -1,6 +1,66 @@
 """Pure market-signal evaluators extracted from the web application."""
 
 
+def _compute_tetsuban(base: dict, race_no: int) -> tuple[int, str]:
+    """鉄板度スコア (1-6) と表示ラベルを計算 (backlog item 11)。
+
+    条件 (各 1 点、合計 0-6):
+      + 高グレード (SG/G1/G2)
+      + F1 一般戦 (一般×国1%≥7×2号40)
+      + race_number 11 または 12 (prime / メインレース)
+      + race_number 12 (最終レース、上に+1で 12R は計 2 点)
+        → 12R は実質 +2 点扱いで「鉄板側に振れる」
+          ※ 11R も prime bonus が付くが 12R bonus は付かない
+      + L4 1c80 (1号艇1コース 1着率 80%+)
+      + L4 PRO (ベテラン × ST × 展示)
+      + L4++ (国1%≥7 + 地1%≥9)
+      + 1号艇国1%≥7 のみ満たす L4+ (中間)
+
+    戻り値: (score 1-6, label) — 鉄板度マーク "★×N" + 評価名
+    """
+    level = base.get("level", "")
+    is_high_grade = level in ("SG", "G1", "G2")
+    is_f1 = bool(base.get("is_f1"))
+    is_prime_r = race_no in (11, 12)
+    is_final_r = race_no == 12
+    is_1c80 = bool(base.get("is_1c80"))
+    is_pro  = bool(base.get("is_l4_pro"))
+    rank    = base.get("rank")
+    is_plus_plus = rank == "plus_plus"
+    is_plus      = rank == "plus"
+
+    score = 0
+    if is_high_grade:    score += 1
+    if is_f1:            score += 1
+    if is_prime_r:       score += 1
+    if is_final_r:       score += 1   # 12R は更に +1 (prime と合わせて +2)
+    if is_1c80:          score += 1
+    if is_pro:           score += 1
+    if is_plus_plus:     score += 1
+    elif is_plus:        score += 0   # plus 単独は弱いので加点しない
+
+    # スコアを 1-5 の星に圧縮
+    stars = 1
+    if score >= 5: stars = 5
+    elif score >= 4: stars = 4
+    elif score >= 3: stars = 3
+    elif score >= 2: stars = 2
+    else: stars = 1
+
+    # ラベル (backlog item 9: ダイヤモンド廃止 → ★×N 表記に統一)
+    if stars >= 5:
+        lab = f"鉄板 {stars}★"
+    elif stars == 4:
+        lab = f"強推 {stars}★"
+    elif stars == 3:
+        lab = f"推奨 {stars}★"
+    elif stars == 2:
+        lab = f"候補 {stars}★"
+    else:
+        lab = f"通常 {stars}★"
+    return stars, lab
+
+
 def _detect_niche_signals(preds: list[dict], conditions: dict) -> list[dict]:
     """
     検証済の「ニッチ大穴シグナル」を検出する。

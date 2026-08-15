@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.strategies.signals import _detect_niche_signals
+from src.strategies.signals import _compute_tetsuban, _detect_niche_signals
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "web" / "app.py"
@@ -275,9 +275,7 @@ def test_general200_overlay_yields_to_adopted_and_preserves_overlay_metadata():
 
 
 def test_tetsuban_score_compresses_all_current_bonuses_to_five_stars():
-    compute = _load_local_function("_compute_tetsuban")
-
-    assert compute(
+    assert _compute_tetsuban(
         {
             "level": "SG",
             "is_f1": True,

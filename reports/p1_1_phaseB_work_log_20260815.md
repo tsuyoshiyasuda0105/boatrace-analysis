@@ -27,3 +27,12 @@
 - `src/web/app.py` は同名関数をモジュールimportし、既存呼び出しは変更なし。
 - 閉包依存: なし。
 - Phase Aテストはimport元だけを新モジュールへ変更。golden期待値は不変。
+- コミット: `397dd1e`。
+- コミット後全テスト: `687 passed`。
+
+### `_compute_tetsuban`
+
+- `market_signals_for_date` 内のネスト定義を本体そのままで `src/strategies/signals.py` に移動。
+- `src/web/app.py` は同名関数をモジュールimportし、既存呼び出し引数 `(base, rn)` は変更なし。
+- 閉包依存: なし。
+- Phase Aテストは呼び出し元だけを新モジュールimportへ変更。golden期待値は不変。
