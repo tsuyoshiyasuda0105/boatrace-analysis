@@ -11,10 +11,19 @@ from typing import Any, Mapping
 from flask import Flask, jsonify, render_template, request
 
 from src.search.roi_search import search_roi
+from src.search.strategies import (
+    deactivate_strategy,
+    get_strategy,
+    list_strategies,
+    match_all_strategies,
+    match_races,
+    save_strategy,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "kachisuji_search.db"
+DEFAULT_STRATEGY_DB_PATH = PROJECT_ROOT / "data" / "kachisuji_strategies.db"
 _RACER_NUMBER = re.compile(r"^\s*(\d+)(?:\s+.*)?$")
 
 
@@ -45,12 +54,19 @@ def _normalize_request(payload: Any) -> tuple[dict[str, Any], bool]:
     return conditions, fast
 
 
-def create_app(db_path: str | Path | None = None) -> Flask:
+def create_app(
+    db_path: str | Path | None = None,
+    strategy_db_path: str | Path | None = None,
+) -> Flask:
     """Create the standalone local application without starting a server."""
 
     app = Flask(__name__)
     configured_path = db_path or os.environ.get("KACHISUJI_DB") or DEFAULT_DB_PATH
+    configured_strategy_path = (
+        strategy_db_path or os.environ.get("KACHISUJI_STRATEGY_DB") or DEFAULT_STRATEGY_DB_PATH
+    )
     app.config["KACHISUJI_DB"] = str(configured_path)
+    app.config["KACHISUJI_STRATEGY_DB"] = str(configured_strategy_path)
     app.json.ensure_ascii = False
 
     @app.get("/")
@@ -66,6 +82,83 @@ def create_app(db_path: str | Path | None = None) -> Flask:
             return jsonify(error=str(exc)), 400
         except Exception as exc:  # pragma: no cover - exercised with a forced failure
             app.logger.exception("kachisuji search failed")
+            return jsonify(error=str(exc)), 500
+
+    @app.post("/api/strategies")
+    def api_save_strategy():
+        try:
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, Mapping):
+                raise ValueError("リクエストはJSONオブジェクトで指定してください")
+            conditions, _fast = _normalize_request(payload.get("conditions"))
+            strategy_id = save_strategy(
+                payload.get("name"),
+                conditions,
+                payload.get("backtest"),
+                db_path=app.config["KACHISUJI_STRATEGY_DB"],
+            )
+            return jsonify(id=strategy_id)
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except Exception as exc:  # pragma: no cover - exercised with a forced failure
+            app.logger.exception("kachisuji strategy save failed")
+            return jsonify(error=str(exc)), 500
+
+    @app.get("/api/strategies")
+    def api_list_strategies():
+        try:
+            return jsonify(list_strategies(db_path=app.config["KACHISUJI_STRATEGY_DB"]))
+        except Exception as exc:  # pragma: no cover - exercised with a forced failure
+            app.logger.exception("kachisuji strategy list failed")
+            return jsonify(error=str(exc)), 500
+
+    @app.delete("/api/strategies/<int:strategy_id>")
+    def api_deactivate_strategy(strategy_id: int):
+        try:
+            changed = deactivate_strategy(
+                strategy_id,
+                db_path=app.config["KACHISUJI_STRATEGY_DB"],
+            )
+            if not changed:
+                return jsonify(error="strategy not found"), 404
+            return jsonify(deactivated=True)
+        except Exception as exc:  # pragma: no cover - exercised with a forced failure
+            app.logger.exception("kachisuji strategy deactivation failed")
+            return jsonify(error=str(exc)), 500
+
+    @app.get("/api/strategies/<int:strategy_id>/matches")
+    def api_strategy_matches(strategy_id: int):
+        try:
+            if get_strategy(strategy_id, db_path=app.config["KACHISUJI_STRATEGY_DB"]) is None:
+                return jsonify(error="strategy not found"), 404
+            return jsonify(
+                match_races(
+                    strategy_id,
+                    request.args.get("date"),
+                    app.config["KACHISUJI_DB"],
+                    app.config["KACHISUJI_STRATEGY_DB"],
+                )
+            )
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except Exception as exc:  # pragma: no cover - exercised with a forced failure
+            app.logger.exception("kachisuji strategy matching failed")
+            return jsonify(error=str(exc)), 500
+
+    @app.get("/api/matches")
+    def api_all_matches():
+        try:
+            return jsonify(
+                match_all_strategies(
+                    request.args.get("date"),
+                    app.config["KACHISUJI_DB"],
+                    app.config["KACHISUJI_STRATEGY_DB"],
+                )
+            )
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except Exception as exc:  # pragma: no cover - exercised with a forced failure
+            app.logger.exception("kachisuji all-strategy matching failed")
             return jsonify(error=str(exc)), 500
 
     @app.get("/healthz")
