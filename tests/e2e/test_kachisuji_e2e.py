@@ -1,10 +1,76 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+from pathlib import Path
+import sqlite3
 import time
 from urllib.parse import urljoin
 
 import pytest
 from playwright.sync_api import expect
+
+
+SEARCH_DB = Path(__file__).resolve().parents[2] / "data" / "kachisuji_search.db"
+
+
+def _search_db_rows(sql: str, parameters=()):
+    connection = sqlite3.connect(SEARCH_DB.resolve().as_uri() + "?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        return connection.execute(sql, parameters).fetchall()
+    finally:
+        connection.close()
+
+
+def _date_after_latest_race() -> str:
+    rows = _search_db_rows("SELECT MAX(race_date) AS race_date FROM asof_race_features")
+    if not rows or rows[0]["race_date"] is None:
+        pytest.skip("kachisuji search DB has no race dates")
+    return (date.fromisoformat(rows[0]["race_date"]) + timedelta(days=1)).isoformat()
+
+
+def _confirmed_match_case():
+    rows = _search_db_rows(
+        """
+        SELECT race_date, jcd, COUNT(*) AS races
+        FROM asof_race_features
+        GROUP BY race_date, jcd
+        HAVING COUNT(*) > 0
+           AND SUM(
+               result_sanrentan IS NULL
+               OR payout_sanrentan IS NULL
+               OR (schema_version >= 4 AND result_sanrentan_json IS NULL)
+               OR (schema_version >= 4 AND payout_sanrentan_json IS NULL)
+           ) = 0
+        ORDER BY race_date DESC, jcd
+        LIMIT 1
+        """
+    )
+    if not rows:
+        pytest.skip("kachisuji search DB has no venue/date with fully confirmed results")
+    return rows[0]
+
+
+def _pending_weather_case():
+    rows = _search_db_rows(
+        """
+        SELECT race_date, jcd, b1_age, COUNT(*) AS pending_races
+        FROM asof_race_features
+        WHERE b1_age IS NOT NULL
+          AND weather IS NULL
+        GROUP BY race_date, jcd, b1_age
+        HAVING COUNT(*) > 0
+        ORDER BY race_date DESC, jcd, b1_age
+        LIMIT 1
+        """
+    )
+    if not rows:
+        pytest.skip(
+            "kachisuji search DB has no race with resolved prior-day b1_age "
+            "and missing same-day weather"
+        )
+    return rows[0]
 
 
 def valid_conditions(**extra):
@@ -159,7 +225,8 @@ def test_s4_invalid_date_ranges_are_400(page, dates):
 
 
 def test_s4_future_range_is_valid_but_empty(page):
-    response = post_json(page, "/api/search", valid_conditions(date_from="2099-01-01", date_to="2099-12-31"))
+    empty_date = _date_after_latest_race()
+    response = post_json(page, "/api/search", valid_conditions(date_from=empty_date, date_to=empty_date))
     assert response.status == 200, response.text()
     assert response.json()["n"] == 0
 
@@ -207,34 +274,43 @@ def test_s5_twenty_strategies_list_and_match(page):
         assert response.status == 200, response.text()
     page.reload(wait_until="networkidle")
     assert page.locator("#myStrategies .mycard").count() >= 20
-    page.locator("#matchDate").fill("2099-01-01")
+    page.locator("#matchDate").fill(_date_after_latest_race())
     page.locator("#btnMatch").click()
     expect(page.locator("#matchResults .match-group").first).to_be_visible(timeout=30_000)
     expect(page.locator("#matchResults")).to_contain_text("確定 0 / 未確定 0")
 
 
 def test_s5_confirmed_match_rows_are_returned(page):
-    response = post_json(page, "/api/strategies", {"name": "confirmed-baseline", "conditions": valid_conditions(venue=1), "backtest": {"roi": 100, "n": 1}})
+    case = _confirmed_match_case()
+    response = post_json(page, "/api/strategies", {"name": "confirmed-baseline", "conditions": valid_conditions(venue=case["jcd"]), "backtest": {"roi": 100, "n": 1}})
     assert response.status == 200, response.text()
     strategy_id = response.json()["id"]
-    matched = get_url(page, f"/api/strategies/{strategy_id}/matches", params={"date": "2026-08-14"})
+    matched = get_url(page, f"/api/strategies/{strategy_id}/matches", params={"date": case["race_date"]})
     assert matched.status == 200, matched.text()
     body = matched.json()
+    assert body["counts"]["races_on_date"] > 0
     assert body["counts"]["matched"] > 0
     assert body["counts"]["pending"] == 0
     assert all(item["status"] == "confirmed" for item in body["matched"])
 
 
 def test_s5_missing_same_day_values_are_pending(page):
-    response = post_json(page, "/api/strategies", {"name": "pending-weather", "conditions": valid_conditions(weather=["晴"]), "backtest": {"roi": 100, "n": 1}})
+    case = _pending_weather_case()
+    conditions = valid_conditions(
+        venue=case["jcd"],
+        weather=["晴"],
+        boats={"1": {"age": {"min": case["b1_age"], "max": case["b1_age"]}}},
+    )
+    response = post_json(page, "/api/strategies", {"name": "pending-weather", "conditions": conditions, "backtest": {"roi": 100, "n": 1}})
     assert response.status == 200, response.text()
     strategy_id = response.json()["id"]
-    matched = get_url(page, f"/api/strategies/{strategy_id}/matches", params={"date": "2026-08-15"})
+    matched = get_url(page, f"/api/strategies/{strategy_id}/matches", params={"date": case["race_date"]})
     assert matched.status == 200, matched.text()
     body = matched.json()
     assert body["counts"]["races_on_date"] > 0
     assert body["counts"]["pending"] > 0
     assert all(item["status"] == "pending" for item in body["pending"])
+    assert all(item["undetermined_columns"] == ["weather"] for item in body["pending"])
 
 
 # S6: direct API hardening.

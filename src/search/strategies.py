@@ -11,7 +11,7 @@ import re
 import sqlite3
 from typing import Any, Mapping
 
-from src.search.roi_search import SUPPORTED_SCHEMA_VERSIONS, _compile_conditions
+from src.search.roi_search import READABLE_SCHEMA_VERSIONS, _compile_conditions
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -237,11 +237,12 @@ def match_races(
         f"WHERE race_date = ? AND {where} ORDER BY jcd, race_no, race_id"
     )
     with _read_connect(search_db) as connection:
+        schema_placeholders = ", ".join("?" for _ in READABLE_SCHEMA_VERSIONS)
         races_on_date = int(
             connection.execute(
                 "SELECT COUNT(*) FROM asof_race_features "
-                "WHERE race_date = ? AND schema_version IN (?, ?)",
-                (normalized_date, *SUPPORTED_SCHEMA_VERSIONS),
+                f"WHERE race_date = ? AND schema_version IN ({schema_placeholders})",
+                (normalized_date, *READABLE_SCHEMA_VERSIONS),
             ).fetchone()[0]
         )
         rows = connection.execute(sql, [normalized_date, *params]).fetchall()

@@ -147,6 +147,17 @@ def test_prior_day_match_is_confirmed(search_db: Path, strategy_db: Path) -> Non
     assert result["counts"] == {"races_on_date": 4, "matched": 2, "pending": 0}
 
 
+def test_races_on_date_counts_schema_v4_search_population(
+    search_db: Path, strategy_db: Path
+) -> None:
+    with sqlite3.connect(search_db) as connection:
+        connection.execute("UPDATE asof_race_features SET schema_version = 4")
+
+    result = match_races({"bet": BET}, "2026-08-16", search_db, strategy_db)
+
+    assert result["counts"] == {"races_on_date": 4, "matched": 4, "pending": 0}
+
+
 def test_same_day_null_is_pending_but_prior_day_miss_or_null_is_not(
     search_db: Path, strategy_db: Path
 ) -> None:
