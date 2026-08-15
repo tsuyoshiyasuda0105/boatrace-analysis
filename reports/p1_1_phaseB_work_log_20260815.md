@@ -101,3 +101,9 @@
 - `src/web/app.py` の旧定義位置で `partial(..., EXCLUDE_B_VENUES=EXCLUDE_B_VENUES)` として従来値を束縛。既存呼び出し引数・順序は変更なし。隣接watchとdaily側重複は未変更。
 - Phase Aテストは新モジュール関数へ同じ除外集合を明示注入。採用dict・除外境界のgolden期待値は不変。
 - 9関数すべてが新モジュールimportになったため、テスト専用ASTローダーを削除。
+
+## 最終監査
+
+- フェーズA直前 `b3b8f54:src/web/app.py` と新 `src/strategies/signals.py` の関数本体をAST比較。
+- 初回比較で `_compute_tetsuban` と `_prefer_adopted_signal_over_general200` の複数行docstring内の字下げだけが不一致だった。ネスト解除に伴う `__doc__` の空白差も挙動差として扱い、旧文字列と完全一致する字下げへ復元。
+- 実行文のロジック差は検出されなかった。復元後に9関数すべての本体AST完全一致を再確認する。

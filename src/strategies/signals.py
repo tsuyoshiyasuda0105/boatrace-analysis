@@ -136,11 +136,11 @@ def _evaluate_g23_optb_signal(stadium, grade, cls, min_payout, natl_1=None, loca
 def _prefer_adopted_signal_over_general200(selected, adopted):
     """Keep adopted strategy labels visible when general200 also matches.
 
-    `l4_general_200` is a useful overlay, but it is not part of the
-    current adopted-strategy set shown in ROI pages. When both match the
-    same race, prefer the adopted strategy for consistency between the
-    ROI dashboard and the live "ROIが高いレース" list.
-    """
+            `l4_general_200` is a useful overlay, but it is not part of the
+            current adopted-strategy set shown in ROI pages. When both match the
+            same race, prefer the adopted strategy for consistency between the
+            ROI dashboard and the live "ROIが高いレース" list.
+            """
     if not selected or not adopted:
         return selected
     selected_level = str(selected.get("level") or "")
@@ -419,20 +419,20 @@ def _evaluate_l4_general_200(stadium, grade, cls, natl_1=None,
 def _compute_tetsuban(base: dict, race_no: int) -> tuple[int, str]:
     """鉄板度スコア (1-6) と表示ラベルを計算 (backlog item 11)。
 
-    条件 (各 1 点、合計 0-6):
-      + 高グレード (SG/G1/G2)
-      + F1 一般戦 (一般×国1%≥7×2号40)
-      + race_number 11 または 12 (prime / メインレース)
-      + race_number 12 (最終レース、上に+1で 12R は計 2 点)
-        → 12R は実質 +2 点扱いで「鉄板側に振れる」
-          ※ 11R も prime bonus が付くが 12R bonus は付かない
-      + L4 1c80 (1号艇1コース 1着率 80%+)
-      + L4 PRO (ベテラン × ST × 展示)
-      + L4++ (国1%≥7 + 地1%≥9)
-      + 1号艇国1%≥7 のみ満たす L4+ (中間)
+            条件 (各 1 点、合計 0-6):
+              + 高グレード (SG/G1/G2)
+              + F1 一般戦 (一般×国1%≥7×2号40)
+              + race_number 11 または 12 (prime / メインレース)
+              + race_number 12 (最終レース、上に+1で 12R は計 2 点)
+                → 12R は実質 +2 点扱いで「鉄板側に振れる」
+                  ※ 11R も prime bonus が付くが 12R bonus は付かない
+              + L4 1c80 (1号艇1コース 1着率 80%+)
+              + L4 PRO (ベテラン × ST × 展示)
+              + L4++ (国1%≥7 + 地1%≥9)
+              + 1号艇国1%≥7 のみ満たす L4+ (中間)
 
-    戻り値: (score 1-6, label) — 鉄板度マーク "★×N" + 評価名
-    """
+            戻り値: (score 1-6, label) — 鉄板度マーク "★×N" + 評価名
+            """
     level = base.get("level", "")
     is_high_grade = level in ("SG", "G1", "G2")
     is_f1 = bool(base.get("is_f1"))
