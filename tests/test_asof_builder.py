@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 import io
+import json
 import sqlite3
 
 import pytest
@@ -309,7 +310,7 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 3
+    assert row["schema_version"] == 4
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
@@ -335,7 +336,9 @@ def test_schema_v2_rows_are_additively_migrated_and_preserved(tmp_path):
     output = tmp_path / "legacy-v2.db"
     new_suffixes = ("_age", "_national_rate2", "_local_rate2")
     legacy_columns = [
-        (name, kind) for name, kind in ALL_COLUMNS if not name.endswith(new_suffixes)
+        (name, kind)
+        for name, kind in ALL_COLUMNS
+        if not name.endswith(new_suffixes) and not name.endswith("_json")
     ]
     with sqlite3.connect(output) as connection:
         ddl = ", ".join(f"{name} {kind}" for name, kind in legacy_columns)
@@ -347,11 +350,12 @@ def test_schema_v2_rows_are_additively_migrated_and_preserved(tmp_path):
         )
         create_output_schema(connection)
         row = connection.execute(
-            "SELECT schema_version,b1_age,b1_national_rate2,b1_local_rate2 "
+            "SELECT schema_version,b1_age,b1_national_rate2,b1_local_rate2,"
+            "result_tansho_json,payout_tansho_json "
             "FROM asof_race_features WHERE race_id='legacy'"
         ).fetchone()
 
-    assert row == (2, None, None, None)
+    assert row == (2, None, None, None, None, None)
 
 
 def test_class_gender_conditions_and_three_payout_types(tmp_path):
@@ -367,10 +371,116 @@ def test_class_gender_conditions_and_three_payout_types(tmp_path):
     assert row["payout_nirentan"] == 450
     assert row["result_tansho"] == 1
     assert row["payout_tansho"] == 120
+    assert row["result_tansho_json"] == '["1"]'
+    assert row["payout_tansho_json"] == '{"1":120}'
+    assert row["result_nirentan_json"] == '["1-2"]'
+    assert row["payout_nirentan_json"] == '{"1-2":450}'
+    assert row["result_sanrentan_json"] == '["1-2-3"]'
+    assert row["payout_sanrentan_json"] == '{"1-2-3":1230}'
     assert row["weather"] == "晴"
     assert row["wind_dir"] is None
     assert row["wind_dir_raw"] == 9
     assert row["tide_phase"] == "上げ潮"
+
+
+def test_results_come_from_finish_order_and_payout_is_matched_by_combination(tmp_path):
+    source = _complete_fixture()
+    source.executemany(
+        "INSERT INTO race_payouts VALUES (?,?,?,?,?)",
+        [
+            ("target", "win", "3", 999, 9),
+            ("target", "exacta", "3-2", 9999, 9),
+            ("target", "trifecta", "3-2-1", 99999, 9),
+        ],
+    )
+    output = tmp_path / "features.db"
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert (row["result_tansho"], row["payout_tansho"]) == (1, 120)
+    assert (row["result_nirentan"], row["payout_nirentan"]) == ("1-2", 450)
+    assert (row["result_sanrentan"], row["payout_sanrentan"]) == ("1-2-3", 1230)
+
+
+def test_dead_heat_preserves_all_winning_combinations_and_payouts(tmp_path):
+    source = _complete_fixture()
+    source.execute(
+        "UPDATE race_results SET finishing_position=1 WHERE race_id='target' AND boat_number=2"
+    )
+    source.execute(
+        "UPDATE race_results SET finishing_position=3 WHERE race_id='target' AND boat_number=3"
+    )
+    source.execute("DELETE FROM race_payouts WHERE race_id='target'")
+    source.executemany(
+        "INSERT INTO race_payouts VALUES (?,?,?,?,?)",
+        [
+            ("target", "win", "1", 130, 1),
+            ("target", "win", "2", 380, 2),
+            ("target", "exacta", "1-2", 190, 1),
+            ("target", "exacta", "2-1", 520, 2),
+            ("target", "trifecta", "1-2-3", 780, 1),
+            ("target", "trifecta", "2-1-3", 2430, 2),
+        ],
+    )
+    output = tmp_path / "dead-heat.db"
+
+    result = build_features(source, output, "2025-06-02", "2025-06-02")
+
+    assert result["warnings"] == 0
+    row = _read_row(output)
+    assert json.loads(row["result_tansho_json"]) == ["1", "2"]
+    assert json.loads(row["payout_tansho_json"]) == {"1": 130, "2": 380}
+    assert json.loads(row["result_nirentan_json"]) == ["1-2", "2-1"]
+    assert json.loads(row["payout_nirentan_json"]) == {"1-2": 190, "2-1": 520}
+    assert json.loads(row["result_sanrentan_json"]) == ["1-2-3", "2-1-3"]
+    assert json.loads(row["payout_sanrentan_json"]) == {
+        "1-2-3": 780,
+        "2-1-3": 2430,
+    }
+
+
+def test_missing_or_duplicate_matching_payout_nulls_only_that_bet_type(tmp_path):
+    source = _complete_fixture()
+    source.execute(
+        "INSERT INTO race_payouts VALUES (?,?,?,?,?)",
+        ("target", "exacta", "1－2", 451, 2),
+    )
+    source.execute(
+        "DELETE FROM race_payouts WHERE race_id='target' AND bet_type='trifecta'"
+    )
+    output = tmp_path / "invalid-payouts.db"
+    stream = io.StringIO()
+
+    result = build_features(
+        source, output, "2025-06-02", "2025-06-02", progress_stream=stream
+    )
+
+    row = _read_row(output)
+    assert result["warnings"] == 2
+    assert row["result_tansho"] == 1
+    assert row["result_nirentan"] is None
+    assert row["payout_nirentan_json"] is None
+    assert row["result_sanrentan"] is None
+    assert "found 2" in stream.getvalue()
+    assert "found 0" in stream.getvalue()
+
+
+def test_history_ignores_nonwinner_kimarite_and_numeric_finish_accident(tmp_path):
+    source = _complete_fixture()
+    source.execute(
+        "UPDATE race_results SET finishing_position=2, kimarite='逃げ' WHERE race_id='old-in'"
+    )
+    source.execute(
+        "UPDATE race_results SET finishing_position=1, remarks='S0' WHERE race_id='asof'"
+    )
+    output = tmp_path / "guarded-history.db"
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert row["b1_kimarite_rate_nige"] == pytest.approx(0.0)
+    assert row["b1_accident_rate"] == pytest.approx(0.0)
 
 
 def test_append_only_rerun_skips_and_preserves_row(tmp_path):

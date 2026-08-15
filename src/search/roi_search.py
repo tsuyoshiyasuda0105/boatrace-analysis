@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import json
 import math
 from pathlib import Path
 import sqlite3
@@ -73,6 +74,7 @@ BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
 HISTORY_CUTOFF = "2023-05-01"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
+READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4)
 
 
 @dataclass(frozen=True)
@@ -204,8 +206,8 @@ def _compile_conditions(conditions: Mapping[str, Any]) -> tuple[str, list[Any], 
 
     _known_keys(conditions, TOP_LEVEL_KEYS, "condition")
     bet = _parse_bet(conditions.get("bet"))
-    filters: list[str] = ["schema_version IN (?, ?)"]
-    params: list[Any] = list(SUPPORTED_SCHEMA_VERSIONS)
+    filters: list[str] = ["schema_version IN (?, ?, ?)"]
+    params: list[Any] = list(READABLE_SCHEMA_VERSIONS)
     null_columns: set[str] = set()
 
     scalar_columns = {
@@ -452,30 +454,62 @@ def search_roi(
         raise ValueError("bootstrap_iterations must be a positive integer")
     where, params, null_columns, bet = _compile_conditions(conditions)
     null_expression = " OR ".join(f"{column} IS NULL" for column in null_columns) or "0"
-    sql = (
-        f"SELECT race_date, {bet.result_column} AS result_value, "
-        f"{bet.payout_column} AS payout_value, "
-        f"CASE WHEN {null_expression} THEN 1 ELSE 0 END AS condition_null "
-        f"FROM asof_race_features WHERE {where}"
-    )
-
     resolved = Path(db_path).resolve()
     uri = resolved.as_uri() + "?mode=ro"
     with sqlite3.connect(uri, uri=True) as conn:
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(asof_race_features)")
+        }
+        result_json_column = f"{bet.result_column}_json"
+        payout_json_column = f"{bet.payout_column}_json"
+        result_json_sql = result_json_column if result_json_column in columns else "NULL"
+        payout_json_sql = payout_json_column if payout_json_column in columns else "NULL"
+        sql = (
+            f"SELECT race_date, schema_version, {bet.result_column} AS result_value, "
+            f"{bet.payout_column} AS payout_value, "
+            f"{result_json_sql} AS result_values_json, "
+            f"{payout_json_sql} AS payout_values_json, "
+            f"CASE WHEN {null_expression} THEN 1 ELSE 0 END AS condition_null "
+            f"FROM asof_race_features WHERE {where}"
+        )
         rows = conn.execute(sql, params).fetchall()
 
     excluded_condition = 0
     excluded_result = 0
     included: list[tuple[str, bool, float]] = []
-    for race_date, result, payout, condition_null in rows:
+    for race_date, schema_version, result, payout, result_json, payout_json, condition_null in rows:
         if condition_null:
             excluded_condition += 1
             continue
-        if result is None or payout is None:
-            excluded_result += 1
-            continue
-        hit = result == bet.expected
-        included.append((str(race_date), hit, float(payout) if hit else 0.0))
+        if int(schema_version) >= 4:
+            try:
+                winning_values = json.loads(result_json)
+                payout_values = json.loads(payout_json)
+                if (
+                    not isinstance(winning_values, list)
+                    or not winning_values
+                    or not isinstance(payout_values, dict)
+                    or any(not isinstance(value, str) for value in winning_values)
+                    or any(value not in payout_values for value in winning_values)
+                ):
+                    raise ValueError("invalid winning-ticket payload")
+                payout_values = {
+                    key: float(value) for key, value in payout_values.items()
+                }
+            except (TypeError, ValueError, json.JSONDecodeError):
+                excluded_result += 1
+                continue
+            expected = str(bet.expected)
+            hit = expected in winning_values
+            included.append(
+                (str(race_date), hit, payout_values[expected] if hit else 0.0)
+            )
+        else:
+            if result is None or payout is None:
+                excluded_result += 1
+                continue
+            hit = result == bet.expected
+            included.append((str(race_date), hit, float(payout) if hit else 0.0))
 
     returns = [item[2] for item in included]
     n = len(included)

@@ -153,6 +153,73 @@ def test_each_bet_type_matches_and_calculates_roi(
     assert result["excluded"] == {"result_missing": 1, "condition_null": 0}
 
 
+@pytest.mark.parametrize(
+    ("bet", "result_json", "payout_json", "expected_roi"),
+    [
+        ({"type": "tansho", "first": 2}, ["1", "2"], {"1": 130, "2": 380}, 380.0),
+        (
+            {"type": "nirentan", "first": 2, "second": 1},
+            ["1-2", "2-1"],
+            {"1-2": 190, "2-1": 520},
+            520.0,
+        ),
+        (
+            {"type": "sanrentan", "first": 2, "second": 1, "third": 3},
+            ["1-2-3", "2-1-3"],
+            {"1-2-3": 780, "2-1-3": 2430},
+            2430.0,
+        ),
+    ],
+)
+def test_schema_v4_dead_heat_uses_payout_for_the_matching_ticket(
+    tmp_path: Path,
+    bet: dict[str, object],
+    result_json: list[str],
+    payout_json: dict[str, int],
+    expected_roi: float,
+) -> None:
+    kind = str(bet["type"])
+    row = _row(
+        "dead-heat",
+        "2025-12-11",
+        schema_version=4,
+        **{
+            f"result_{kind}_json": json.dumps(result_json),
+            f"payout_{kind}_json": json.dumps(payout_json),
+        },
+    )
+    db = _make_db(tmp_path / f"dead-heat-{kind}.db", [row])
+
+    result = search_roi(db, {"bet": bet}, fast=True)
+
+    assert result["n"] == 1
+    assert result["hits"] == 1
+    assert result["roi"] == expected_roi
+    assert result["excluded"] == {"result_missing": 0, "condition_null": 0}
+
+
+def test_schema_v4_invalid_winner_payload_is_result_missing(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "invalid-v4.db",
+        [
+            _row(
+                "invalid",
+                "2025-01-01",
+                schema_version=4,
+                result_tansho_json='["1","2"]',
+                payout_tansho_json='{"1":130}',
+            )
+        ],
+    )
+
+    result = search_roi(
+        db, {"bet": {"type": "tansho", "first": 1}}, fast=True
+    )
+
+    assert result["n"] == 0
+    assert result["excluded"] == {"result_missing": 1, "condition_null": 0}
+
+
 def test_condition_null_is_excluded_only_when_condition_references_column(fixture_db: Path) -> None:
     bet = {"type": "tansho", "first": 1}
 
@@ -351,16 +418,23 @@ def test_step5_boat_ranges_exclude_nulls(
     assert result["excluded"]["condition_null"] == 1
 
 
-def test_schema_v2_and_v3_rows_coexist(tmp_path: Path) -> None:
+def test_schema_v2_v3_and_v4_rows_coexist(tmp_path: Path) -> None:
     db = _make_db(
         tmp_path / "schema-coexist.db",
         [
             _row("v2", "2025-01-01", schema_version=2),
             _row("v3", "2025-01-02", schema_version=3),
+            _row(
+                "v4",
+                "2025-01-03",
+                schema_version=4,
+                result_sanrentan_json='["1-2-3"]',
+                payout_sanrentan_json='{"1-2-3":1230}',
+            ),
         ],
     )
 
-    assert search_roi(db, {}, fast=True)["n"] == 2
+    assert search_roi(db, {}, fast=True)["n"] == 3
 
 
 @pytest.mark.parametrize(

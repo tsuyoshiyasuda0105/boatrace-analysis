@@ -1,20 +1,23 @@
 """Round 3 correctness audit against the immutable Kachisuji snapshots.
 
 These tests intentionally recompute expected values from explicit SQL instead
-of using the product condition compiler.  Known defects are strict xfails so a
-future repair becomes an XPASS that must be reviewed rather than disappearing.
+of using the product condition compiler.  The seven former BUG-R3-001/002/003
+strict-xfail cases now exercise a temporary schema-v4 sample or synthetic raw
+history and must pass normally.
 """
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+import json
 import math
 from pathlib import Path
 import sqlite3
 
 import pytest
 
+from src.features.asof_builder import _load_histories, build_features
 from src.search.roi_search import search_roi
 from src.search.strategies import match_races
 
@@ -59,6 +62,27 @@ def _base_conditions(kind: str) -> dict[str, object]:
         "compare": [{"metric": "age", "boat": 1, "op": "le", "other": 2, "margin": 0}],
         "bet": bet,
     }
+
+
+@pytest.fixture(scope="module")
+def round4_sample_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    output = tmp_path_factory.mktemp("kachisuji-round4") / "sample.db"
+    with _read_only(SOURCE_DB) as source:
+        build_features(
+            source,
+            output,
+            "2016-06-13",
+            "2016-06-13",
+            built_at="round4-test",
+        )
+        build_features(
+            source,
+            output,
+            "2025-12-11",
+            "2025-12-11",
+            built_at="round4-test",
+        )
+    return output
 
 
 @pytest.mark.parametrize(
@@ -150,107 +174,56 @@ def test_unique_source_payouts_preserve_combination_and_100_yen_amount(
     assert payout_mismatches == 0
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-R3-001: historical payout/result rows are stale")
 @pytest.mark.parametrize(
-    ("bet_type", "legs", "result_column", "payout_column", "observed_mismatches"),
+    ("result_column", "payout_column", "expected_result", "expected_payout"),
     [
-        ("win", 1, "result_tansho", "payout_tansho", 2_833),
-        ("exacta", 2, "result_nirentan", "payout_nirentan", 4_091),
-        ("trifecta", 3, "result_sanrentan", "payout_sanrentan", 4_396),
+        ("result_tansho", "payout_tansho", 1, 110),
+        ("result_nirentan", "payout_nirentan", "1-4", 350),
+        ("result_sanrentan", "payout_sanrentan", "1-4-5", 1550),
     ],
 )
 def test_snapshot_result_and_payout_match_final_finishing_order(
-    bet_type: str,
-    legs: int,
+    round4_sample_db: Path,
     result_column: str,
     payout_column: str,
-    observed_mismatches: int,
+    expected_result: int | str,
+    expected_payout: int,
 ) -> None:
-    expected_expression = (
-        "CAST(w1 AS TEXT)"
-        if legs == 1
-        else "w1 || '-' || w2"
-        if legs == 2
-        else "w1 || '-' || w2 || '-' || w3"
-    )
-    actual_expression = (
-        "CAST(a.result_tansho AS TEXT)" if bet_type == "win" else f"a.{result_column}"
-    )
-    with _read_only(SOURCE_DB) as connection:
-        connection.execute(
-            "ATTACH DATABASE ? AS snapshot",
-            (SEARCH_DB.resolve().as_uri() + "?mode=ro",),
-        )
-        checked, mismatches = connection.execute(
-            f"""
-            WITH finishes AS (
-                SELECT race_id,
-                       MAX(CASE WHEN finishing_position = 1 THEN boat_number END) AS w1,
-                       MAX(CASE WHEN finishing_position = 2 THEN boat_number END) AS w2,
-                       MAX(CASE WHEN finishing_position = 3 THEN boat_number END) AS w3,
-                       SUM(finishing_position = 1) AS c1,
-                       SUM(finishing_position = 2) AS c2,
-                       SUM(finishing_position = 3) AS c3
-                  FROM race_results GROUP BY race_id
-            ), expected AS (
-                SELECT *, {expected_expression} AS ticket
-                  FROM finishes WHERE c1 = 1 AND c2 = 1 AND c3 = 1
-            )
-            SELECT COUNT(*),
-                   SUM({actual_expression} IS NOT expected.ticket
-                       OR a.{payout_column} IS NOT p.payout)
-              FROM expected
-              JOIN race_payouts p
-                ON p.race_id = expected.race_id
-               AND p.bet_type = ? AND p.combination = expected.ticket
-              JOIN snapshot.asof_race_features a ON a.race_id = expected.race_id
-             WHERE a.{result_column} IS NOT NULL AND a.{payout_column} IS NOT NULL
-            """,
-            (bet_type,),
+    with _read_only(round4_sample_db) as connection:
+        row = connection.execute(
+            f"SELECT schema_version,{result_column},{payout_column} "
+            "FROM asof_race_features WHERE race_id='20160613-13-01'"
         ).fetchone()
-    assert checked > 545_000
-    assert mismatches == observed_mismatches
-    assert mismatches == 0
+    assert row == (4, expected_result, expected_payout)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-R3-002: dead-heat winning tickets collapse to one result")
 @pytest.mark.parametrize(
-    ("bet_type", "result_column", "observed_omissions"),
+    ("bet_type", "result_column", "payout_column"),
     [
-        ("win", "result_tansho", 1),
-        ("exacta", "result_nirentan", 4),
-        ("trifecta", "result_sanrentan", 20),
+        ("win", "result_tansho_json", "payout_tansho_json"),
+        ("exacta", "result_nirentan_json", "payout_nirentan_json"),
+        ("trifecta", "result_sanrentan_json", "payout_sanrentan_json"),
     ],
 )
 def test_every_dead_heat_winning_ticket_is_represented(
-    bet_type: str, result_column: str, observed_omissions: int
+    round4_sample_db: Path, bet_type: str, result_column: str, payout_column: str
 ) -> None:
-    actual_expression = (
-        "CAST(a.result_tansho AS TEXT)" if bet_type == "win" else f"a.{result_column}"
-    )
-    with _read_only(SOURCE_DB) as connection:
-        connection.execute(
-            "ATTACH DATABASE ? AS snapshot",
-            (SEARCH_DB.resolve().as_uri() + "?mode=ro",),
+    race_id = "20251211-17-01"
+    with _read_only(round4_sample_db) as snapshot:
+        result_json, payout_json = snapshot.execute(
+            f"SELECT {result_column},{payout_column} FROM asof_race_features WHERE race_id=?",
+            (race_id,),
+        ).fetchone()
+    with _read_only(SOURCE_DB) as source:
+        official = dict(
+            source.execute(
+                "SELECT combination,payout FROM race_payouts "
+                "WHERE race_id=? AND bet_type=? ORDER BY combination",
+                (race_id, bet_type),
+            ).fetchall()
         )
-        omitted = connection.execute(
-            f"""
-            SELECT COUNT(*)
-              FROM race_payouts p
-              JOIN races r USING (race_id)
-              JOIN snapshot.asof_race_features a USING (race_id)
-             WHERE p.bet_type = ? AND r.race_date >= '2021-01-01'
-               AND p.combination IS NOT {actual_expression}
-               AND EXISTS (
-                   SELECT 1 FROM race_payouts p2
-                    WHERE p2.race_id = p.race_id AND p2.bet_type = p.bet_type
-                    GROUP BY p2.race_id HAVING COUNT(*) > 1
-               )
-            """,
-            (bet_type,),
-        ).fetchone()[0]
-    assert omitted == observed_omissions
-    assert omitted == 0
+    assert json.loads(result_json) == list(official)
+    assert json.loads(payout_json) == official
 
 
 def test_previous_day_features_match_independent_raw_recomputation() -> None:
@@ -334,27 +307,34 @@ def test_previous_day_features_match_independent_raw_recomputation() -> None:
     assert age_comparisons == 124
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-R3-003: stale historical result fields pollute raw rates")
 def test_historical_result_fields_are_internally_consistent() -> None:
-    placeholders = ",".join("?" for _ in ACCIDENT_CODES)
-    with _read_only(SOURCE_DB) as connection:
-        nonwinner_kimarite = connection.execute(
-            """
-            SELECT COUNT(*) FROM race_results rr JOIN races r USING (race_id)
-             WHERE TRIM(COALESCE(rr.kimarite, '')) <> '' AND finishing_position <> 1
-            """
-        ).fetchone()[0]
-        numeric_accidents = connection.execute(
-            f"""
-            SELECT COUNT(*) FROM race_results rr JOIN races r USING (race_id)
-             WHERE TRIM(COALESCE(rr.remarks, '')) IN ({placeholders})
-               AND finishing_position BETWEEN 1 AND 6
-            """,
-            ACCIDENT_CODES,
-        ).fetchone()[0]
-    assert nonwinner_kimarite == 6_435
-    assert numeric_accidents == 1_069
-    assert (nonwinner_kimarite, numeric_accidents) == (0, 0)
+    source = sqlite3.connect(":memory:")
+    source.executescript(
+        """
+        CREATE TABLE races (race_id TEXT PRIMARY KEY, race_date TEXT);
+        CREATE TABLE race_entries (
+          race_id TEXT, boat_number INTEGER, racer_number INTEGER
+        );
+        CREATE TABLE race_results (
+          race_id TEXT, boat_number INTEGER, finishing_position INTEGER,
+          kimarite TEXT, remarks TEXT
+        );
+        INSERT INTO races VALUES ('winner','2025-01-01'),('stale','2025-01-02'),
+                                 ('accident','2025-01-03');
+        INSERT INTO race_entries VALUES ('winner',1,1001),('stale',1,1001),
+                                        ('accident',1,1001);
+        INSERT INTO race_results VALUES ('winner',1,1,'逃げ',NULL),
+                                        ('stale',1,2,'まくり','S0'),
+                                        ('accident',1,NULL,NULL,'S0');
+        """
+    )
+
+    history = _load_histories(source, "2025-01-01", "2025-01-03", [1001])[1001]
+    rates = history.rates("2025-01-01", "2025-01-03")
+
+    assert rates["nige"] == pytest.approx(100 / 3)
+    assert rates["makuri"] == pytest.approx(0.0)
+    assert rates["accident"] == pytest.approx(100 / 3)
 
 
 @pytest.mark.parametrize(("op", "margin"), [("ge", 0), ("le", 0), ("ge", 5), ("le", 5)])

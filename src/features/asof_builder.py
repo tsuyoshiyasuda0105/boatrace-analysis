@@ -19,6 +19,8 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from itertools import permutations, product
+import json
 import math
 from pathlib import Path
 import random
@@ -27,7 +29,7 @@ import sys
 from typing import Any, Iterable, Sequence
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -97,10 +99,16 @@ BASE_COLUMNS: list[tuple[str, str]] = [
 RESULT_COLUMNS: list[tuple[str, str]] = [
     ("result_sanrentan", "TEXT"),
     ("payout_sanrentan", "INTEGER"),
+    ("result_sanrentan_json", "TEXT"),
+    ("payout_sanrentan_json", "TEXT"),
     ("result_nirentan", "TEXT"),
     ("payout_nirentan", "INTEGER"),
+    ("result_nirentan_json", "TEXT"),
+    ("payout_nirentan_json", "TEXT"),
     ("result_tansho", "INTEGER"),
     ("payout_tansho", "INTEGER"),
+    ("result_tansho_json", "TEXT"),
+    ("payout_tansho_json", "TEXT"),
 ]
 ALL_COLUMNS = BASE_COLUMNS + _boat_columns() + RESULT_COLUMNS
 
@@ -312,9 +320,18 @@ def _load_histories(
     window_end: str,
     racer_ids: Iterable[int] | None = None,
 ) -> dict[int, RacerHistory]:
+    """Load guarded racer history through ``window_end``.
+
+    A kimarite is authoritative only on a row whose finishing position is 1.
+    An accident remark is counted only when the position is not a numeric
+    official finish from 1 through 6.  This rejects legacy rows that combine
+    an accident code with an ordinary numeric finish.
+    """
+
     params: list[Any] = [window_start, window_end]
     ids = sorted({int(value) for value in racer_ids or []})
-    sql = """SELECT e.racer_number, r.race_date, rr.kimarite, rr.remarks
+    sql = """SELECT e.racer_number, r.race_date, rr.finishing_position,
+                    rr.kimarite, rr.remarks
              FROM races r
              JOIN race_entries e ON e.race_id = r.race_id
              JOIN race_results rr
@@ -344,8 +361,20 @@ def _load_histories(
             dates.append(_iso(item["race_date"]))
             starts.append(starts[-1] + 1)
             remark = str(item.get("remarks") or "").strip()
-            accidents.append(accidents[-1] + int(remark in ACCIDENT_REMARK_CODES))
-            winning_key = KIMARITE_LABELS.get(str(item.get("kimarite") or "").strip())
+            try:
+                finishing_position = int(item.get("finishing_position"))
+            except (TypeError, ValueError):
+                finishing_position = None
+            valid_numeric_finish = finishing_position in BOATS
+            accidents.append(
+                accidents[-1]
+                + int(remark in ACCIDENT_REMARK_CODES and not valid_numeric_finish)
+            )
+            winning_key = (
+                KIMARITE_LABELS.get(str(item.get("kimarite") or "").strip())
+                if finishing_position == 1
+                else None
+            )
             for key in KIMARITE_KEYS:
                 kimarite[key].append(kimarite[key][-1] + int(winning_key == key))
         histories[racer_id] = RacerHistory(
@@ -430,14 +459,103 @@ def _female_present(entries: dict[int, dict[str, Any]]) -> int | None:
     return int(2 in genders)
 
 
-def _valid_payout(payouts: dict[str, dict[str, Any]], kind: str) -> tuple[Any, Any]:
-    item = payouts.get(kind)
-    if not item or item.get("combination") in (None, "不成立"):
-        return None, None
-    payout = item.get("payout")
-    if payout is None:
-        return None, None
-    return item["combination"], int(payout)
+def _normalize_combination(value: Any, legs: int) -> str | None:
+    """Return the canonical hyphenated boat combination for a payout row."""
+
+    if value in (None, "不成立"):
+        return None
+    normalized = str(value).strip()
+    for separator in ("－", "−", "ー", "―", "‐", "ｰ", " "):
+        normalized = normalized.replace(separator, "-")
+    parts = [part.strip() for part in normalized.split("-") if part.strip()]
+    if len(parts) != legs:
+        return None
+    try:
+        boats = [int(part) for part in parts]
+    except ValueError:
+        return None
+    if any(boat not in BOATS for boat in boats) or len(set(boats)) != len(boats):
+        return None
+    return "-".join(str(boat) for boat in boats)
+
+
+def _winning_combinations(
+    results: list[dict[str, Any]], legs: int
+) -> tuple[list[str] | None, str | None]:
+    """Derive every official winning ticket implied by finishing positions.
+
+    Tied boats may appear in either order within the tied rank.  Competition
+    ranking must remain contiguous (for example 1,1,3 or 1,2,2,4); conflicting
+    versions for one boat or a rank gap make the order ambiguous.
+    """
+
+    positions_by_boat: dict[int, set[int]] = defaultdict(set)
+    for item in results:
+        try:
+            boat = int(item.get("boat_number"))
+            position = int(item.get("finishing_position"))
+        except (TypeError, ValueError):
+            continue
+        if boat in BOATS and position >= 1:
+            positions_by_boat[boat].add(position)
+    if any(len(positions) > 1 for positions in positions_by_boat.values()):
+        return None, "conflicting result versions"
+
+    groups: dict[int, list[int]] = defaultdict(list)
+    for boat, positions in positions_by_boat.items():
+        if positions:
+            groups[next(iter(positions))].append(boat)
+    ordered_groups: list[list[int]] = []
+    prior_boats = 0
+    for position in sorted(groups):
+        if position != prior_boats + 1:
+            return None, "ambiguous finishing-position gap"
+        group = sorted(groups[position])
+        ordered_groups.append(group)
+        prior_boats += len(group)
+        if prior_boats >= legs:
+            break
+    if prior_boats < legs:
+        return None, "insufficient finishing positions"
+
+    tickets = {
+        "-".join(str(boat) for boat in order[:legs])
+        for order in (
+            tuple(boat for group_order in group_orders for boat in group_order)
+            for group_orders in product(
+                *(tuple(permutations(group)) for group in ordered_groups)
+            )
+        )
+    }
+    return sorted(tickets), None
+
+
+def _winning_payouts(
+    results: list[dict[str, Any]],
+    payouts: list[dict[str, Any]],
+    kind: str,
+    legs: int,
+) -> tuple[list[str] | None, dict[str, int] | None, str | None]:
+    winners, error = _winning_combinations(results, legs)
+    if winners is None:
+        return None, None, error
+    matching: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in payouts:
+        if str(item.get("bet_type")) != kind:
+            continue
+        combination = _normalize_combination(item.get("combination"), legs)
+        if combination in winners:
+            matching[combination].append(item)
+    amounts: dict[str, int] = {}
+    for winner in winners:
+        rows = matching[winner]
+        if len(rows) != 1:
+            return None, None, f"expected one payout for {winner}, found {len(rows)}"
+        try:
+            amounts[winner] = int(rows[0]["payout"])
+        except (KeyError, TypeError, ValueError):
+            return None, None, f"invalid payout for {winner}"
+    return winners, amounts, None
 
 
 def _build_row(
@@ -446,10 +564,11 @@ def _build_row(
     previews: list[dict[str, Any]],
     tide: dict[str, Any] | None,
     payouts: list[dict[str, Any]],
-    has_results: bool,
+    results: list[dict[str, Any]],
     histories: dict[int, RacerHistory],
     day_index: str | None,
     built_at: str,
+    warning_messages: list[str] | None = None,
 ) -> dict[str, Any]:
     race_date = _iso(race["race_date"])
     asof_date = (date.fromisoformat(race_date) - timedelta(days=1)).isoformat()
@@ -511,25 +630,30 @@ def _build_row(
                 f"b{boat}_accident_rate": rates["accident"],
             }
         )
-    payout_by_type = {str(item["bet_type"]): item for item in payouts}
-    trifecta = _valid_payout(payout_by_type, "trifecta") if has_results else (None, None)
-    exacta = _valid_payout(payout_by_type, "exacta") if has_results else (None, None)
-    win = _valid_payout(payout_by_type, "win") if has_results else (None, None)
-    try:
-        win_boat = int(win[0]) if win[0] is not None else None
-    except (TypeError, ValueError):
-        win_boat = None
-        win = (None, None)
-    row.update(
-        {
-            "result_sanrentan": trifecta[0],
-            "payout_sanrentan": trifecta[1],
-            "result_nirentan": exacta[0],
-            "payout_nirentan": exacta[1],
-            "result_tansho": win_boat,
-            "payout_tansho": win[1],
-        }
-    )
+    messages = warning_messages if warning_messages is not None else []
+    has_results = any(item.get("finishing_position") is not None for item in results)
+    for kind, legs in (("sanrentan", 3), ("nirentan", 2), ("tansho", 1)):
+        winners: list[str] | None = None
+        amounts: dict[str, int] | None = None
+        error: str | None = None
+        if has_results:
+            source_kind = {"sanrentan": "trifecta", "nirentan": "exacta", "tansho": "win"}[kind]
+            winners, amounts, error = _winning_payouts(results, payouts, source_kind, legs)
+        if error is not None:
+            messages.append(f"{kind}: {error}")
+        representative = winners[0] if winners and amounts else None
+        row[f"result_{kind}"] = (
+            int(representative) if kind == "tansho" and representative is not None else representative
+        )
+        row[f"payout_{kind}"] = amounts[representative] if representative and amounts else None
+        row[f"result_{kind}_json"] = (
+            json.dumps(winners, separators=(",", ":")) if winners and amounts else None
+        )
+        row[f"payout_{kind}_json"] = (
+            json.dumps(amounts, separators=(",", ":"), sort_keys=True)
+            if winners and amounts
+            else None
+        )
     return row
 
 
@@ -610,20 +734,23 @@ def build_features(
     )
     result_rows = _rows_for_ids(
         source,
-        "SELECT DISTINCT race_id FROM race_results WHERE race_id IN ({placeholders}) AND finishing_position IS NOT NULL",
+        "SELECT race_id,boat_number,finishing_position FROM race_results "
+        "WHERE race_id IN ({placeholders}) ORDER BY race_id,boat_number",
         race_ids,
     )
     by_entries: dict[str, list[dict[str, Any]]] = defaultdict(list)
     by_previews: dict[str, list[dict[str, Any]]] = defaultdict(list)
     by_payouts: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_results: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in entry_rows:
         by_entries[str(item["race_id"])].append(item)
     for item in preview_rows:
         by_previews[str(item["race_id"])].append(item)
     for item in payout_rows:
         by_payouts[str(item["race_id"])].append(item)
+    for item in result_rows:
+        by_results[str(item["race_id"])].append(item)
     by_tide = {str(item["race_id"]): item for item in tide_rows}
-    result_ids = {str(item["race_id"]) for item in result_rows}
     racer_ids = {
         int(item["racer_number"])
         for item in entry_rows
@@ -649,19 +776,24 @@ def build_features(
     for race in pending:
         race_id = str(race["race_id"])
         try:
+            race_warnings: list[str] = []
             row = _build_row(
                 race,
                 by_entries[race_id],
                 by_previews[race_id],
                 by_tide.get(race_id),
                 by_payouts[race_id],
-                race_id in result_ids,
+                by_results[race_id],
                 histories,
                 day_indexes.get(race_id),
                 timestamp,
+                race_warnings,
             )
             output.execute(sql, [row.get(name) for name in names])
             inserted += 1
+            for message in race_warnings:
+                warnings += 1
+                print(f"warning: {race_id}: {message}", file=progress_stream, flush=True)
             if inserted % 1000 == 0:
                 print(f"processed {inserted:,} races", file=progress_stream, flush=True)
                 output.commit()

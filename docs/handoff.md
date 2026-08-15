@@ -1,5 +1,29 @@
 # Handoff
 
+## Active task (2026-08-16 Kachisuji as-of correctness round 4)
+
+- Task: implement `reports/kachisuji_asof_fix_round4_spec_20260815.md` exactly: derive winning combinations from `race_results.finishing_position`, match payouts by normalized combination, preserve all dead-heat winners, and guard historical kimarite/accident inputs.
+- Skill: `project-ops-guard`.
+- Expected edit files: `src/features/asof_builder.py`, `src/search/roi_search.py`, corresponding files under `tests/`, the specification-required `docs/kachisuji_asof_fix_round4_result_20260815.md`, and this handoff only.
+- Conflict avoidance: preserve all pre-existing untracked `.serena/`, reports, inaccessible pytest residue, and unrelated history. No active handoff entry claims the two product files for concurrent work. Stage only the declared Round 4 files; do not stage the untracked specification input.
+- Prohibited actions/surfaces: any write to `data/boatrace.db`, full-period regeneration, production scheduler/writer/server startup, network access, deployment, or push. Sample generation must use a temporary DB.
+- Running processes: none. Only finite read-only inspection, temporary-DB sample generation, pytest, static checks, and scoped Git commands are planned.
+- Planned verification: known 2016-06-13 race values, independent SQL sample reconciliation, all seven Round 3 strict-xfail cases converted to ordinary passes, dead-heat payout selection, history guards, future-data invariants, focused regression bundles, `git diff --check`, and one local commit with the mandated message.
+- Cleanup target: any Round 4 pytest/sample temporary directory will be recorded by exact repository-contained path before removal. No production/source/input database is a deletion target.
+- Cleanup target recorded: `C:\boat_project\boatrace-analysis\.pytest_tmp_round4_focused` (pytest basetemp created by the first focused run) only; resolve it under the repository before removal.
+- Cleanup target recorded: `C:\boat_project\boatrace-analysis\.pytest_tmp_round4_sample` (small Round 4 generated sample and reconciliation artifacts) only; resolve it under the repository before removal.
+- Failure log: the first focused run passed 61/62 and failed only `test_program_and_preview_values_are_copied_and_metrics_are_correct`, whose old assertion expected schema version 3. Root cause: the fixture expectation had not yet been updated for the mandated schema version 4. Prevention: update the schema assertion together with explicit additive-column compatibility checks, then rerun the full focused bundle.
+- Failure log: the first test-file discovery used a forward-slash path expression against Windows `rg --files` output and returned exit 1 with no matches. Root cause: path-separator-sensitive filtering. Prevention: filter by basename tokens or accept both separators; the corrected discovery found the four required files.
+- Failure log: cleanup removed the recorded sample directory, but `Remove-Item` was denied on the recorded `.pytest_tmp_round4_focused` basetemp even after its resolved path was verified under the repository. Root cause: pytest-created ACL behavior already seen in this workspace. Prevention: retry only this exact recorded task-created path with elevated removal; do not broaden the target.
+- Completed: schema version 4 derives all winning tickets from `race_results.finishing_position`, normalizes and uniquely matches payout rows, stores dead-heat ticket/payout JSON, and makes schema-v4 ROI use the matched ticket-specific payout while preserving schema 2/3 reads.
+- Completed: historical kimarite counts only winners, and accident remarks count only when no ordinary numeric 1-6 finish is present.
+- Sample reconciliation: a read-only source build of 108 races on 2016-06-13 produced the known `20160613-13-01` values 1=110, 1-4=350, and 1-4-5=1550; independent SQL matched all three. One different race correctly emitted a missing-win-payout warning and NULL.
+- Verification: the required as-of/ROI/strategies/Web/Round 3 bundle passed 132/132; all seven former Round 3 strict-xfail cases are ordinary passes with zero xfail/xpass. Python compilation and `git diff --check` passed.
+- Cleanup complete: both recorded Round 4 temporary directories were removed after path validation. The focused basetemp required a scoped elevated retry because of its pytest ACL. No local server, scheduler, writer, watcher, or background process was started; running processes remain none.
+- Next action: create the mandated single local commit from only the seven declared Round 4 files. Do not push. Rin must perform the full-period `data/kachisuji_search.db` regeneration later.
+- Open decisions: none. Existing source races with no unique payout match remain NULL + warning by design.
+- Failure log: the first exact-file `git add` could not create `.git/index.lock` (`Permission denied`) under the managed sandbox. Root cause: sandbox protection on Git metadata, not a content or scope failure. Prevention: retry the identical seven-file staging command with repository-scoped elevated Git permission; do not stage any other tracked or untracked path.
+
 ## Active task (2026-08-16 Kachisuji correctness bug hunt round 3)
 
 - Task: discover calculation and data-integrity defects in Kachisuji Search Round 3 using independent read-only SQL, pytest, and Playwright where useful; do not modify product code or operational databases.
