@@ -33,7 +33,20 @@ HISTORY_LABELS = {
     "nuki": "\u629c\u304d",
     "megumare": "\u6075\u307e\u308c",
 }
-ACCIDENT_CODES = ("K0", "K1", "S0", "S1", "S2", "F", "L", "\u5931", "\u5931\u683c", "\u8ee2", "\u843d", "\u59a8")
+ACCIDENT_CODES = (
+    "K0",
+    "K1",
+    "S0",
+    "S1",
+    "S2",
+    "F",
+    "L",
+    "\u5931",
+    "\u5931\u683c",
+    "\u8ee2",
+    "\u843d",
+    "\u59a8",
+)
 
 
 def _read_only(path: Path, *, rows: bool = False) -> sqlite3.Connection:
@@ -42,6 +55,69 @@ def _read_only(path: Path, *, rows: bool = False) -> sqlite3.Connection:
         connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only = ON")
     return connection
+
+
+def _representative_dates(
+    *, where: str = "1=1", leading: int, trailing: int
+) -> tuple[str, ...]:
+    """Select stable edge coverage from the dates that the current snapshot has."""
+
+    with _read_only(SEARCH_DB) as connection:
+        dates = [
+            str(row[0])
+            for row in connection.execute(
+                f"""
+                SELECT DISTINCT race_date
+                  FROM asof_race_features
+                 WHERE schema_version IN (2,3,4) AND {where}
+                 ORDER BY race_date
+                """
+            )
+        ]
+    assert len(dates) >= leading + trailing
+    return tuple(dict.fromkeys([*dates[:leading], *dates[-trailing:]]))
+
+
+MATCH_DATES = _representative_dates(where="jcd=12", leading=0, trailing=2)
+DATE_BOUND_DATES = _representative_dates(leading=3, trailing=2)
+
+
+def _independent_ticket_return(
+    schema_version: int,
+    result: int | str | None,
+    payout: int | None,
+    result_json: str | None,
+    payout_json: str | None,
+    ticket: int | str,
+) -> tuple[bool, float] | None:
+    """Decode one raw snapshot row without calling the product compiler/engine."""
+
+    if schema_version < 4:
+        if result is None or payout is None:
+            return None
+        hit = result == ticket
+        return hit, float(payout) if hit else 0.0
+
+    try:
+        winning_tickets = json.loads(result_json)  # type: ignore[arg-type]
+        payout_by_ticket = json.loads(payout_json)  # type: ignore[arg-type]
+        if (
+            not isinstance(winning_tickets, list)
+            or not winning_tickets
+            or not isinstance(payout_by_ticket, dict)
+            or any(not isinstance(value, str) for value in winning_tickets)
+            or any(value not in payout_by_ticket for value in winning_tickets)
+        ):
+            return None
+        normalized_payouts = {
+            str(key): float(value) for key, value in payout_by_ticket.items()
+        }
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+    expected = str(ticket)
+    hit = expected in winning_tickets
+    return hit, normalized_payouts[expected] if hit else 0.0
 
 
 def _base_conditions(kind: str) -> dict[str, object]:
@@ -86,11 +162,11 @@ def round4_sample_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("kind", "ticket", "result_column", "payout_column", "expected"),
+    ("kind", "ticket", "result_column", "payout_column"),
     [
-        ("tansho", 1, "result_tansho", "payout_tansho", (38, 30, 100.8, 1, 0)),
-        ("nirentan", "1-2", "result_nirentan", "payout_nirentan", (39, 14, 104.1, 0, 0)),
-        ("sanrentan", "1-2-3", "result_sanrentan", "payout_sanrentan", (39, 3, 54.4, 0, 0)),
+        ("tansho", 1, "result_tansho", "payout_tansho"),
+        ("nirentan", "1-2", "result_nirentan", "payout_nirentan"),
+        ("sanrentan", "1-2-3", "result_sanrentan", "payout_sanrentan"),
     ],
 )
 def test_roi_matches_independent_sql_for_all_bet_types(
@@ -98,13 +174,15 @@ def test_roi_matches_independent_sql_for_all_bet_types(
     ticket: int | str,
     result_column: str,
     payout_column: str,
-    expected: tuple[int, int, float, int, int],
 ) -> None:
     sql = f"""
-        SELECT {result_column} AS result_value, {payout_column} AS payout_value,
+        SELECT schema_version,
+               {result_column} AS result_value, {payout_column} AS payout_value,
+               {result_column}_json AS result_values_json,
+               {payout_column}_json AS payout_values_json,
                b1_motor_rate2, b2_national_rate, b1_age, b2_age
           FROM asof_race_features
-         WHERE schema_version IN (2, 3)
+         WHERE schema_version IN (2, 3, 4)
            AND jcd = 12
            AND race_date BETWEEN '2025-01-01' AND '2025-03-31'
            AND race_no BETWEEN 7 AND 12
@@ -114,15 +192,16 @@ def test_roi_matches_independent_sql_for_all_bet_types(
     """
     with _read_only(SEARCH_DB) as connection:
         rows = connection.execute(sql).fetchall()
-    condition_null = sum(any(value is None for value in row[2:]) for row in rows)
-    usable = [row for row in rows if not any(value is None for value in row[2:])]
-    result_missing = sum(row[0] is None or row[1] is None for row in usable)
-    included = [row for row in usable if row[0] is not None and row[1] is not None]
-    hits = sum(row[0] == ticket for row in included)
-    roi = round(sum(row[1] if row[0] == ticket else 0 for row in included) / len(included), 1)
+    condition_null = sum(any(value is None for value in row[5:]) for row in rows)
+    usable = [row for row in rows if not any(value is None for value in row[5:])]
+    outcomes = [_independent_ticket_return(*row[:5], ticket) for row in usable]
+    result_missing = sum(outcome is None for outcome in outcomes)
+    included = [outcome for outcome in outcomes if outcome is not None]
+    assert included
+    hits = sum(outcome[0] for outcome in included)
+    roi = round(sum(outcome[1] for outcome in included) / len(included), 1)
 
     manual = (len(included), hits, roi, result_missing, condition_null)
-    assert manual == expected
     actual = search_roi(SEARCH_DB, _base_conditions(kind), fast=True)
     assert (actual["n"], actual["hits"], actual["roi"]) == manual[:3]
     assert actual["excluded"] == {
@@ -132,15 +211,15 @@ def test_roi_matches_independent_sql_for_all_bet_types(
 
 
 @pytest.mark.parametrize(
-    ("bet_type", "result_column", "payout_column", "expected_rows"),
+    ("bet_type", "result_column", "payout_column"),
     [
-        ("win", "result_tansho", "payout_tansho", 308_619),
-        ("exacta", "result_nirentan", "payout_nirentan", 308_815),
-        ("trifecta", "result_sanrentan", "payout_sanrentan", 308_679),
+        ("win", "result_tansho", "payout_tansho"),
+        ("exacta", "result_nirentan", "payout_nirentan"),
+        ("trifecta", "result_sanrentan", "payout_sanrentan"),
     ],
 )
 def test_unique_source_payouts_preserve_combination_and_100_yen_amount(
-    bet_type: str, result_column: str, payout_column: str, expected_rows: int
+    bet_type: str, result_column: str, payout_column: str
 ) -> None:
     result_expression = (
         "CAST(a.result_tansho AS TEXT)" if bet_type == "win" else f"a.{result_column}"
@@ -169,6 +248,18 @@ def test_unique_source_payouts_preserve_combination_and_100_yen_amount(
             """,
             (bet_type,),
         ).fetchone()
+        expected_rows = connection.execute(
+            f"""
+            SELECT COUNT(*)
+              FROM snapshot.asof_race_features a
+             WHERE a.race_date >= '2021-01-01'
+               AND a.{result_column} IS NOT NULL
+               AND (SELECT COUNT(*) FROM race_payouts p
+                     WHERE p.race_id=a.race_id AND p.bet_type=?) = 1
+            """,
+            (bet_type,),
+        ).fetchone()[0]
+    assert expected_rows > 0
     assert checked == expected_rows
     assert result_mismatches == 0
     assert payout_mismatches == 0
@@ -198,15 +289,44 @@ def test_snapshot_result_and_payout_match_final_finishing_order(
 
 
 @pytest.mark.parametrize(
-    ("bet_type", "result_column", "payout_column"),
+    (
+        "bet_type",
+        "result_column",
+        "payout_column",
+        "expected_tickets",
+        "expected_payouts",
+    ),
     [
-        ("win", "result_tansho_json", "payout_tansho_json"),
-        ("exacta", "result_nirentan_json", "payout_nirentan_json"),
-        ("trifecta", "result_sanrentan_json", "payout_sanrentan_json"),
+        (
+            "win",
+            "result_tansho_json",
+            "payout_tansho_json",
+            ["1", "2"],
+            {"1": 130, "2": 380},
+        ),
+        (
+            "exacta",
+            "result_nirentan_json",
+            "payout_nirentan_json",
+            ["1-2", "2-1"],
+            {"1-2": 190, "2-1": 520},
+        ),
+        (
+            "trifecta",
+            "result_sanrentan_json",
+            "payout_sanrentan_json",
+            ["1-2-5", "2-1-5"],
+            {"1-2-5": 780, "2-1-5": 2430},
+        ),
     ],
 )
 def test_every_dead_heat_winning_ticket_is_represented(
-    round4_sample_db: Path, bet_type: str, result_column: str, payout_column: str
+    round4_sample_db: Path,
+    bet_type: str,
+    result_column: str,
+    payout_column: str,
+    expected_tickets: list[str],
+    expected_payouts: dict[str, int],
 ) -> None:
     race_id = "20251211-17-01"
     with _read_only(round4_sample_db) as snapshot:
@@ -222,8 +342,9 @@ def test_every_dead_heat_winning_ticket_is_represented(
                 (race_id, bet_type),
             ).fetchall()
         )
-    assert json.loads(result_json) == list(official)
-    assert json.loads(payout_json) == official
+    assert official == expected_payouts
+    assert json.loads(result_json) == expected_tickets
+    assert json.loads(payout_json) == expected_payouts
 
 
 def test_previous_day_features_match_independent_raw_recomputation() -> None:
@@ -231,27 +352,54 @@ def test_previous_day_features_match_independent_raw_recomputation() -> None:
         total_rows, chronology_errors = snapshot.execute(
             "SELECT COUNT(*), SUM(asof_date >= race_date) FROM asof_race_features"
         ).fetchone()
-        assert total_rows == 557_425
+        min_date, max_date = snapshot.execute(
+            "SELECT MIN(race_date), MAX(race_date) FROM asof_race_features"
+        ).fetchone()
+        source_rows = source.execute(
+            "SELECT COUNT(*) FROM races WHERE race_date BETWEEN ? AND ?",
+            (min_date, max_date),
+        ).fetchone()[0]
+        assert total_rows == source_rows
         assert chronology_errors == 0
         samples = snapshot.execute(
             """
-            WITH numbered AS (
-                SELECT *, ROW_NUMBER() OVER (
-                    PARTITION BY SUBSTR(race_date, 1, 4) ORDER BY race_id
-                ) AS sample_no
+            WITH eligible_years AS (
+                SELECT SUBSTR(race_date, 1, 4) AS race_year
                   FROM asof_race_features
-                 WHERE race_date BETWEEN '2021-01-01' AND '2026-08-14'
+                 GROUP BY race_year
+                 ORDER BY race_year DESC
+                 LIMIT 6
+            ), numbered AS (
+                SELECT a.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY SUBSTR(a.race_date, 1, 4) ORDER BY a.race_id
+                       ) AS sample_no,
+                       COUNT(*) OVER (
+                           PARTITION BY SUBSTR(a.race_date, 1, 4)
+                       ) AS year_rows
+                  FROM asof_race_features a
+                  JOIN eligible_years y
+                    ON y.race_year=SUBSTR(a.race_date, 1, 4)
             )
-            SELECT * FROM numbered WHERE sample_no IN (1, 10000, 20000, 30000)
+            SELECT * FROM numbered
+             WHERE sample_no IN (
+                 1,
+                 MAX(1, CAST(year_rows / 3 AS INTEGER)),
+                 MAX(1, CAST(year_rows * 2 / 3 AS INTEGER)),
+                 year_rows
+             )
              ORDER BY race_date, race_id
             """
         ).fetchall()
         rate_sql = (
             "SELECT COUNT(*), "
             + ", ".join(
-                "SUM(TRIM(COALESCE(rr.kimarite, '')) = ?)" for _ in HISTORY_LABELS
+                "SUM(rr.finishing_position = 1 AND TRIM(COALESCE(rr.kimarite, '')) = ?)"
+                for _ in HISTORY_LABELS
             )
-            + ", SUM(TRIM(COALESCE(rr.remarks, '')) IN ("
+            + ", SUM((rr.finishing_position IS NULL OR "
+            "CAST(rr.finishing_position AS INTEGER) NOT BETWEEN 1 AND 6) "
+            "AND TRIM(COALESCE(rr.remarks, '')) IN ("
             + ",".join("?" for _ in ACCIDENT_CODES)
             + ")) FROM races r JOIN race_entries e USING (race_id) "
             "JOIN race_results rr ON rr.race_id=e.race_id AND rr.boat_number=e.boat_number "
@@ -260,12 +408,15 @@ def test_previous_day_features_match_independent_raw_recomputation() -> None:
         )
         rate_comparisons = 0
         age_comparisons = 0
+        sampled_racers = 0
+        racers_with_birth_dates = 0
         for row in samples:
             assert row["asof_date"] < row["race_date"]
             for boat in range(1, 7):
                 racer_id = row[f"b{boat}_racer_id"]
                 if racer_id is None:
                     continue
+                sampled_racers += 1
                 raw = source.execute(
                     rate_sql,
                     (
@@ -277,7 +428,11 @@ def test_previous_day_features_match_independent_raw_recomputation() -> None:
                     ),
                 ).fetchone()
                 starts = raw[0]
-                expected_rates = [None] * 7 if starts == 0 else [value * 100.0 / starts for value in raw[1:]]
+                expected_rates = (
+                    [None] * 7
+                    if starts == 0
+                    else [value * 100.0 / starts for value in raw[1:]]
+                )
                 columns = [
                     *(f"b{boat}_kimarite_rate_{key}" for key in HISTORY_LABELS),
                     f"b{boat}_accident_rate",
@@ -295,16 +450,25 @@ def test_previous_day_features_match_independent_raw_recomputation() -> None:
                     "SELECT birth_date FROM racers WHERE racer_number = ?", (racer_id,)
                 ).fetchone()
                 if birth is not None and birth[0] is not None:
+                    racers_with_birth_dates += 1
                     born = date.fromisoformat(str(birth[0])[:10])
                     raced = date.fromisoformat(row["race_date"])
-                    expected_age = raced.year - born.year - (
-                        (raced.month, raced.day) < (born.month, born.day)
+                    expected_age = (
+                        raced.year
+                        - born.year
+                        - ((raced.month, raced.day) < (born.month, born.day))
                     )
                     assert row[f"b{boat}_age"] == expected_age
                     age_comparisons += 1
-    assert len(samples) == 24
-    assert rate_comparisons == 924
-    assert age_comparisons == 124
+    samples_per_year: dict[str, int] = {}
+    for row in samples:
+        samples_per_year[row["race_date"][:4]] = (
+            samples_per_year.get(row["race_date"][:4], 0) + 1
+        )
+    assert len(samples_per_year) == 6
+    assert set(samples_per_year.values()) == {4}
+    assert rate_comparisons == sampled_racers * 7
+    assert age_comparisons == racers_with_birth_dates
 
 
 def test_historical_result_fields_are_internally_consistent() -> None:
@@ -338,30 +502,39 @@ def test_historical_result_fields_are_internally_consistent() -> None:
 
 
 @pytest.mark.parametrize(("op", "margin"), [("ge", 0), ("le", 0), ("ge", 5), ("le", 5)])
-def test_comparison_margin_boundaries_match_signed_difference_sql(op: str, margin: int) -> None:
+def test_comparison_margin_boundaries_match_signed_difference_sql(
+    op: str, margin: int
+) -> None:
     operator = ">=" if op == "ge" else "<="
     threshold = margin if op == "ge" else -margin
     conditions = {
         "date_from": "2025-01-01",
         "date_to": "2025-01-31",
         "bet": {"type": "tansho", "first": 1},
-        "compare": [{"metric": "age", "boat": 1, "op": op, "other": 2, "margin": margin}],
+        "compare": [
+            {"metric": "age", "boat": 1, "op": op, "other": 2, "margin": margin}
+        ],
     }
     with _read_only(SEARCH_DB) as connection:
         rows = connection.execute(
             f"""
-            SELECT result_tansho, payout_tansho, b1_age, b2_age
+            SELECT schema_version,result_tansho,payout_tansho,
+                   result_tansho_json,payout_tansho_json,b1_age,b2_age
               FROM asof_race_features
-             WHERE schema_version IN (2,3)
+             WHERE schema_version IN (2,3,4)
                AND race_date BETWEEN '2025-01-01' AND '2025-01-31'
                AND ((b1_age - b2_age) {operator} ? OR b1_age IS NULL OR b2_age IS NULL)
             """,
             (threshold,),
         ).fetchall()
-    condition_null = sum(row[2] is None or row[3] is None for row in rows)
-    usable = [row for row in rows if row[2] is not None and row[3] is not None]
-    result_missing = sum(row[0] is None or row[1] is None for row in usable)
-    n = len(usable) - result_missing
+    condition_null = sum(row[5] is None or row[6] is None for row in rows)
+    outcomes = [
+        _independent_ticket_return(*row[:5], 1)
+        for row in rows
+        if row[5] is not None and row[6] is not None
+    ]
+    result_missing = sum(outcome is None for outcome in outcomes)
+    n = len(outcomes) - result_missing
     actual = search_roi(SEARCH_DB, conditions, fast=True)
     assert actual["n"] == n
     assert actual["excluded"] == {
@@ -374,27 +547,79 @@ def test_negative_comparison_margin_is_rejected_and_null_side_is_excluded() -> N
     with pytest.raises(ValueError, match="non-negative"):
         search_roi(
             SEARCH_DB,
-            {"compare": [{"metric": "age", "boat": 1, "op": "ge", "other": 2, "margin": -0.01}]},
+            {
+                "compare": [
+                    {
+                        "metric": "age",
+                        "boat": 1,
+                        "op": "ge",
+                        "other": 2,
+                        "margin": -0.01,
+                    }
+                ]
+            },
             fast=True,
         )
+    with _read_only(SEARCH_DB) as connection:
+        target_date = connection.execute(
+            """
+            SELECT race_date
+              FROM asof_race_features
+             WHERE schema_version IN (2,3,4)
+             GROUP BY race_date
+            HAVING SUM(b1_ex_time IS NULL OR b2_ex_time IS NULL) > 0
+             ORDER BY race_date DESC
+             LIMIT 1
+            """
+        ).fetchone()[0]
+        raw_rows = connection.execute(
+            """
+            SELECT schema_version,result_tansho,payout_tansho,
+                   result_tansho_json,payout_tansho_json,b1_ex_time,b2_ex_time
+              FROM asof_race_features
+             WHERE schema_version IN (2,3,4) AND race_date=?
+               AND ((b1_ex_time-b2_ex_time)>=0 OR b1_ex_time IS NULL OR b2_ex_time IS NULL)
+            """,
+            (target_date,),
+        ).fetchall()
+    condition_null = sum(row[5] is None or row[6] is None for row in raw_rows)
+    outcomes = [
+        _independent_ticket_return(*row[:5], 1)
+        for row in raw_rows
+        if row[5] is not None and row[6] is not None
+    ]
+    expected_missing = sum(outcome is None for outcome in outcomes)
+    expected_n = len(outcomes) - expected_missing
     result = search_roi(
         SEARCH_DB,
         {
-            "date_from": "2024-01-01",
-            "date_to": "2024-01-01",
-            "compare": [{"metric": "ex_time", "boat": 1, "op": "ge", "other": 2, "margin": 0}],
+            "date_from": target_date,
+            "date_to": target_date,
+            "compare": [
+                {"metric": "ex_time", "boat": 1, "op": "ge", "other": 2, "margin": 0}
+            ],
         },
         fast=True,
     )
-    assert result["n"] == 0
-    assert result["excluded"] == {"result_missing": 0, "condition_null": 156}
+    assert condition_null > 0
+    assert result["n"] == expected_n
+    assert result["excluded"] == {
+        "result_missing": expected_missing,
+        "condition_null": condition_null,
+    }
 
 
 @pytest.mark.parametrize(
     ("target_date", "same_day"),
-    [("2025-01-02", False), ("2025-01-02", True), ("2026-08-15", False), ("2026-08-15", True)],
+    [
+        (target_date, same_day)
+        for target_date in MATCH_DATES
+        for same_day in (False, True)
+    ],
 )
-def test_match_races_sets_equal_independent_step2_predicates(target_date: str, same_day: bool) -> None:
+def test_match_races_sets_equal_independent_step2_predicates(
+    target_date: str, same_day: bool
+) -> None:
     conditions: dict[str, object] = {
         "venue": 12,
         "race_no": {"min": 7, "max": 12},
@@ -417,7 +642,7 @@ def test_match_races_sets_equal_independent_step2_predicates(target_date: str, s
                 """
                 SELECT race_id,b1_motor_rate2,b1_ex_rank,b1_ex_time,b2_ex_time
                   FROM asof_race_features
-                 WHERE schema_version IN (2,3) AND race_date=? AND jcd=12
+                 WHERE schema_version IN (2,3,4) AND race_date=? AND jcd=12
                    AND race_no BETWEEN 7 AND 12
                    AND (b1_motor_rate2>=35 OR b1_motor_rate2 IS NULL)
                    AND (b1_ex_rank<=3 OR b1_ex_rank IS NULL)
@@ -426,20 +651,25 @@ def test_match_races_sets_equal_independent_step2_predicates(target_date: str, s
                 (target_date,),
             ).fetchall()
             expected_confirmed = {
-                row["race_id"] for row in rows if all(row[key] is not None for key in row.keys()[1:])
+                row["race_id"]
+                for row in rows
+                if all(row[key] is not None for key in row.keys()[1:])
             }
             expected_pending = {
                 row["race_id"]
                 for row in rows
                 if row["b1_motor_rate2"] is not None
-                and any(row[key] is None for key in ("b1_ex_rank", "b1_ex_time", "b2_ex_time"))
+                and any(
+                    row[key] is None
+                    for key in ("b1_ex_rank", "b1_ex_time", "b2_ex_time")
+                )
             }
         else:
             rows = connection.execute(
                 """
                 SELECT race_id,b1_motor_rate2,b1_age,b2_age
                   FROM asof_race_features
-                 WHERE schema_version IN (2,3) AND race_date=? AND jcd=12
+                 WHERE schema_version IN (2,3,4) AND race_date=? AND jcd=12
                    AND race_no BETWEEN 7 AND 12
                    AND (b1_motor_rate2>=35 OR b1_motor_rate2 IS NULL)
                    AND ((b1_age-b2_age)<=0 OR b1_age IS NULL OR b2_age IS NULL)
@@ -447,7 +677,9 @@ def test_match_races_sets_equal_independent_step2_predicates(target_date: str, s
                 (target_date,),
             ).fetchall()
             expected_confirmed = {
-                row["race_id"] for row in rows if all(row[key] is not None for key in row.keys()[1:])
+                row["race_id"]
+                for row in rows
+                if all(row[key] is not None for key in row.keys()[1:])
             }
             expected_pending = set()
 
@@ -460,22 +692,32 @@ def test_match_races_sets_equal_independent_step2_predicates(target_date: str, s
         fast=True,
     )
     assert matched["counts"]["pending"] == step2["excluded"]["condition_null"]
-    assert matched["counts"]["matched"] == step2["n"] + step2["excluded"]["result_missing"]
+    assert (
+        matched["counts"]["matched"] == step2["n"] + step2["excluded"]["result_missing"]
+    )
 
 
 @pytest.mark.parametrize(
-    ("target_date", "expected_n", "expected_missing"),
-    [
-        ("2025-01-01", 168, 0),
-        ("2025-01-02", 192, 0),
-        ("2025-01-03", 215, 1),
-        ("2026-08-14", 149, 43),
-        ("2026-08-15", 0, 216),
-    ],
+    "target_date",
+    DATE_BOUND_DATES,
 )
 def test_date_bounds_are_inclusive_and_effective_range_uses_included_rows(
-    target_date: str, expected_n: int, expected_missing: int
+    target_date: str,
 ) -> None:
+    with _read_only(SEARCH_DB) as connection:
+        raw_rows = connection.execute(
+            """
+            SELECT schema_version,result_tansho,payout_tansho,
+                   result_tansho_json,payout_tansho_json
+              FROM asof_race_features
+             WHERE schema_version IN (2,3,4) AND race_date=?
+            """,
+            (target_date,),
+        ).fetchall()
+    outcomes = [_independent_ticket_return(*row, 1) for row in raw_rows]
+    expected_missing = sum(outcome is None for outcome in outcomes)
+    expected_n = len(outcomes) - expected_missing
+    assert raw_rows
     result = search_roi(
         SEARCH_DB,
         {
@@ -514,7 +756,9 @@ def test_bootstrap_is_identical_sequentially_and_concurrently() -> None:
     }
 
     def run() -> dict[str, object]:
-        return search_roi(SEARCH_DB, conditions, seed=20260815, bootstrap_iterations=500)
+        return search_roi(
+            SEARCH_DB, conditions, seed=20260815, bootstrap_iterations=500
+        )
 
     baseline = run()
     assert run() == baseline
