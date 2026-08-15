@@ -1,0 +1,724 @@
+"""Build leakage-safe, one-row-per-race feature snapshots.
+
+The source database is always treated as read-only by this module.  Callers are
+responsible for opening ``data/boatrace.db`` with
+``src.db.connection.connect()``; this module writes only to the separate
+``kachisuji_search.db`` SQLite file.
+
+Timing groups:
+
+* program fields and the one-year racer aggregates are available by the day
+  before a race (``asof_date``);
+* preview weather and exhibition fields are same-day observations and are
+  retained for historical filtering, but are not pre-race-day facts.
+"""
+
+from __future__ import annotations
+
+from bisect import bisect_left, bisect_right
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+import math
+from pathlib import Path
+import random
+import sqlite3
+import sys
+from typing import Any, Iterable, Sequence
+
+
+SCHEMA_VERSION = 2
+BOATS = range(1, 7)
+KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
+KIMARITE_LABELS = {
+    "逃げ": "nige",
+    "差し": "sashi",
+    "まくり": "makuri",
+    "まくり差し": "makurizashi",
+    "抜き": "nuki",
+    "恵まれ": "megumare",
+}
+CLASS_LABELS = {1: "A1", 2: "A2", 3: "B1", 4: "B2"}
+
+# Codes accepted by the official K parser when a numeric finishing position is
+# unavailable.  The production SQLite snapshot inspected on 2026-08-15
+# contains S0/S1/S2; the wider parser-supported set keeps the definition stable
+# if F/L, disqualification, capsize, fall, or interference appears later.
+ACCIDENT_REMARK_CODES = frozenset(
+    {"K0", "K1", "S0", "S1", "S2", "F", "L", "失", "失格", "転", "落", "妨"}
+)
+
+
+def _boat_columns() -> list[tuple[str, str]]:
+    columns: list[tuple[str, str]] = []
+    for boat in BOATS:
+        columns.extend(
+            [
+                (f"b{boat}_racer_id", "INTEGER"),
+                (f"b{boat}_class", "TEXT"),
+                (f"b{boat}_avg_st", "REAL"),
+                (f"b{boat}_national_rate", "REAL"),
+                (f"b{boat}_local_rate", "REAL"),
+                (f"b{boat}_motor_rate2", "REAL"),
+                (f"b{boat}_ex_time", "REAL"),
+                (f"b{boat}_ex_rank", "INTEGER"),
+                (f"b{boat}_ex_dev", "REAL"),
+                (f"b{boat}_ex_st", "REAL"),
+            ]
+        )
+        columns.extend((f"b{boat}_kimarite_rate_{key}", "REAL") for key in KIMARITE_KEYS)
+        columns.append((f"b{boat}_accident_rate", "REAL"))
+    return columns
+
+
+BASE_COLUMNS: list[tuple[str, str]] = [
+    ("race_id", "TEXT PRIMARY KEY"),
+    ("race_date", "TEXT NOT NULL"),
+    ("asof_date", "TEXT NOT NULL"),
+    ("built_at", "TEXT NOT NULL"),
+    ("schema_version", "INTEGER NOT NULL"),
+    ("jcd", "INTEGER"),
+    ("race_no", "INTEGER"),
+    ("grade", "INTEGER"),
+    ("day_index", "TEXT"),
+    ("daypart", "TEXT"),
+    ("female_present", "INTEGER"),
+    ("class_mix", "TEXT"),
+    ("tide_phase", "TEXT"),
+    ("weather", "TEXT"),
+    ("wind_dir", "TEXT"),
+    ("wind_dir_raw", "INTEGER"),
+    ("wind_speed", "REAL"),
+]
+RESULT_COLUMNS: list[tuple[str, str]] = [
+    ("result_sanrentan", "TEXT"),
+    ("payout_sanrentan", "INTEGER"),
+    ("result_nirentan", "TEXT"),
+    ("payout_nirentan", "INTEGER"),
+    ("result_tansho", "INTEGER"),
+    ("payout_tansho", "INTEGER"),
+]
+ALL_COLUMNS = BASE_COLUMNS + _boat_columns() + RESULT_COLUMNS
+
+
+def create_output_schema(conn: sqlite3.Connection) -> None:
+    """Create only the Step 1 output table and its date index."""
+
+    ddl = ",\n  ".join(f"{name} {kind}" for name, kind in ALL_COLUMNS)
+    conn.execute(f"CREATE TABLE IF NOT EXISTS asof_race_features (\n  {ddl}\n)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_asof_race_features_date "
+        "ON asof_race_features(race_date)"
+    )
+    conn.commit()
+
+
+def open_output(path: str | Path) -> sqlite3.Connection:
+    """Open the separate feature database; never use this for boatrace.db."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(output_path)
+    conn.row_factory = sqlite3.Row
+    create_output_schema(conn)
+    return conn
+
+
+def _rows(conn: Any, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
+    cursor = conn.execute(sql, tuple(params))
+    names = [item[0] for item in cursor.description]
+    return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+
+def _one(conn: Any, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
+    result = _rows(conn, sql, params)
+    return result[0] if result else None
+
+
+def _iso(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)[:10]
+
+
+def _finite_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def weather_label(weather_number: Any) -> str | None:
+    """Map observed weather: 1=晴, 2=曇, 3=雨, other codes=その他."""
+
+    if weather_number is None:
+        return None
+    try:
+        code = int(weather_number)
+    except (TypeError, ValueError):
+        return None
+    return {1: "晴", 2: "曇", 3: "雨"}.get(code, "その他")
+
+
+def classify_daypart(first_race_closed_at: Any) -> str | None:
+    """Classify by the venue-day first-race scheduled close time.
+
+    The source has no separate start timestamp, so ``race_closed_at`` (the
+    published telephone-vote deadline) is the schedule proxy.  Before 10:30 is
+    モーニング, 14:00 or later is ナイター, and the interval is デイ.
+    """
+
+    if not first_race_closed_at:
+        return None
+    text = str(first_race_closed_at)
+    try:
+        clock = datetime.fromisoformat(text).time()
+    except ValueError:
+        try:
+            clock = datetime.strptime(text[-5:], "%H:%M").time()
+        except ValueError:
+            return None
+    minutes = clock.hour * 60 + clock.minute
+    if minutes < 10 * 60 + 30:
+        return "モーニング"
+    if minutes >= 14 * 60:
+        return "ナイター"
+    return "デイ"
+
+
+def normalize_tide_phase(row: dict[str, Any] | None) -> str | None:
+    """Use the stored scheduled-race tide classification.
+
+    ``race_tides`` uses a ±90 minute high/low zone and otherwise records a
+    rising/falling phase.  Unknown phases remain NULL.
+    """
+
+    if not row:
+        return None
+    phase = str(row.get("tide_phase") or "").lower()
+    return {
+        "high": "満潮前後",
+        "low": "干潮前後",
+        "rising": "上げ潮",
+        "falling": "下げ潮",
+    }.get(phase)
+
+
+def exhibition_metrics(times: dict[int, float | None]) -> dict[int, tuple[int | None, float | None]]:
+    """Return competition rank and deviation from the six-boat mean.
+
+    Rank is ``1 + count(times strictly faster)`` so ties share a rank.  Both
+    derived values stay NULL unless all six finite exhibition times exist.
+    """
+
+    clean = {boat: _finite_float(times.get(boat)) for boat in BOATS}
+    if any(clean[boat] is None for boat in BOATS):
+        return {boat: (None, None) for boat in BOATS}
+    values = [clean[boat] for boat in BOATS]
+    mean = sum(values) / 6  # type: ignore[arg-type]
+    return {
+        boat: (
+            1 + sum(value < clean[boat] for value in values),  # type: ignore[operator]
+            clean[boat] - mean,  # type: ignore[operator]
+        )
+        for boat in BOATS
+    }
+
+
+@dataclass(frozen=True)
+class RacerHistory:
+    dates: tuple[str, ...]
+    starts_prefix: tuple[int, ...]
+    accident_prefix: tuple[int, ...]
+    kimarite_prefix: dict[str, tuple[int, ...]]
+
+    def rates(self, window_start: str, asof_date: str) -> dict[str, float | None]:
+        left = bisect_left(self.dates, window_start)
+        right = bisect_right(self.dates, asof_date)
+        starts = self.starts_prefix[right] - self.starts_prefix[left]
+        if starts == 0:
+            return {**{key: None for key in KIMARITE_KEYS}, "accident": None}
+        output = {
+            key: (self.kimarite_prefix[key][right] - self.kimarite_prefix[key][left])
+            * 100.0
+            / starts
+            for key in KIMARITE_KEYS
+        }
+        output["accident"] = (
+            self.accident_prefix[right] - self.accident_prefix[left]
+        ) * 100.0 / starts
+        return output
+
+
+def _load_histories(
+    source: Any,
+    window_start: str,
+    window_end: str,
+    racer_ids: Iterable[int] | None = None,
+) -> dict[int, RacerHistory]:
+    params: list[Any] = [window_start, window_end]
+    racer_filter = ""
+    ids = sorted({int(value) for value in racer_ids or []})
+    if ids:
+        racer_filter = f" AND e.racer_number IN ({','.join('?' for _ in ids)})"
+        params.extend(ids)
+    rows = _rows(
+        source,
+        """SELECT e.racer_number, r.race_date, rr.kimarite, rr.remarks
+             FROM races r
+             JOIN race_entries e ON e.race_id = r.race_id
+             JOIN race_results rr
+               ON rr.race_id = e.race_id AND rr.boat_number = e.boat_number
+            WHERE r.race_date BETWEEN ? AND ?"""
+        + racer_filter
+        + " ORDER BY e.racer_number, r.race_date, r.race_id",
+        params,
+    )
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row["racer_number"] is not None:
+            grouped[int(row["racer_number"])].append(row)
+    histories: dict[int, RacerHistory] = {}
+    for racer_id, items in grouped.items():
+        dates: list[str] = []
+        starts = [0]
+        accidents = [0]
+        kimarite = {key: [0] for key in KIMARITE_KEYS}
+        for item in items:
+            dates.append(_iso(item["race_date"]))
+            starts.append(starts[-1] + 1)
+            remark = str(item.get("remarks") or "").strip()
+            accidents.append(accidents[-1] + int(remark in ACCIDENT_REMARK_CODES))
+            winning_key = KIMARITE_LABELS.get(str(item.get("kimarite") or "").strip())
+            for key in KIMARITE_KEYS:
+                kimarite[key].append(kimarite[key][-1] + int(winning_key == key))
+        histories[racer_id] = RacerHistory(
+            tuple(dates),
+            tuple(starts),
+            tuple(accidents),
+            {key: tuple(values) for key, values in kimarite.items()},
+        )
+    return histories
+
+
+def _history_rates(
+    histories: dict[int, RacerHistory], racer_id: Any, asof_date: str
+) -> dict[str, float | None]:
+    if racer_id is None or int(racer_id) not in histories:
+        return {**{key: None for key in KIMARITE_KEYS}, "accident": None}
+    window_start = (date.fromisoformat(asof_date) - timedelta(days=364)).isoformat()
+    return histories[int(racer_id)].rates(window_start, asof_date)
+
+
+def _day_indexes(source: Any, races: list[dict[str, Any]]) -> dict[str, str | None]:
+    keys = {(int(r["stadium_number"]), str(r.get("race_title") or "")) for r in races}
+    output: dict[str, str | None] = {}
+    for stadium, title in keys:
+        if not title:
+            continue
+        dates = [
+            _iso(row["race_date"])
+            for row in _rows(
+                source,
+                """SELECT DISTINCT race_date FROM races
+                    WHERE stadium_number=? AND race_title=? ORDER BY race_date""",
+                (stadium, title),
+            )
+        ]
+        if not dates:
+            continue
+        # The same event title can recur in later years.  Split title-matched
+        # dates into meetings when more than one empty calendar day separates
+        # them; a single weather-cancellation day can still remain one meeting.
+        meetings: list[list[str]] = []
+        for value in dates:
+            if not meetings or (
+                date.fromisoformat(value) - date.fromisoformat(meetings[-1][-1])
+            ).days > 2:
+                meetings.append([value])
+            else:
+                meetings[-1].append(value)
+        label_by_date: dict[str, str] = {}
+        for meeting in meetings:
+            for index, value in enumerate(meeting):
+                label_by_date[value] = (
+                    "初日"
+                    if index == 0
+                    else "最終日"
+                    if index == len(meeting) - 1
+                    else "中日"
+                )
+        for race in races:
+            if int(race["stadium_number"]) == stadium and str(race.get("race_title") or "") == title:
+                output[str(race["race_id"])] = label_by_date.get(_iso(race["race_date"]))
+    return output
+
+
+def _class_mix(entries: dict[int, dict[str, Any]]) -> str | None:
+    if set(entries) != set(BOATS) or any(row.get("class_number") is None for row in entries.values()):
+        return None
+    a1 = [boat for boat, row in entries.items() if int(row["class_number"]) == 1]
+    if len(a1) == 1:
+        return "1号艇A1" if a1[0] == 1 else "A1単騎"
+    if len(a1) > 1:
+        return "1号艇A1" if 1 in a1 else "A1複数_1号艇非A1"
+    return "A1なし"
+
+
+def _female_present(entries: dict[int, dict[str, Any]]) -> int | None:
+    if set(entries) != set(BOATS):
+        return None
+    genders = [row.get("gender") for row in entries.values()]
+    if any(value not in (1, 2) for value in genders):
+        return None
+    return int(2 in genders)
+
+
+def _valid_payout(payouts: dict[str, dict[str, Any]], kind: str) -> tuple[Any, Any]:
+    item = payouts.get(kind)
+    if not item or item.get("combination") in (None, "不成立"):
+        return None, None
+    payout = item.get("payout")
+    if payout is None:
+        return None, None
+    return item["combination"], int(payout)
+
+
+def _build_row(
+    race: dict[str, Any],
+    entries: list[dict[str, Any]],
+    previews: list[dict[str, Any]],
+    tide: dict[str, Any] | None,
+    payouts: list[dict[str, Any]],
+    has_results: bool,
+    histories: dict[int, RacerHistory],
+    day_index: str | None,
+    built_at: str,
+) -> dict[str, Any]:
+    race_date = _iso(race["race_date"])
+    asof_date = (date.fromisoformat(race_date) - timedelta(days=1)).isoformat()
+    entry_by_boat = {int(item["boat_number"]): item for item in entries}
+    preview_by_boat = {int(item["boat_number"]): item for item in previews}
+    first_deadline = race.get("first_race_closed_at")
+    preview_header = preview_by_boat.get(1) or next(iter(preview_by_boat.values()), {})
+    times = {
+        boat: _finite_float(preview_by_boat.get(boat, {}).get("exhibition_time"))
+        for boat in BOATS
+    }
+    metrics = exhibition_metrics(times)
+    row: dict[str, Any] = {
+        "race_id": str(race["race_id"]),
+        "race_date": race_date,
+        "asof_date": asof_date,
+        "built_at": built_at,
+        "schema_version": SCHEMA_VERSION,
+        "jcd": race.get("stadium_number"),
+        "race_no": race.get("race_number"),
+        "grade": race.get("race_grade_number"),
+        "day_index": day_index,
+        "daypart": classify_daypart(first_deadline),
+        "female_present": _female_present(entry_by_boat),
+        "class_mix": _class_mix(entry_by_boat),
+        "tide_phase": normalize_tide_phase(tide),
+        "weather": weather_label(preview_header.get("weather_number")),
+        # No audited venue-heading table exists in the source schema.  Preserve
+        # the observed compass code without inventing a tail/head/cross mapping.
+        "wind_dir": None,
+        "wind_dir_raw": preview_header.get("wind_direction_number"),
+        "wind_speed": _finite_float(preview_header.get("wind_speed")),
+    }
+    for boat in BOATS:
+        entry = entry_by_boat.get(boat, {})
+        preview = preview_by_boat.get(boat, {})
+        rates = _history_rates(histories, entry.get("racer_number"), asof_date)
+        row.update(
+            {
+                f"b{boat}_racer_id": entry.get("racer_number"),
+                f"b{boat}_class": CLASS_LABELS.get(entry.get("class_number")),
+                f"b{boat}_avg_st": _finite_float(entry.get("avg_start_timing")),
+                f"b{boat}_national_rate": _finite_float(entry.get("national_top_1_percent")),
+                f"b{boat}_local_rate": _finite_float(entry.get("local_top_1_percent")),
+                f"b{boat}_motor_rate2": _finite_float(entry.get("assigned_motor_top_2_percent")),
+                f"b{boat}_ex_time": times[boat],
+                f"b{boat}_ex_rank": metrics[boat][0],
+                f"b{boat}_ex_dev": metrics[boat][1],
+                # F is stored as a negative number by the source parser; L or
+                # an unparseable exhibition start remains NULL.
+                f"b{boat}_ex_st": _finite_float(preview.get("start_timing_exhibition")),
+                **{
+                    f"b{boat}_kimarite_rate_{key}": rates[key]
+                    for key in KIMARITE_KEYS
+                },
+                f"b{boat}_accident_rate": rates["accident"],
+            }
+        )
+    payout_by_type = {str(item["bet_type"]): item for item in payouts}
+    trifecta = _valid_payout(payout_by_type, "trifecta") if has_results else (None, None)
+    exacta = _valid_payout(payout_by_type, "exacta") if has_results else (None, None)
+    win = _valid_payout(payout_by_type, "win") if has_results else (None, None)
+    try:
+        win_boat = int(win[0]) if win[0] is not None else None
+    except (TypeError, ValueError):
+        win_boat = None
+        win = (None, None)
+    row.update(
+        {
+            "result_sanrentan": trifecta[0],
+            "payout_sanrentan": trifecta[1],
+            "result_nirentan": exacta[0],
+            "payout_nirentan": exacta[1],
+            "result_tansho": win_boat,
+            "payout_tansho": win[1],
+        }
+    )
+    return row
+
+
+def build_features(
+    source: Any,
+    output_path: str | Path,
+    date_from: str,
+    date_to: str,
+    *,
+    rebuild: bool = False,
+    built_at: str | None = None,
+    progress_stream: Any = sys.stdout,
+) -> dict[str, int]:
+    """Build a date-ascending append-only snapshot batch.
+
+    Each racer aggregate uses the inclusive 365-day window
+    ``[asof_date - 364 days, asof_date]``.  Results on the target race date are
+    never eligible for those aggregates.
+    """
+
+    start = date.fromisoformat(date_from)
+    end = date.fromisoformat(date_to)
+    if start > end:
+        raise ValueError("date_from must not be after date_to")
+    races = _rows(
+        source,
+        """SELECT r.*,
+                  (SELECT MIN(r1.race_closed_at) FROM races r1
+                    WHERE r1.race_date=r.race_date
+                      AND r1.stadium_number=r.stadium_number) AS first_race_closed_at
+             FROM races r
+            WHERE r.race_date BETWEEN ? AND ?
+            ORDER BY r.race_date, r.stadium_number, r.race_number""",
+        (date_from, date_to),
+    )
+    output = open_output(output_path)
+    if rebuild:
+        output.execute(
+            "DELETE FROM asof_race_features WHERE race_date BETWEEN ? AND ?",
+            (date_from, date_to),
+        )
+        output.commit()
+    existing = {
+        row[0]
+        for row in output.execute(
+            "SELECT race_id FROM asof_race_features WHERE race_date BETWEEN ? AND ?",
+            (date_from, date_to),
+        )
+    }
+    pending = [race for race in races if str(race["race_id"]) not in existing]
+    if not pending:
+        output.close()
+        return {"selected": len(races), "inserted": 0, "skipped_existing": len(races), "warnings": 0}
+
+    race_ids = [str(race["race_id"]) for race in pending]
+    placeholders = ",".join("?" for _ in race_ids)
+    entry_rows = _rows(
+        source,
+        f"""SELECT e.*, rc.gender FROM race_entries e
+          LEFT JOIN racers rc ON rc.racer_number=e.racer_number
+               WHERE e.race_id IN ({placeholders})
+            ORDER BY e.race_id,e.boat_number""",
+        race_ids,
+    )
+    preview_rows = _rows(
+        source,
+        f"SELECT * FROM race_previews WHERE race_id IN ({placeholders}) ORDER BY race_id,boat_number",
+        race_ids,
+    )
+    tide_rows = _rows(
+        source,
+        f"SELECT race_id,tide_phase,is_high_tide_zone,is_low_tide_zone FROM race_tides WHERE race_id IN ({placeholders})",
+        race_ids,
+    )
+    payout_rows = _rows(
+        source,
+        f"SELECT race_id,bet_type,combination,payout FROM race_payouts WHERE race_id IN ({placeholders})",
+        race_ids,
+    )
+    result_rows = _rows(
+        source,
+        f"SELECT DISTINCT race_id FROM race_results WHERE race_id IN ({placeholders}) AND finishing_position IS NOT NULL",
+        race_ids,
+    )
+    by_entries: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_previews: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_payouts: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in entry_rows:
+        by_entries[str(item["race_id"])].append(item)
+    for item in preview_rows:
+        by_previews[str(item["race_id"])].append(item)
+    for item in payout_rows:
+        by_payouts[str(item["race_id"])].append(item)
+    by_tide = {str(item["race_id"]): item for item in tide_rows}
+    result_ids = {str(item["race_id"]) for item in result_rows}
+    racer_ids = {
+        int(item["racer_number"])
+        for item in entry_rows
+        if item.get("racer_number") is not None
+    }
+    earliest_asof = start - timedelta(days=1)
+    history_start = earliest_asof - timedelta(days=364)
+    histories = _load_histories(
+        source,
+        history_start.isoformat(),
+        (end - timedelta(days=1)).isoformat(),
+        racer_ids,
+    )
+    day_indexes = _day_indexes(source, pending)
+    timestamp = built_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    names = [name for name, _ in ALL_COLUMNS]
+    sql = (
+        f"INSERT INTO asof_race_features ({','.join(names)}) "
+        f"VALUES ({','.join('?' for _ in names)})"
+    )
+    inserted = 0
+    warnings = 0
+    for race in pending:
+        race_id = str(race["race_id"])
+        try:
+            row = _build_row(
+                race,
+                by_entries[race_id],
+                by_previews[race_id],
+                by_tide.get(race_id),
+                by_payouts[race_id],
+                race_id in result_ids,
+                histories,
+                day_indexes.get(race_id),
+                timestamp,
+            )
+            output.execute(sql, [row.get(name) for name in names])
+            inserted += 1
+            if inserted % 1000 == 0:
+                print(f"processed {inserted:,} races", file=progress_stream, flush=True)
+                output.commit()
+        except Exception as exc:  # one bad race must not abort the batch
+            warnings += 1
+            print(f"warning: skipped {race_id}: {exc}", file=progress_stream, flush=True)
+    output.commit()
+    output.close()
+    return {
+        "selected": len(races),
+        "inserted": inserted,
+        "skipped_existing": len(races) - len(pending),
+        "warnings": warnings,
+    }
+
+
+def _equal_rate(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    return math.isclose(float(left), float(right), rel_tol=0.0, abs_tol=1e-10)
+
+
+def verify_features(
+    source: Any,
+    output_path: str | Path,
+    sample: int = 20,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    """Verify chronology and sampled future-data exclusion invariance."""
+
+    output = sqlite3.connect(output_path)
+    output.row_factory = sqlite3.Row
+    where: list[str] = []
+    params: list[Any] = []
+    if date_from is not None:
+        where.append("race_date>=?")
+        params.append(date_from)
+    if date_to is not None:
+        where.append("race_date<=?")
+        params.append(date_to)
+    clause = " WHERE " + " AND ".join(where) if where else ""
+    chronology_errors = output.execute(
+        "SELECT COUNT(*) FROM asof_race_features WHERE asof_date>=race_date"
+    ).fetchone()[0]
+    candidates = output.execute(
+        "SELECT * FROM asof_race_features" + clause + " ORDER BY race_id", params
+    ).fetchall()
+    if sample < 0:
+        raise ValueError("sample must be non-negative")
+    chosen = random.Random(20260815).sample(candidates, min(sample, len(candidates)))
+    racer_ids = {
+        int(row[f"b{boat}_racer_id"])
+        for row in chosen
+        for boat in BOATS
+        if row[f"b{boat}_racer_id"] is not None
+    }
+    histories: dict[int, RacerHistory] = {}
+    if chosen:
+        earliest = min(date.fromisoformat(row["asof_date"]) for row in chosen)
+        latest = max(date.fromisoformat(row["asof_date"]) for row in chosen)
+        histories = _load_histories(
+            source,
+            (earliest - timedelta(days=364)).isoformat(),
+            latest.isoformat(),
+            racer_ids,
+        )
+    mismatches: list[str] = []
+    for row in chosen:
+        for boat in BOATS:
+            rates = _history_rates(histories, row[f"b{boat}_racer_id"], row["asof_date"])
+            for key in KIMARITE_KEYS:
+                column = f"b{boat}_kimarite_rate_{key}"
+                if not _equal_rate(row[column], rates[key]):
+                    mismatches.append(f"{row['race_id']}:{column}")
+            column = f"b{boat}_accident_rate"
+            if not _equal_rate(row[column], rates["accident"]):
+                mismatches.append(f"{row['race_id']}:{column}")
+    output.close()
+    return {
+        "ok": chronology_errors == 0 and not mismatches,
+        "rows": len(candidates),
+        "sampled": len(chosen),
+        "chronology_errors": chronology_errors,
+        "mismatches": mismatches,
+    }
+
+
+def coverage_rows(output_path: str | Path) -> list[dict[str, Any]]:
+    """Return non-NULL count, earliest populated race date, and fill percent."""
+
+    conn = sqlite3.connect(output_path)
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(asof_race_features)")]
+    total = conn.execute("SELECT COUNT(*) FROM asof_race_features").fetchone()[0]
+    result: list[dict[str, Any]] = []
+    for column in columns:
+        quoted = '"' + column.replace('"', '""') + '"'
+        populated, oldest = conn.execute(
+            f"SELECT COUNT({quoted}), MIN(CASE WHEN {quoted} IS NOT NULL THEN race_date END) "
+            "FROM asof_race_features"
+        ).fetchone()
+        result.append(
+            {
+                "column": column,
+                "populated": populated,
+                "total": total,
+                "oldest_date": oldest,
+                "coverage_pct": (populated * 100.0 / total) if total else 0.0,
+            }
+        )
+    conn.close()
+    return result
