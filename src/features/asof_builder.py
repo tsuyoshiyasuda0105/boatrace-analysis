@@ -27,7 +27,7 @@ import sys
 from typing import Any, Iterable, Sequence
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -57,9 +57,12 @@ def _boat_columns() -> list[tuple[str, str]]:
             [
                 (f"b{boat}_racer_id", "INTEGER"),
                 (f"b{boat}_class", "TEXT"),
+                (f"b{boat}_age", "INTEGER"),
                 (f"b{boat}_avg_st", "REAL"),
                 (f"b{boat}_national_rate", "REAL"),
                 (f"b{boat}_local_rate", "REAL"),
+                (f"b{boat}_national_rate2", "REAL"),
+                (f"b{boat}_local_rate2", "REAL"),
                 (f"b{boat}_motor_rate2", "REAL"),
                 (f"b{boat}_ex_time", "REAL"),
                 (f"b{boat}_ex_rank", "INTEGER"),
@@ -103,10 +106,20 @@ ALL_COLUMNS = BASE_COLUMNS + _boat_columns() + RESULT_COLUMNS
 
 
 def create_output_schema(conn: sqlite3.Connection) -> None:
-    """Create only the Step 1 output table and its date index."""
+    """Create or additively migrate the Step 1 output table and date index.
+
+    Existing rows retain their original schema version and receive NULL for
+    newly added columns; only later builds write the current version.
+    """
 
     ddl = ",\n  ".join(f"{name} {kind}" for name, kind in ALL_COLUMNS)
     conn.execute(f"CREATE TABLE IF NOT EXISTS asof_race_features (\n  {ddl}\n)")
+    existing = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(asof_race_features)")
+    }
+    for name, kind in ALL_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE asof_race_features ADD COLUMN {name} {kind}")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_asof_race_features_date "
         "ON asof_race_features(race_date)"
@@ -174,6 +187,21 @@ def _finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _age_on_date(birth_date: Any, race_date: str) -> int | None:
+    """Return full years of age on ``race_date`` from an ISO birth date."""
+
+    if birth_date is None:
+        return None
+    try:
+        born = date.fromisoformat(str(birth_date)[:10])
+        raced = date.fromisoformat(race_date)
+    except (TypeError, ValueError):
+        return None
+    if born > raced:
+        return None
+    return raced.year - born.year - ((raced.month, raced.day) < (born.month, born.day))
 
 
 def weather_label(weather_number: Any) -> str | None:
@@ -463,9 +491,12 @@ def _build_row(
             {
                 f"b{boat}_racer_id": entry.get("racer_number"),
                 f"b{boat}_class": CLASS_LABELS.get(entry.get("class_number")),
+                f"b{boat}_age": _age_on_date(entry.get("birth_date"), race_date),
                 f"b{boat}_avg_st": _finite_float(entry.get("avg_start_timing")),
                 f"b{boat}_national_rate": _finite_float(entry.get("national_top_1_percent")),
                 f"b{boat}_local_rate": _finite_float(entry.get("local_top_1_percent")),
+                f"b{boat}_national_rate2": _finite_float(entry.get("national_top_2_percent")),
+                f"b{boat}_local_rate2": _finite_float(entry.get("local_top_2_percent")),
                 f"b{boat}_motor_rate2": _finite_float(entry.get("assigned_motor_top_2_percent")),
                 f"b{boat}_ex_time": times[boat],
                 f"b{boat}_ex_rank": metrics[boat][0],
@@ -556,7 +587,7 @@ def build_features(
     race_ids = [str(race["race_id"]) for race in pending]
     entry_rows = _rows_for_ids(
         source,
-        """SELECT e.*, rc.gender FROM race_entries e
+        """SELECT e.*, rc.gender, rc.birth_date FROM race_entries e
           LEFT JOIN racers rc ON rc.racer_number=e.racer_number
                WHERE e.race_id IN ({placeholders})
             ORDER BY e.race_id,e.boat_number""",

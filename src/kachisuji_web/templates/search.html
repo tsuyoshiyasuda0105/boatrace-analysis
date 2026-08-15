@@ -65,6 +65,13 @@
               </select>
             </div>
             <div class="row">
+              <label for="raceNoFrom">レース番号</label>
+              <select id="raceNoFrom"><option value="">指定なし</option></select>
+              <span class="unit">〜</span>
+              <select id="raceNoTo" aria-label="レース番号上限"><option value="">指定なし</option></select>
+              <span class="unit">R</span>
+            </div>
+            <div class="row">
               <label for="betType">買い目</label>
               <select id="betType" name="bet_type">
                 <option value="sanrentan">3連単</option>
@@ -133,6 +140,13 @@
           </fieldset>
 
           <fieldset>
+            <legend>⚖ 艇間比較</legend>
+            <p class="compare-help">艇同士の差を比較します。複数行はすべて満たすレースだけが対象です。</p>
+            <div id="compareRows"></div>
+            <button type="button" id="btnAddCompare" class="compact-button">＋ 比較条件を追加</button>
+          </fieldset>
+
+          <fieldset>
             <legend>検索期間</legend>
             <div class="row">
               <label for="dateFrom">開始日</label><input type="date" id="dateFrom" name="date_from">
@@ -191,6 +205,17 @@
     var boatNumbers = [1, 2, 3, 4, 5, 6];
     var classNames = ['A1', 'A2', 'B1', 'B2'];
     var kimarite = [['', '指定なし'], ['nige', '逃げ'], ['sashi', '差し'], ['makuri', 'まくり'], ['makurizashi', 'まくり差し'], ['nuki', '抜き'], ['megumare', '恵まれ']];
+    var compareMetrics = [
+      ['', '指標を選択', ''],
+      ['motor_rate2', 'モーター2連対率', 'pt'],
+      ['avg_st', '平均ST', '秒'],
+      ['ex_time', '展示タイム', '秒'],
+      ['ex_st', '展示ST', '秒'],
+      ['national_rate', '全国勝率', 'pt'],
+      ['local_rate', '当地勝率', 'pt'],
+      ['national_rate2', '全国2連対率', 'pt'],
+      ['age', '年齢', '歳']
+    ];
     var lastConditions = null;
     var lastBacktest = null;
 
@@ -212,9 +237,12 @@
         '<div class="conds">' +
         '<div class="cond">級別 <span class="chip day">📋</span><span class="wchips boat-classes" id="b' + i + 'Classes">' + classes + '</span><span class="unit">複数選択可</span></div>' +
         '<div class="cond">選手 <span class="chip day">📋</span><input type="text" id="b' + i + 'Racer" inputmode="numeric" placeholder="例: 4320 または 4320 峰竜太"><span class="unit">番号で検索</span></div>' +
+        '<div class="cond">年齢 <span class="chip day">📋</span>' + compareSelect('b' + i + 'AgeCmp') + '<input type="number" id="b' + i + 'Age" value="30" min="16" max="100" step="1"><span class="unit">歳</span></div>' +
         '<div class="cond">平均ST <span class="chip day">📋</span>' + compareSelect('b' + i + 'AvgStCmp') + '<input type="number" id="b' + i + 'AvgSt" value="0.15" min="0" max="0.5" step="0.01"><span class="unit">秒</span></div>' +
         '<div class="cond">全国勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'NationalCmp') + '<input type="number" id="b' + i + 'National" value="6.00" min="0" max="10" step="0.1"></div>' +
         '<div class="cond">当地勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'LocalCmp') + '<input type="number" id="b' + i + 'Local" value="6.00" min="0" max="10" step="0.1"></div>' +
+        '<div class="cond">全国2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'National2Cmp') + '<input type="number" id="b' + i + 'National2" value="40" min="0" max="100" step="0.1"><span class="unit">%</span></div>' +
+        '<div class="cond">当地2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'Local2Cmp') + '<input type="number" id="b' + i + 'Local2" value="40" min="0" max="100" step="0.1"><span class="unit">%</span></div>' +
         '<div class="cond">モーター2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'MotorCmp') + '<input type="number" id="b' + i + 'Motor" value="35" min="0" max="100" step="1"><span class="unit">%</span></div>' +
         '<div class="cond limited2">展示順位 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExFrom"><option value="">指定なし</option>' + optionList(boatNumbers, '') + '</select><span class="unit">〜</span><select id="b' + i + 'ExTo">' + optionList(boatNumbers, 3) + '</select></div>' +
         '<div class="cond limited2">展示タイム 会場平均比 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExDevDir"><option value="">指定なし</option><option value="faster_by">平均より速い</option><option value="slower_by">平均より遅い</option></select><input type="number" id="b' + i + 'ExDev" value="0.10" min="0" max="1" step="0.05"><span class="unit">秒以上</span></div>' +
@@ -227,7 +255,38 @@
     byId('pos1').innerHTML = optionList(boatNumbers, 1);
     byId('pos2').innerHTML = optionList(boatNumbers, 2);
     byId('pos3').innerHTML = optionList(boatNumbers, 3);
+    byId('raceNoFrom').innerHTML += optionList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '');
+    byId('raceNoTo').innerHTML += optionList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '');
     byId('boats').innerHTML = boatNumbers.map(boatBlock).join('');
+
+    function compareRow() {
+      var metricOptions = compareMetrics.map(function (item) {
+        return '<option value="' + item[0] + '">' + item[1] + '</option>';
+      }).join('');
+      return '<div class="compare-row">' +
+        '<select class="compare-boat" aria-label="比較する艇">' + optionList(boatNumbers, 1) + '</select><span class="unit">号艇の</span>' +
+        '<select class="compare-metric">' + metricOptions + '</select><span class="unit">が</span>' +
+        '<select class="compare-other" aria-label="比較相手の艇">' + optionList(boatNumbers, 2) + '</select><span class="unit">号艇より</span>' +
+        '<input class="compare-margin" type="number" value="0" min="0" step="0.01" aria-label="差"><span class="compare-unit unit"></span>' +
+        '<select class="compare-op"><option value="ge">以上高い</option><option value="le">以上低い</option></select>' +
+        '<button type="button" class="remove-compare compact-button" aria-label="比較条件を削除">削除</button></div>';
+    }
+    function updateCompareUnit(row) {
+      var metric = row.querySelector('.compare-metric').value;
+      var definition = compareMetrics.find(function (item) { return item[0] === metric; });
+      row.querySelector('.compare-unit').textContent = definition ? definition[2] : '';
+    }
+    byId('btnAddCompare').addEventListener('click', function () {
+      byId('compareRows').insertAdjacentHTML('beforeend', compareRow());
+    });
+    byId('compareRows').addEventListener('change', function (event) {
+      var row = event.target.closest('.compare-row');
+      if (row) updateCompareUnit(row);
+    });
+    byId('compareRows').addEventListener('click', function (event) {
+      var button = event.target.closest('.remove-compare');
+      if (button) button.closest('.compare-row').remove();
+    });
 
     document.addEventListener('click', function (event) {
       var chip = event.target.closest('.wchip');
@@ -256,9 +315,12 @@
       if (classes.length) boat.class = classes;
       var racer = byId('b' + i + 'Racer').value.trim();
       if (racer) boat.racer_id = racer;
+      addRange(boat, 'age', 'b' + i + 'AgeCmp', 'b' + i + 'Age');
       addRange(boat, 'avg_st', 'b' + i + 'AvgStCmp', 'b' + i + 'AvgSt');
       addRange(boat, 'national_rate', 'b' + i + 'NationalCmp', 'b' + i + 'National');
       addRange(boat, 'local_rate', 'b' + i + 'LocalCmp', 'b' + i + 'Local');
+      addRange(boat, 'national_rate2', 'b' + i + 'National2Cmp', 'b' + i + 'National2');
+      addRange(boat, 'local_rate2', 'b' + i + 'Local2Cmp', 'b' + i + 'Local2');
       addRange(boat, 'motor_rate2', 'b' + i + 'MotorCmp', 'b' + i + 'Motor');
       addRange(boat, 'ex_st', 'b' + i + 'ExStCmp', 'b' + i + 'ExSt');
       addRange(boat, 'accident_rate', 'b' + i + 'AccidentCmp', 'b' + i + 'Accident');
@@ -284,6 +346,10 @@
       if (result.bet.type !== 'tansho') result.bet.second = Number(byId('pos2').value);
       if (result.bet.type === 'sanrentan') result.bet.third = Number(byId('pos3').value);
       if (byId('venue').value) result.venue = Number(byId('venue').value);
+      var raceNo = {};
+      if (byId('raceNoFrom').value) raceNo.min = Number(byId('raceNoFrom').value);
+      if (byId('raceNoTo').value) raceNo.max = Number(byId('raceNoTo').value);
+      if (Object.keys(raceNo).length) result.race_no = raceNo;
       var weather = Array.from(document.querySelectorAll('#weatherChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
       if (weather.length) result.weather = weather;
       var wind = byId('windStrength').value;
@@ -301,6 +367,18 @@
       var boats = {};
       boatNumbers.forEach(function (i) { var boat = collectBoat(i); if (Object.keys(boat).length) boats[String(i)] = boat; });
       if (Object.keys(boats).length) result.boats = boats;
+      var comparisons = Array.from(document.querySelectorAll('#compareRows .compare-row')).map(function (row) {
+        var metric = row.querySelector('.compare-metric').value;
+        if (!metric) return null;
+        return {
+          metric: metric,
+          boat: Number(row.querySelector('.compare-boat').value),
+          op: row.querySelector('.compare-op').value,
+          other: Number(row.querySelector('.compare-other').value),
+          margin: Number(row.querySelector('.compare-margin').value)
+        };
+      }).filter(Boolean);
+      if (comparisons.length) result.compare = comparisons;
       if (byId('fast').checked) result.fast = true;
       return result;
     }
@@ -403,6 +481,7 @@
     byId('searchForm').addEventListener('reset', function () {
       window.setTimeout(function () {
         document.querySelectorAll('.wchip.on').forEach(function (chip) { chip.classList.remove('on'); chip.setAttribute('aria-pressed', 'false'); });
+        byId('compareRows').innerHTML = '';
         refreshBetUI(); refreshBoatSummaries();
         lastConditions = null; lastBacktest = null; byId('btnSaveStrategy').disabled = true;
         byId('resultArea').innerHTML = '<div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>';

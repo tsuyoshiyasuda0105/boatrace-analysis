@@ -30,15 +30,28 @@ def _row(race_id: str, race_date: str, **overrides: object) -> dict[str, object]
         "daypart": "ナイター",
         "b1_class": "A1",
         "b1_racer_id": 4320,
+        "b1_age": 30,
         "b1_avg_st": 0.12,
         "b1_national_rate": 6.5,
         "b1_local_rate": 6.1,
+        "b1_national_rate2": 45.0,
+        "b1_local_rate2": 41.0,
         "b1_motor_rate2": 42.0,
+        "b1_ex_time": 6.70,
         "b1_ex_rank": 1,
         "b1_ex_dev": -0.15,
         "b1_ex_st": 0.08,
         "b1_kimarite_rate_nige": 70.0,
         "b1_accident_rate": 0.6,
+        "b2_age": 35,
+        "b2_avg_st": 0.14,
+        "b2_national_rate": 5.5,
+        "b2_local_rate": 5.1,
+        "b2_national_rate2": 35.0,
+        "b2_local_rate2": 31.0,
+        "b2_motor_rate2": 37.0,
+        "b2_ex_time": 6.80,
+        "b2_ex_st": 0.10,
         "result_tansho": 1,
         "payout_tansho": 180,
         "result_nirentan": "1-2",
@@ -75,9 +88,12 @@ def fixture_db(tmp_path: Path) -> Path:
                 weather="曇",
                 b1_class="A2",
                 b1_racer_id=5000,
+                b1_age=40,
                 b1_avg_st=0.18,
                 b1_national_rate=5.0,
                 b1_local_rate=4.5,
+                b1_national_rate2=30.0,
+                b1_local_rate2=20.0,
                 b1_motor_rate2=30.0,
                 b1_ex_rank=4,
                 b1_ex_dev=None,
@@ -158,9 +174,12 @@ def test_condition_null_is_excluded_only_when_condition_references_column(fixtur
     [
         {"class": ["A1", "B1"]},
         {"racer_id": 4320},
+        {"age": {"min": 25, "max": 35}},
         {"avg_st": {"min": 0.10, "max": 0.15}},
         {"national_rate": {"min": 6.0}},
         {"local_rate": {"min": 6.0}},
+        {"national_rate2": {"min": 40.0}},
+        {"local_rate2": {"min": 40.0}},
         {"motor_rate2": {"min": 40.0, "max": 45.0}},
         {"ex_rank": {"min": 1, "max": 3}},
         {"ex_dev": {"faster_by": 0.1}},
@@ -192,6 +211,147 @@ def test_slower_by_uses_positive_exhibition_deviation(tmp_path: Path) -> None:
         fast=True,
     )
     assert result["n"] == 1
+
+
+@pytest.mark.parametrize(
+    ("comparison", "overrides"),
+    [
+        (
+            {"metric": "motor_rate2", "boat": 1, "op": "ge", "other": 2, "margin": 5},
+            {"b1_motor_rate2": 42.0, "b2_motor_rate2": 37.0},
+        ),
+        (
+            {"metric": "avg_st", "boat": 1, "op": "le", "other": 2, "margin": 0.02},
+            {"b1_avg_st": 0.12, "b2_avg_st": 0.14},
+        ),
+    ],
+)
+def test_compare_ge_le_margin_boundary_is_inclusive(
+    tmp_path: Path, comparison: dict[str, object], overrides: dict[str, object]
+) -> None:
+    passing = _row("pass", "2025-01-01", schema_version=3, **overrides)
+    db = _make_db(tmp_path / "compare-boundary.db", [passing])
+
+    result = search_roi(db, {"compare": [comparison]}, fast=True)
+
+    assert result["n"] == 1
+    assert result["excluded"]["condition_null"] == 0
+
+
+@pytest.mark.parametrize(
+    ("comparison", "overrides"),
+    [
+        (
+            {"metric": "motor_rate2", "boat": 1, "op": "ge", "other": 2, "margin": 5},
+            {"b1_motor_rate2": 41.99, "b2_motor_rate2": 37.0},
+        ),
+        (
+            {"metric": "avg_st", "boat": 1, "op": "le", "other": 2, "margin": 0.02},
+            {"b1_avg_st": 0.121, "b2_avg_st": 0.14},
+        ),
+    ],
+)
+def test_compare_ge_le_rejects_values_inside_margin(
+    tmp_path: Path, comparison: dict[str, object], overrides: dict[str, object]
+) -> None:
+    failing = _row("fail", "2025-01-01", schema_version=3, **overrides)
+    db = _make_db(tmp_path / "compare-fail.db", [failing])
+
+    assert search_roi(db, {"compare": [comparison]}, fast=True)["n"] == 0
+
+
+def test_compare_null_on_either_side_is_condition_null(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "compare-null.db",
+        [_row("null", "2025-01-01", schema_version=3, b2_motor_rate2=None)],
+    )
+    comparison = {"metric": "motor_rate2", "boat": 1, "op": "ge", "other": 2, "margin": 5}
+
+    result = search_roi(db, {"compare": [comparison]}, fast=True)
+
+    assert result["n"] == 0
+    assert result["excluded"] == {"result_missing": 0, "condition_null": 1}
+
+
+def test_multiple_compare_conditions_are_combined_with_and(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "compare-and.db",
+        [
+            _row("both", "2025-01-01", schema_version=3),
+            _row("one-only", "2025-01-01", schema_version=3, b1_age=40),
+        ],
+    )
+    comparisons = [
+        {"metric": "motor_rate2", "boat": 1, "op": "ge", "other": 2, "margin": 5},
+        {"metric": "age", "boat": 1, "op": "le", "other": 2, "margin": 5},
+    ]
+
+    result = search_roi(db, {"compare": comparisons}, fast=True)
+
+    assert result["n"] == 1
+
+
+@pytest.mark.parametrize(
+    ("comparison", "message"),
+    [
+        ({"metric": "drop_table", "boat": 1, "op": "ge", "other": 2, "margin": 0}, "metric"),
+        ({"metric": "age", "boat": 7, "op": "ge", "other": 2, "margin": 0}, "boats"),
+        ({"metric": "age", "boat": 2, "op": "ge", "other": 2, "margin": 0}, "must differ"),
+        ({"metric": "age", "boat": 1, "op": "ge", "other": 2, "margin": -1}, "non-negative"),
+    ],
+)
+def test_compare_validates_whitelists_and_invariants(
+    fixture_db: Path, comparison: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        search_roi(fixture_db, {"compare": [comparison]}, fast=True)
+
+
+def test_race_number_range_is_inclusive(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "race-number.db",
+        [
+            _row("r6", "2025-01-01", schema_version=3, race_no=6),
+            _row("r7", "2025-01-01", schema_version=3, race_no=7),
+            _row("r12", "2025-01-01", schema_version=3, race_no=12),
+        ],
+    )
+
+    result = search_roi(db, {"race_no": {"min": 7, "max": 12}}, fast=True)
+
+    assert result["n"] == 2
+
+
+@pytest.mark.parametrize("key", ["age", "national_rate2", "local_rate2"])
+def test_step5_boat_ranges_exclude_nulls(
+    tmp_path: Path, key: str
+) -> None:
+    column = f"b1_{key}"
+    db = _make_db(
+        tmp_path / f"{key}.db",
+        [
+            _row("match", "2025-01-01", schema_version=3, **{column: 40}),
+            _row("miss", "2025-01-01", schema_version=3, **{column: 20}),
+            _row("null", "2025-01-01", schema_version=3, **{column: None}),
+        ],
+    )
+
+    result = search_roi(db, {"boats": {"1": {key: {"min": 30, "max": 50}}}}, fast=True)
+
+    assert result["n"] == 1
+    assert result["excluded"]["condition_null"] == 1
+
+
+def test_schema_v2_and_v3_rows_coexist(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "schema-coexist.db",
+        [
+            _row("v2", "2025-01-01", schema_version=2),
+            _row("v3", "2025-01-02", schema_version=3),
+        ],
+    )
+
+    assert search_roi(db, {}, fast=True)["n"] == 2
 
 
 @pytest.mark.parametrize(

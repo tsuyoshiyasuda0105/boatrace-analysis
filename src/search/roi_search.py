@@ -28,18 +28,23 @@ TOP_LEVEL_KEYS = frozenset(
         "class_mix",
         "day_index",
         "daypart",
+        "race_no",
         "date_from",
         "date_to",
         "boats",
+        "compare",
     }
 )
 BOAT_KEYS = frozenset(
     {
         "class",
         "racer_id",
+        "age",
         "avg_st",
         "national_rate",
         "local_rate",
+        "national_rate2",
+        "local_rate2",
         "motor_rate2",
         "ex_rank",
         "ex_dev",
@@ -49,11 +54,25 @@ BOAT_KEYS = frozenset(
     }
 )
 RANGE_KEYS = frozenset({"min", "max"})
+COMPARE_KEYS = frozenset({"metric", "boat", "op", "other", "margin"})
+COMPARE_METRICS = frozenset(
+    {
+        "motor_rate2",
+        "avg_st",
+        "ex_time",
+        "ex_st",
+        "national_rate",
+        "local_rate",
+        "national_rate2",
+        "age",
+    }
+)
 EX_DEV_KEYS = frozenset({"faster_by", "slower_by"})
 KIMARITE_KEYS = frozenset({"nige", "sashi", "makuri", "makurizashi", "nuki", "megumare"})
 BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
 HISTORY_CUTOFF = "2023-05-01"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
+SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 
 
 @dataclass(frozen=True)
@@ -174,10 +193,19 @@ def _add_range(
 
 
 def _compile_conditions(conditions: Mapping[str, Any]) -> tuple[str, list[Any], list[str], _Bet]:
+    """Compile validated conditions into parameterized SQL.
+
+    A comparison always evaluates the signed difference between two boats:
+    ``value(boat) - value(other) >= margin`` for ``op='ge'`` and
+    ``value(boat) - value(other) <= -margin`` for ``op='le'``.  ``margin``
+    must be non-negative.  Metric-derived column names come only from the
+    fixed whitelist above; every margin remains a bound SQL parameter.
+    """
+
     _known_keys(conditions, TOP_LEVEL_KEYS, "condition")
     bet = _parse_bet(conditions.get("bet"))
-    filters: list[str] = ["schema_version = ?"]
-    params: list[Any] = [2]
+    filters: list[str] = ["schema_version IN (?, ?)"]
+    params: list[Any] = list(SUPPORTED_SCHEMA_VERSIONS)
     null_columns: set[str] = set()
 
     scalar_columns = {
@@ -213,6 +241,29 @@ def _compile_conditions(conditions: Mapping[str, Any]) -> tuple[str, list[Any], 
     if conditions.get("wind_speed") is not None:
         _add_range(filters, params, null_columns, "wind_speed", conditions["wind_speed"], "wind_speed")
 
+    if conditions.get("race_no") is not None:
+        label = "race_no"
+        raw = _mapping(conditions["race_no"], label)
+        _known_keys(raw, RANGE_KEYS, label)
+        comparisons: list[str] = []
+        values: list[int] = []
+        if raw.get("min") is not None:
+            minimum = _integer(raw["min"], "race_no.min")
+            if not 1 <= minimum <= 12:
+                raise ValueError("race_no.min must be from 1 through 12")
+            comparisons.append("race_no >= ?")
+            values.append(minimum)
+        if raw.get("max") is not None:
+            maximum = _integer(raw["max"], "race_no.max")
+            if not 1 <= maximum <= 12:
+                raise ValueError("race_no.max must be from 1 through 12")
+            comparisons.append("race_no <= ?")
+            values.append(maximum)
+        if len(values) == 2 and values[0] > values[1]:
+            raise ValueError("race_no.min must not exceed max")
+        if comparisons:
+            _add_predicate(filters, params, null_columns, "race_no", " AND ".join(comparisons), values)
+
     history_condition = False
     boats = conditions.get("boats")
     if boats is not None:
@@ -234,7 +285,18 @@ def _compile_conditions(conditions: Mapping[str, Any]) -> tuple[str, list[Any], 
                 value = _integer(boat["racer_id"], f"boats.{boat_key}.racer_id")
                 column = prefix + "racer_id"
                 _add_predicate(filters, params, null_columns, column, f"{column} = ?", [value])
-            for key in ("avg_st", "national_rate", "local_rate", "motor_rate2", "ex_rank", "ex_st", "accident_rate"):
+            for key in (
+                "age",
+                "avg_st",
+                "national_rate",
+                "local_rate",
+                "national_rate2",
+                "local_rate2",
+                "motor_rate2",
+                "ex_rank",
+                "ex_st",
+                "accident_rate",
+            ):
                 if boat.get(key) is not None:
                     active = _add_range(
                         filters,
@@ -280,6 +342,41 @@ def _compile_conditions(conditions: Mapping[str, Any]) -> tuple[str, list[Any], 
                 rate = _number(rate_min, f"{label}.rate_min")
                 _add_predicate(filters, params, null_columns, column, f"{column} >= ?", [rate])
                 history_condition = True
+
+    comparisons = conditions.get("compare")
+    if comparisons is not None:
+        for index, item in enumerate(_sequence(comparisons, "compare")):
+            label = f"compare.{index}"
+            raw = _mapping(item, label)
+            _known_keys(raw, COMPARE_KEYS, label)
+            missing = sorted(key for key in COMPARE_KEYS if raw.get(key) is None)
+            if missing:
+                raise ValueError(f"{label} missing key(s): {', '.join(missing)}")
+            metric = raw["metric"]
+            if not isinstance(metric, str) or metric not in COMPARE_METRICS:
+                raise ValueError(f"{label}.metric is not supported")
+            boat = _integer(raw["boat"], f"{label}.boat")
+            other = _integer(raw["other"], f"{label}.other")
+            if not 1 <= boat <= 6 or not 1 <= other <= 6:
+                raise ValueError(f"{label} boats must be from 1 through 6")
+            if boat == other:
+                raise ValueError(f"{label}.boat and other must differ")
+            op = raw["op"]
+            if not isinstance(op, str) or op not in {"ge", "le"}:
+                raise ValueError(f"{label}.op must be ge or le")
+            margin = _number(raw["margin"], f"{label}.margin")
+            if margin < 0:
+                raise ValueError(f"{label}.margin must be non-negative")
+            left = f"b{boat}_{metric}"
+            right = f"b{other}_{metric}"
+            operator = ">=" if op == "ge" else "<="
+            threshold = "?" if op == "ge" else "(0 - ?)"
+            filters.append(
+                f"((({left} - {right}) {operator} {threshold}) "
+                f"OR {left} IS NULL OR {right} IS NULL)"
+            )
+            params.append(margin)
+            null_columns.update((left, right))
 
     date_from = conditions.get("date_from")
     date_to = conditions.get("date_to")

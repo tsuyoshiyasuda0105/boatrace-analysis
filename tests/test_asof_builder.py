@@ -7,8 +7,10 @@ import sqlite3
 import pytest
 
 from src.features.asof_builder import (
+    ALL_COLUMNS,
     build_features,
     coverage_rows,
+    create_output_schema,
     exhibition_metrics,
     verify_features,
 )
@@ -177,7 +179,19 @@ def _complete_fixture() -> sqlite3.Connection:
         racer = 1000 + boat
         conn.execute(
             "INSERT OR IGNORE INTO racers VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (racer, f"racer-{racer}", None, 1, 1, None, 2 if boat == 6 else 1, None, None, None, "2025-01-01"),
+            (
+                racer,
+                f"racer-{racer}",
+                None,
+                1,
+                1,
+                "2000-06-02" if boat == 1 else "2000-06-03",
+                2 if boat == 6 else 1,
+                None,
+                None,
+                None,
+                "2025-01-01",
+            ),
         )
         _entry(conn, "target", boat, racer, classes[boat])
         conn.execute(
@@ -291,12 +305,53 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_avg_st"] == pytest.approx(0.11)
     assert row["b1_national_rate"] == pytest.approx(11.0)
     assert row["b1_local_rate"] == pytest.approx(21.0)
+    assert row["b1_national_rate2"] == pytest.approx(51.0)
+    assert row["b1_local_rate2"] == pytest.approx(41.0)
+    assert row["b1_age"] == 25
+    assert row["b2_age"] == 24
+    assert row["schema_version"] == 3
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
     assert [row[f"b{boat}_ex_rank"] for boat in range(1, 7)] == [1, 2, 2, 4, 5, 6]
     assert row["b1_ex_dev"] == pytest.approx(6.70 - (6.70 + 6.80 + 6.80 + 7.00 + 7.10 + 7.20) / 6)
     assert row["b6_ex_dev"] == pytest.approx(7.20 - (6.70 + 6.80 + 6.80 + 7.00 + 7.10 + 7.20) / 6)
+
+
+def test_missing_or_invalid_birth_date_keeps_age_null(tmp_path):
+    source = _complete_fixture()
+    source.execute("UPDATE racers SET birth_date=NULL WHERE racer_number=1001")
+    source.execute("UPDATE racers SET birth_date='invalid' WHERE racer_number=1002")
+    output = tmp_path / "features.db"
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert row["b1_age"] is None
+    assert row["b2_age"] is None
+
+
+def test_schema_v2_rows_are_additively_migrated_and_preserved(tmp_path):
+    output = tmp_path / "legacy-v2.db"
+    new_suffixes = ("_age", "_national_rate2", "_local_rate2")
+    legacy_columns = [
+        (name, kind) for name, kind in ALL_COLUMNS if not name.endswith(new_suffixes)
+    ]
+    with sqlite3.connect(output) as connection:
+        ddl = ", ".join(f"{name} {kind}" for name, kind in legacy_columns)
+        connection.execute(f"CREATE TABLE asof_race_features ({ddl})")
+        connection.execute(
+            "INSERT INTO asof_race_features "
+            "(race_id,race_date,asof_date,built_at,schema_version) VALUES (?,?,?,?,?)",
+            ("legacy", "2025-01-01", "2024-12-31", "fixed", 2),
+        )
+        create_output_schema(connection)
+        row = connection.execute(
+            "SELECT schema_version,b1_age,b1_national_rate2,b1_local_rate2 "
+            "FROM asof_race_features WHERE race_id='legacy'"
+        ).fetchone()
+
+    assert row == (2, None, None, None)
 
 
 def test_class_gender_conditions_and_three_payout_types(tmp_path):

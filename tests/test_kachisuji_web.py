@@ -27,15 +27,28 @@ def _row(race_id: str, race_date: str, **overrides: object) -> dict[str, object]
         "daypart": "デイ",
         "b1_class": "A1",
         "b1_racer_id": 4320,
+        "b1_age": 30,
         "b1_avg_st": 0.12,
         "b1_national_rate": 7.1,
         "b1_local_rate": 6.8,
+        "b1_national_rate2": 45.0,
+        "b1_local_rate2": 40.0,
         "b1_motor_rate2": 42.0,
+        "b1_ex_time": 6.70,
         "b1_ex_rank": 1,
         "b1_ex_dev": -0.15,
         "b1_ex_st": 0.08,
         "b1_kimarite_rate_nige": 70.0,
         "b1_accident_rate": 0.4,
+        "b2_age": 35,
+        "b2_avg_st": 0.15,
+        "b2_national_rate": 5.5,
+        "b2_local_rate": 5.0,
+        "b2_national_rate2": 35.0,
+        "b2_local_rate2": 30.0,
+        "b2_motor_rate2": 35.0,
+        "b2_ex_time": 6.80,
+        "b2_ex_st": 0.10,
         "result_tansho": 1,
         "payout_tansho": 180,
         "result_nirentan": "1-2",
@@ -109,7 +122,11 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="weatherChips"',
         'id="windStrength"',
         'id="classMix"',
+        'id="raceNoFrom"',
         'id="boats"',
+        'id="compareRows"',
+        "全国2連対率",
+        "⚖ 艇間比較",
         'id="dateFrom"',
         'id="dateTo"',
         "条件判定不能で除外した件数",
@@ -187,6 +204,36 @@ def test_boat_class_motor_and_exhibition_conditions_apply_through_api(client) ->
     assert result["roi"] == 180.0
 
 
+def test_step5_ranges_and_compare_apply_through_api(client) -> None:
+    response = client.post(
+        "/api/search",
+        json={
+            "bet": {"type": "tansho", "first": 1},
+            "race_no": {"min": 1, "max": 12},
+            "boats": {
+                "1": {
+                    "age": {"max": 32},
+                    "national_rate2": {"min": 40},
+                    "local_rate2": {"min": 35},
+                }
+            },
+            "compare": [
+                {
+                    "metric": "motor_rate2",
+                    "boat": 1,
+                    "op": "ge",
+                    "other": 2,
+                    "margin": 5,
+                }
+            ],
+            "fast": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["n"] == 1
+
+
 def test_number_and_number_plus_name_racer_inputs_are_supported(client) -> None:
     for racer in ("4320", "4320 峰竜太"):
         response = client.post(
@@ -216,3 +263,14 @@ def test_healthz(client) -> None:
 
     assert response.status_code == 200
     assert response.get_json() == {"status": "ok"}
+
+
+def test_double_click_launcher_is_ascii_and_has_required_guards() -> None:
+    launcher = Path(__file__).resolve().parents[1] / "scripts" / "start_kachisuji.bat"
+    content = launcher.read_bytes()
+    text = content.decode("ascii")
+
+    assert "http://127.0.0.1:8080/healthz" in text
+    assert "scripts\\run_kachisuji_web.py --port 8080" in text
+    assert "start \"\" http://localhost:8080" in text
+    assert "Closing this window stops the server" in text

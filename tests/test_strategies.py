@@ -41,15 +41,28 @@ def _row(race_id: str, race_no: int, **overrides: object) -> dict[str, object]:
         "daypart": "デイ",
         "b1_class": "A1",
         "b1_racer_id": 4320,
+        "b1_age": 30,
         "b1_avg_st": 0.12,
         "b1_national_rate": 7.1,
         "b1_local_rate": 6.8,
+        "b1_national_rate2": 45.0,
+        "b1_local_rate2": 40.0,
         "b1_motor_rate2": 42.0,
+        "b1_ex_time": 6.70,
         "b1_ex_rank": 1,
         "b1_ex_dev": -0.15,
         "b1_ex_st": 0.08,
         "b1_kimarite_rate_nige": 70.0,
         "b1_accident_rate": 0.4,
+        "b2_age": 35,
+        "b2_avg_st": 0.15,
+        "b2_national_rate": 5.5,
+        "b2_local_rate": 5.0,
+        "b2_national_rate2": 35.0,
+        "b2_local_rate2": 30.0,
+        "b2_motor_rate2": 35.0,
+        "b2_ex_time": 6.80,
+        "b2_ex_st": 0.10,
     }
     row.update(overrides)
     return row
@@ -60,7 +73,7 @@ def search_db(tmp_path: Path) -> Path:
     path = tmp_path / "search.db"
     rows = [
         _row("confirmed", 1),
-        _row("pending", 2, b1_ex_rank=None),
+        _row("pending", 2, b1_ex_rank=None, b2_ex_time=None),
         _row("prior-miss", 3, b1_class="B1", b1_ex_rank=None),
         _row("prior-null", 4, b1_class=None),
     ]
@@ -136,6 +149,49 @@ def test_same_day_null_is_pending_but_prior_day_miss_or_null_is_not(
     assert [item["race_id"] for item in result["pending"]] == ["pending"]
     assert result["pending"][0]["status"] == "pending"
     assert result["pending"][0]["undetermined_columns"] == ["b1_ex_rank"]
+
+
+def test_saved_compare_strategy_round_trips_and_matches(
+    search_db: Path, strategy_db: Path
+) -> None:
+    comparison = {
+        "metric": "motor_rate2",
+        "boat": 1,
+        "op": "ge",
+        "other": 2,
+        "margin": 5,
+    }
+    conditions = {
+        "race_no": {"min": 1, "max": 2},
+        "compare": [comparison],
+        "bet": BET,
+    }
+    strategy_id = save_strategy("艇間比較", conditions, db_path=strategy_db)
+
+    saved = get_strategy(strategy_id, db_path=strategy_db)
+    result = match_races(strategy_id, "2026-08-16", search_db, strategy_db)
+
+    assert saved is not None
+    assert saved["conditions"] == conditions
+    assert [item["race_id"] for item in result["matched"]] == ["confirmed", "pending"]
+
+
+def test_same_day_compare_null_is_pending(
+    search_db: Path, strategy_db: Path
+) -> None:
+    conditions = {
+        "boats": {"1": {"class": ["A1"]}},
+        "compare": [
+            {"metric": "ex_time", "boat": 1, "op": "le", "other": 2, "margin": 0.05}
+        ],
+        "bet": BET,
+    }
+
+    result = match_races(conditions, "2026-08-16", search_db, strategy_db)
+
+    assert [item["race_id"] for item in result["matched"]] == ["confirmed"]
+    assert [item["race_id"] for item in result["pending"]] == ["pending"]
+    assert result["pending"][0]["undetermined_columns"] == ["b2_ex_time"]
 
 
 def test_no_races_on_date_is_safe(search_db: Path, strategy_db: Path) -> None:

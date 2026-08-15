@@ -11,7 +11,7 @@ import re
 import sqlite3
 from typing import Any, Mapping
 
-from src.search.roi_search import _compile_conditions
+from src.search.roi_search import SUPPORTED_SCHEMA_VERSIONS, _compile_conditions
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_strategies_owner_active
 _SAME_DAY_COLUMNS = frozenset({"weather", "wind_speed"}) | frozenset(
     f"b{boat}_{suffix}"
     for boat in range(1, 7)
-    for suffix in ("ex_rank", "ex_dev", "ex_st")
+    for suffix in ("ex_time", "ex_rank", "ex_dev", "ex_st")
 )
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 _BET_LABELS = {"tansho": "単勝", "nirentan": "2連単", "sanrentan": "3連単"}
@@ -237,8 +237,9 @@ def match_races(
     with _read_connect(search_db) as connection:
         races_on_date = int(
             connection.execute(
-                "SELECT COUNT(*) FROM asof_race_features WHERE race_date = ? AND schema_version = ?",
-                (normalized_date, 2),
+                "SELECT COUNT(*) FROM asof_race_features "
+                "WHERE race_date = ? AND schema_version IN (?, ?)",
+                (normalized_date, *SUPPORTED_SCHEMA_VERSIONS),
             ).fetchone()[0]
         )
         rows = connection.execute(sql, [normalized_date, *params]).fetchall()
