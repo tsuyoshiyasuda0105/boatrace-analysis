@@ -118,6 +118,8 @@ def save_strategy(
         raise ValueError("name must not be empty")
     if not isinstance(owner, str) or not owner.strip():
         raise ValueError("owner must not be empty")
+    if backtest is not None and not isinstance(backtest, Mapping):
+        raise ValueError("バックテスト結果はJSONオブジェクトまたはnullで指定してください")
     normalized = _validated_conditions(conditions)
     conditions_json = _json_text(normalized, "conditions")
     backtest_json = None if backtest is None else _json_text(backtest, "backtest")

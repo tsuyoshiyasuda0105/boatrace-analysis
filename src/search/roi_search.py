@@ -148,7 +148,7 @@ def _parse_bet(value: Any) -> _Bet:
         raise ValueError(f"unused bet key(s) for {kind}: {', '.join(surplus)}")
     legs = [_integer(raw[key], f"bet.{key}") for key in leg_names]
     if any(leg < 1 or leg > 6 for leg in legs) or len(set(legs)) != len(legs):
-        raise ValueError("bet boats must be distinct integers from 1 through 6")
+        raise ValueError("買い目は1〜6号艇から、着順ごとに異なる艇番を選んでください")
     expected: int | str = legs[0] if kind == "tansho" else "-".join(map(str, legs))
     return _Bet(kind, f"result_{kind}", f"payout_{kind}", expected)
 
@@ -360,7 +360,7 @@ def _compile_conditions(conditions: Mapping[str, Any]) -> tuple[str, list[Any], 
             if not 1 <= boat <= 6 or not 1 <= other <= 6:
                 raise ValueError(f"{label} boats must be from 1 through 6")
             if boat == other:
-                raise ValueError(f"{label}.boat and other must differ")
+                raise ValueError("艇間比較は異なる号艇同士で指定してください。同じ艇同士は比較できません")
             op = raw["op"]
             if not isinstance(op, str) or op not in {"ge", "le"}:
                 raise ValueError(f"{label}.op must be ge or le")

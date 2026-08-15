@@ -27,6 +27,28 @@ DEFAULT_STRATEGY_DB_PATH = PROJECT_ROOT / "data" / "kachisuji_strategies.db"
 _RACER_NUMBER = re.compile(r"^\s*(\d+)(?:\s+.*)?$")
 
 
+def _user_validation_message(error: ValueError) -> str:
+    """Hide validator field paths and English implementation details from the UI."""
+
+    message = str(error)
+    user_message_prefixes = (
+        "検索条件は",
+        "リクエストは",
+        "高速集計の指定は",
+        "選手名には",
+        "買い目は",
+        "艇間比較は",
+        "バックテスト結果は",
+    )
+    if message.startswith(user_message_prefixes):
+        return message
+    if message == "name must not be empty":
+        return "手法名を入力してください"
+    if message == "date must be an ISO date":
+        return "日付はYYYY-MM-DD形式で指定してください"
+    return "入力内容に誤りがあります。各項目の値を確認してください"
+
+
 def _normalize_request(payload: Any) -> tuple[dict[str, Any], bool]:
     if not isinstance(payload, Mapping):
         raise ValueError("検索条件はJSONオブジェクトで指定してください")
@@ -34,7 +56,7 @@ def _normalize_request(payload: Any) -> tuple[dict[str, Any], bool]:
     conditions = deepcopy(dict(payload))
     fast = conditions.pop("fast", False)
     if not isinstance(fast, bool):
-        raise ValueError("fastは真偽値で指定してください")
+        raise ValueError("高速集計の指定はtrueまたはfalseにしてください")
 
     boats = conditions.get("boats")
     if boats is not None:
@@ -79,7 +101,7 @@ def create_app(
             conditions, fast = _normalize_request(request.get_json(silent=True))
             return jsonify(search_roi(app.config["KACHISUJI_DB"], conditions, fast=fast))
         except ValueError as exc:
-            return jsonify(error=str(exc)), 400
+            return jsonify(error=_user_validation_message(exc)), 400
         except Exception as exc:  # pragma: no cover - exercised with a forced failure
             app.logger.exception("kachisuji search failed")
             return jsonify(error=str(exc)), 500
@@ -99,7 +121,7 @@ def create_app(
             )
             return jsonify(id=strategy_id)
         except ValueError as exc:
-            return jsonify(error=str(exc)), 400
+            return jsonify(error=_user_validation_message(exc)), 400
         except Exception as exc:  # pragma: no cover - exercised with a forced failure
             app.logger.exception("kachisuji strategy save failed")
             return jsonify(error=str(exc)), 500
@@ -140,7 +162,7 @@ def create_app(
                 )
             )
         except ValueError as exc:
-            return jsonify(error=str(exc)), 400
+            return jsonify(error=_user_validation_message(exc)), 400
         except Exception as exc:  # pragma: no cover - exercised with a forced failure
             app.logger.exception("kachisuji strategy matching failed")
             return jsonify(error=str(exc)), 500
@@ -156,7 +178,7 @@ def create_app(
                 )
             )
         except ValueError as exc:
-            return jsonify(error=str(exc)), 400
+            return jsonify(error=_user_validation_message(exc)), 400
         except Exception as exc:  # pragma: no cover - exercised with a forced failure
             app.logger.exception("kachisuji all-strategy matching failed")
             return jsonify(error=str(exc)), 500

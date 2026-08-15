@@ -51,7 +51,6 @@ def test_s1_search_renders_result_kpis(page):
 
 
 # S2: ticket validation and unused legs.
-@pytest.mark.xfail(strict=True, reason="BUG-001: duplicated ticket exposes an internal English validator message")
 def test_s2_duplicate_ticket_is_rejected_with_visible_guidance(page):
     page.locator("#pos2").select_option("1")
     page.locator("#fast").check()
@@ -118,7 +117,6 @@ def test_s3_comparison_units_change_with_metric(page, metric, unit):
     expect(page.locator(".compare-row")).to_have_count(0)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-002: same-boat comparison exposes an internal English field path")
 def test_s3_same_boat_comparison_has_clear_visible_error(page):
     page.locator("#btnAddCompare").click()
     row = page.locator(".compare-row")
@@ -264,7 +262,6 @@ def test_s6_strategy_malformed_payload_is_400(page, payload):
     assert response.status == 400, response.text()
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-003: strategy API stores a non-object backtest payload")
 def test_s6_strategy_rejects_non_object_backtest(page):
     response = post_json(page, "/api/strategies", {"name": "broken-backtest", "conditions": valid_conditions(), "backtest": "not-an-object"})
     assert response.status == 400, response.text()

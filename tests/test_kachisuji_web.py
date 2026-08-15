@@ -159,11 +159,38 @@ def test_search_returns_expected_step2_json_structure(client) -> None:
     assert result["excluded"] == {"result_missing": 1, "condition_null": 0}
 
 
-def test_unknown_condition_key_returns_400(client) -> None:
-    response = client.post("/api/search", json={"unknown": True})
+@pytest.mark.parametrize("unknown_key", ["unknown", "未知キー"])
+def test_unknown_condition_key_returns_400(client, unknown_key: str) -> None:
+    response = client.post("/api/search", json={unknown_key: True})
 
     assert response.status_code == 400
-    assert "unknown condition key" in response.get_json()["error"]
+    assert response.get_json()["error"] == "入力内容に誤りがあります。各項目の値を確認してください"
+
+
+def test_duplicate_ticket_returns_japanese_guidance(client) -> None:
+    response = client.post(
+        "/api/search",
+        json={"bet": {"type": "sanrentan", "first": 1, "second": 1, "third": 3}},
+    )
+
+    assert response.status_code == 400
+    assert "着順ごとに異なる艇番" in response.get_json()["error"]
+
+
+def test_same_boat_comparison_returns_japanese_guidance(client) -> None:
+    response = client.post(
+        "/api/search",
+        json={
+            "compare": [
+                {"metric": "age", "boat": 1, "op": "ge", "other": 1, "margin": 0}
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    message = response.get_json()["error"]
+    assert "同じ艇同士は比較できません" in message
+    assert "compare.0.boat" not in message
 
 
 @pytest.mark.parametrize(

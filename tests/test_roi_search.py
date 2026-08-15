@@ -296,7 +296,7 @@ def test_multiple_compare_conditions_are_combined_with_and(tmp_path: Path) -> No
     [
         ({"metric": "drop_table", "boat": 1, "op": "ge", "other": 2, "margin": 0}, "metric"),
         ({"metric": "age", "boat": 7, "op": "ge", "other": 2, "margin": 0}, "boats"),
-        ({"metric": "age", "boat": 2, "op": "ge", "other": 2, "margin": 0}, "must differ"),
+        ({"metric": "age", "boat": 2, "op": "ge", "other": 2, "margin": 0}, "異なる号艇同士"),
         ({"metric": "age", "boat": 1, "op": "ge", "other": 2, "margin": -1}, "non-negative"),
     ],
 )
@@ -305,6 +305,15 @@ def test_compare_validates_whitelists_and_invariants(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         search_roi(fixture_db, {"compare": [comparison]}, fast=True)
+
+
+def test_duplicate_ticket_has_user_facing_japanese_error(fixture_db: Path) -> None:
+    with pytest.raises(ValueError, match="着順ごとに異なる艇番"):
+        search_roi(
+            fixture_db,
+            {"bet": {"type": "sanrentan", "first": 1, "second": 1, "third": 3}},
+            fast=True,
+        )
 
 
 def test_race_number_range_is_inclusive(tmp_path: Path) -> None:

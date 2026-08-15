@@ -122,6 +122,18 @@ def test_invalid_or_empty_strategy_is_rejected(strategy_db: Path) -> None:
     assert list_strategies() == []
 
 
+@pytest.mark.parametrize("backtest", ["not-an-object", [], 123, True])
+def test_non_object_backtest_is_rejected(strategy_db: Path, backtest: object) -> None:
+    with pytest.raises(ValueError, match="JSONオブジェクトまたはnull"):
+        save_strategy("invalid backtest", {"bet": BET}, backtest)
+
+
+def test_null_backtest_is_accepted(strategy_db: Path) -> None:
+    strategy_id = save_strategy("null backtest", {"bet": BET}, None)
+
+    assert get_strategy(strategy_id)["backtest"] is None
+
+
 def test_prior_day_match_is_confirmed(search_db: Path, strategy_db: Path) -> None:
     result = match_races(
         {"venue": 14, "boats": {"1": {"class": ["A1"]}}, "bet": BET},
@@ -255,6 +267,21 @@ def test_strategy_api_lifecycle(search_db: Path, strategy_db: Path) -> None:
     assert client.get("/api/strategies").get_json()[0]["id"] == strategy_id
     assert client.get(f"/api/strategies/{strategy_id}/matches?date=2026-08-16").status_code == 200
     assert client.delete(f"/api/strategies/{strategy_id}").status_code == 200
+    assert client.get("/api/strategies").get_json() == []
+
+
+def test_strategy_api_rejects_non_object_backtest(search_db: Path, strategy_db: Path) -> None:
+    app = create_app(search_db, strategy_db)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/strategies",
+        json={"name": "不正", "conditions": {"bet": BET}, "backtest": "not-an-object"},
+    )
+
+    assert response.status_code == 400
+    assert "JSONオブジェクトまたはnull" in response.get_json()["error"]
     assert client.get("/api/strategies").get_json() == []
 
 
