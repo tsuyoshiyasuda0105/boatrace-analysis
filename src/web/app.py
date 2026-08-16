@@ -1260,6 +1260,7 @@ def invalidate_cache():
     _kimarite_skill_tags_for_race_cached.cache_clear()
     _race_actual_result_cached.cache_clear()
     _race_current_conditions_cached.cache_clear()
+    _venue_environment_summaries_for_date_cached.cache_clear()
 
 
 def _clear_web_caches():
@@ -4178,14 +4179,14 @@ def _race_current_conditions(race_id: str) -> dict:
     out = {
         "wind_speed": None, "wave_height": None, "temperature": None, "water_temperature": None,
         "wind_direction_number": None, "weather_number": None,
-        "boats": {},   # {boat_number: {exhibition_time, start_timing_exhibition, course_number, tilt_adjustment, weight_adjustment, lap_time, turn_time, straight_time, original_rank}}
+        "boats": {},   # {boat_number: {exhibition_time, start_timing_exhibition, course_number, tilt_adjustment, stable_plate, weight_adjustment, lap_time, turn_time, straight_time, original_rank}}
     }
     with db_connect() as conn:
         rows = conn.execute("""
             SELECT boat_number, weather_number, wind_speed, wind_direction_number,
                    wave_height, temperature, water_temperature,
                    course_number, NULLIF(exhibition_time, 0), start_timing_exhibition,
-                   weight_adjustment, tilt_adjustment
+                   weight_adjustment, tilt_adjustment, stable_plate
               FROM race_previews
              WHERE race_id = ?
              ORDER BY boat_number
@@ -4193,7 +4194,7 @@ def _race_current_conditions(race_id: str) -> dict:
     keys = ["boat_number", "weather_number", "wind_speed", "wind_direction_number",
             "wave_height", "temperature", "water_temperature",
             "course_number", "exhibition_time", "start_timing_exhibition",
-            "weight_adjustment", "tilt_adjustment"]
+            "weight_adjustment", "tilt_adjustment", "stable_plate"]
     for row in rows:
         d = dict(zip(keys, row))
         # レース全体の値 (どの行でも同じはずなので最初の値で上書き)
@@ -4208,6 +4209,7 @@ def _race_current_conditions(race_id: str) -> dict:
             "start_timing_exhibition": d.get("start_timing_exhibition"),
             "weight_adjustment": d.get("weight_adjustment"),
             "tilt_adjustment": d.get("tilt_adjustment"),
+            "stable_plate": d.get("stable_plate"),
         }
     try:
         with db_connect() as conn:
@@ -4264,7 +4266,16 @@ _WEATHER_LABELS = {
     1: "晴れ",
     2: "曇り",
     3: "雨",
-    4: "雪",
+    4: "霧",
+    5: "雪",
+}
+
+_WIND_DIRECTION_LABELS = {
+    1: "北", 2: "北北東", 3: "北東", 4: "東北東",
+    5: "東", 6: "東南東", 7: "南東", 8: "南南東",
+    9: "南", 10: "南南西", 11: "南西", 12: "西南西",
+    13: "西", 14: "西北西", 15: "北西", 16: "北北西",
+    17: "無風",
 }
 
 _COURSE_TYPE_LABELS = {
@@ -4289,6 +4300,65 @@ def _safe_int(value):
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _compact_measurement(value: Any, unit: str) -> str:
+    number = _safe_float(value)
+    if number is None:
+        return "—"
+    return f"{number:g}{unit}"
+
+
+def _race_beforeinfo_display(info: dict[str, Any], conditions: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Build the lightweight official-beforeinfo view without compatibility SQL."""
+    conditions = conditions if isinstance(conditions, dict) else {}
+    race_keys = (
+        "weather_number", "temperature", "wind_speed", "wind_direction_number",
+        "water_temperature", "wave_height",
+    )
+    has_race_data = any(conditions.get(key) is not None for key in race_keys)
+
+    boats: list[dict[str, Any]] = []
+    raw_boats = conditions.get("boats")
+    if isinstance(raw_boats, dict):
+        for raw_boat_number, raw_boat in raw_boats.items():
+            if not isinstance(raw_boat, dict):
+                continue
+            boat = dict(raw_boat)
+            boat_number = _safe_int(raw_boat_number)
+            if boat_number is None:
+                continue
+            display_keys = (
+                "course_number", "start_timing_exhibition", "exhibition_time",
+                "tilt_adjustment", "stable_plate",
+            )
+            if not any(boat.get(key) is not None for key in display_keys):
+                continue
+            for key in display_keys:
+                boat.setdefault(key, None)
+            stable_plate = boat.get("stable_plate")
+            boat["boat_number"] = boat_number
+            boat["stable_plate_label"] = (
+                "安定板" if bool(stable_plate) else ("なし" if stable_plate is not None else "—")
+            )
+            boats.append(boat)
+    boats.sort(key=lambda row: row["boat_number"])
+
+    if not has_race_data and not boats:
+        return None
+
+    weather_number = _safe_int(conditions.get("weather_number"))
+    wind_direction_number = _safe_int(conditions.get("wind_direction_number"))
+    return {
+        "weather_label": _WEATHER_LABELS.get(weather_number, "—"),
+        "temperature_label": _compact_measurement(conditions.get("temperature"), "℃"),
+        "wind_speed_label": _compact_measurement(conditions.get("wind_speed"), "m"),
+        "wind_direction_label": _WIND_DIRECTION_LABELS.get(wind_direction_number, "—"),
+        "water_temperature_label": _compact_measurement(conditions.get("water_temperature"), "℃"),
+        "wave_height_label": _compact_measurement(conditions.get("wave_height"), "cm"),
+        "stadium_number": _safe_int(info.get("stadium_number")),
+        "boats": boats,
+    }
 
 
 def _accident_period_start_for_date(date_iso: str) -> str:
@@ -4898,7 +4968,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v6"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v15"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v16"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -7674,6 +7744,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                 _attach_motor_fact_grades(
                     race_id, preds, info=info, allow_ace_recompute=False
                 )
+                conditions = _race_current_conditions_cached(race_id)
                 html = render_template(
                     "race.html",
                     info=info,
@@ -7683,7 +7754,8 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
                     racer_names=_racer_names_from_preds(preds) or _racer_names(race_id),
                     trifecta_pw=[],
                     trifecta_unified=[],
-                    conditions=_race_current_conditions_cached(race_id),
+                    conditions=conditions,
+                    beforeinfo=_race_beforeinfo_display(info, conditions),
                     niche_signals=[],
                     market_signal=None,
                     compat_analysis=None,
@@ -7713,6 +7785,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = info["race_date"]
         t2 = time.perf_counter()
         conditions = _race_current_conditions_cached(race_id)
+        beforeinfo = _race_beforeinfo_display(info, conditions)
         t_conditions = time.perf_counter() - t2
         t3 = time.perf_counter()
         actual_result = None
@@ -7787,6 +7860,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             trifecta_pw=tri_pw,
             trifecta_unified=tri_uni,
             conditions=conditions,
+            beforeinfo=beforeinfo,
             venue_warning=venue_warning,
             venue_environment=venue_environment,
             sweet_spot=sweet_spot,

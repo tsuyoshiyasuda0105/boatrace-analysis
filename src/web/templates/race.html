@@ -46,6 +46,47 @@
     {% endif %}
   </div>
 
+  {% if beforeinfo %}
+    <section class="beforeinfo-panel" aria-labelledby="beforeinfo-title">
+      <div class="beforeinfo-head">
+        <div>
+          <span class="beforeinfo-kicker">OFFICIAL BEFOREINFO</span>
+          <h3 id="beforeinfo-title">直前情報</h3>
+        </div>
+        <span class="beforeinfo-status">公開済みデータ</span>
+      </div>
+      <div class="beforeinfo-condition-grid">
+        <div><small>天候</small><b>{{ beforeinfo.weather_label }}</b></div>
+        <div><small>気温</small><b>{{ beforeinfo.temperature_label }}</b></div>
+        <div><small>風速</small><b>{{ beforeinfo.wind_speed_label }}</b></div>
+        <div><small>風向</small><b>{{ beforeinfo.wind_direction_label }}</b></div>
+        <div><small>水温</small><b>{{ beforeinfo.water_temperature_label }}</b></div>
+        <div><small>波高</small><b>{{ beforeinfo.wave_height_label }}</b></div>
+      </div>
+      {% if beforeinfo.boats %}
+        <div class="beforeinfo-table-wrap">
+          <table class="beforeinfo-table">
+            <thead>
+              <tr><th>艇</th><th>進入</th><th>展示ST</th><th>展示タイム</th><th>チルト</th><th>部品交換</th></tr>
+            </thead>
+            <tbody>
+              {% for boat in beforeinfo.boats %}
+                <tr>
+                  <td><span class="lane lane-{{ boat.boat_number }}">{{ boat.boat_number }}</span></td>
+                  <td>{{ boat.course_number if boat.course_number is not none else '—' }}</td>
+                  <td>{{ '%.2f' | format(boat.start_timing_exhibition) if boat.start_timing_exhibition is not none else '—' }}</td>
+                  <td>{{ '%.2f' | format(boat.exhibition_time) if boat.exhibition_time is not none else '—' }}</td>
+                  <td>{{ '%+.1f' | format(boat.tilt_adjustment) if boat.tilt_adjustment is not none else '—' }}</td>
+                  <td>{{ boat.stable_plate_label }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+
   {% if venue_warning %}
     <div class="venue-warning venue-{{ venue_warning.level }}">
       <span class="vw-icon">{% if venue_warning.level == 'danger' %}⚠{% else %}△{% endif %}</span>
