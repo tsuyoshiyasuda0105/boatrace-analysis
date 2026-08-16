@@ -210,8 +210,7 @@ def test_mikuni_confirmed_source():
     )
 
 
-def test_kojima_confirmed_source_and_control_groups():
-    source_name, pattern = SOURCE_PATTERNS[16][0]
+def test_kojima_control_groups_parser_fixture_is_preserved():
     names = "".join(f'<div class="ren-name">Racer {n}</div>' for n in range(1, 7))
     controls = []
     for boat in range(1, 7):
@@ -227,14 +226,23 @@ def test_kojima_confirmed_source_and_control_groups():
 
     rows = parse_original_exhibition(names + "".join(controls))
 
-    assert source_name == "kojima_hjpc"
-    assert pattern.format(date="20260723", rno=7) == (
-        "https://hj.kojima-yosou.com/hjpc/index/20260723/07"
-    )
     assert len(rows) == 6
     assert rows[0]["lap_time"] == 37.01
     assert rows[0]["turn_time"] == 5.01
     assert rows[0]["straight_time"] == 7.01
+
+
+def test_broken_original_exhibition_sources_are_disabled():
+    for stadium in (3, 9, 16):
+        assert SOURCE_PATTERNS[stadium] == []
+        assert original_exhibition.expected_fields(stadium) == frozenset()
+
+
+def test_venue_field_capabilities_match_confirmed_absences():
+    assert original_exhibition.expected_fields(1) == frozenset({"turn", "straight"})
+    assert original_exhibition.expected_fields(13) == frozenset({"lap", "turn"})
+    assert original_exhibition.expected_fields(18) == frozenset({"lap", "turn"})
+    assert original_exhibition.expected_fields(5) == frozenset({"lap", "turn", "straight"})
 
 
 def test_original_exhibition_filter_retries_partial_metric_rows():
@@ -246,10 +254,10 @@ def test_original_exhibition_filter_retries_partial_metric_rows():
         """
         INSERT INTO race_original_exhibitions (
             race_id, boat_number, source_name, stadium_number, race_date,
-            race_number, turn_time, source_url, collected_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            race_number, lap_time, turn_time, straight_time, source_url, collected_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("20260804-05-01", 1, "tamagawa_oriten", 5, "2026-08-04", 1, 5.21, "https://example.test", "now"),
+        ("20260804-05-01", 1, "tamagawa_oriten", 5, "2026-08-04", 1, 37.1, 5.21, 7.1, "https://example.test", "now"),
     )
     assert original_exhibition._filter_missing(conn, target, force=False) == target
 
@@ -258,8 +266,8 @@ def test_original_exhibition_filter_retries_partial_metric_rows():
             """
             INSERT INTO race_original_exhibitions (
                 race_id, boat_number, source_name, stadium_number, race_date,
-                race_number, turn_time, source_url, collected_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                race_number, lap_time, turn_time, straight_time, source_url, collected_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "20260804-05-01",
@@ -268,7 +276,9 @@ def test_original_exhibition_filter_retries_partial_metric_rows():
                 5,
                 "2026-08-04",
                 1,
+                37.0 + boat / 100,
                 5.2 + boat / 100,
+                7.0 + boat / 100,
                 "https://example.test",
                 "now",
             ),

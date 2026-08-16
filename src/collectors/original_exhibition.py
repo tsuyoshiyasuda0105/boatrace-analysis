@@ -80,28 +80,11 @@ SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
             "https://www.boatrace-fukuoka.com/modules/yosou/tenji_info.php?day={date}&race={rno}",
         ),
     ],
-    # Tsu and Edogawa pages are kept as candidates. Some dates only expose
-    # archive/text pages, so rows are saved only when the parser finds a table.
-    9: [
-        ("tsu_raceinfo", "https://www.boatrace-tsu.com/modules/raceinfo/?page=index_racejoho&target_day={date}&rno={rno}"),
-        ("tsu_raceinfo", "https://www.boatrace-tsu.com/modules/raceinfo/?page=index_raceinfo&target_day={date}&rno={rno}"),
-        ("tsu_raceinfo", "https://www.boatrace-tsu.com/modules/raceinfo/?page=index&target_day={date}&rno={rno}"),
-    ],
     10: [
         (
             "mikuni_cyokuzen",
             "https://www.boatrace-mikuni.jp/modules/yosou/group-cyokuzen.php?day={date}&race={rno}&kind=2",
         ),
-    ],
-    16: [
-        (
-            "kojima_hjpc",
-            "https://hj.kojima-yosou.com/hjpc/index/{date}/{rno:02d}",
-        ),
-    ],
-    3: [
-        ("edogawa_raceinfo", "https://www.boatrace-edogawa.com/modules/kouryaku/race_betsu.php?day={date}&rno={rno}"),
-        ("edogawa_raceinfo", "https://www.boatrace-edogawa.com/modules/raceresult/index.php?day={date}&rno={rno}"),
     ],
     # Omura keeps race-by-race original exhibition values in its syussou
     # archive. The page includes lap, turn and straight times for all six boats.
@@ -159,12 +142,6 @@ _ALL_SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
     stadium: _default_patterns(stadium)
     for stadium in sorted(VENUE_DOMAINS)
 }
-_ALL_SOURCE_PATTERNS[3] = [
-    ("edogawa_raceinfo", "https://www.boatrace-edogawa.com/modules/kouryaku/race_betsu.php?day={date}&rno={rno}"),
-    ("edogawa_raceinfo", "https://www.boatrace-edogawa.com/modules/raceresult/index.php?day={date}&rno={rno}"),
-    *_ALL_SOURCE_PATTERNS[3],
-]
-
 # Probe hand-tuned patterns before generic candidates. Confirmed venue adapters
 # should not pay for several known-dead generic requests first.
 for _stadium, _patterns in SOURCE_PATTERNS.items():
@@ -174,6 +151,60 @@ for _stadium, _patterns in SOURCE_PATTERNS.items():
         *(_pattern for _pattern in _generic if _pattern not in _patterns),
     ]
 SOURCE_PATTERNS = _ALL_SOURCE_PATTERNS
+
+
+# Fields confirmed from the most recent 60 days of production data. Empty sets
+# are intentional: the former venue candidates returned unrelated pages or a
+# dead host, so they must not be probed until a working source is verified.
+VENUE_FIELD_CAPABILITIES: dict[int, frozenset[str]] = {
+    1: frozenset({"turn", "straight"}),
+    3: frozenset(),
+    5: frozenset({"lap", "turn", "straight"}),
+    6: frozenset({"lap", "turn", "straight"}),
+    9: frozenset(),
+    10: frozenset({"lap", "turn", "straight"}),
+    11: frozenset({"lap", "turn", "straight"}),
+    13: frozenset({"lap", "turn"}),
+    16: frozenset(),
+    17: frozenset({"lap", "turn", "straight"}),
+    18: frozenset({"lap", "turn"}),
+    19: frozenset({"lap", "turn", "straight"}),
+    22: frozenset({"lap", "turn", "straight"}),
+    24: frozenset({"lap", "turn", "straight"}),
+}
+
+
+def expected_fields(stadium: int) -> frozenset[str]:
+    """Return fields a verified venue source is expected to provide."""
+    return VENUE_FIELD_CAPABILITIES.get(int(stadium), frozenset())
+
+
+def supported_stadiums() -> frozenset[int]:
+    """Return venues with both a verified source and at least one field."""
+    return frozenset(
+        int(stadium)
+        for stadium, patterns in SOURCE_PATTERNS.items()
+        if patterns and expected_fields(int(stadium))
+    )
+
+
+def has_complete_expected_fields(
+    stadium: int,
+    original_rows: int,
+    lap_rows: int,
+    turn_rows: int,
+    straight_rows: int,
+) -> bool:
+    """Return whether all six boats have every field provided by the venue."""
+    if int(original_rows or 0) < 6:
+        return False
+    counts = {
+        "lap": int(lap_rows or 0),
+        "turn": int(turn_rows or 0),
+        "straight": int(straight_rows or 0),
+    }
+    expected = expected_fields(stadium)
+    return bool(expected) and all(counts[field] >= 6 for field in expected)
 
 
 def _execute_ddl(conn, sql: str) -> None:
@@ -293,7 +324,9 @@ def _list_target_races(
     force: bool,
     stadium_filter: set[int] | None = None,
 ) -> list[tuple[str, int, int]]:
-    stadiums = tuple(sorted(stadium_filter or SOURCE_PATTERNS.keys()))
+    stadiums = tuple(sorted(supported_stadiums() & (stadium_filter or supported_stadiums())))
+    if not stadiums:
+        return []
     placeholders = ",".join("?" for _ in stadiums)
     if force:
         sql = f"""
@@ -374,19 +407,13 @@ def _filter_missing(conn, targets: list[tuple[str, int, int]], force: bool) -> l
         return targets
     out = []
     for race_id, stadium, race_no in targets:
-        if _original_exhibition_needs_backfill(conn, race_id):
+        if _original_exhibition_needs_backfill(conn, race_id, stadium):
             out.append((race_id, stadium, race_no))
     return out
 
 
-def _original_exhibition_needs_backfill(conn, race_id: str) -> bool:
-    """Return True when original exhibition rows are missing or partially empty.
-
-    Venues expose different metric subsets. A metric is treated as incomplete
-    only when at least one boat has it but fewer than all six boats have it.
-    Rows with no lap/turn/straight values are also retried because they cannot
-    support the race-detail motor comparison.
-    """
+def _original_exhibition_needs_backfill(conn, race_id: str, stadium: int) -> bool:
+    """Return True only when a venue-provided field is missing for any boat."""
     row = conn.execute(
         """
         SELECT COUNT(DISTINCT boat_number) AS original_rows,
@@ -410,15 +437,7 @@ def _original_exhibition_needs_backfill(conn, race_id: str) -> bool:
     if not row:
         return True
 
-    original_rows, lap_rows, turn_rows, straight_rows = (int(value or 0) for value in row)
-    metric_counts = [lap_rows, turn_rows, straight_rows]
-    if original_rows < 6:
-        return True
-    if any(0 < count < 6 for count in metric_counts):
-        return True
-    if original_rows > 0 and all(count == 0 for count in metric_counts):
-        return True
-    return False
+    return not has_complete_expected_fields(stadium, *row)
 
 
 def _collect_targets(
@@ -485,7 +504,7 @@ def collect_for_races(target_date: date, races: Iterable[tuple[str, int, int]],
         targets = [
             (race_id, stadium, race_no)
             for race_id, stadium, race_no in races
-            if stadium in SOURCE_PATTERNS and (not stadiums or stadium in stadiums)
+            if stadium in supported_stadiums() and (not stadiums or stadium in stadiums)
         ]
         targets = _filter_missing(conn, targets, force)
         return _collect_targets(

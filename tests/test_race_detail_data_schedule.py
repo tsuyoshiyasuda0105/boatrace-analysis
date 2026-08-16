@@ -35,7 +35,7 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert "find_missing_original_exhibition_races" in source
     assert "COUNT(DISTINCT oe.boat_number) AS original_rows" in runtime
     assert "COUNT(DISTINCT CASE" in runtime
-    assert "all(count >= 6 for count in metric_counts)" in runtime
+    assert "collector.has_complete_expected_fields" in runtime
     assert "original_exhibition_collector.collect_for_races" in source
     assert '["scripts/render_cache_predictions.py", "--date", target_date]' in source
     assert '["scripts/generate_start_predictions.py", "--date", target_date]' in source

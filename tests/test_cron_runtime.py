@@ -267,3 +267,57 @@ def test_original_exhibition_requires_six_complete_metric_rows(monkeypatch):
     )
 
     assert [row[0] for row in due] == ["race-2", "race-3", "race-4"]
+
+
+def test_original_exhibition_missing_detection_uses_venue_capabilities(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE races (
+          race_id TEXT PRIMARY KEY,
+          race_date TEXT,
+          stadium_number INTEGER,
+          race_number INTEGER,
+          race_closed_at TEXT
+        );
+        CREATE TABLE race_original_exhibitions (
+          race_id TEXT,
+          boat_number INTEGER,
+          lap_time REAL,
+          turn_time REAL,
+          straight_time REAL
+        );
+        """
+    )
+    venues = (("kiryu-complete", 1), ("amagasaki-complete", 13),
+              ("tokuyama-complete", 18), ("tamagawa-missing-turn", 5))
+    for race_no, (race_id, stadium) in enumerate(venues, start=1):
+        conn.execute(
+            "INSERT INTO races VALUES (?, '2026-08-14', ?, ?, '12:00')",
+            (race_id, stadium, race_no),
+        )
+        for boat in range(1, 7):
+            lap = None if stadium == 1 else 37.0
+            straight = None if stadium in (13, 18) else 7.0
+            turn = None if race_id == "tamagawa-missing-turn" and boat == 6 else 5.0
+            conn.execute(
+                "INSERT INTO race_original_exhibitions VALUES (?, ?, ?, ?, ?)",
+                (race_id, boat, lap, turn, straight),
+            )
+    conn.commit()
+    monkeypatch.setattr(
+        original_exhibition,
+        "SOURCE_PATTERNS",
+        {1: ["fixture"], 5: ["fixture"], 13: ["fixture"], 18: ["fixture"]},
+    )
+
+    due = cron_runtime.find_missing_original_exhibition_races(
+        datetime(2026, 8, 14, 11, 55, tzinfo=JST),
+        target_date="2026-08-14",
+        past_min=60,
+        future_min=30,
+        limit=10,
+        connect=lambda: conn,
+    )
+
+    assert [row[0] for row in due] == ["tamagawa-missing-turn"]

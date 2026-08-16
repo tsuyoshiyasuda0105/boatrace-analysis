@@ -256,15 +256,14 @@ def find_missing_original_exhibition_races(
     future_min: int,
     limit: int,
     connect=None,
+    stadiums: set[int] | None = None,
 ) -> list[tuple[str, int, int, datetime]]:
-    """Return races whose six original-exhibition rows or metrics are incomplete."""
+    """Return races missing any field that their venue actually provides."""
     from src.collectors import original_exhibition as collector
 
-    supported = sorted(
-        int(stadium)
-        for stadium, patterns in collector.SOURCE_PATTERNS.items()
-        if patterns
-    )
+    supported = sorted(collector.supported_stadiums())
+    if stadiums is not None:
+        supported = [stadium for stadium in supported if stadium in stadiums]
     if not supported:
         return []
 
@@ -299,9 +298,9 @@ def find_missing_original_exhibition_races(
     due: list[tuple[str, int, int, datetime]] = []
     for row in rows:
         race_id, stadium, race_no, closed_at, original_rows, lap_rows, turn_rows, straight_rows = row
-        original_count = int(original_rows or 0)
-        metric_counts = [int(lap_rows or 0), int(turn_rows or 0), int(straight_rows or 0)]
-        if original_count >= 6 and all(count >= 6 for count in metric_counts):
+        if collector.has_complete_expected_fields(
+            int(stadium), original_rows, lap_rows, turn_rows, straight_rows
+        ):
             continue
         close = parse_race_close_jst(closed_at, target_date)
         if close is None:
