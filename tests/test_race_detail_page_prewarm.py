@@ -14,6 +14,30 @@ APP_SOURCE = ROOT / "src" / "web" / "app.py"
 SCRIPT_SOURCE = ROOT / "scripts" / "prewarm_race_detail_pages.py"
 
 
+class _SharedConnection:
+    def __init__(self):
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def close(self):
+        self.closed = True
+
+
+def test_borrowed_prewarm_connection_cannot_close_loop_owner():
+    owner = _SharedConnection()
+    with web_app._use_race_detail_prewarm_context(owner, {}):
+        borrowed = web_app.db_connect()
+        borrowed.close()
+        with borrowed:
+            pass
+    assert owner.closed is False
+
+
 def test_race_detail_uses_fresh_page_cache_for_today_and_stale_for_past():
     source = APP_SOURCE.read_text(encoding="utf-8")
     start = source.index("def race_detail(race_id: str):")
@@ -75,8 +99,10 @@ def test_prewarm_fails_when_http_200_page_is_not_persisted(monkeypatch):
 
     checks = iter([["race-2"], ["race-2"]])
     monkeypatch.setattr(page_prewarm, "_require_postgres", lambda: None)
-    monkeypatch.setattr(page_prewarm, "_race_ids", lambda *_args: ["race-1", "race-2"])
-    monkeypatch.setattr(page_prewarm, "_missing_persistent_page_ids", lambda _ids: next(checks))
+    monkeypatch.setattr(page_prewarm, "db_connect", _SharedConnection)
+    monkeypatch.setattr(page_prewarm, "_race_ids", lambda *_args, **_kwargs: ["race-1", "race-2"])
+    monkeypatch.setattr(page_prewarm, "_missing_persistent_page_ids", lambda _ids, **_kwargs: next(checks))
+    monkeypatch.setattr(page_prewarm.web_app, "_prefetch_race_detail_page_inputs", lambda *_args: {})
     monkeypatch.setattr(page_prewarm.web_app, "create_app", lambda **_kwargs: App())
 
     summary = page_prewarm.prewarm("2026-08-11")
@@ -121,12 +147,14 @@ def test_page_prewarm_budget_saves_each_page_and_resumes_missing(monkeypatch):
             return Client()
 
     monkeypatch.setattr(page_prewarm, "_require_postgres", lambda: None)
-    monkeypatch.setattr(page_prewarm, "_race_ids", lambda *_args: ["race-1", "race-2", "race-3"])
+    monkeypatch.setattr(page_prewarm, "db_connect", _SharedConnection)
+    monkeypatch.setattr(page_prewarm, "_race_ids", lambda *_args, **_kwargs: ["race-1", "race-2", "race-3"])
     monkeypatch.setattr(
         page_prewarm,
         "_missing_persistent_page_ids",
-        lambda race_ids: [race_id for race_id in race_ids if race_id not in cached],
+        lambda race_ids, **_kwargs: [race_id for race_id in race_ids if race_id not in cached],
     )
+    monkeypatch.setattr(page_prewarm.web_app, "_prefetch_race_detail_page_inputs", lambda *_args: {})
     monkeypatch.setattr(page_prewarm.time, "perf_counter", lambda: clock["value"])
     monkeypatch.setattr(page_prewarm.web_app, "create_app", lambda **_kwargs: App())
 
@@ -146,6 +174,88 @@ def test_page_prewarm_budget_saves_each_page_and_resumes_missing(monkeypatch):
     assert second["succeeded"] == 1
     assert second["remaining"] == 0
     assert cached == {"race-1", "race-2", "race-3"}
+
+
+def test_page_html_is_byte_identical_with_shared_prefetch_context(monkeypatch):
+    race_id = "20260816-01-01"
+    info = {
+        "race_id": race_id,
+        "race_date": "2026-08-16",
+        "stadium_number": 1,
+        "stadium_name": "桐生",
+        "race_number": 1,
+        "race_grade_number": 5,
+        "race_title": "固定テスト",
+        "race_subtitle": "",
+        "race_closed_at": "2026-08-16T23:00:00+09:00",
+        "boatcast_replay_url": "",
+    }
+    preds = [
+        {
+            "boat_number": 1,
+            "racer_name": "固定選手",
+            "prob_first": 0.71,
+            "prob_top_2": 0.82,
+            "prob_top_3": 0.91,
+            "national_top_1_percent": None,
+            "national_top_2_percent": None,
+            "local_top_2_percent": None,
+            "assigned_motor_top_2_percent": None,
+            "avg_start_timing": None,
+            "dash_time": None,
+            "exhibition_time": None,
+            "national_course_second_rate": None,
+            "national_course_top3_rate": None,
+            "national_course_win_rate": None,
+            "start_timing_exhibition": None,
+            "straight_time": None,
+            "tilt_adjustment": None,
+            "turn_time": None,
+            "venue_recent10_course_win_rate": None,
+            "weight": None,
+            "finishing_position": None,
+            "racer_number": 1001,
+            "class_number": 1,
+            "branch_number": 1,
+            "branch_label": "支部1",
+            "age": 30,
+            "flying_count": 0,
+            "late_count": 0,
+            "assigned_motor_number": 1,
+            "pred_rank": 1,
+        }
+    ]
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-detail-prewarm")
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-16")
+    monkeypatch.setattr(
+        web_app,
+        "_now_jst",
+        lambda: datetime.fromisoformat("2026-08-16T06:30:00+09:00"),
+    )
+    monkeypatch.setattr(web_app, "_race_basic_info", lambda _rid: dict(info))
+    monkeypatch.setattr(web_app, "_venue_environment_summaries_for_date", lambda *_args: {})
+    monkeypatch.setattr(web_app, "_race_predictions_from_cache", lambda *_args: [dict(row) for row in preds])
+    monkeypatch.setattr(web_app, "_race_entry_fallback_rows", lambda *_args: [])
+    monkeypatch.setattr(web_app, "_attach_race_detail_display_facts", lambda *_args: None)
+    monkeypatch.setattr(web_app, "_attach_precomputed_race_detail_tags", lambda *_args: None)
+    monkeypatch.setattr(web_app, "_attach_motor_fact_grades", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(web_app, "_race_current_conditions_cached", lambda *_args: {})
+    monkeypatch.setattr(web_app, "_write_page_html_cache", lambda *_args: None)
+
+    def render_bytes(prefetched=None):
+        web_app._CACHE.clear()
+        web_app._PAGE_HTML_MEM_CACHE.clear()
+        app = web_app.create_app()
+        app.testing = True
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["is_member"] = True
+        if prefetched is None:
+            return client.get(f"/race/{race_id}?recompute=1").data
+        with web_app._use_race_detail_prewarm_context(_SharedConnection(), prefetched):
+            return client.get(f"/race/{race_id}?recompute=1").data
+
+    assert render_bytes({"race_info": {race_id: info}}) == render_bytes()
 
 
 def test_race_detail_venue_environment_uses_date_cache_wrapper():
