@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 import json
 from pathlib import Path
 import sqlite3
@@ -548,6 +549,58 @@ def test_yearly_totals_equal_overall(fixture_db: Path) -> None:
     assert sum(year["n"] for year in result["yearly"]) == result["n"]
     assert sum(year["hits"] for year in result["yearly"]) == result["hits"]
     assert result["effective_date_range"] == ["2023-05-10", "2024-01-10"]
+
+
+def test_monthly_totals_match_each_year_and_skip_empty_months(fixture_db: Path) -> None:
+    result = search_roi(
+        fixture_db,
+        {"bet": {"type": "tansho", "first": 1}, "date_from": "2023-05-01"},
+        fast=True,
+    )
+
+    assert result["monthly"] == [
+        {"year": 2023, "month": 5, "n": 1, "hits": 1, "roi": 180.0},
+        {"year": 2023, "month": 6, "n": 1, "hits": 0, "roi": 0.0},
+        {"year": 2024, "month": 1, "n": 1, "hits": 1, "roi": 220.0},
+    ]
+    for yearly in result["yearly"]:
+        assert sum(month["n"] for month in result["monthly"] if month["year"] == yearly["year"]) == yearly["n"]
+
+
+def test_profit_curve_aggregates_by_date_in_order(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "curve.db",
+        [
+            _row("r1", "2026-08-02", result_tansho=2, payout_tansho=0),
+            _row("r2", "2026-08-01", result_tansho=2, payout_tansho=0),
+            _row("r3", "2026-08-01", payout_tansho=250),
+        ],
+    )
+
+    result = search_roi(
+        db,
+        {"bet": {"type": "tansho", "first": 1}},
+        fast=True,
+        include_profit_curve=True,
+    )
+
+    assert result["profit_curve"] == [
+        {"date": "2026-08-01", "cumulative": 50},
+        {"date": "2026-08-02", "cumulative": -50},
+    ]
+
+
+def test_profit_curve_downsampling_keeps_first_and_last(tmp_path: Path) -> None:
+    start = date(2025, 1, 1)
+    rows = [_row(f"r{index}", (start + timedelta(days=index)).isoformat()) for index in range(205)]
+    db = _make_db(tmp_path / "curve-large.db", rows)
+
+    curve = search_roi(db, {}, fast=True, include_profit_curve=True)["profit_curve"]
+
+    assert len(curve) == 200
+    assert curve[0] == {"date": "2025-01-01", "cumulative": 1130}
+    assert curve[-1]["date"] == (start + timedelta(days=204)).isoformat()
+    assert curve[-1]["cumulative"] == 231650
 
 
 def test_history_condition_explicitly_enforces_cutoff(fixture_db: Path) -> None:

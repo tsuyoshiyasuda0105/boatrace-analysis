@@ -14,7 +14,9 @@ from src.search.roi_search import search_roi
 from src.search.strategies import (
     deactivate_strategy,
     get_strategy,
+    get_strategy_performance,
     list_strategies,
+    list_strategy_performances,
     match_all_strategies,
     match_races,
     save_strategy,
@@ -133,6 +135,38 @@ def create_app(
             return jsonify(list_strategies(db_path=app.config["KACHISUJI_STRATEGY_DB"]))
         except Exception as exc:  # pragma: no cover - exercised with a forced failure
             app.logger.exception("kachisuji strategy list failed")
+            return jsonify(error=str(exc)), 500
+
+    @app.get("/api/strategies/performance")
+    def api_list_strategy_performance():
+        try:
+            return jsonify(
+                list_strategy_performances(
+                    app.config["KACHISUJI_DB"],
+                    app.config["KACHISUJI_STRATEGY_DB"],
+                )
+            )
+        except ValueError as exc:
+            return jsonify(error=_user_validation_message(exc)), 400
+        except Exception as exc:  # pragma: no cover - exercised with a forced failure
+            app.logger.exception("kachisuji strategy performance list failed")
+            return jsonify(error=str(exc)), 500
+
+    @app.get("/api/strategies/<int:strategy_id>/performance")
+    def api_strategy_performance(strategy_id: int):
+        try:
+            performance = get_strategy_performance(
+                strategy_id,
+                app.config["KACHISUJI_DB"],
+                app.config["KACHISUJI_STRATEGY_DB"],
+            )
+            if performance is None:
+                return jsonify(error="strategy not found"), 404
+            return jsonify(performance)
+        except ValueError as exc:
+            return jsonify(error=_user_validation_message(exc)), 400
+        except Exception as exc:  # pragma: no cover - exercised with a forced failure
+            app.logger.exception("kachisuji strategy performance failed")
             return jsonify(error=str(exc)), 500
 
     @app.delete("/api/strategies/<int:strategy_id>")

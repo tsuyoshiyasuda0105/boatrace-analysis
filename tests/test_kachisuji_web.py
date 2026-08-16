@@ -182,6 +182,7 @@ def test_search_returns_expected_step2_json_structure(client) -> None:
         "roi_ci_high",
         "excluded",
         "yearly",
+        "monthly",
         "warnings",
         "effective_date_range",
     }

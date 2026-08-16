@@ -471,6 +471,17 @@ def _normal_ci(returns: Sequence[float]) -> tuple[float, float]:
     return max(0.0, point - 1.96 * standard_error), point + 1.96 * standard_error
 
 
+def _downsample_curve(
+    points: list[dict[str, Any]], max_points: int = 200
+) -> list[dict[str, Any]]:
+    """Evenly downsample a dated curve while retaining both endpoints."""
+
+    if len(points) <= max_points:
+        return points
+    indexes = [round(index * (len(points) - 1) / (max_points - 1)) for index in range(max_points)]
+    return [points[index] for index in indexes]
+
+
 def search_roi(
     db_path: str | Path,
     conditions: Mapping[str, Any] | None = None,
@@ -478,12 +489,14 @@ def search_roi(
     fast: bool = False,
     seed: int = 42,
     bootstrap_iterations: int = 1000,
+    include_profit_curve: bool = False,
 ) -> dict[str, Any]:
     """Search a Step 1 SQLite snapshot without ever opening it writable.
 
     Payout values are JPY returned per JPY 100 ticket, as preserved by Step 1.
     The function adds the odds join only when an odds condition is active;
-    bootstrap work is in Python.
+    bootstrap work is in Python.  When requested, ``profit_curve`` is the
+    date-ordered cumulative profit for one fixed JPY 100 ticket per race.
     """
 
     if conditions is None:
@@ -583,17 +596,40 @@ def search_roi(
     else:
         ci_low, ci_high = _bootstrap_ci(returns, seed, bootstrap_iterations)
 
-    yearly: list[dict[str, Any]] = []
-    for year in sorted({int(item[0][:4]) for item in included}):
-        year_rows = [item for item in included if int(item[0][:4]) == year]
-        yearly.append(
-            {
-                "year": year,
-                "n": len(year_rows),
-                "hits": sum(item[1] for item in year_rows),
-                "roi": round(sum(item[2] for item in year_rows) / len(year_rows), 1),
-            }
-        )
+    yearly_totals: dict[int, list[float]] = {}
+    monthly_totals: dict[tuple[int, int], list[float]] = {}
+    daily_profit: dict[str, float] = {}
+    for race_date, hit, payout in included:
+        year = int(race_date[:4])
+        month = int(race_date[5:7])
+        for totals in (
+            yearly_totals.setdefault(year, [0.0, 0.0, 0.0]),
+            monthly_totals.setdefault((year, month), [0.0, 0.0, 0.0]),
+        ):
+            totals[0] += 1
+            totals[1] += int(hit)
+            totals[2] += payout
+        daily_profit[race_date] = daily_profit.get(race_date, 0.0) + payout - 100.0
+
+    yearly = [
+        {
+            "year": year,
+            "n": int(totals[0]),
+            "hits": int(totals[1]),
+            "roi": round(totals[2] / totals[0], 1),
+        }
+        for year, totals in sorted(yearly_totals.items())
+    ]
+    monthly = [
+        {
+            "year": year,
+            "month": month,
+            "n": int(totals[0]),
+            "hits": int(totals[1]),
+            "roi": round(totals[2] / totals[0], 1),
+        }
+        for (year, month), totals in sorted(monthly_totals.items())
+    ]
     warnings: list[str] = []
     if n < 30:
         warnings.append("n<30: 偶然の可能性が高い")
@@ -603,7 +639,7 @@ def search_roi(
         min((item[0] for item in included), default=None),
         max((item[0] for item in included), default=None),
     ]
-    return {
+    result = {
         "n": n,
         "hits": hits,
         "hit_rate": round(hits * 100.0 / n, 1) if n else 0.0,
@@ -612,9 +648,24 @@ def search_roi(
         "roi_ci_high": round(ci_high, 1),
         "excluded": {"result_missing": excluded_result, "condition_null": excluded_condition},
         "yearly": yearly,
+        "monthly": monthly,
         "warnings": warnings,
         "effective_date_range": effective_range,
     }
+    if include_profit_curve:
+        cumulative = 0.0
+        curve: list[dict[str, Any]] = []
+        for race_date in sorted(daily_profit):
+            cumulative += daily_profit[race_date]
+            rounded = round(cumulative, 1)
+            curve.append(
+                {
+                    "date": race_date,
+                    "cumulative": int(rounded) if rounded.is_integer() else rounded,
+                }
+            )
+        result["profit_curve"] = _downsample_curve(curve)
+    return result
 
 
 __all__ = ["search_roi"]

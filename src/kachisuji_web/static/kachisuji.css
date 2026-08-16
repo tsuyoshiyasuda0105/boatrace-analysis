@@ -137,7 +137,37 @@ button.is-loading::before { display: inline-block; width: 10px; height: 10px; ma
 .yeartbl th { padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--ink-3); text-align: right; font-size: 11px; letter-spacing: .06em; }
 .yeartbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
 .yeartbl th:first-child, .yeartbl td:first-child { text-align: left; }
+.year-row td { font-weight: 700; }
+.month-toggle, .month-toggle-placeholder { display: inline-grid; width: 24px; height: 24px; margin-right: 7px; place-items: center; vertical-align: middle; }
+.month-toggle { padding: 0; border-radius: 5px; color: var(--accent-ink); font-size: 16px; line-height: 1; }
+.month-toggle-placeholder { content: ""; }
+.month-row { background: var(--surface-2); }
+.month-row td { border-bottom-style: dashed; }
+.month-indent { display: inline-block; padding-left: 31px; color: var(--ink-2); }
 .roi-pos { color: var(--good); font-weight: 700; }.roi-neg { color: var(--crit); font-weight: 700; }
+.mycard.strategy-performance { display: block; padding: 13px 14px 11px; border-left: 3px solid var(--accent); }
+.strategy-card-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.performance-grid { display: grid; gap: 3px; margin-top: 10px; }
+.performance-row { display: grid; grid-template-columns: minmax(6em, 1fr) auto auto; gap: 14px; align-items: baseline; padding: 3px 8px; border-radius: 5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.performance-row > span:first-child { font-size: 11.5px; font-weight: 700; }
+.performance-row strong { min-width: 5.3em; color: var(--ink); text-align: right; }
+.performance-row > span:last-child { min-width: 3.5em; color: var(--ink-3); text-align: right; font-size: 11.5px; }
+.performance-forward { background: var(--accent-soft); color: var(--accent-ink); }
+.performance-forward strong { color: var(--accent-ink); font-size: 18px; }
+.strategy-outcome { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.verdict { padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 800; }
+.verdict-promote { background: var(--good-soft); color: var(--good); }
+.verdict-watch { background: var(--surface-2); color: var(--ink-2); }
+.verdict-demote { background: var(--crit-soft); color: var(--crit); }
+.verdict-pending { background: var(--warn-soft); color: var(--warn); }
+.verdict-remaining { color: var(--ink-3); font-size: 11px; }
+.forward-sparkline { width: 180px; height: 48px; margin-left: auto; overflow: visible; }
+.spark-zero { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 3 3; opacity: .55; }
+.spark-path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.spark-end { fill: currentColor; stroke: var(--surface); stroke-width: 1.5; }
+.spark-positive { color: var(--good); }.spark-negative { color: var(--crit); }
+.forward-note { margin: 8px 0 0; color: var(--ink-3); font-size: 10.5px; line-height: 1.55; }
+.forward-section-note { margin: -2px 0 9px; color: var(--ink-3); font-size: 10.5px; line-height: 1.55; }
 .actionbar { position: fixed; z-index: 100; right: 0; bottom: 0; left: 0; border-top: 1px solid var(--line); background: var(--surface); box-shadow: 0 -6px 24px rgba(18, 30, 40, .14); }
 .actionbar-inner { display: flex; max-width: 1080px; min-height: 76px; margin: 0 auto; padding: 12px 18px; gap: 10px; align-items: center; }
 .actionbar button { padding: 9px 17px; }
@@ -163,6 +193,9 @@ button.is-loading::before { display: inline-block; width: 10px; height: 10px; ma
   .mini-kpi { order: 5; width: 100%; margin-left: 0; padding-block: 5px !important; }
   .bar-reset { margin-left: auto; }
   .compare-row { align-items: center; }
+  .performance-row { gap: 8px; }
+  .strategy-outcome { align-items: flex-start; }
+  .forward-sparkline { width: 100%; margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }

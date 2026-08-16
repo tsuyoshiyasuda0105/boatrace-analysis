@@ -185,8 +185,9 @@
         <hr class="divider">
         <div class="h3row">
           <h2>★ マイ手法</h2>
-          <span class="sub">保存日以降のフォワード検証の起点になります</span>
+          <span class="sub">保存日の翌日以降がフォワード検証の起点です</span>
         </div>
+        <p class="forward-section-note">フォワードは保存日の翌日以降のレースだけで集計した成績です。探索時の数値は上振れを含むため、実力に近いのはフォワードです。判定はN30以上から。</p>
         <div id="myStrategies" class="mylist" aria-live="polite">
           <div class="mycard"><span class="strategy-meta">読み込み中…</span></div>
         </div>
@@ -441,9 +442,21 @@
         return '<div class="warnbox ' + level + '">⚠ ' + escapeHtml(warning) + '</div>';
       }).join('');
       if (!warnings) warnings = '<div class="okbox">✓ 小標本警告はありません。</div>';
+      var monthlyByYear = (data.monthly || []).reduce(function (groups, month) {
+        (groups[month.year] = groups[month.year] || []).push(month); return groups;
+      }, {});
       var years = data.yearly.map(function (year) {
-        return '<tr><td>' + year.year + '年</td><td>' + year.n + '</td><td>' + year.hits + '</td><td class="' + (year.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + year.roi.toFixed(1) + '%</td></tr>';
-      }).join('') || '<tr><td colspan="4">対象データなし</td></tr>';
+        var months = monthlyByYear[year.year] || [];
+        var controlId = 'monthly-' + year.year;
+        var toggle = months.length
+          ? '<button type="button" class="month-toggle" aria-expanded="false" aria-controls="' + controlId + '" aria-label="' + year.year + '年の月別内訳を開く">＋</button>'
+          : '<span class="month-toggle-placeholder" aria-hidden="true"></span>';
+        var monthRows = months.map(function (month) {
+          return '<tr class="month-row"><td><span class="month-indent">' + month.year + '年' + month.month + '月</span></td><td>' + month.n + '</td><td>' + month.hits + '</td><td class="' + (month.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + month.roi.toFixed(1) + '%</td></tr>';
+        }).join('');
+        return '<tbody class="year-group"><tr class="year-row"><td>' + toggle + '<span>' + year.year + '年</span></td><td>' + year.n + '</td><td>' + year.hits + '</td><td class="' + (year.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + year.roi.toFixed(1) + '%</td></tr></tbody>' +
+          (months.length ? '<tbody id="' + controlId + '" class="month-rows" hidden>' + monthRows + '</tbody>' : '');
+      }).join('') || '<tbody><tr><td colspan="4">対象データなし</td></tr></tbody>';
       var range = data.effective_date_range[0] ? escapeHtml(data.effective_date_range[0]) + ' 〜 ' + escapeHtml(data.effective_date_range[1]) : '対象データなし';
       var excludedTotal = data.excluded.result_missing + data.excluded.condition_null;
       byId('resultArea').innerHTML =
@@ -454,7 +467,7 @@
         '<div class="kpi"><div class="v">' + excludedTotal + '</div><div class="l">除外件数</div><div class="ci">結果欠損 ' + data.excluded.result_missing + '件</div></div></div>' +
         warnings +
         '<div class="exclusions"><h2>除外の内訳</h2><dl><div><dt>結果・払戻欠損</dt><dd>' + data.excluded.result_missing + '件</dd></div><div class="condition-null"><dt>条件判定不能で除外した件数</dt><dd>' + data.excluded.condition_null + '件</dd></div></dl></div>' +
-        '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年</th><th>N</th><th>的中</th><th>回収率</th></tr></thead><tbody>' + years + '</tbody></table>';
+        '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年月</th><th>N</th><th>的中</th><th>回収率</th></tr></thead>' + years + '</table>';
       byId('miniKpi').hidden = false;
       byId('miniKpi').textContent = '回収率 ' + data.roi.toFixed(1) + '% / N ' + data.n;
       byId('resultArea').classList.remove('result-updated');
@@ -474,6 +487,48 @@
       if (!response.ok) throw new Error(data.error || '処理に失敗しました');
       return data;
     }
+    function metricText(metric) {
+      if (!metric || !Number.isFinite(Number(metric.roi)) || !Number.isFinite(Number(metric.n))) return '<strong>—</strong><span>N —</span>';
+      return '<strong>' + Number(metric.roi).toFixed(1) + '%</strong><span>N ' + Number(metric.n) + '</span>';
+    }
+    function sparkline(curve, name) {
+      var points = Array.isArray(curve) ? curve : [];
+      var width = 180, height = 48, pad = 4;
+      var values = points.map(function (point) { return Number(point.cumulative); }).filter(Number.isFinite);
+      var min = Math.min.apply(null, values.concat([0]));
+      var max = Math.max.apply(null, values.concat([0]));
+      var span = Math.max(1, max - min);
+      function y(value) { return (height - pad - ((value - min) / span) * (height - pad * 2)).toFixed(1); }
+      var path = values.map(function (value, index) {
+        var x = values.length < 2 ? width / 2 : pad + index * (width - pad * 2) / (values.length - 1);
+        return (index ? 'L' : 'M') + x.toFixed(1) + ',' + y(value);
+      }).join(' ');
+      var end = values.length ? values[values.length - 1] : 0;
+      var endX = values.length < 2 ? width / 2 : width - pad;
+      return '<svg class="forward-sparkline ' + (end >= 0 ? 'spark-positive' : 'spark-negative') + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escapeHtml(name) + 'のフォワード累積収支">' +
+        '<line class="spark-zero" x1="0" x2="' + width + '" y1="' + y(0) + '" y2="' + y(0) + '"></line>' +
+        (path ? '<path class="spark-path" d="' + path + '"></path><circle class="spark-end" cx="' + endX.toFixed(1) + '" cy="' + y(end) + '" r="3"></circle>' : '') +
+        '</svg>';
+    }
+    function formatSavedDate(createdAt) {
+      var parsed = new Date(createdAt);
+      if (Number.isNaN(parsed.getTime())) return escapeHtml(String(createdAt).slice(0, 10));
+      return parsed.toLocaleDateString('ja-JP', {timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'});
+    }
+    function performanceCard(item) {
+        var icon = {promote: '🟢', watch: '⚪', demote: '🔴', pending: '🟡'}[item.verdict] || '';
+        var pending = item.verdict === 'pending' ? '<span class="verdict-remaining">あと' + Number(item.races_until_verdict) + '件で判定</span>' : '';
+        return '<article class="mycard strategy-performance" data-strategy-id="' + Number(item.strategy_id) + '">' +
+          '<div class="strategy-card-head"><div><div class="nm">★ ' + escapeHtml(item.name) + '</div>' +
+          '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + ' ｜ 経過 ' + Number(item.days_since_saved) + '日</div></div>' +
+          '<button type="button" class="delete-strategy" data-id="' + Number(item.strategy_id) + '">削除</button></div>' +
+          '<div class="performance-grid" aria-label="3成績"><div class="performance-row"><span>探索時</span>' + metricText(item.backtest) + '</div>' +
+          '<div class="performance-row"><span>全期間</span>' + metricText(item.overall) + '</div>' +
+          '<div class="performance-row performance-forward"><span>フォワード</span>' + metricText(item.forward) + '</div></div>' +
+          '<div class="strategy-outcome"><span class="verdict verdict-' + escapeHtml(item.verdict) + '">' + icon + ' ' + escapeHtml(item.verdict_label) + '</span>' + pending +
+          sparkline(item.forward_curve, item.name) + '</div>' +
+          '<p class="forward-note">フォワードは保存日の翌日以降のレースだけで集計した成績です。探索時の数値は上振れを含むため、実力に近いのはフォワードです。判定はN30以上から。</p></article>';
+    }
     function renderStrategies(items) {
       var area = byId('myStrategies');
       if (!items.length) {
@@ -481,13 +536,11 @@
         return;
       }
       area.innerHTML = items.map(function (item) {
-        var backtest = item.backtest || {};
-        var roi = Number.isFinite(Number(backtest.roi)) ? Number(backtest.roi).toFixed(1) + '%' : '—';
-        var n = Number.isFinite(Number(backtest.n)) ? String(backtest.n) : '—';
-        var saved = escapeHtml(String(item.created_at).slice(0, 10));
-        return '<div class="mycard"><div><div class="nm">★ ' + escapeHtml(item.name) + '</div>' +
-          '<div class="strategy-meta">保存日 ' + saved + ' ｜ 保存時 回収率 ' + roi + ' / N=' + n + '</div></div>' +
-          '<button type="button" class="delete-strategy" data-id="' + Number(item.id) + '">削除</button></div>';
+        return '<article class="mycard strategy-performance strategy-unloaded" data-strategy-id="' + Number(item.id) + '">' +
+          '<div class="strategy-card-head"><div><div class="nm">★ ' + escapeHtml(item.name) + '</div>' +
+          '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + '</div></div>' +
+          '<button type="button" class="delete-strategy" data-id="' + Number(item.id) + '">削除</button></div>' +
+          '<button type="button" class="load-performance" data-id="' + Number(item.id) + '">成績を見る</button></article>';
       }).join('');
     }
     async function loadStrategies() {
@@ -498,6 +551,17 @@
         byId('myStrategies').querySelector('.errorbox').textContent = error.message;
       }
     }
+
+    byId('resultArea').addEventListener('click', function (event) {
+      var button = event.target.closest('.month-toggle');
+      if (!button) return;
+      var rows = document.getElementById(button.getAttribute('aria-controls'));
+      var expanded = button.getAttribute('aria-expanded') === 'true';
+      button.setAttribute('aria-expanded', String(!expanded));
+      button.textContent = expanded ? '＋' : '−';
+      button.setAttribute('aria-label', button.getAttribute('aria-label').replace(expanded ? '閉じる' : '開く', expanded ? '開く' : '閉じる'));
+      rows.hidden = expanded;
+    });
     function renderMatches(groups) {
       var area = byId('matchResults');
       if (!groups.length) {
@@ -571,6 +635,18 @@
       }
     });
     byId('myStrategies').addEventListener('click', async function (event) {
+      var performanceButton = event.target.closest('.load-performance');
+      if (performanceButton) {
+        performanceButton.disabled = true; performanceButton.textContent = '計算中…';
+        try {
+          var performance = await requestJson('/api/strategies/' + performanceButton.dataset.id + '/performance');
+          performanceButton.closest('.strategy-performance').outerHTML = performanceCard(performance);
+        } catch (error) {
+          byId('strategyMessage').textContent = error.message;
+          performanceButton.disabled = false; performanceButton.textContent = '成績を見る';
+        }
+        return;
+      }
       var button = event.target.closest('.delete-strategy');
       if (!button || !window.confirm('この手法を一覧から削除しますか？')) return;
       button.disabled = true;

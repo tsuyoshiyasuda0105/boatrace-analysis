@@ -124,6 +124,28 @@ def test_s1_search_renders_result_kpis(page):
     expect(page.locator("#btnSaveStrategy")).to_be_enabled()
 
 
+def test_s9_year_row_toggles_monthly_breakdown_accessibly(page):
+    page.locator("#fast").check()
+    page.locator("#venue").select_option("1")
+    page.locator("#btnSearch").click()
+    toggle = page.locator(".month-toggle").first
+    expect(toggle).to_be_visible(timeout=30_000)
+    controlled_id = toggle.get_attribute("aria-controls")
+    assert controlled_id
+    rows = page.locator(f"#{controlled_id}")
+    expect(toggle).to_have_attribute("aria-expanded", "false")
+    expect(rows).to_be_hidden()
+
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "true")
+    expect(rows).to_be_visible()
+    expect(rows.locator(".month-row").first).to_be_visible()
+
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "false")
+    expect(rows).to_be_hidden()
+
+
 @pytest.mark.parametrize("width", [1280, 390])
 def test_s7_sticky_action_bar_keeps_search_visible_at_page_bottom(page, width):
     page.set_viewport_size({"width": width, "height": 800})
@@ -285,6 +307,31 @@ def test_s5_strategy_save_list_delete_roundtrip(page):
     deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
     assert deleted.status == 200
     assert all(item["id"] != strategy_id for item in get_url(page, "/api/strategies").json())
+
+
+def test_s9_strategy_card_loads_three_scores_verdict_and_sparkline(page):
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": "step9-forward", "conditions": valid_conditions(venue=1), "backtest": {"roi": 101.2, "n": 12}},
+    )
+    assert response.status == 200, response.text()
+    strategy_id = response.json()["id"]
+    page.reload(wait_until="networkidle")
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    expect(card).to_contain_text("step9-forward")
+    card.locator(".load-performance").click()
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    expect(card.locator(".performance-grid")).to_contain_text("探索時", timeout=30_000)
+    expect(card.locator(".performance-grid")).to_contain_text("全期間")
+    expect(card.locator(".performance-forward")).to_contain_text("フォワード")
+    expect(card.locator(".verdict")).to_be_visible()
+    expect(card.locator("svg.forward-sparkline")).to_be_visible()
+    expect(card).to_contain_text("保存日の翌日以降")
+
+    deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+    assert deleted.status == 200
 
 
 def test_s5_strategy_name_is_escaped_and_does_not_execute(page):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,10 @@ from src.features.asof_builder import create_output_schema
 from src.kachisuji_web.app import create_app
 from src.search.strategies import (
     deactivate_strategy,
+    forward_verdict,
     get_strategy,
+    get_strategy_performance,
+    list_strategy_performances,
     list_strategies,
     match_races,
     save_strategy,
@@ -132,6 +136,128 @@ def test_null_backtest_is_accepted(strategy_db: Path) -> None:
     strategy_id = save_strategy("null backtest", {"bet": BET}, None)
 
     assert get_strategy(strategy_id)["backtest"] is None
+
+
+def _performance_search_db(tmp_path: Path) -> Path:
+    path = tmp_path / "performance-search.db"
+    rows = [
+        _row("before", 1, race_date="2026-08-14", result_sanrentan="2-1-3", payout_sanrentan=0),
+        _row("saved-day", 2, race_date="2026-08-15", result_sanrentan="1-2-3", payout_sanrentan=500),
+        _row("forward-miss", 3, race_date="2026-08-16", result_sanrentan="2-1-3", payout_sanrentan=0),
+        _row("forward-hit", 4, race_date="2026-08-16", result_sanrentan="1-2-3", payout_sanrentan=300),
+        _row("forward-next", 5, race_date="2026-08-17", result_sanrentan="2-1-3", payout_sanrentan=0),
+    ]
+    with sqlite3.connect(path) as connection:
+        create_output_schema(connection)
+        for row in rows:
+            columns = list(row)
+            connection.execute(
+                f"INSERT INTO asof_race_features ({','.join(columns)}) "
+                f"VALUES ({','.join('?' for _ in columns)})",
+                [row[column] for column in columns],
+            )
+    return path
+
+
+def test_performance_uses_jst_next_day_and_overall_ignores_saved_dates(
+    tmp_path: Path, strategy_db: Path
+) -> None:
+    search_db = _performance_search_db(tmp_path)
+    strategy_id = save_strategy(
+        "境界手法",
+        {"bet": BET, "date_from": "2026-08-15", "date_to": "2026-08-15"},
+        {"roi": 500.0, "n": 1},
+        db_path=strategy_db,
+    )
+    with sqlite3.connect(strategy_db) as connection:
+        connection.execute(
+            "UPDATE strategies SET created_at = ? WHERE id = ?",
+            ("2026-08-15T14:59:00+00:00", strategy_id),
+        )
+
+    result = get_strategy_performance(
+        strategy_id,
+        search_db,
+        strategy_db,
+        now=datetime(2026, 8, 18, tzinfo=timezone.utc),
+    )
+
+    assert result is not None
+    assert result["backtest"] == {"roi": 500.0, "n": 1}
+    assert result["overall"]["n"] == 5
+    assert result["overall"]["roi"] == 160.0
+    assert result["forward"] == {
+        "roi": 100.0,
+        "n": 3,
+        "hits": 1,
+        "roi_ci_low": 0.0,
+        "roi_ci_high": 296.0,
+    }
+    assert result["forward_curve"] == [
+        {"date": "2026-08-16", "cumulative": 100},
+        {"date": "2026-08-17", "cumulative": 0},
+    ]
+    assert result["days_since_saved"] == 3
+    assert result["verdict"] == "pending"
+    assert result["races_until_verdict"] == 27
+
+
+@pytest.mark.parametrize(
+    ("n", "roi", "expected"),
+    [
+        (29, 999.0, ("pending", "判定待ち", 1)),
+        (30, 130.0, ("promote", "昇格候補", 0)),
+        (30, 129.9, ("watch", "監視中", 0)),
+        (30, 69.9, ("demote", "降格候補", 0)),
+    ],
+)
+def test_forward_verdict_boundaries(n: int, roi: float, expected: tuple[str, str, int]) -> None:
+    assert forward_verdict(n, roi) == expected
+
+
+def test_zero_forward_rows_is_safe_and_list_omits_curve(
+    tmp_path: Path, strategy_db: Path
+) -> None:
+    search_db = _performance_search_db(tmp_path)
+    strategy_id = save_strategy("保存直後", {"bet": BET}, db_path=strategy_db)
+    with sqlite3.connect(strategy_db) as connection:
+        connection.execute(
+            "UPDATE strategies SET created_at = ? WHERE id = ?",
+            ("2026-08-17T15:00:00+00:00", strategy_id),
+        )
+
+    single = get_strategy_performance(strategy_id, search_db, strategy_db)
+    listed = list_strategy_performances(search_db, strategy_db)
+
+    assert single is not None
+    assert single["forward"]["n"] == 0
+    assert single["forward"]["roi"] == 0.0
+    assert single["forward_curve"] == []
+    assert single["verdict"] == "pending"
+    assert single["races_until_verdict"] == 30
+    assert len(listed) == 1
+    assert "forward_curve" not in listed[0]
+
+
+def test_performance_api_returns_single_curve_and_compact_active_list(
+    tmp_path: Path, strategy_db: Path
+) -> None:
+    search_db = _performance_search_db(tmp_path)
+    strategy_id = save_strategy("API実成績", {"bet": BET}, {"roi": 120, "n": 10}, db_path=strategy_db)
+    app = create_app(search_db, strategy_db)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+
+    single = client.get(f"/api/strategies/{strategy_id}/performance")
+    listed = client.get("/api/strategies/performance")
+
+    assert single.status_code == 200
+    assert single.get_json()["strategy_id"] == strategy_id
+    assert "forward_curve" in single.get_json()
+    assert listed.status_code == 200
+    assert [item["strategy_id"] for item in listed.get_json()] == [strategy_id]
+    assert "forward_curve" not in listed.get_json()[0]
+    assert client.get("/api/strategies/999999/performance").status_code == 404
 
 
 def test_prior_day_match_is_confirmed(search_db: Path, strategy_db: Path) -> None:

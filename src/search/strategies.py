@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import re
 import sqlite3
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
-from src.search.roi_search import READABLE_SCHEMA_VERSIONS, _compile_conditions
+from src.search.roi_search import READABLE_SCHEMA_VERSIONS, _compile_conditions, search_roi
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +44,13 @@ _SAME_DAY_COLUMNS = frozenset({"weather", "wind_speed"}) | frozenset(
 _SAME_DAY_COLUMNS = _SAME_DAY_COLUMNS | frozenset({"odds"})
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 _BET_LABELS = {"tansho": "単勝", "nirentan": "2連単", "sanrentan": "3連単"}
+_JST = ZoneInfo("Asia/Tokyo")
+_VERDICT_LABELS = {
+    "promote": "昇格候補",
+    "watch": "監視中",
+    "demote": "降格候補",
+    "pending": "判定待ち",
+}
 
 
 def _strategy_db_path() -> Path:
@@ -176,6 +184,127 @@ def deactivate_strategy(strategy_id: int, *, db_path: str | Path | None = None) 
             (strategy_id,),
         )
         return cursor.rowcount == 1
+
+
+def forward_verdict(n: int, roi: float) -> tuple[str, str, int]:
+    """Return the operations verdict for forward sample size and ROI."""
+
+    if n < 30:
+        verdict = "pending"
+    elif roi >= 130:
+        verdict = "promote"
+    elif roi >= 70:
+        verdict = "watch"
+    else:
+        verdict = "demote"
+    return verdict, _VERDICT_LABELS[verdict], max(0, 30 - n)
+
+
+def _created_at_in_jst(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as exc:
+        raise ValueError("strategy created_at must be an ISO datetime") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(_JST)
+
+
+def _performance_summary(result: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: result[key]
+        for key in ("roi", "n", "hits", "roi_ci_low", "roi_ci_high")
+    }
+
+
+def _strategy_performance(
+    strategy: Mapping[str, Any],
+    search_db: str | Path,
+    *,
+    include_curve: bool,
+    now: datetime,
+) -> dict[str, Any]:
+    """Calculate current performance, excluding the saved JST day from forward.
+
+    ``created_at`` is converted to its Asia/Tokyo calendar date and forward
+    begins on the following day.  The saved day is deliberately excluded so
+    results that may already have been known at save time cannot leak into the
+    forward evaluation.
+    """
+
+    created_jst = _created_at_in_jst(str(strategy["created_at"]))
+    now_jst = now.astimezone(_JST) if now.tzinfo is not None else now.replace(tzinfo=timezone.utc).astimezone(_JST)
+    overall_conditions = dict(strategy["conditions"])
+    overall_conditions.pop("date_from", None)
+    overall_conditions.pop("date_to", None)
+    forward_conditions = dict(overall_conditions)
+    forward_conditions["date_from"] = (created_jst.date() + timedelta(days=1)).isoformat()
+
+    overall_result = search_roi(search_db, overall_conditions, fast=True)
+    forward_result = search_roi(
+        search_db,
+        forward_conditions,
+        fast=True,
+        include_profit_curve=include_curve,
+    )
+    verdict, verdict_label, races_until_verdict = forward_verdict(
+        int(forward_result["n"]), float(forward_result["roi"])
+    )
+    performance = {
+        "strategy_id": strategy["id"],
+        "name": strategy["name"],
+        "created_at": strategy["created_at"],
+        "days_since_saved": max(0, (now_jst.date() - created_jst.date()).days),
+        "backtest": strategy["backtest"],
+        "overall": _performance_summary(overall_result),
+        "forward": _performance_summary(forward_result),
+        "verdict": verdict,
+        "verdict_label": verdict_label,
+        "races_until_verdict": races_until_verdict,
+    }
+    if include_curve:
+        performance["forward_curve"] = forward_result["profit_curve"]
+    return performance
+
+
+def get_strategy_performance(
+    strategy_id: int,
+    search_db: str | Path = DEFAULT_SEARCH_DB,
+    strategies_db: str | Path = DEFAULT_STRATEGY_DB,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Return three performance views and the forward curve for one strategy."""
+
+    strategy = _get_strategy_from(strategies_db, strategy_id)
+    if strategy is None:
+        return None
+    return _strategy_performance(
+        strategy,
+        search_db,
+        include_curve=True,
+        now=now or datetime.now(timezone.utc),
+    )
+
+
+def list_strategy_performances(
+    search_db: str | Path = DEFAULT_SEARCH_DB,
+    strategies_db: str | Path = DEFAULT_STRATEGY_DB,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Return compact performance for every active strategy without curves."""
+
+    current = now or datetime.now(timezone.utc)
+    return [
+        _strategy_performance(
+            strategy,
+            search_db,
+            include_curve=False,
+            now=current,
+        )
+        for strategy in list_strategies(db_path=strategies_db)
+    ]
 
 
 def _get_strategy_from(path: str | Path, strategy_id: int) -> dict[str, Any] | None:
@@ -326,8 +455,11 @@ def match_all_strategies(
 
 __all__ = [
     "deactivate_strategy",
+    "forward_verdict",
     "get_strategy",
+    "get_strategy_performance",
     "list_strategies",
+    "list_strategy_performances",
     "match_all_strategies",
     "match_races",
     "save_strategy",
