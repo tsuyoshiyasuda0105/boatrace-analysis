@@ -17,6 +17,8 @@ import os
 import re
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from functools import lru_cache, partial, wraps
 from typing import Optional, Any
@@ -167,7 +169,47 @@ class _ProfiledConnection:
         return self._conn.__exit__(exc_type, exc, tb)
 
 
+class _BorrowedConnection:
+    """Context-manager view of a connection owned by the prewarm loop."""
+
+    def __init__(self, conn: Any):
+        self._conn = conn
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        return self._conn
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return False
+
+    def close(self):
+        # Ownership stays with the outer prewarm loop even when a legacy
+        # helper follows its ``owns_connection`` branch and closes explicitly.
+        return None
+
+
+_RACE_DETAIL_PREWARM_CONTEXT: ContextVar[Optional[dict[str, Any]]] = ContextVar(
+    "race_detail_prewarm_context",
+    default=None,
+)
+
+
+@contextmanager
+def _use_race_detail_prewarm_context(conn: Any, prefetched: dict[str, Any]):
+    """Share one DB connection and date-batched inputs during prewarming."""
+    token = _RACE_DETAIL_PREWARM_CONTEXT.set({"conn": conn, **prefetched})
+    try:
+        yield
+    finally:
+        _RACE_DETAIL_PREWARM_CONTEXT.reset(token)
+
+
 def db_connect(*args, **kwargs):
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get()
+    if prewarm_context is not None and not args and not kwargs:
+        return _BorrowedConnection(prewarm_context["conn"])
     conn = _raw_db_connect(*args, **kwargs)
     retry_event = consume_transient_db_retry_event()
     if retry_event and "_note_transient_db_error" in globals():
@@ -1258,6 +1300,17 @@ def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
             updated_at, html = float(mem_row[0] or 0), mem_row[1]
             if now_ts - updated_at <= max_age_sec:
                 return html
+        prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+        prefetched_rows = prewarm_context.get("page_cache_rows")
+        if prefetched_rows is not None:
+            prefetched_row = prefetched_rows.get(cache_key)
+            if prefetched_row is None:
+                return None
+            html, updated_at = prefetched_row
+            if now_ts - float(updated_at or 0) <= max_age_sec:
+                _PAGE_HTML_MEM_CACHE[cache_key] = (float(updated_at or 0), html)
+                return html
+            return None
         _ensure_page_html_cache_table()
         with db_connect() as conn:
             row = conn.execute(
@@ -1314,6 +1367,17 @@ def _read_page_html_cache_stale(cache_key: str) -> Optional[str]:
         mem_entry = _PAGE_HTML_MEM_CACHE.get(cache_key)
         if mem_entry:
             return mem_entry[1]
+        prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+        prefetched_rows = prewarm_context.get("page_cache_rows")
+        if prefetched_rows is not None:
+            prefetched_row = prefetched_rows.get(cache_key)
+            if prefetched_row is None:
+                return None
+            html, updated_at = prefetched_row
+            if not html:
+                return None
+            _PAGE_HTML_MEM_CACHE[cache_key] = (float(updated_at or 0), html)
+            return html
         _ensure_page_html_cache_table()
         with db_connect() as conn:
             row = conn.execute(
@@ -2472,6 +2536,10 @@ def _stadium_name_map() -> dict[int, str]:
 def _race_basic_info(race_id: str) -> Optional[dict]:
     # races テーブルのみ問い合わせ、stadium_name はメモリキャッシュから付加
     # (旧コードは毎回 JOIN stadiums していたが、stadiums は静的なので不要)
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+    prefetched = prewarm_context.get("race_info", {}).get(race_id)
+    if prefetched is not None:
+        return prefetched
     with db_connect() as conn:
         row = conn.execute("""
             SELECT race_id, race_date, stadium_number, race_number,
@@ -2892,6 +2960,11 @@ def _race_predictions_from_cache(race_id: str, version: str) -> Optional[list[di
     """predictions テーブルからキャッシュ済予測を取得。
     Supabase Free でも軽量に動作するため、まずキャッシュを試みる。
     """
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+    prefetched = prewarm_context.get("predictions")
+    if prefetched is not None:
+        rows = prefetched.get(race_id)
+        return [dict(row) for row in rows] if rows else None
     with db_connect() as conn:
         try:
             rows = conn.execute("""
@@ -2979,6 +3052,10 @@ def _race_entry_fallback_rows(race_id: str) -> list[dict]:
     populated on production. Probabilities are left at 0 and rows are ordered
     by boat number.
     """
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+    prefetched = prewarm_context.get("fallback_rows")
+    if prefetched is not None:
+        return [dict(row) for row in prefetched.get(race_id, [])]
     with db_connect() as conn:
         rows = conn.execute(
             """
@@ -4547,13 +4624,23 @@ def _original_exhibition_quality_mark(rank: Optional[int]) -> Optional[str]:
     return "×"
 
 
-def _original_exhibition_quality_marks(race_ids: list[str]) -> dict[str, dict[int, dict[str, Any]]]:
+def _original_exhibition_quality_marks(
+    race_ids: list[str],
+    conn: Any = None,
+) -> dict[str, dict[int, dict[str, Any]]]:
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+    prefetched = prewarm_context.get("original_marks")
+    if prefetched is not None:
+        return {str(rid): prefetched.get(str(rid), {}) for rid in race_ids}
     unique_race_ids = [rid for rid in dict.fromkeys(race_ids) if rid]
     if not unique_race_ids:
         return {}
     placeholders = ",".join("?" for _ in unique_race_ids)
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
     try:
-        with db_connect() as conn:
+        try:
             rows = conn.execute(
                 f"""
                 SELECT race_id, boat_number,
@@ -4566,9 +4653,12 @@ def _original_exhibition_quality_marks(race_ids: list[str]) -> dict[str, dict[in
                 """,
                 tuple(unique_race_ids),
             ).fetchall()
-    except Exception:
-        logger.exception("original exhibition quality mark load failed")
-        return {}
+        except Exception:
+            logger.exception("original exhibition quality mark load failed")
+            return {}
+    finally:
+        if owns_connection:
+            conn.close()
 
     raw: dict[str, dict[int, dict[str, Optional[float]]]] = {}
     for rid, boat_no, dash_time, turn_time, straight_time in rows:
@@ -4819,21 +4909,310 @@ def _race_detail_page_cache_key(race_id: str) -> str:
     return f"race_detail_page:{RACE_DETAIL_PAGE_CACHE_VERSION}:{race_id}"
 
 
+def _prefetch_race_detail_common(
+    race_ids: list[str],
+    conn: Any,
+) -> dict[str, Any]:
+    """Load race/entry rows once for a complete prewarm batch."""
+    unique_ids = [str(rid) for rid in dict.fromkeys(race_ids) if rid]
+    if not unique_ids:
+        return {"race_info": {}, "tag_entries": {}}
+    placeholders = ",".join("?" for _ in unique_ids)
+    info_rows = conn.execute(
+        f"""
+        SELECT r.race_id, r.race_date, r.stadium_number, r.race_number,
+               r.race_grade_number, r.race_title, r.race_subtitle,
+               r.race_closed_at, s.name
+          FROM races r
+          LEFT JOIN stadiums s ON s.stadium_number = r.stadium_number
+         WHERE r.race_id IN ({placeholders})
+        """,
+        tuple(unique_ids),
+    ).fetchall()
+    info_by_race: dict[str, dict[str, Any]] = {}
+    info_keys = [
+        "race_id", "race_date", "stadium_number", "race_number",
+        "race_grade_number", "race_title", "race_subtitle", "race_closed_at",
+    ]
+    for row in info_rows:
+        info = dict(zip(info_keys, row[:8]))
+        info["stadium_name"] = row[8] or ""
+        info["boatcast_replay_url"] = _boatcast_replay_url(info)
+        info_by_race[str(row[0])] = info
+
+    entry_rows = conn.execute(
+        f"""
+        SELECT race_id, boat_number, racer_number, assigned_motor_top_2_percent
+          FROM race_entries
+         WHERE race_id IN ({placeholders})
+         ORDER BY race_id, boat_number
+        """,
+        tuple(unique_ids),
+    ).fetchall()
+    entries_by_race: dict[str, list[tuple[Any, ...]]] = {}
+    for rid, boat_number, racer_number, motor_rate in entry_rows:
+        entries_by_race.setdefault(str(rid), []).append(
+            (boat_number, racer_number, motor_rate)
+        )
+    return {"race_info": info_by_race, "tag_entries": entries_by_race}
+
+
+def _prefetch_race_detail_tag_inputs(
+    race_ids: list[str],
+    conn: Any,
+) -> dict[str, Any]:
+    """Batch/deduplicate every historical input used by detail-tag builds."""
+    prefetched = _prefetch_race_detail_common(race_ids, conn)
+    info_by_race = prefetched["race_info"]
+    entries_by_race = prefetched["tag_entries"]
+    if not info_by_race:
+        return prefetched
+    race_dates = {str(info.get("race_date") or "") for info in info_by_race.values()}
+    if len(race_dates) != 1:
+        raise ValueError("race-detail tag prefetch requires one race date")
+    race_date = next(iter(race_dates))
+    all_racers = tuple(sorted({
+        int(row[1])
+        for rows in entries_by_race.values()
+        for row in rows
+        if row[1] is not None
+    }))
+    period_start = _accident_period_start_for_date(race_date)
+    try:
+        accident_by_racer = _accident_watch_map(period_start, race_date, all_racers)
+    except Exception:
+        accident_by_racer = {}
+        logger.warning("batch accident tag prefetch failed: %s", race_date, exc_info=True)
+
+    ace_thresholds: dict[tuple[int, str], Optional[float]] = {}
+    for info in info_by_race.values():
+        key = (int(info["stadium_number"]), str(info["race_date"]))
+        if key in ace_thresholds:
+            continue
+        try:
+            ace_thresholds[key] = _ace_motor_threshold(*key)
+        except Exception:
+            ace_thresholds[key] = None
+            logger.warning("batch ace-motor prefetch failed: %s", key, exc_info=True)
+
+    entry_change_by_racer = _load_entry_change_snapshot_stats(
+        race_date,
+        list(all_racers),
+    )
+    unique_ids = list(info_by_race)
+    placeholders = ",".join("?" for _ in unique_ids)
+    window = _monthly_snapshot_window(race_date)
+    try:
+        escape_rows = conn.execute(
+            f"""
+            WITH current_boat1 AS (
+                SELECT race_id AS current_race_id, racer_number
+                  FROM race_entries
+                 WHERE race_id IN ({placeholders}) AND boat_number = 1
+            )
+            SELECT c.current_race_id,
+                   COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+              FROM current_boat1 c
+              JOIN race_entries e ON e.racer_number = c.racer_number
+              JOIN races r ON r.race_id = e.race_id
+                           AND r.race_date >= ? AND r.race_date < ?
+              JOIN race_results rr ON rr.race_id = e.race_id
+                                  AND rr.boat_number = e.boat_number
+             WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
+               AND rr.finishing_position IS NOT NULL
+             GROUP BY c.current_race_id
+            """,
+            (*unique_ids, window["from_date"], window["to_date"]),
+        ).fetchall()
+    except Exception:
+        escape_rows = []
+        logger.warning("batch escape-profile prefetch failed: %s", race_date, exc_info=True)
+    escape_by_race = {
+        str(rid): {
+            "starts": int(starts or 0),
+            "wins": int(wins or 0),
+            "rate": float(wins or 0) / int(starts) * 100.0,
+            "snapshot_month": str(window["snapshot_month"] or ""),
+            "preferred_course": 1,
+        }
+        for rid, starts, wins in escape_rows
+        if int(starts or 0) > 0
+    }
+    prefetched.update(
+        {
+            "accident_by_racer": accident_by_racer,
+            "ace_thresholds": ace_thresholds,
+            "escape_by_race": escape_by_race,
+            "entry_change_by_racer": entry_change_by_racer,
+        }
+    )
+    return prefetched
+
+
+def _prefetch_race_detail_page_inputs(
+    race_ids: list[str],
+    model_version: str,
+    conn: Any,
+) -> dict[str, Any]:
+    """Batch the immutable/read-mostly inputs consumed by the page route."""
+    prefetched = _prefetch_race_detail_common(race_ids, conn)
+    unique_ids = list(prefetched["race_info"])
+    if not unique_ids:
+        return prefetched
+    placeholders = ",".join("?" for _ in unique_ids)
+
+    prediction_rows = conn.execute(
+        f"""
+        SELECT p.race_id, p.boat_number, p.prob_first, p.prob_top_2, p.prob_top_3,
+               e.racer_number, e.racer_name, e.class_number,
+               e.branch_number, e.age, e.weight, e.flying_count, e.late_count,
+               e.national_top_1_percent, e.national_top_2_percent, e.local_top_2_percent,
+               e.assigned_motor_number, e.assigned_motor_top_2_percent,
+               NULLIF(pv.exhibition_time, 0), pv.start_timing_exhibition,
+               pv.tilt_adjustment, res.finishing_position
+          FROM predictions p
+          JOIN race_entries e ON p.race_id = e.race_id AND p.boat_number = e.boat_number
+          LEFT JOIN race_previews pv ON p.race_id = pv.race_id AND p.boat_number = pv.boat_number
+          LEFT JOIN race_results res ON p.race_id = res.race_id AND p.boat_number = res.boat_number
+         WHERE p.race_id IN ({placeholders}) AND p.model_version = ?
+         ORDER BY p.race_id, p.prob_first DESC
+        """,
+        (*unique_ids, model_version),
+    ).fetchall()
+    prediction_keys = [
+        "boat_number", "prob_first", "prob_top_2", "prob_top_3", "racer_number",
+        "racer_name", "class_number", "branch_number", "age", "weight",
+        "flying_count", "late_count", "national_top_1_percent",
+        "national_top_2_percent", "local_top_2_percent", "assigned_motor_number",
+        "assigned_motor_top_2_percent", "exhibition_time",
+        "start_timing_exhibition", "tilt_adjustment", "finishing_position",
+    ]
+    predictions_by_race: dict[str, list[dict[str, Any]]] = {}
+    for row in prediction_rows:
+        rid = str(row[0])
+        values = dict(zip(prediction_keys, row[1:]))
+        values["branch_label"] = _branch_label(values.get("branch_number"))
+        target = predictions_by_race.setdefault(rid, [])
+        values["pred_rank"] = len(target) + 1
+        target.append(values)
+
+    fallback_rows = conn.execute(
+        f"""
+        SELECT e.race_id, e.boat_number, e.racer_number, e.racer_name,
+               e.class_number, e.branch_number, e.age, e.weight,
+               e.flying_count, e.late_count, e.national_top_1_percent,
+               e.national_top_2_percent, e.local_top_2_percent,
+               e.assigned_motor_number, e.assigned_motor_top_2_percent,
+               NULLIF(pv.exhibition_time, 0), pv.start_timing_exhibition,
+               pv.tilt_adjustment, res.finishing_position
+          FROM race_entries e
+          LEFT JOIN race_previews pv ON pv.race_id = e.race_id AND pv.boat_number = e.boat_number
+          LEFT JOIN race_results res ON res.race_id = e.race_id AND res.boat_number = e.boat_number
+         WHERE e.race_id IN ({placeholders})
+         ORDER BY e.race_id, e.boat_number
+        """,
+        tuple(unique_ids),
+    ).fetchall()
+    fallback_by_race: dict[str, list[dict[str, Any]]] = {}
+    fallback_keys = [
+        "boat_number", "racer_number", "racer_name", "class_number",
+        "branch_number", "age", "weight", "flying_count", "late_count",
+        "national_top_1_percent", "national_top_2_percent", "local_top_2_percent",
+        "assigned_motor_number", "assigned_motor_top_2_percent", "exhibition_time",
+        "start_timing_exhibition", "tilt_adjustment", "finishing_position",
+    ]
+    for row in fallback_rows:
+        rid = str(row[0])
+        target = fallback_by_race.setdefault(rid, [])
+        values = dict(zip(fallback_keys, row[1:]))
+        values.update(
+            {
+                "branch_label": _branch_label(values.get("branch_number")),
+                "prob_first": 0.0,
+                "prob_top_2": 0.0,
+                "prob_top_3": 0.0,
+                "pred_rank": len(target) + 1,
+            }
+        )
+        target.append(values)
+
+    display_rows = conn.execute(
+        f"""
+        WITH original AS (
+            SELECT race_id, boat_number,
+                   MIN(lap_time) AS dash_time,
+                   MIN(turn_time) AS turn_time,
+                   MIN(straight_time) AS straight_time
+              FROM race_original_exhibitions
+             WHERE race_id IN ({placeholders})
+             GROUP BY race_id, boat_number
+        )
+        SELECT e.race_id, e.boat_number, e.branch_number, e.age, e.weight,
+               e.flying_count, e.late_count, e.national_top_1_percent,
+               e.national_top_2_percent, e.local_top_2_percent,
+               pv.tilt_adjustment, e.avg_start_timing,
+               original.dash_time, original.turn_time, original.straight_time
+          FROM race_entries e
+          LEFT JOIN race_previews pv ON pv.race_id = e.race_id AND pv.boat_number = e.boat_number
+          LEFT JOIN original ON original.race_id = e.race_id AND original.boat_number = e.boat_number
+         WHERE e.race_id IN ({placeholders})
+        """,
+        (*unique_ids, *unique_ids),
+    ).fetchall()
+    display_by_race: dict[str, list[tuple[Any, ...]]] = {}
+    for row in display_rows:
+        display_by_race.setdefault(str(row[0]), []).append(tuple(row[1:]))
+
+    cache_keys = []
+    for rid in unique_ids:
+        cache_keys.extend(
+            (
+                _race_detail_tag_cache_key(rid),
+                f"race_conditions:{rid}",
+                f"race_actual_result:{rid}",
+            )
+        )
+    cache_placeholders = ",".join("?" for _ in cache_keys)
+    cache_rows = conn.execute(
+        f"SELECT cache_key, html, updated_at FROM page_html_cache WHERE cache_key IN ({cache_placeholders})",
+        tuple(cache_keys),
+    ).fetchall()
+
+    original_marks = _original_exhibition_quality_marks(unique_ids, conn=conn)
+    prefetched.update(
+        {
+            "predictions": predictions_by_race,
+            "fallback_rows": fallback_by_race,
+            "display_rows": display_by_race,
+            "page_cache_rows": {
+                str(key): (html, float(updated_at or 0))
+                for key, html, updated_at in cache_rows
+            },
+            "original_marks": original_marks,
+        }
+    )
+    return prefetched
+
+
 def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
     """Build pre-race display tags using only information available by race day."""
-    info = _race_basic_info(race_id)
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+    info = prewarm_context.get("race_info", {}).get(race_id) or _race_basic_info(race_id)
     if not info:
         return {}
-    with db_connect() as conn:
-        entries = conn.execute(
-            """
-            SELECT boat_number, racer_number, assigned_motor_top_2_percent
-              FROM race_entries
-             WHERE race_id = ?
-             ORDER BY boat_number
-            """,
-            (race_id,),
-        ).fetchall()
+    entries = prewarm_context.get("tag_entries", {}).get(race_id)
+    if entries is None:
+        with db_connect() as conn:
+            entries = conn.execute(
+                """
+                SELECT boat_number, racer_number, assigned_motor_top_2_percent
+                  FROM race_entries
+                 WHERE race_id = ?
+                 ORDER BY boat_number
+                """,
+                (race_id,),
+            ).fetchall()
 
     racer_numbers = tuple(
         sorted({int(row[1]) for row in entries if row[1] is not None})
@@ -4841,30 +5220,42 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
     race_date = str(info.get("race_date") or "")
     period_start = _accident_period_start_for_date(race_date)
     try:
-        accident_by_racer = _accident_watch_map(period_start, race_date, racer_numbers)
+        accident_by_racer = prewarm_context.get("accident_by_racer")
+        if accident_by_racer is None:
+            accident_by_racer = _accident_watch_map(period_start, race_date, racer_numbers)
     except Exception:
         accident_by_racer = {}
         logger.warning("accident tag snapshot failed for %s", race_id, exc_info=True)
 
     try:
-        ace_threshold = _ace_motor_threshold(
-            int(info["stadium_number"]),
-            str(info["race_date"]),
+        ace_key = (int(info["stadium_number"]), str(info["race_date"]))
+        ace_thresholds = prewarm_context.get("ace_thresholds")
+        ace_threshold = (
+            ace_thresholds.get(ace_key)
+            if ace_thresholds is not None
+            else _ace_motor_threshold(*ace_key)
         )
     except Exception:
         ace_threshold = None
         logger.warning("ace motor snapshot failed for %s", race_id, exc_info=True)
 
     try:
-        boat1_escape = _boat1_monthly_escape_profile(race_id, str(info["race_date"]))
+        escape_by_race = prewarm_context.get("escape_by_race")
+        boat1_escape = (
+            escape_by_race.get(race_id)
+            if escape_by_race is not None
+            else _boat1_monthly_escape_profile(race_id, str(info["race_date"]))
+        )
     except Exception:
         boat1_escape = None
         logger.warning("escape tag snapshot failed for %s", race_id, exc_info=True)
 
-    entry_change_by_racer = _load_entry_change_snapshot_stats(
-        race_date,
-        [int(row[1]) for row in entries if row[1] is not None],
-    )
+    entry_change_by_racer = prewarm_context.get("entry_change_by_racer")
+    if entry_change_by_racer is None:
+        entry_change_by_racer = _load_entry_change_snapshot_stats(
+            race_date,
+            [int(row[1]) for row in entries if row[1] is not None],
+        )
 
     boats: dict[str, dict[str, Any]] = {}
     for boat_number, racer_number, motor_rate_raw in entries:
@@ -5086,51 +5477,51 @@ def _attach_race_detail_display_facts(race_id: str, preds: list[dict]) -> None:
         return
     if _preds_have_race_detail_display_facts(preds):
         return
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+    prefetched_display = prewarm_context.get("display_rows")
     with db_connect() as conn:
-        info_row = conn.execute(
-            """
-            SELECT race_date, race_number, stadium_number
-              FROM races
-             WHERE race_id = ?
-            """,
-            (race_id,),
-        ).fetchone()
-        rows = conn.execute(
-            """
-            WITH original AS (
-                SELECT race_id, boat_number,
-                       MIN(lap_time) AS dash_time,
-                       MIN(turn_time) AS turn_time,
-                       MIN(straight_time) AS straight_time
-                  FROM race_original_exhibitions
-                 WHERE race_id = ?
-                 GROUP BY race_id, boat_number
+        if prefetched_display is not None:
+            info = prewarm_context.get("race_info", {}).get(race_id)
+            info_row = (
+                (info.get("race_date"), info.get("race_number"), info.get("stadium_number"))
+                if info
+                else None
             )
-            SELECT e.boat_number,
-                   e.branch_number,
-                   e.age,
-                   e.weight,
-                   e.flying_count,
-                   e.late_count,
-                   e.national_top_1_percent,
-                   e.national_top_2_percent,
-                   e.local_top_2_percent,
-                   pv.tilt_adjustment,
-                   e.avg_start_timing,
-                   original.dash_time,
-                   original.turn_time,
-                   original.straight_time
-              FROM race_entries e
-              LEFT JOIN race_previews pv
-                ON pv.race_id = e.race_id
-               AND pv.boat_number = e.boat_number
-              LEFT JOIN original
-                ON original.race_id = e.race_id
-               AND original.boat_number = e.boat_number
-             WHERE e.race_id = ?
-            """,
-            (race_id, race_id),
-        ).fetchall()
+            rows = prefetched_display.get(race_id, [])
+        else:
+            info_row = conn.execute(
+                """
+                SELECT race_date, race_number, stadium_number
+                  FROM races
+                 WHERE race_id = ?
+                """,
+                (race_id,),
+            ).fetchone()
+            rows = conn.execute(
+                """
+                WITH original AS (
+                    SELECT race_id, boat_number,
+                           MIN(lap_time) AS dash_time,
+                           MIN(turn_time) AS turn_time,
+                           MIN(straight_time) AS straight_time
+                      FROM race_original_exhibitions
+                     WHERE race_id = ?
+                     GROUP BY race_id, boat_number
+                )
+                SELECT e.boat_number, e.branch_number, e.age, e.weight,
+                       e.flying_count, e.late_count, e.national_top_1_percent,
+                       e.national_top_2_percent, e.local_top_2_percent,
+                       pv.tilt_adjustment, e.avg_start_timing,
+                       original.dash_time, original.turn_time, original.straight_time
+                  FROM race_entries e
+                  LEFT JOIN race_previews pv ON pv.race_id = e.race_id
+                                            AND pv.boat_number = e.boat_number
+                  LEFT JOIN original ON original.race_id = e.race_id
+                                    AND original.boat_number = e.boat_number
+                 WHERE e.race_id = ?
+                """,
+                (race_id, race_id),
+            ).fetchall()
         course_rows = []
         if info_row:
             course_rows = conn.execute(

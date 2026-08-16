@@ -35,10 +35,19 @@ def _require_postgres() -> None:
         raise RuntimeError("DATABASE_URL must point to Supabase/Postgres")
 
 
-def _race_ids(target_date: str, race_id: str | None, limit: int | None) -> list[str]:
+def _race_ids(
+    target_date: str,
+    race_id: str | None,
+    limit: int | None,
+    *,
+    conn=None,
+) -> list[str]:
     if race_id:
         return [race_id]
-    with db_connect() as conn:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
+    try:
         rows = conn.execute(
             """
             SELECT race_id
@@ -48,11 +57,14 @@ def _race_ids(target_date: str, race_id: str | None, limit: int | None) -> list[
             """,
             (target_date,),
         ).fetchall()
+    finally:
+        if owns_connection:
+            conn.close()
     ids = [str(row[0]) for row in rows]
     return ids[:limit] if limit else ids
 
 
-def _missing_persistent_page_ids(race_ids: list[str]) -> list[str]:
+def _missing_persistent_page_ids(race_ids: list[str], *, conn=None) -> list[str]:
     if not race_ids:
         return []
     keyed_ids = {
@@ -61,7 +73,10 @@ def _missing_persistent_page_ids(race_ids: list[str]) -> list[str]:
     }
     found: set[str] = set()
     cache_keys = list(keyed_ids)
-    with db_connect() as conn:
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
+    try:
         for start in range(0, len(cache_keys), 900):
             chunk = cache_keys[start : start + 900]
             placeholders = ",".join("?" for _ in chunk)
@@ -70,6 +85,9 @@ def _missing_persistent_page_ids(race_ids: list[str]) -> list[str]:
                 tuple(chunk),
             ).fetchall()
             found.update(str(row[0]) for row in rows)
+    finally:
+        if owns_connection:
+            conn.close()
     return [keyed_ids[key] for key in cache_keys if key not in found]
 
 
@@ -85,12 +103,13 @@ def prewarm(
     if budget_sec is not None and budget_sec <= 0:
         raise ValueError("budget_sec must be positive")
     _require_postgres()
-    requested_ids = _race_ids(target_date, race_id, None)
-    ids = (
-        _missing_persistent_page_ids(requested_ids)
-        if missing_only
-        else requested_ids
-    )
+    with db_connect() as conn:
+        requested_ids = _race_ids(target_date, race_id, None, conn=conn)
+        ids = (
+            _missing_persistent_page_ids(requested_ids, conn=conn)
+            if missing_only
+            else requested_ids
+        )
     if limit:
         ids = ids[:limit]
     app = web_app.create_app(version=config.DEFAULT_MODEL_VERSION)
@@ -119,32 +138,42 @@ def prewarm(
             flush=True,
         )
 
-    for index, rid in enumerate(ids, 1):
-        generate(rid, f"{index}/{len(ids)}")
-        processed_ids.append(rid)
-        if budget_sec is not None and time.perf_counter() - started >= budget_sec:
-            budget_exhausted = len(processed_ids) < len(ids)
-            break
-
-    persistent_missing = _missing_persistent_page_ids(processed_ids)
-    for retry in range(1, max(0, retry_missing) + 1):
-        if not persistent_missing:
-            break
-        print(
-            f"[race-detail-page] persistent cache retry={retry} "
-            f"missing={len(persistent_missing)}",
-            flush=True,
+    with db_connect() as conn:
+        prefetched = web_app._prefetch_race_detail_page_inputs(
+            ids,
+            config.DEFAULT_MODEL_VERSION,
+            conn,
         )
-        for index, rid in enumerate(persistent_missing, 1):
-            if budget_sec is not None and time.perf_counter() - started >= budget_sec:
-                budget_exhausted = True
-                break
-            web_app._CACHE.clear()
-            web_app._PAGE_HTML_MEM_CACHE.clear()
-            generate(rid, f"retry-{retry}:{index}/{len(persistent_missing)}")
-        persistent_missing = _missing_persistent_page_ids(persistent_missing)
-        if budget_exhausted:
-            break
+        with web_app._use_race_detail_prewarm_context(conn, prefetched):
+            for index, rid in enumerate(ids, 1):
+                generate(rid, f"{index}/{len(ids)}")
+                processed_ids.append(rid)
+                if budget_sec is not None and time.perf_counter() - started >= budget_sec:
+                    budget_exhausted = len(processed_ids) < len(ids)
+                    break
+
+            persistent_missing = _missing_persistent_page_ids(processed_ids, conn=conn)
+            for retry in range(1, max(0, retry_missing) + 1):
+                if not persistent_missing:
+                    break
+                print(
+                    f"[race-detail-page] persistent cache retry={retry} "
+                    f"missing={len(persistent_missing)}",
+                    flush=True,
+                )
+                for index, rid in enumerate(persistent_missing, 1):
+                    if budget_sec is not None and time.perf_counter() - started >= budget_sec:
+                        budget_exhausted = True
+                        break
+                    web_app._CACHE.clear()
+                    web_app._PAGE_HTML_MEM_CACHE.clear()
+                    generate(rid, f"retry-{retry}:{index}/{len(persistent_missing)}")
+                persistent_missing = _missing_persistent_page_ids(
+                    persistent_missing,
+                    conn=conn,
+                )
+                if budget_exhausted:
+                    break
 
     for rid in persistent_missing:
         failures_by_race[rid] = {
