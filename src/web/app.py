@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime
 from functools import lru_cache, partial, wraps
-from typing import Optional, Any
+from typing import Optional, Any, Iterable
 from zoneinfo import ZoneInfo
 
 from datetime import timedelta
@@ -1142,6 +1142,69 @@ def _read_top_page_snapshot(target_date: str) -> Optional[dict[str, Any]]:
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
     suffix = ":".join(str(p) for p in parts)
     return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{_strategy_definition_signature()}:{suffix}"
+
+
+def _roi_history_page_revision(from_date: str, to_date: str) -> str:
+    """Return a cheap ledger revision for ROI page-cache invalidation.
+
+    The durable race ledger can be populated after a strategy page was
+    rendered.  Its revision therefore belongs in the HTML cache key; otherwise
+    a stale zero-result page bypasses the normal lightweight ledger overlay.
+    """
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(updated_at), COUNT(*)
+                  FROM roi_race_history
+                 WHERE race_date BETWEEN ? AND ?
+                   AND is_settled = 1
+                   AND is_active = 1
+                """,
+                (from_date, to_date),
+            ).fetchone()
+        latest = str((row or (None, 0))[0] or "none")
+        count = int((row or (None, 0))[1] or 0)
+        return f"ledger-{latest}-{count}"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ROI race history revision lookup failed: %s", exc)
+        return "ledger-unavailable"
+
+
+def _operational_roi_totals(
+    rows: list[dict], adopted_keys: Iterable[str], bet_unit_map: dict[str, int]
+) -> tuple[list[dict], list[dict], dict[str, int]]:
+    """Partition reference rows and total only immutable operational rows."""
+    keys = tuple(adopted_keys)
+    operational_rows = [
+        row for row in rows if bool(row.get("_adopted_from_market_signals_cache"))
+    ]
+    reconstructed_rows = [row for row in rows if row not in operational_rows]
+    totals = {
+        "adopted_total_bets": sum(
+            int(row.get(f"{key}_bets", 0) or 0)
+            for row in operational_rows
+            for key in keys
+        ),
+        "adopted_total_hits": sum(
+            int(row.get(f"{key}_hits", 0) or 0)
+            for row in operational_rows
+            for key in keys
+        ),
+        "adopted_total_pay": sum(
+            int(row.get(f"{key}_pay", 0) or 0)
+            for row in operational_rows
+            for key in keys
+        ),
+        "adopted_total_cost": sum(
+            int(row.get(f"{key}_bets", 0) or 0) * int(bet_unit_map.get(key, 100))
+            for row in operational_rows
+            for key in keys
+        ),
+        "operational_day_count": len(operational_rows),
+        "reconstructed_day_count": len(reconstructed_rows),
+    }
+    return operational_rows, reconstructed_rows, totals
 
 
 def _is_expensive_recompute_allowed() -> bool:
@@ -21285,7 +21348,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/member/strategy")
     @admin_required
-    @cached(ttl=600, past_ttl=7200)  # 通常はキャッシュ表示、更新時だけ再集計
     def member_strategy():
         """L4 戦略の日別 ROI ダッシュボード (会員限定)"""
         from datetime import timedelta
@@ -21299,7 +21361,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             return "Invalid date format", 400
 
         force_recompute = _effective_force_recompute()
-        page_cache_key = _strategy_page_cache_key("member_strategy", from_d, to_d)
+        ledger_revision = _roi_history_page_revision(from_d, to_d)
+        page_cache_key = _strategy_page_cache_key(
+            "member_strategy", from_d, to_d, ledger_revision
+        )
         if not force_recompute:
             cached_html = _read_page_html_cache(
                 page_cache_key,
@@ -21358,29 +21423,15 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # Only immutable market snapshots represent picks that were actually
         # shown. Reconstructed historical matches stay in the daily table as
         # reference data and must not be mixed into operational ROI totals.
-        operational_rows = [
-            r for r in rows if bool(r.get("_adopted_from_market_signals_cache"))
-        ]
-        reconstructed_rows = [r for r in rows if r not in operational_rows]
+        operational_rows, reconstructed_rows, operational_totals = _operational_roi_totals(
+            rows, adopted_keys, BET_UNIT_MAP
+        )
 
         # 通算集計 (L4 = A1 のみ + サブカテゴリ別 ROI)
         totals = {
             "n_total": sum(r["n_total"] for r in rows),
             "n_l4": sum(r["n_l4"] for r in rows),
-            "adopted_total_bets": sum(r.get("adopted_total_bets", 0) for r in operational_rows),
-            "adopted_total_hits": sum(r.get("adopted_total_hits", 0) for r in operational_rows),
-            "adopted_total_pay": sum(
-                int(r.get(f"{key}_pay", 0) or 0)
-                for r in operational_rows
-                for key in adopted_keys
-            ),
-            "adopted_total_cost": sum(
-                int(r.get(f"{key}_bets", 0) or 0) * BET_UNIT_MAP.get(key, 100)
-                for r in operational_rows
-                for key in adopted_keys
-            ),
-            "operational_day_count": len(operational_rows),
-            "reconstructed_day_count": len(reconstructed_rows),
+            **operational_totals,
         }
         totals["adopted_total_hit_rate"] = (
             (totals["adopted_total_hits"] / totals["adopted_total_bets"]) * 100
@@ -21516,7 +21567,6 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
 
     @app.route("/member/strategy/monthly")
     @admin_required
-    @cached(ttl=600, past_ttl=7200)
     def member_strategy_monthly():
         """月別 ROI (長期推移) 専用ページ — テーブル + 推移グラフ。
         backlog items 19, 20: 月別推移ボタンの遷移先 + グラフ表示。
@@ -21530,7 +21580,10 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         # monthly_from=monthly_from / monthly_to=monthly_to
 
         force_recompute = _effective_force_recompute()
-        page_cache_key = _strategy_page_cache_key("member_strategy_monthly", monthly_from, monthly_to)
+        ledger_revision = _roi_history_page_revision(monthly_from, monthly_to)
+        page_cache_key = _strategy_page_cache_key(
+            "member_strategy_monthly", monthly_from, monthly_to, ledger_revision
+        )
         if not force_recompute:
             # Monthly ROI is rebuilt by the nightly Render scheduler. Keep the
             # generated HTML valid through the next night so normal navigation

@@ -65,6 +65,71 @@ def test_snapshot_becomes_settled_race_history_and_daily_totals():
     assert daily["2026-07-31"]["kiryu_13"] == {"bets": 1, "hits": 1, "pay": 540, "stake": 100}
 
 
+def test_daily_loader_returns_real_registry_key_and_ignores_unsettled_row():
+    conn = _conn()
+    assert load_roi_history_daily(
+        conn,
+        "2026-08-16",
+        "2026-08-16",
+        ("a1_ace_motor_123_corr_tri",),
+    ) == {}
+    common = (
+        "a1_ace_motor_123_corr_tri",
+        "A1 ace motor 1-2-3",
+        '[{"bet_type":"trifecta","combination":"1-2-3"}]',
+        100,
+        "market_signals:last-good:2026-08-16",
+        "v27",
+        "sig",
+        "2026-08-16T10:00:00",
+        "live_last_good",
+        "hash",
+        "2026-08-16T19:58:38",
+    )
+    conn.execute(
+        """
+        INSERT INTO roi_race_history (
+            race_date, race_id, strategy_key, strategy_label, bet_json,
+            stake_amount, payout_amount, is_hit, is_settled, is_active,
+            source_cache_key, source_cache_version, strategy_signature,
+            snapshot_computed_at, capture_quality, payload_hash, updated_at
+        ) VALUES ('2026-08-16', '20260816-01-01', ?, ?, ?, ?, 640, 1, 1, 1,
+                  ?, ?, ?, ?, ?, ?, ?)
+        """,
+        common,
+    )
+    conn.execute(
+        """
+        INSERT INTO roi_race_history (
+            race_date, race_id, strategy_key, strategy_label, bet_json,
+            stake_amount, payout_amount, is_hit, is_settled, is_active,
+            source_cache_key, source_cache_version, strategy_signature,
+            snapshot_computed_at, capture_quality, payload_hash, updated_at
+        ) VALUES ('2026-08-16', '20260816-01-02', ?, ?, ?, ?, 0, 0, 0, 1,
+                  ?, ?, ?, ?, ?, ?, ?)
+        """,
+        common,
+    )
+
+    daily = load_roi_history_daily(
+        conn,
+        "2026-08-16",
+        "2026-08-16",
+        ("a1_ace_motor_123_corr_tri",),
+    )
+
+    assert daily == {
+        "2026-08-16": {
+            "a1_ace_motor_123_corr_tri": {
+                "bets": 1,
+                "hits": 1,
+                "pay": 640,
+                "stake": 100,
+            }
+        }
+    }
+
+
 def test_existing_roi_row_settles_after_result_arrives():
     conn = _conn()
     ensure_payload = {
