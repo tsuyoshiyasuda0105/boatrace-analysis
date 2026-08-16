@@ -87,7 +87,7 @@ def get_url(page, path: str, **kwargs):
     return page.request.get(urljoin(page.url, path), **kwargs)
 
 
-def mock_search_result(page):
+def mock_search_result(page, **overrides):
     payloads = []
     result = {
         "roi": 100.0,
@@ -102,6 +102,7 @@ def mock_search_result(page):
         "yearly": [],
         "monthly": [],
     }
+    result.update(overrides)
 
     def handle(route, request):
         payloads.append(request.post_data_json)
@@ -109,6 +110,28 @@ def mock_search_result(page):
 
     page.route("**/api/search", handle)
     return payloads
+
+
+def mock_performance(page, strategy_id: int, *, forward_n: int, verdict: str = "pending"):
+    labels = {"promote": "昇格", "watch": "継続", "demote": "降格", "pending": "判定待ち"}
+    result = {
+        "strategy_id": strategy_id,
+        "name": f"growth-{forward_n}",
+        "created_at": "2026-08-10T00:00:00+00:00",
+        "days_since_saved": 6,
+        "backtest": {"roi": 101.2, "n": 50},
+        "overall": {"roi": 98.0, "n": 80},
+        "forward": {"roi": 102.0, "n": forward_n},
+        "verdict": verdict,
+        "verdict_label": labels[verdict],
+        "races_until_verdict": max(0, 30 - forward_n),
+        "forward_curve": [],
+    }
+
+    def handle(route):
+        route.fulfill(status=200, json=result)
+
+    page.route(f"**/api/strategies/{strategy_id}/performance", handle)
 
 
 def test_s17_racer_autocomplete_selects_number_and_shows_name_in_summary(page):
@@ -210,6 +233,41 @@ def test_s1_search_renders_result_kpis(page):
     expect(page.locator(".kpis")).to_be_visible(timeout=30_000)
     expect(page.locator(".kpi")).to_have_count(4)
     expect(page.locator("#btnSaveStrategy")).to_be_enabled()
+
+
+@pytest.mark.parametrize(
+    ("result", "rank", "absent", "description"),
+    [
+        ({"n": 12, "roi": 999.0, "roi_ci_low": 500.0}, "🌫️ 未探査", "金脈発見", "母数が少なすぎて判定できません"),
+        ({"n": 100, "roi": 110.0, "roi_ci_low": 101.0}, "⛏️ 金脈発見", "未探査", "95%信頼区間の下限も100%以上"),
+        ({"n": 100, "roi": 69.9, "roi_ci_low": 50.0}, "⛰️ ハズレ鉱区", "金脈発見", "外れを知るのも発掘のうち"),
+    ],
+)
+def test_s18_discovery_feedback_obeys_statistical_priority(page, result, rank, absent, description):
+    mock_search_result(page, **result)
+    page.locator("#btnSearch").click()
+
+    status = page.locator(".discovery-status")
+    expect(status).to_contain_text(rank)
+    expect(status).to_contain_text(description)
+    expect(status).not_to_contain_text(absent)
+
+
+def test_s18_discovery_feedback_keeps_existing_warnings(page):
+    mock_search_result(page, n=12, roi=150.0, roi_ci_low=120.0, warnings=["n<30: 偶然の可能性が高い"])
+    page.locator("#btnSearch").click()
+
+    expect(page.locator(".discovery-status")).to_contain_text("🌫️ 未探査")
+    expect(page.locator(".warnbox.critical")).to_contain_text("n<30: 偶然の可能性が高い")
+
+
+def test_s18_gold_animation_is_disabled_for_reduced_motion(page):
+    page.emulate_media(reduced_motion="reduce")
+    mock_search_result(page, n=100, roi=110.0, roi_ci_low=101.0)
+    page.locator("#btnSearch").click()
+
+    expect(page.locator(".discovery-gold")).to_be_visible()
+    assert page.locator(".discovery-gold").evaluate("node => getComputedStyle(node).animationName") == "none"
 
 
 def test_s16_result_summary_shows_exact_configured_conditions(page):
@@ -523,6 +581,58 @@ def test_s9_strategy_card_loads_three_scores_verdict_and_sparkline(page):
 
     deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
     assert deleted.status == 200
+
+
+def test_s18_strategy_growth_shows_n30_progress_and_elapsed_days(page):
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": "growth-12", "conditions": valid_conditions(venue=2), "backtest": {"roi": 101.2, "n": 12}},
+    )
+    strategy_id = response.json()["id"]
+    mock_performance(page, strategy_id, forward_n=12)
+    page.reload(wait_until="networkidle")
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    card.locator(".load-performance").click()
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    expect(card.locator(".strategy-level")).to_have_text("Lv.0 🌱 育成中")
+    expect(card.locator(".growth-remaining")).to_have_text("🌱 判定まで あと18レース")
+    expect(card.locator(".growth-progress")).to_have_attribute("aria-valuenow", "12")
+    assert card.locator(".growth-progress > span").get_attribute("style") == "width:40.0%"
+    expect(card.locator(".strategy-elapsed")).to_have_text("保存から6日 / フォワード12レース消化")
+    expect(card.locator(".growth-note")).to_contain_text("レベルは検証したレース数を表します")
+    expect(card.locator(".verdict")).to_contain_text("🟡 判定待ち")
+
+
+@pytest.mark.parametrize(
+    ("forward_n", "verdict", "expected_level", "verdict_icon"),
+    [
+        (0, "pending", "Lv.0 🌱 育成中", "🟡"),
+        (30, "watch", "Lv.1 🌿 判定可能", "⚪"),
+        (100, "promote", "Lv.2 🌳 実績あり", "🟢"),
+        (300, "demote", "Lv.3 🏔️ 長期検証済み", "🔴"),
+    ],
+)
+def test_s18_strategy_growth_level_boundaries_preserve_verdict_badges(
+    page, forward_n, verdict, expected_level, verdict_icon
+):
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": f"growth-{forward_n}", "conditions": valid_conditions(venue=4), "backtest": {"roi": 100, "n": 1}},
+    )
+    strategy_id = response.json()["id"]
+    mock_performance(page, strategy_id, forward_n=forward_n, verdict=verdict)
+    page.reload(wait_until="networkidle")
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    card.locator(".load-performance").click()
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    expect(card.locator(".strategy-level")).to_have_text(expected_level)
+    expect(card.locator(".verdict")).to_contain_text(verdict_icon)
+    if forward_n >= 30:
+        expect(card.locator(".growth-progress")).to_have_count(0)
 
 
 def test_s5_strategy_name_is_escaped_and_does_not_execute(page):

@@ -715,6 +715,7 @@
       var excludedTotal = data.excluded.result_missing + data.excluded.condition_null;
       byId('resultArea').innerHTML =
         conditionSummaryHtml(conditions) +
+        discoveryStatusHtml(data) +
         '<div class="kpis">' +
         '<div class="kpi"><div class="v ' + roiClass + '">' + data.roi.toFixed(1) + '%</div><div class="l">回収率</div><div class="ci">95%CI ' + data.roi_ci_low.toFixed(1) + '〜' + data.roi_ci_high.toFixed(1) + '%</div></div>' +
         '<div class="kpi"><div class="v">' + data.hit_rate.toFixed(1) + '%</div><div class="l">的中率</div><div class="ci">' + data.hits + ' / ' + data.n + ' 本</div></div>' +
@@ -728,6 +729,48 @@
       byId('resultArea').classList.remove('result-updated');
       void byId('resultArea').offsetWidth;
       byId('resultArea').classList.add('result-updated');
+    }
+
+    function discoveryStatusHtml(data) {
+      var n = Number(data.n);
+      var roi = Number(data.roi);
+      var roiCiLow = Number(data.roi_ci_low);
+      var rank;
+      if (n < 30) {
+        rank = {
+          key: 'unexplored',
+          label: '🌫️ 未探査',
+          description: '母数が少なすぎて判定できません。検証を続けましょう。'
+        };
+      } else if (n >= 100 && roi >= 100 && roiCiLow >= 100) {
+        rank = {
+          key: 'gold',
+          label: '⛏️ 金脈発見',
+          description: '十分な検証量があり、95%信頼区間の下限も100%以上です。'
+        };
+      } else if (roi >= 100) {
+        rank = {
+          key: 'vein',
+          label: '✨ 鉱脈の気配',
+          description: n < 100
+            ? '回収率は100%以上ですが、十分な検証量まであと' + (100 - n) + 'レースです。'
+            : '回収率は100%以上ですが、95%信頼区間の下限が100%未満のため検証継続です。'
+        };
+      } else if (roi >= 70) {
+        rank = {
+          key: 'review',
+          label: '🪨 要検証',
+          description: '条件を見直しながら、さらに検証を重ねる段階です。'
+        };
+      } else {
+        rank = {
+          key: 'miss',
+          label: '⛰️ ハズレ鉱区',
+          description: '外れを知るのも発掘のうち。この条件は避ける判断材料になります。'
+        };
+      }
+      return '<section class="discovery-status discovery-' + rank.key + '" aria-label="発掘ステータス">' +
+        '<strong>' + rank.label + '</strong><span>' + rank.description + '</span></section>';
     }
 
     function showResultsOnMobile() {
@@ -770,17 +813,37 @@
       if (Number.isNaN(parsed.getTime())) return escapeHtml(String(createdAt).slice(0, 10));
       return parsed.toLocaleDateString('ja-JP', {timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'});
     }
+    function strategyGrowthHtml(item) {
+      var forwardN = Math.max(0, Number(item.forward && item.forward.n) || 0);
+      var level = forwardN < 30
+        ? ['0', '🌱', '育成中']
+        : (forwardN < 100
+          ? ['1', '🌿', '判定可能']
+          : (forwardN < 300 ? ['2', '🌳', '実績あり'] : ['3', '🏔️', '長期検証済み']));
+      var note = '<span class="growth-note">レベルは検証したレース数を表します。成績は判定バッジで確認します。</span>';
+      var growth = '<div class="strategy-growth-head"><span class="strategy-level">Lv.' + level[0] + ' ' + level[1] + ' ' + level[2] + '</span>' +
+        '<span class="growth-volume">フォワード N ' + forwardN + '</span></div>' + note;
+      if (forwardN >= 30) return '<div class="strategy-growth">' + growth + '</div>';
+      var remainingValue = Number(item.races_until_verdict);
+      var remaining = Number.isFinite(remainingValue) ? Math.max(0, remainingValue) : Math.max(0, 30 - forwardN);
+      var progress = Math.min(100, forwardN / 30 * 100);
+      return '<div class="strategy-growth">' + growth +
+        '<div class="growth-progress" role="progressbar" aria-label="判定に必要な30レースまでの検証進捗" aria-valuemin="0" aria-valuemax="30" aria-valuenow="' + forwardN + '">' +
+        '<span style="width:' + progress.toFixed(1) + '%"></span></div>' +
+        '<div class="growth-remaining">🌱 判定まで あと' + remaining + 'レース</div></div>';
+    }
     function performanceCard(item) {
         var icon = {promote: '🟢', watch: '⚪', demote: '🔴', pending: '🟡'}[item.verdict] || '';
-        var pending = item.verdict === 'pending' ? '<span class="verdict-remaining">あと' + Number(item.races_until_verdict) + '件で判定</span>' : '';
         return '<article class="mycard strategy-performance" data-strategy-id="' + Number(item.strategy_id) + '">' +
           '<div class="strategy-card-head"><div><div class="nm">★ ' + escapeHtml(item.name) + '</div>' +
-          '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + ' ｜ 経過 ' + Number(item.days_since_saved) + '日</div></div>' +
+          '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + '</div></div>' +
           '<button type="button" class="delete-strategy" data-id="' + Number(item.strategy_id) + '">削除</button></div>' +
+          '<div class="strategy-elapsed">保存から' + Number(item.days_since_saved) + '日 / フォワード' + Math.max(0, Number(item.forward && item.forward.n) || 0) + 'レース消化</div>' +
           '<div class="performance-grid" aria-label="3成績"><div class="performance-row"><span>探索時</span>' + metricText(item.backtest) + '</div>' +
           '<div class="performance-row"><span>全期間</span>' + metricText(item.overall) + '</div>' +
           '<div class="performance-row performance-forward"><span>フォワード</span>' + metricText(item.forward) + '</div></div>' +
-          '<div class="strategy-outcome"><span class="verdict verdict-' + escapeHtml(item.verdict) + '">' + icon + ' ' + escapeHtml(item.verdict_label) + '</span>' + pending +
+          strategyGrowthHtml(item) +
+          '<div class="strategy-outcome"><span class="verdict verdict-' + escapeHtml(item.verdict) + '">' + icon + ' ' + escapeHtml(item.verdict_label) + '</span>' +
           sparkline(item.forward_curve, item.name) + '</div>' +
           '<p class="forward-note">フォワードは保存日の翌日以降のレースだけで集計した成績です。探索時の数値は上振れを含むため、実力に近いのはフォワードです。判定はN30以上から。</p></article>';
     }
