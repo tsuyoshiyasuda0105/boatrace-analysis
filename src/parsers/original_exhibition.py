@@ -93,6 +93,46 @@ def _extract_boat_number(cells: list[str], mapping: dict[int, str]) -> int | Non
     return None
 
 
+def _table_header_mapping(table) -> dict[int, str]:
+    """Expand multi-row/colspan headers into their leaf column positions."""
+    header_rows = table.select("thead tr")
+    if not header_rows:
+        header_rows = [tr for tr in table.find_all("tr") if tr.find("th")]
+    if not header_rows:
+        return {}
+
+    active_rowspans: dict[int, tuple[int, str]] = {}
+    leaf_headers: dict[int, str] = {}
+    for tr in header_rows:
+        occupied = set(active_rowspans)
+        for column, (remaining, text) in list(active_rowspans.items()):
+            leaf_headers[column] = text
+            if remaining <= 1:
+                del active_rowspans[column]
+            else:
+                active_rowspans[column] = (remaining - 1, text)
+
+        column = 0
+        for cell in tr.find_all(["th", "td"], recursive=False):
+            while column in occupied:
+                column += 1
+            text = cell.get_text(" ", strip=True)
+            colspan = max(1, int(cell.get("colspan", 1) or 1))
+            rowspan = max(1, int(cell.get("rowspan", 1) or 1))
+            for offset in range(colspan):
+                current = column + offset
+                leaf_headers[current] = text
+                if rowspan > 1:
+                    active_rowspans[current] = (rowspan - 1, text)
+            column += colspan
+
+    return {
+        idx: field
+        for idx, header in leaf_headers.items()
+        if (field := _classify_header(header))
+    }
+
+
 def parse_original_exhibition(html: str) -> list[OriginalExhibitionRow]:
     soup = BeautifulSoup(html, "lxml")
     rows: list[OriginalExhibitionRow] = []
@@ -193,6 +233,7 @@ def parse_original_exhibition(html: str) -> list[OriginalExhibitionRow]:
             return css_rows
 
     for table in soup.find_all("table"):
+        mapping = _table_header_mapping(table)
         header_cells = table.find_all("th")
         first_row = table.find("tr")
         fallback_header_row = False
@@ -201,12 +242,13 @@ def parse_original_exhibition(html: str) -> list[OriginalExhibitionRow]:
             fallback_header_row = True
         if not header_cells:
             continue
-        headers = [c.get_text(" ", strip=True) for c in header_cells]
-        mapping = {
-            idx: field
-            for idx, header in enumerate(headers)
-            if (field := _classify_header(header))
-        }
+        if not mapping:
+            headers = [c.get_text(" ", strip=True) for c in header_cells]
+            mapping = {
+                idx: field
+                for idx, header in enumerate(headers)
+                if (field := _classify_header(header))
+            }
         fields = set(mapping.values())
         if not ({"lap_time", "turn_time", "straight_time"} & fields):
             continue

@@ -40,10 +40,23 @@ SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
             "https://www.boatrace-hamanako.jp/modules/yosou/group-cyokuzen.php?day={date}&race={rno}&kind=2",
         ),
     ],
+    7: [
+        (
+            "gamagori_recomend",
+            "https://www.gamagori-kyotei.com/asp/gamagori/sp/kyogi/"
+            "kyogihtml/recomend/recomend{date}07{rno:02d}.htm",
+        ),
+    ],
     11: [
         (
             "biwako_cyokuzen",
             "https://www.boatrace-biwako.jp/modules/yosou/cyokuzen.php?day={date}&race={rno}&kind=2",
+        ),
+    ],
+    12: [
+        (
+            "suminoe_original",
+            "https://www.boatrace-suminoe.jp/asp/kyogi/12/pc/st02{rno:02d}.htm",
         ),
     ],
     # Amagasaki introduced original exhibition times (1周 / まわり足) in 2021.
@@ -78,6 +91,13 @@ SOURCE_PATTERNS: dict[int, list[tuple[str, str]]] = {
         (
             "fukuoka_tenji_info",
             "https://www.boatrace-fukuoka.com/modules/yosou/tenji_info.php?day={date}&race={rno}",
+        ),
+    ],
+    23: [
+        (
+            "karatsu_cyokuzen",
+            "https://www.boatrace-karatsu.jp/sp/index.php?day={date}"
+            "&page=yosou-cyokuzen&race={rno}",
         ),
     ],
     10: [
@@ -161,15 +181,18 @@ VENUE_FIELD_CAPABILITIES: dict[int, frozenset[str]] = {
     3: frozenset(),
     5: frozenset({"lap", "turn", "straight"}),
     6: frozenset({"lap", "turn", "straight"}),
+    7: frozenset({"lap", "turn", "straight"}),
     9: frozenset(),
     10: frozenset({"lap", "turn", "straight"}),
     11: frozenset({"lap", "turn", "straight"}),
+    12: frozenset({"lap", "turn"}),
     13: frozenset({"lap", "turn"}),
     16: frozenset(),
     17: frozenset({"lap", "turn", "straight"}),
     18: frozenset({"lap", "turn"}),
     19: frozenset({"lap", "turn", "straight"}),
     22: frozenset({"lap", "turn", "straight"}),
+    23: frozenset({"lap", "turn", "straight"}),
     24: frozenset({"lap", "turn", "straight"}),
 }
 

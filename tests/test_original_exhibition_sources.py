@@ -210,6 +210,58 @@ def test_mikuni_confirmed_source():
     )
 
 
+def test_newly_confirmed_source_patterns_and_capabilities():
+    assert SOURCE_PATTERNS[7][0] == (
+        "gamagori_recomend",
+        "https://www.gamagori-kyotei.com/asp/gamagori/sp/kyogi/"
+        "kyogihtml/recomend/recomend{date}07{rno:02d}.htm",
+    )
+    assert SOURCE_PATTERNS[7][0][1].format(date="20260531", rno=2).endswith(
+        "recomend202605310702.htm"
+    )
+    assert SOURCE_PATTERNS[12][0][1].format(date="20260816", rno=4).endswith(
+        "/asp/kyogi/12/pc/st0204.htm"
+    )
+    assert SOURCE_PATTERNS[23][0][1].format(date="20260814", rno=12) == (
+        "https://www.boatrace-karatsu.jp/sp/index.php?day=20260814"
+        "&page=yosou-cyokuzen&race=12"
+    )
+    assert original_exhibition.expected_fields(7) == frozenset(
+        {"lap", "turn", "straight"}
+    )
+    assert original_exhibition.expected_fields(12) == frozenset({"lap", "turn"})
+    assert original_exhibition.expected_fields(23) == frozenset(
+        {"lap", "turn", "straight"}
+    )
+
+
+def test_karatsu_multirow_original_exhibition_table():
+    header = """
+      <thead>
+        <tr>
+          <th rowspan="2">枠</th><th>体重</th><th rowspan="2">チルト</th>
+          <th rowspan="2">展示</th><th colspan="3">オリジナル展示データ</th>
+          <th rowspan="2">展示評価</th>
+        </tr>
+        <tr><th>調整</th><th>一周</th><th>まわり足</th><th>直線</th></tr>
+      </thead>
+    """
+    body = "".join(
+        f'<tr><td rowspan="2">{boat}</td><td>52.0</td><td rowspan="2">0.0</td>'
+        f'<td rowspan="2">6.7{boat}</td><td rowspan="2">37.0{boat}</td>'
+        f'<td rowspan="2">5.1{boat}</td><td rowspan="2">7.8{boat}</td>'
+        f'<td rowspan="2">5</td></tr><tr><td></td></tr>'
+        for boat in range(1, 7)
+    )
+
+    rows = parse_original_exhibition(f"<table>{header}<tbody>{body}</tbody></table>")
+
+    assert len(rows) == 6
+    assert rows[0]["lap_time"] == 37.01
+    assert rows[0]["turn_time"] == 5.11
+    assert rows[0]["straight_time"] == 7.81
+
+
 def test_kojima_control_groups_parser_fixture_is_preserved():
     names = "".join(f'<div class="ren-name">Racer {n}</div>' for n in range(1, 7))
     controls = []
@@ -236,6 +288,39 @@ def test_broken_original_exhibition_sources_are_disabled():
     for stadium in (3, 9, 16):
         assert SOURCE_PATTERNS[stadium] == []
         assert original_exhibition.expected_fields(stadium) == frozenset()
+
+
+def test_unconfigured_venues_are_excluded_from_retry_targets():
+    unconfigured = {2, 3, 4, 8, 9, 14, 15, 16, 20, 21}
+
+    assert unconfigured.isdisjoint(original_exhibition.supported_stadiums())
+    assert all(SOURCE_PATTERNS[stadium] == [] for stadium in unconfigured)
+
+
+def test_existing_supported_venue_capabilities_are_unchanged():
+    expected = {
+        1: {"turn", "straight"},
+        5: {"lap", "turn", "straight"},
+        6: {"lap", "turn", "straight"},
+        10: {"lap", "turn", "straight"},
+        11: {"lap", "turn", "straight"},
+        13: {"lap", "turn"},
+        17: {"lap", "turn", "straight"},
+        18: {"lap", "turn"},
+        19: {"lap", "turn", "straight"},
+        22: {"lap", "turn", "straight"},
+        24: {"lap", "turn", "straight"},
+    }
+
+    for stadium, fields in expected.items():
+        assert original_exhibition.expected_fields(stadium) == frozenset(fields)
+        assert SOURCE_PATTERNS[stadium]
+
+
+def test_new_venue_missing_detection_uses_confirmed_fields_only():
+    assert original_exhibition.has_complete_expected_fields(12, 6, 6, 6, 0)
+    assert not original_exhibition.has_complete_expected_fields(12, 6, 6, 5, 0)
+    assert not original_exhibition.has_complete_expected_fields(7, 6, 6, 6, 5)
 
 
 def test_venue_field_capabilities_match_confirmed_absences():
