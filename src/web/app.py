@@ -21813,6 +21813,27 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
             summary=snapshot["summary"],
         )
 
+    @app.route("/admin/incidents")
+    @admin_required
+    def admin_incidents():
+        from src.notifications.incident_ledger import list_incidents
+
+        selected_status = (request.args.get("status") or "").strip().lower()
+        allowed_statuses = {"", "open", "investigating", "resolved", "wontfix"}
+        if selected_status not in allowed_statuses:
+            return "Invalid status", 400
+        try:
+            limit = max(1, min(int(request.args.get("limit") or 50), 200))
+        except (TypeError, ValueError):
+            return "Invalid limit", 400
+        rows = list_incidents(status=selected_status or None, limit=limit)
+        return render_template(
+            "admin_incidents.html",
+            incidents=rows,
+            selected_status=selected_status,
+            limit=limit,
+        )
+
     @app.route("/member/accidents")
     @login_required
     def member_accidents():

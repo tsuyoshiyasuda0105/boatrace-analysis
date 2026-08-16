@@ -55,6 +55,7 @@
 
     <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
       <a href="{{ url_for('admin_data_status') }}" class="account-btn account-btn-notify">取得状況を見る</a>
+      <a href="{{ url_for('admin_incidents') }}" class="account-btn account-btn-notify">インシデント台帳</a>
       <a href="{{ url_for('admin_cache_clear') }}" class="account-btn account-btn-public-roi">キャッシュ管理</a>
       <a href="{{ url_for('member_today_races', date=today_iso_global) }}" class="account-btn account-btn-login">本日のレースへ戻る</a>
     </div>

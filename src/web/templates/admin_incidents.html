@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}インシデント台帳{% endblock %}
+
+{% block content %}
+<section class="health-dashboard">
+  <div class="start-prediction">
+    <div class="start-prediction-head">
+      <div>
+        <div class="start-eyebrow">ADMIN</div>
+        <h3>インシデント台帳</h3>
+        <p>エラー検知、再発回数、AI・人による対応履歴をアプリ別に確認できます。</p>
+      </div>
+    </div>
+
+    <form method="get" class="date-range-form" style="margin-top:16px;">
+      <label>状態:
+        <select name="status">
+          <option value="" {% if not selected_status %}selected{% endif %}>すべて（未解決を先頭）</option>
+          {% for value, label in [('open', '未対応'), ('investigating', '対応中'), ('resolved', '解決済み'), ('wontfix', '対応しない')] %}
+          <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <input type="hidden" name="limit" value="{{ limit }}">
+      <button type="submit">表示</button>
+    </form>
+
+    <div class="start-admin-table-wrap" style="margin-top:16px;">
+      <table class="start-admin-table">
+        <thead>
+          <tr>
+            <th>最終発生</th><th>アプリ</th><th>種別 / 発生元</th><th>件名</th>
+            <th>深刻度</th><th>回数</th><th>状態</th><th>対応履歴</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in incidents %}
+          <tr>
+            <td>{{ row.last_seen_at }}</td>
+            <td>{{ row.app_name }}</td>
+            <td>{{ row.category }}<br><small>{{ row.source }}</small></td>
+            <td>{{ row.title }}<br><small>{{ row.incident_id }}</small></td>
+            <td>{{ row.severity }}</td>
+            <td>{{ row.occurrence_count }}</td>
+            <td>{{ row.status }}</td>
+            <td>
+              {% if row.response_note %}{{ row.response_note }}{% else %}-{% endif %}
+              {% if row.handled_by %}<br><small>{{ row.handled_by }}{% if row.resolved_at %} / {{ row.resolved_at }}{% endif %}</small>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8">該当するインシデントはありません。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
+      <a href="{{ url_for('admin_data_status') }}" class="account-btn account-btn-notify">取得状況へ</a>
+      <a href="{{ url_for('admin_memberships') }}" class="account-btn account-btn-public-roi">会員管理へ</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
