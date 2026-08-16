@@ -41,7 +41,9 @@ def test_known_real_file_recovers_primary_and_fallback_accidents() -> None:
         1,
     )
     assert len(parsed.starts) == parsed.diagnostics.race_count * 6 == 720
-    assert parsed.diagnostics.fallback_rows == 3
+    # F rows are normalized and parsed through the existing full-row parser;
+    # only the genuinely field-less K cancellation row uses prefix fallback.
+    assert parsed.diagnostics.fallback_rows == 1
     assert parsed.diagnostics.skipped_rows == 0
     assert parsed.diagnostics.incomplete_races == 0
 
@@ -66,6 +68,7 @@ def test_every_year_sample_has_six_starts_per_race_without_silent_skips() -> Non
     for path in sample_by_year.values():
         parsed = parse_official_result_file(path)
         assert len(parsed.starts) == parsed.diagnostics.race_count * 6, path.name
+        assert len(parsed.start_timings) == len(parsed.starts), path.name
         assert parsed.diagnostics.skipped_rows == 0, path.name
         assert parsed.diagnostics.incomplete_races == 0, path.name
 

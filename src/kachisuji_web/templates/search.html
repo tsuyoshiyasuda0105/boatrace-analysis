@@ -36,7 +36,7 @@
     <div class="legendbar">
       <span><span class="chip day">📋 前日確定</span> 番組表・前日までの集計・潮汐計算</span>
       <span><span class="chip live">⏱ 直前確定</span> 天候・風・展示</span>
-      <span><span class="chip restored">📅 2016/6〜</span> 復元事故率</span>
+      <span><span class="chip restored">📅 2016/6〜</span> 復元事故率・直近180日平均ST</span>
       <span><span class="chip lim">📅 2023/5〜</span> 決まり手・過去1年事故率</span>
       <span><span class="chip lim2">📅 2024/12〜</span> 展示順位・展示タイム・展示ST</span>
     </div>
@@ -142,7 +142,7 @@
 
           <fieldset>
             <legend>艇別条件（1〜6号艇）</legend>
-            <p class="accident-guide">過去検証には「審査期・検証用」を推奨します。本日判定用は現行スナップショット、過去1年は参考指標です。</p>
+            <p class="accident-guide">平均STはレース前日までの直近180日を公式成績から自前集計し、F・L・欠測を除いた有効走数 n と併記します。n=0 は平均NULLです。事故率の過去検証には「審査期・検証用」を推奨します。</p>
             <div id="boats"></div>
           </fieldset>
 
@@ -249,7 +249,7 @@
         '<div class="cond">級別 <span class="chip day">📋</span><span class="wchips boat-classes" id="b' + i + 'Classes">' + classes + '</span><span class="unit">複数選択可</span></div>' +
         '<div class="cond">選手 <span class="chip day">📋</span><input type="text" id="b' + i + 'Racer" inputmode="numeric" placeholder="例: 4320 または 4320 峰竜太"><span class="unit">番号で検索</span></div>' +
         '<div class="cond">年齢 <span class="chip day">📋</span>' + compareSelect('b' + i + 'AgeCmp') + '<input type="number" id="b' + i + 'Age" value="30" min="16" max="100" step="1"><span class="unit">歳</span></div>' +
-        '<div class="cond">平均ST <span class="chip day">📋</span>' + compareSelect('b' + i + 'AvgStCmp') + '<input type="number" id="b' + i + 'AvgSt" value="0.15" min="0" max="0.5" step="0.01"><span class="unit">秒</span></div>' +
+        '<div class="cond restored-condition"><strong>平均ST（直近180日）</strong> <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span>' + compareSelect('b' + i + 'AvgStCmp') + '<input type="number" id="b' + i + 'AvgSt" value="0.15" min="0" max="0.5" step="0.01"><span class="unit">秒・F除外</span></div>' +
         '<div class="cond">全国勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'NationalCmp') + '<input type="number" id="b' + i + 'National" value="6.00" min="0" max="10" step="0.1"></div>' +
         '<div class="cond">当地勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'LocalCmp') + '<input type="number" id="b' + i + 'Local" value="6.00" min="0" max="10" step="0.1"></div>' +
         '<div class="cond">全国2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'National2Cmp') + '<input type="number" id="b' + i + 'National2" value="40" min="0" max="100" step="0.1"><span class="unit">%</span></div>' +

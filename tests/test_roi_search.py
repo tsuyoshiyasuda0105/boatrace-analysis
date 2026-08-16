@@ -310,6 +310,55 @@ def test_compare_ge_le_margin_boundary_is_inclusive(
     assert result["excluded"]["condition_null"] == 0
 
 
+def test_restored_average_st_filters_and_comparisons_use_2016_cutoff(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _row(
+            "before",
+            "2016-05-31",
+            schema_version=7,
+            b1_avg_st=0.18,
+            b2_avg_st=0.15,
+            result_sanrentan_json='["1-2-3"]',
+            payout_sanrentan_json='{"1-2-3":1230}',
+        ),
+        _row(
+            "boundary",
+            "2016-06-01",
+            schema_version=7,
+            b1_avg_st=0.18,
+            b2_avg_st=0.15,
+            result_sanrentan_json='["1-2-3"]',
+            payout_sanrentan_json='{"1-2-3":1230}',
+        ),
+    ]
+    database = _make_db(tmp_path / "restored-avg-st.db", rows)
+
+    ranged = search_roi(
+        database,
+        {"boats": {"1": {"avg_st": {"min": 0.17}}}},
+        fast=True,
+    )
+    compared = search_roi(
+        database,
+        {
+            "compare": [
+                {
+                    "metric": "avg_st",
+                    "boat": 1,
+                    "op": "ge",
+                    "other": 2,
+                    "margin": 0.02,
+                }
+            ]
+        },
+        fast=True,
+    )
+
+    assert ranged["n"] == compared["n"] == 1
+
+
 def test_compare_omitted_margin_is_equivalent_to_zero(tmp_path: Path) -> None:
     db = _make_db(tmp_path / "compare-zero.db", [_row("equal", "2026-01-01", b2_age=30)])
     base = {"metric": "age", "boat": 1, "op": "ge", "other": 2}

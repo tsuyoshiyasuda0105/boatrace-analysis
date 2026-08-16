@@ -7,7 +7,10 @@ import sqlite3
 
 import pytest
 
-from src.features.accident_history import ensure_accident_history_schema
+from src.features.accident_history import (
+    ensure_accident_history_schema,
+    ensure_start_timing_schema,
+)
 from src.features.asof_builder import (
     ALL_COLUMNS,
     build_features,
@@ -341,14 +344,16 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     output = tmp_path / "features.db"
     build_features(source, output, "2025-06-02", "2025-06-02")
     row = _read_row(output)
-    assert row["b1_avg_st"] == pytest.approx(0.11)
+    assert row["b1_avg_st"] is None
+    assert row["b1_avg_st_n"] == 0
+    assert row["b1_avg_st_official"] == pytest.approx(0.11)
     assert row["b1_national_rate"] == pytest.approx(11.0)
     assert row["b1_local_rate"] == pytest.approx(21.0)
     assert row["b1_national_rate2"] == pytest.approx(51.0)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 6
+    assert row["schema_version"] == 7
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
@@ -373,7 +378,13 @@ def test_missing_or_invalid_birth_date_keeps_age_null(tmp_path):
 
 def test_schema_v2_rows_are_additively_migrated_and_preserved(tmp_path):
     output = tmp_path / "legacy-v2.db"
-    new_suffixes = ("_age", "_national_rate2", "_local_rate2")
+    new_suffixes = (
+        "_age",
+        "_national_rate2",
+        "_local_rate2",
+        "_avg_st_n",
+        "_avg_st_official",
+    )
     legacy_columns = [
         (name, kind)
         for name, kind in ALL_COLUMNS
@@ -390,11 +401,11 @@ def test_schema_v2_rows_are_additively_migrated_and_preserved(tmp_path):
         create_output_schema(connection)
         row = connection.execute(
             "SELECT schema_version,b1_age,b1_national_rate2,b1_local_rate2,"
-            "result_tansho_json,payout_tansho_json "
+            "b1_avg_st_n,b1_avg_st_official,result_tansho_json,payout_tansho_json "
             "FROM asof_race_features WHERE race_id='legacy'"
         ).fetchone()
 
-    assert row == (2, None, None, None, None, None)
+    assert row == (2, None, None, None, 0, None, None, None)
 
 
 def test_schema_v4_accident_rate_is_moved_to_365d_before_name_reuse(tmp_path):
@@ -599,6 +610,37 @@ def test_restored_period_accidents_are_cut_off_before_race_day(tmp_path):
     assert verify_features(source, output, sample=1)["ok"] is True
 
 
+def test_restored_average_st_uses_previous_180_days_only(tmp_path):
+    source = _complete_fixture()
+    output = tmp_path / "restored-start-timing.db"
+    with sqlite3.connect(output) as connection:
+        create_output_schema(connection)
+        ensure_start_timing_schema(connection)
+        connection.executemany(
+            "INSERT INTO start_timing_events VALUES (?,?,?,?,?,?,?,?)",
+            [
+                ("outside", "2024-12-03", 1001, 1, 1, 0.90, 0, 0),
+                ("lower", "2024-12-04", 1001, 1, 1, 0.10, 0, 0),
+                ("flying", "2025-05-01", 1001, 1, 1, -0.02, 1, 0),
+                ("late", "2025-05-02", 1001, 1, None, None, 0, 1),
+                ("previous", "2025-06-01", 1001, 1, 1, 0.20, 0, 0),
+                ("same-day", "2025-06-02", 1001, 1, 1, 0.80, 0, 0),
+                ("future", "2025-06-03", 1001, 1, 1, 0.70, 0, 0),
+                ("only-f", "2025-05-01", 1002, 2, 2, -0.03, 1, 0),
+            ],
+        )
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert row["b1_avg_st"] == pytest.approx(0.15)
+    assert row["b1_avg_st_n"] == 2
+    assert row["b1_avg_st_official"] == pytest.approx(0.11)
+    assert row["b2_avg_st"] is None
+    assert row["b2_avg_st_n"] == 0
+    assert verify_features(source, output, sample=1)["ok"] is True
+
+
 def test_append_only_rerun_skips_and_preserves_row(tmp_path):
     source = _complete_fixture()
     output = tmp_path / "features.db"
@@ -610,7 +652,9 @@ def test_append_only_rerun_skips_and_preserves_row(tmp_path):
     second = build_features(source, output, "2025-06-02", "2025-06-02", built_at="second")
     row = _read_row(output)
     assert second == {"selected": 1, "inserted": 0, "skipped_existing": 1, "warnings": 0}
-    assert row["b1_avg_st"] == pytest.approx(0.11)
+    assert row["b1_avg_st"] is None
+    assert row["b1_avg_st_n"] == 0
+    assert row["b1_avg_st_official"] == pytest.approx(0.11)
     assert row["built_at"] == "first"
 
 

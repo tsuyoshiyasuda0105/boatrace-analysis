@@ -30,11 +30,13 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from src.features.accident_history import (
     RestoredAccidentHistory,
+    RestoredStartTimingHistory,
     load_restored_histories,
+    load_start_timing_histories,
 )
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -67,6 +69,8 @@ def _boat_columns() -> list[tuple[str, str]]:
                 (f"b{boat}_class", "TEXT"),
                 (f"b{boat}_age", "INTEGER"),
                 (f"b{boat}_avg_st", "REAL"),
+                (f"b{boat}_avg_st_n", "INTEGER NOT NULL DEFAULT 0"),
+                (f"b{boat}_avg_st_official", "REAL"),
                 (f"b{boat}_national_rate", "REAL"),
                 (f"b{boat}_local_rate", "REAL"),
                 (f"b{boat}_national_rate2", "REAL"),
@@ -552,6 +556,29 @@ def _restored_period_accident_values(
     )
 
 
+def _restored_average_start_timing_values(
+    histories: Mapping[int, RestoredStartTimingHistory],
+    race_date: str,
+    racer_id: Any,
+) -> tuple[float | None, int]:
+    """Return ordinary-ST mean/count for the 180 dates before a race.
+
+    For race date ``D``, the exact window is ``[D - 180 days, D)``: the 180
+    calendar dates ending on the previous day.  The exclusive upper bound
+    prevents same-day and future leakage.  F, L, and NULL events were excluded
+    when histories were loaded; zero valid starts therefore returns
+    ``(NULL, 0)`` rather than a fabricated zero average.
+    """
+
+    if racer_id is None:
+        return None, 0
+    history = histories.get(int(racer_id))
+    if history is None:
+        return None, 0
+    period_start = (date.fromisoformat(race_date) - timedelta(days=180)).isoformat()
+    return history.average(period_start, race_date)
+
+
 def _load_t5_favorite_odds(
     source: Any, race_ids: Sequence[str]
 ) -> dict[str, float]:
@@ -825,6 +852,7 @@ def _build_row(
     histories: dict[int, RacerHistory],
     period_accidents: Mapping[str, Any],
     restored_accidents: Mapping[int, RestoredAccidentHistory],
+    restored_start_timings: Mapping[int, RestoredStartTimingHistory],
     t5_favorite_odds: Mapping[str, float],
     day_index: str | None,
     built_at: str,
@@ -877,12 +905,19 @@ def _build_row(
                 restored_accidents, race_date, entry.get("racer_number")
             )
         )
+        restored_avg_st, restored_avg_st_n = _restored_average_start_timing_values(
+            restored_start_timings, race_date, entry.get("racer_number")
+        )
         row.update(
             {
                 f"b{boat}_racer_id": entry.get("racer_number"),
                 f"b{boat}_class": CLASS_LABELS.get(entry.get("class_number")),
                 f"b{boat}_age": _age_on_date(entry.get("birth_date"), race_date),
-                f"b{boat}_avg_st": _finite_float(entry.get("avg_start_timing")),
+                f"b{boat}_avg_st": restored_avg_st,
+                f"b{boat}_avg_st_n": restored_avg_st_n,
+                f"b{boat}_avg_st_official": _finite_float(
+                    entry.get("avg_start_timing")
+                ),
                 f"b{boat}_national_rate": _finite_float(entry.get("national_top_1_percent")),
                 f"b{boat}_local_rate": _finite_float(entry.get("local_top_1_percent")),
                 f"b{boat}_national_rate2": _finite_float(entry.get("national_top_2_percent")),
@@ -1048,6 +1083,12 @@ def build_features(
         max(_iso(race["race_date"]) for race in pending),
         racer_ids,
     )
+    restored_start_timings = load_start_timing_histories(
+        output,
+        (start - timedelta(days=180)).isoformat(),
+        max(_iso(race["race_date"]) for race in pending),
+        racer_ids,
+    )
     t5_favorite_odds = _load_t5_favorite_odds(source, race_ids)
     day_indexes = _day_indexes(source, pending)
     timestamp = built_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1072,6 +1113,7 @@ def build_features(
                 histories,
                 period_accidents,
                 restored_accidents,
+                restored_start_timings,
                 t5_favorite_odds,
                 day_indexes.get(race_id),
                 timestamp,
@@ -1153,6 +1195,7 @@ def verify_features(
     chosen_races = [dict(row) for row in chosen]
     period_accidents = _load_period_accidents(source, chosen_races, racer_ids)
     restored_accidents: dict[int, RestoredAccidentHistory] = {}
+    restored_start_timings: dict[int, RestoredStartTimingHistory] = {}
     if chosen_races:
         restored_accidents = load_restored_histories(
             output,
@@ -1160,6 +1203,15 @@ def verify_features(
                 _accident_period_start_for_date(str(race["race_date"]))
                 for race in chosen_races
             ),
+            max(str(race["race_date"]) for race in chosen_races),
+            racer_ids,
+        )
+        restored_start_timings = load_start_timing_histories(
+            output,
+            (
+                min(date.fromisoformat(str(race["race_date"])) for race in chosen_races)
+                - timedelta(days=180)
+            ).isoformat(),
             max(str(race["race_date"]) for race in chosen_races),
             racer_ids,
         )
@@ -1212,6 +1264,16 @@ def verify_features(
                     )
                     if not equal:
                         mismatches.append(f"{row['race_id']}:{period_column}")
+            if int(row["schema_version"]) >= 7:
+                average, count = _restored_average_start_timing_values(
+                    restored_start_timings,
+                    str(row["race_date"]),
+                    row[f"b{boat}_racer_id"],
+                )
+                if not _equal_rate(row[f"b{boat}_avg_st"], average):
+                    mismatches.append(f"{row['race_id']}:b{boat}_avg_st")
+                if row[f"b{boat}_avg_st_n"] != count:
+                    mismatches.append(f"{row['race_id']}:b{boat}_avg_st_n")
     output.close()
     return {
         "ok": chronology_errors == 0 and not mismatches,

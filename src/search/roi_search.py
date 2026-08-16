@@ -80,7 +80,7 @@ HISTORY_CUTOFF = "2023-05-01"
 RESTORED_ACCIDENT_CUTOFF = "2016-06-01"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
-READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6)
+READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6, 7)
 RETIRED_ODDS_CONDITION_KEYS = frozenset({"odds", "t5_odds_favorite"})
 ODDS_FILTER_REMOVED_MESSAGE = (
     "オッズによる絞り込みは廃止されました。"
@@ -306,6 +306,7 @@ def _compile_conditions(
 
     history_condition = False
     restored_accident_condition = False
+    restored_avg_st_condition = False
     boats = conditions.get("boats")
     if boats is not None:
         boat_map = _mapping(boats, "boats")
@@ -358,6 +359,9 @@ def _compile_conditions(
                     restored_accident_condition = restored_accident_condition or (
                         key in {"accident_rate_period", "accident_count_period"}
                         and active
+                    )
+                    restored_avg_st_condition = restored_avg_st_condition or (
+                        key == "avg_st" and active
                     )
             if boat.get("ex_dev") is not None:
                 label = f"boats.{boat_key}.ex_dev"
@@ -431,17 +435,21 @@ def _compile_conditions(
             )
             params.append(margin)
             null_columns.update((left, right))
+            restored_avg_st_condition = restored_avg_st_condition or metric == "avg_st"
 
     date_from = conditions.get("date_from")
     date_to = conditions.get("date_to")
     start = _iso_date(date_from, "date_from") if date_from is not None else None
     end = _iso_date(date_to, "date_to") if date_to is not None else None
-    if history_condition and (start is None or start < HISTORY_CUTOFF):
-        start = HISTORY_CUTOFF
-    elif restored_accident_condition and (
-        start is None or start < RESTORED_ACCIDENT_CUTOFF
-    ):
-        start = RESTORED_ACCIDENT_CUTOFF
+    required_cutoffs: list[str] = []
+    if history_condition:
+        required_cutoffs.append(HISTORY_CUTOFF)
+    if restored_accident_condition or restored_avg_st_condition:
+        required_cutoffs.append(RESTORED_ACCIDENT_CUTOFF)
+    if required_cutoffs:
+        cutoff = max(required_cutoffs)
+        if start is None or start < cutoff:
+            start = cutoff
     if start is not None:
         filters.append("race_date >= ?")
         params.append(start)

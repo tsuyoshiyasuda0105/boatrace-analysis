@@ -137,6 +137,8 @@ def test_index_renders_major_condition_fields(client) -> None:
         "事故点（審査期）",
         "事故率（過去1年・参考）",
         "2016/6〜・推奨",
+        "平均ST（直近180日）",
+        "F・L・欠測を除いた有効走数 n",
         "⚖ 艇間比較",
         'id="dateFrom"',
         'id="dateTo"',
