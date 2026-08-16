@@ -393,6 +393,7 @@ _TABLE_PRIMARY_KEYS = {
     "decay_factor": ["bucket"],
     "paper_trades": ["id"],
     "alert_sent": ["email_hash", "race_id", "alert_type"],
+    "incident_log": ["incident_id"],
     "roi_race_history": ["race_id", "strategy_key"],
     "derived_start_stats": ["race_id", "boat_number"],
     "racer_accident_point_rules": ["rule_version", "event_code", "applies_from"],

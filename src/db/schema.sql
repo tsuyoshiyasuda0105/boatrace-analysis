@@ -527,6 +527,36 @@ CREATE TABLE IF NOT EXISTS system_status (
 CREATE INDEX IF NOT EXISTS idx_sysstat_date ON system_status(check_date, status);
 
 -- ============================================================
+-- 共通インシデント台帳 (複数アプリ共有 / AI・人の対応履歴)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS incident_log (
+  incident_id      TEXT PRIMARY KEY,
+  app_name         TEXT NOT NULL,
+  occurred_at      TEXT NOT NULL,
+  category         TEXT NOT NULL,
+  source           TEXT NOT NULL,
+  title            TEXT NOT NULL,
+  detail           TEXT,
+  severity         TEXT NOT NULL DEFAULT 'error',
+  dedup_key        TEXT NOT NULL,
+  occurrence_count INTEGER NOT NULL DEFAULT 1,
+  last_seen_at     TEXT NOT NULL,
+  notified         INTEGER NOT NULL DEFAULT 0,
+  status           TEXT NOT NULL DEFAULT 'open',
+  resolved_at      TEXT,
+  handled_by       TEXT,
+  response_note    TEXT,
+  updated_at       TEXT NOT NULL
+);
+
+-- 未解決の同種障害は1行だけに集約する。resolved/wontfix 後の再発は新規行になる。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_log_active_dedup
+  ON incident_log(app_name, dedup_key)
+  WHERE status IN ('open', 'investigating');
+CREATE INDEX IF NOT EXISTS idx_incident_log_app_status_seen
+  ON incident_log(app_name, status, last_seen_at DESC);
+
+-- ============================================================
 -- タスク実行ログ (起動時キャッチアップ用)
 -- サーバー(ローカルPC)がスケジュール時刻にダウンしていてタスクが実行され
 -- なかった場合に、起動時 (scripts/startup_catchup.py) が「今日そのタスクが
