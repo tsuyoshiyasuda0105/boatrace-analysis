@@ -7,6 +7,7 @@ it can be measured manually before being attached to a dedicated Render cron.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import statistics
@@ -27,6 +28,23 @@ from src.web import app as web_app  # noqa: E402
 
 
 JST = ZoneInfo("Asia/Tokyo")
+DEFAULT_BATCH_SIZE = 25
+
+
+def _peak_rss_mb() -> float | None:
+    """Return process peak RSS on Linux without adding a runtime dependency."""
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmHWM:"):
+                return round(float(line.split()[1]) / 1024.0, 1)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _batches(values: list[str], batch_size: int):
+    for start in range(0, len(values), batch_size):
+        yield values[start : start + batch_size]
 
 
 def _require_postgres() -> None:
@@ -99,9 +117,12 @@ def prewarm(
     missing_only: bool = False,
     retry_missing: int = 1,
     budget_sec: float | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> dict:
     if budget_sec is not None and budget_sec <= 0:
         raise ValueError("budget_sec must be positive")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
     _require_postgres()
     with db_connect() as conn:
         requested_ids = _race_ids(target_date, race_id, None, conn=conn)
@@ -112,7 +133,10 @@ def prewarm(
         )
     if limit:
         ids = ids[:limit]
-    app = web_app.create_app(version=config.DEFAULT_MODEL_VERSION)
+    app = web_app.create_app(
+        version=config.DEFAULT_MODEL_VERSION,
+        cached_predictions_only=True,
+    )
     app.testing = True
     client = app.test_client()
     with client.session_transaction() as sess:
@@ -138,44 +162,70 @@ def prewarm(
             flush=True,
         )
 
-    with db_connect() as conn:
-        prefetched = web_app._prefetch_race_detail_page_inputs(
-            ids,
-            config.DEFAULT_MODEL_VERSION,
-            conn,
-        )
-        with web_app._use_race_detail_prewarm_context(conn, prefetched):
-            for index, rid in enumerate(ids, 1):
-                generate(rid, f"{index}/{len(ids)}")
-                processed_ids.append(rid)
-                if budget_sec is not None and time.perf_counter() - started >= budget_sec:
-                    budget_exhausted = len(processed_ids) < len(ids)
-                    break
-
-            persistent_missing = _missing_persistent_page_ids(processed_ids, conn=conn)
-            for retry in range(1, max(0, retry_missing) + 1):
-                if not persistent_missing:
-                    break
-                print(
-                    f"[race-detail-page] persistent cache retry={retry} "
-                    f"missing={len(persistent_missing)}",
-                    flush=True,
+    persistent_missing_ids: list[str] = []
+    batch_count = 0
+    for batch_count, batch_ids in enumerate(_batches(ids, batch_size), 1):
+        if budget_sec is not None and time.perf_counter() - started >= budget_sec:
+            budget_exhausted = True
+            break
+        processed_in_batch: list[str] = []
+        prefetched = None
+        try:
+            with db_connect() as conn:
+                prefetched = web_app._prefetch_race_detail_page_inputs(
+                    batch_ids,
+                    config.DEFAULT_MODEL_VERSION,
+                    conn,
                 )
-                for index, rid in enumerate(persistent_missing, 1):
-                    if budget_sec is not None and time.perf_counter() - started >= budget_sec:
-                        budget_exhausted = True
-                        break
-                    web_app._CACHE.clear()
-                    web_app._PAGE_HTML_MEM_CACHE.clear()
-                    generate(rid, f"retry-{retry}:{index}/{len(persistent_missing)}")
-                persistent_missing = _missing_persistent_page_ids(
-                    persistent_missing,
-                    conn=conn,
-                )
-                if budget_exhausted:
-                    break
+                with web_app._use_race_detail_prewarm_context(conn, prefetched):
+                    for rid in batch_ids:
+                        generate(rid, f"{len(processed_ids) + 1}/{len(ids)}")
+                        processed_ids.append(rid)
+                        processed_in_batch.append(rid)
+                        if budget_sec is not None and time.perf_counter() - started >= budget_sec:
+                            budget_exhausted = len(processed_ids) < len(ids)
+                            break
 
-    for rid in persistent_missing:
+                    persistent_missing = _missing_persistent_page_ids(
+                        processed_in_batch,
+                        conn=conn,
+                    )
+                    for retry in range(1, max(0, retry_missing) + 1):
+                        if not persistent_missing:
+                            break
+                        print(
+                            f"[race-detail-page] persistent cache retry={retry} "
+                            f"missing={len(persistent_missing)}",
+                            flush=True,
+                        )
+                        for index, rid in enumerate(persistent_missing, 1):
+                            if budget_sec is not None and time.perf_counter() - started >= budget_sec:
+                                budget_exhausted = True
+                                break
+                            web_app._CACHE.clear()
+                            web_app._PAGE_HTML_MEM_CACHE.clear()
+                            generate(rid, f"retry-{retry}:{index}/{len(persistent_missing)}")
+                        persistent_missing = _missing_persistent_page_ids(
+                            persistent_missing,
+                            conn=conn,
+                        )
+                        if budget_exhausted:
+                            break
+                persistent_missing_ids.extend(persistent_missing)
+        finally:
+            prefetched = None
+            web_app._CACHE.clear()
+            web_app._PAGE_HTML_MEM_CACHE.clear()
+            gc.collect()
+            print(
+                f"[race-detail-page] batch={batch_count} size={len(processed_in_batch)} "
+                f"peak_rss_mb={_peak_rss_mb()}",
+                flush=True,
+            )
+        if budget_exhausted:
+            break
+
+    for rid in persistent_missing_ids:
         failures_by_race[rid] = {
             "race_id": rid,
             "status": "persistent_cache_missing",
@@ -184,7 +234,7 @@ def prewarm(
     total = time.perf_counter() - started
     failures = list(failures_by_race.values())
     success_count = len(processed_ids) - len(failures)
-    remaining_count = (len(ids) - len(processed_ids)) + len(persistent_missing)
+    remaining_count = (len(ids) - len(processed_ids)) + len(persistent_missing_ids)
     cache_read_samples: list[dict[str, object]] = []
     sample_ids = list(dict.fromkeys(
         [processed_ids[0], processed_ids[len(processed_ids) // 2], processed_ids[-1]]
@@ -217,6 +267,9 @@ def prewarm(
         "persistent_missing": remaining_count,
         "remaining": remaining_count,
         "budget_exhausted": budget_exhausted,
+        "batch_size": batch_size,
+        "batches": batch_count,
+        "peak_rss_mb": _peak_rss_mb(),
         "elapsed_seconds": round(total, 3),
         "average_seconds": round(statistics.mean(durations), 3) if durations else 0.0,
         "median_seconds": round(statistics.median(durations), 3) if durations else 0.0,
@@ -237,6 +290,7 @@ def main() -> int:
     parser.add_argument("--missing-only", action="store_true")
     parser.add_argument("--retry-missing", type=int, default=1)
     parser.add_argument("--budget-sec", type=float)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--report")
     args = parser.parse_args()
     summary = prewarm(
@@ -246,6 +300,7 @@ def main() -> int:
         missing_only=args.missing_only,
         retry_missing=args.retry_missing,
         budget_sec=args.budget_sec,
+        batch_size=args.batch_size,
     )
     if args.report:
         report_path = Path(args.report)

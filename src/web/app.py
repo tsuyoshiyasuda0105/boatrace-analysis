@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime
 from functools import lru_cache, partial, wraps
-from typing import Optional, Any, Iterable
+from typing import TYPE_CHECKING, Optional, Any, Iterable
 from zoneinfo import ZoneInfo
 
 from datetime import timedelta
@@ -112,7 +112,8 @@ from src.web.auth import (
     is_supabase_auth_enabled, login_required, member_only_api, register_auth_routes,
 )
 from src.web.billing import register_billing_routes
-from src.web.predictor import Predictor
+if TYPE_CHECKING:
+    from src.web.predictor import Predictor
 try:
     from src.web.start_prediction_api import bp as start_prediction_bp
 except ModuleNotFoundError:
@@ -120,6 +121,19 @@ except ModuleNotFoundError:
     start_prediction_bp = None
 
 logger = logging.getLogger(__name__)
+
+
+class _CachedOnlyPredictor:
+    """Minimal predictor state for page rendering from persisted predictions."""
+
+    def __init__(self, version: str):
+        self.version = version
+        self.artifact = None
+
+    def __getattr__(self, name: str) -> Any:
+        raise RuntimeError(
+            f"predictor.{name} is unavailable in cached-predictions-only mode"
+        )
 
 
 def _is_response_profiling_enabled() -> bool:
@@ -6514,7 +6528,11 @@ def _ensure_db_initialized() -> None:
                 logger.info("loaded %d stadiums into DB", len(rows))
 
 
-def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
+def create_app(
+    version: str = config.DEFAULT_MODEL_VERSION,
+    *,
+    cached_predictions_only: bool = False,
+) -> Flask:
     app = Flask(
         __name__,
         template_folder="templates",
@@ -7048,21 +7066,31 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         except Exception as e:
             logger.warning("TOP startup snapshot warm skipped: %s", e)
 
-    predictor = Predictor(version=version)
-
-    # 起動時にモデルを先読み (失敗してもアプリは動かす)
-    # Render 等の本番環境ではキャッシュ専用モードのためモデルロードを skip
-    # → LightGBM/cascade/per_winner で 200-300MB 節約 (Render Free 512MB 対策)
-    if os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT"):
+    if cached_predictions_only:
+        # Detail-page prewarm reads the already-persisted predictions table.
+        # Avoid importing pandas and the model/cascade modules in this process.
+        predictor = _CachedOnlyPredictor(version)
         logger.info(
-            "production mode: skipping predictor.load() to conserve memory. "
-            "predictions table must be populated via scripts/cache_predictions.py"
+            "cached-predictions-only mode: predictor modules are not imported"
         )
     else:
-        try:
-            predictor.load()
-        except FileNotFoundError as e:
-            logger.warning("model not loaded: %s. UI will show error until model is trained.", e)
+        from src.web.predictor import Predictor
+
+        predictor = Predictor(version=version)
+
+        # 起動時にモデルを先読み (失敗してもアプリは動かす)
+        # Render 等の本番環境ではキャッシュ専用モードのためモデルロードを skip
+        # → LightGBM/cascade/per_winner で 200-300MB 節約 (Render Free 512MB 対策)
+        if os.environ.get("RENDER") or os.environ.get("DISABLE_LIVE_PREDICT"):
+            logger.info(
+                "production mode: skipping predictor.load() to conserve memory. "
+                "predictions table must be populated via scripts/cache_predictions.py"
+            )
+        else:
+            try:
+                predictor.load()
+            except FileNotFoundError as e:
+                logger.warning("model not loaded: %s. UI will show error until model is trained.", e)
 
         # backlog item 3: /api/ev-races 廃止に伴い、起動後 bg-warm も削除済
         # (warm_trifecta_cache は per-race の race_detail で必要時のみ実行)

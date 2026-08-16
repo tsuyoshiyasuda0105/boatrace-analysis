@@ -378,6 +378,68 @@ def test_detail_pages_selfheal_prewarms_when_coverage_is_low(monkeypatch):
     )
 
 
+def test_detail_pages_selfheal_repeated_ticks_fill_complete_coverage(monkeypatch):
+    calls = []
+    coverage = iter(
+        (
+            {"races": 10, "covered": 4},
+            {"races": 10, "covered": 7},
+            {"races": 10, "covered": 7},
+            {"races": 10, "covered": 10},
+            {"races": 10, "covered": 10},
+        )
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "race_detail_page_cache_coverage",
+        lambda _run_date: next(coverage),
+    )
+    monkeypatch.setattr(scheduler, "task_attempt_recently_finished", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py",
+        lambda args, timeout: calls.append((tuple(args), timeout)) or True,
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda task, run_date, status, detail=None: calls.append(
+            ("record", task, run_date, status, detail)
+        ),
+    )
+
+    now = scheduler.datetime(2026, 7, 21, 8, 5, tzinfo=scheduler.JST)
+    assert scheduler.run_detail_pages_selfheal(now)
+    assert scheduler.run_detail_pages_selfheal(now + scheduler.timedelta(minutes=30))
+    assert scheduler.run_detail_pages_selfheal(now + scheduler.timedelta(minutes=60))
+
+    page_calls = [
+        call for call in calls
+        if call and call[0] == (
+            "scripts/prewarm_race_detail_pages.py",
+            "--date",
+            "2026-07-21",
+            "--missing-only",
+            "--budget-sec",
+            "240",
+        )
+    ]
+    assert page_calls == [
+        (page_calls[0][0], scheduler.DETAIL_SELFHEAL_TIMEOUT_SEC),
+        (page_calls[0][0], scheduler.DETAIL_SELFHEAL_TIMEOUT_SEC),
+    ]
+    assert any(
+        call[:4] == (
+            "record",
+            "render_detail_pages_selfheal",
+            "2026-07-21",
+            "success",
+        )
+        and "skip:coverage=10/10" in call[4]
+        for call in calls
+    )
+
+
 def test_detail_page_coverage_uses_the_web_cache_version(monkeypatch):
     executed = []
 

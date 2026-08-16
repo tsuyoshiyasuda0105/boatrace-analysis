@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import builtins
+import sys
+from types import ModuleType
 from datetime import datetime
 from pathlib import Path
 
@@ -59,7 +62,31 @@ def test_manual_prewarm_uses_guarded_recompute_and_member_session():
     assert 'BOATRACE_TASK_TRIGGER", "render-detail-prewarm"' in source
     assert 'sess["is_member"] = True' in source
     assert 'client.get(f"/race/{rid}?recompute=1")' in source
+    assert "cached_predictions_only=True" in source
     assert "elapsed_seconds" in source
+
+
+def test_cached_only_app_does_not_import_or_construct_predictor(monkeypatch):
+    fake_predictor_module = ModuleType("src.web.predictor")
+
+    class ForbiddenPredictor:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("model predictor must not be constructed")
+
+    fake_predictor_module.Predictor = ForbiddenPredictor
+    monkeypatch.setitem(sys.modules, "src.web.predictor", fake_predictor_module)
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "src.web.predictor":
+            raise AssertionError("model predictor module must not be imported")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    app = web_app.create_app(cached_predictions_only=True)
+
+    assert app is not None
 
 
 def test_manual_prewarm_verifies_every_persistent_page_and_can_repair_only_missing():
@@ -176,6 +203,67 @@ def test_page_prewarm_budget_saves_each_page_and_resumes_missing(monkeypatch):
     assert cached == {"race-1", "race-2", "race-3"}
 
 
+def test_page_prewarm_closes_each_sub_batch_and_collects_garbage(monkeypatch):
+    connections = []
+    prefetched_batches = []
+    gc_calls = []
+
+    class Connection(_SharedConnection):
+        def __enter__(self):
+            connections.append(self)
+            return self
+
+        def __exit__(self, *_args):
+            self.closed = True
+            return False
+
+    class Session:
+        def __enter__(self):
+            return {}
+
+        def __exit__(self, *_args):
+            return False
+
+    class Response:
+        status_code = 200
+        data = b"stable-html"
+
+    class Client:
+        def session_transaction(self):
+            return Session()
+
+        def get(self, _url):
+            return Response()
+
+    class App:
+        testing = False
+
+        def test_client(self):
+            return Client()
+
+    race_ids = [f"race-{index}" for index in range(5)]
+    monkeypatch.setattr(page_prewarm, "_require_postgres", lambda: None)
+    monkeypatch.setattr(page_prewarm, "db_connect", Connection)
+    monkeypatch.setattr(page_prewarm, "_race_ids", lambda *_args, **_kwargs: race_ids)
+    monkeypatch.setattr(page_prewarm, "_missing_persistent_page_ids", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        page_prewarm.web_app,
+        "_prefetch_race_detail_page_inputs",
+        lambda ids, *_args: prefetched_batches.append(list(ids)) or {},
+    )
+    monkeypatch.setattr(page_prewarm.web_app, "create_app", lambda **_kwargs: App())
+    monkeypatch.setattr(page_prewarm.gc, "collect", lambda: gc_calls.append(True) or 0)
+
+    summary = page_prewarm.prewarm("2026-08-17", batch_size=2)
+
+    assert prefetched_batches == [race_ids[:2], race_ids[2:4], race_ids[4:]]
+    assert summary["batches"] == 3
+    assert summary["batch_size"] == 2
+    assert summary["succeeded"] == 5
+    assert all(connection.closed for connection in connections)
+    assert len(gc_calls) == 3
+
+
 def test_page_html_is_byte_identical_with_shared_prefetch_context(monkeypatch):
     race_id = "20260816-01-01"
     info = {
@@ -242,10 +330,10 @@ def test_page_html_is_byte_identical_with_shared_prefetch_context(monkeypatch):
     monkeypatch.setattr(web_app, "_race_current_conditions_cached", lambda *_args: {})
     monkeypatch.setattr(web_app, "_write_page_html_cache", lambda *_args: None)
 
-    def render_bytes(prefetched=None):
+    def render_bytes(prefetched=None, *, cached_only=False):
         web_app._CACHE.clear()
         web_app._PAGE_HTML_MEM_CACHE.clear()
-        app = web_app.create_app()
+        app = web_app.create_app(cached_predictions_only=cached_only)
         app.testing = True
         client = app.test_client()
         with client.session_transaction() as session:
@@ -255,7 +343,10 @@ def test_page_html_is_byte_identical_with_shared_prefetch_context(monkeypatch):
         with web_app._use_race_detail_prewarm_context(_SharedConnection(), prefetched):
             return client.get(f"/race/{race_id}?recompute=1").data
 
-    assert render_bytes({"race_info": {race_id: info}}) == render_bytes()
+    assert render_bytes(
+        {"race_info": {race_id: info}},
+        cached_only=True,
+    ) == render_bytes()
 
 
 def test_race_detail_venue_environment_uses_date_cache_wrapper():
