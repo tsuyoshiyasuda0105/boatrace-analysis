@@ -32,6 +32,7 @@ from src.db.cron_runtime import (  # noqa: E402
     record_task_run,
 )
 from src.deploy_info import log_deploy_revision  # noqa: E402
+from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
 
 
 MOTOR_CACHE_VERSION = "v9"
@@ -520,8 +521,11 @@ def refresh(target_date: str, *, delay_seconds: int = 60, limit: int = 12) -> di
     return summary
 
 
-def main() -> int:
-    log_deploy_revision("boatrace-exhibition-detail-cron")
+CRON_JOB_NAME = "boatrace-exhibition-detail-cron"
+
+
+def _main_impl() -> int:
+    log_deploy_revision(CRON_JOB_NAME)
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=datetime.now(JST).date().isoformat())
     parser.add_argument("--delay-seconds", type=int, default=60)
@@ -596,6 +600,41 @@ def main() -> int:
     )
     _record_task(task_name, args.date, "success" if succeeded else "failure", detail=detail)
     return 0 if succeeded else 1
+
+
+def _notify_failure(message: str, detail: dict) -> None:
+    try:
+        notify_cron_failure(CRON_JOB_NAME, message, detail=detail)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            "[exhibition-detail-refresh] failure mail skipped: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
+def main() -> int:
+    try:
+        exit_code = _main_impl()
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            _notify_failure(
+                "exhibition-detail cron exited before completion",
+                {"exit_code": str(exc.code)},
+            )
+        raise
+    except Exception as exc:
+        _notify_failure(
+            f"exhibition-detail cron raised {type(exc).__name__}: {exc}"[:500],
+            {"error_type": type(exc).__name__, "error": str(exc)[:1000]},
+        )
+        raise
+    if exit_code:
+        _notify_failure(
+            "exhibition-detail cron completed with a failure status",
+            {"exit_code": exit_code},
+        )
+    return exit_code
 
 
 if __name__ == "__main__":

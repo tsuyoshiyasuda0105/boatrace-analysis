@@ -29,9 +29,11 @@ from scripts import odds_scheduler as base  # noqa: E402
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.db.cron_runtime import advisory_lock  # noqa: E402
 from src.deploy_info import log_deploy_revision  # noqa: E402
+from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
 
 
 LOCK_NAME = "boatrace-odds-scheduler-v1"
+CRON_JOB_NAME = "boatrace-odds-cron"
 
 # tolerance は cron 間隔の半分 (2.5分) にする。
 # render.yaml のオッズ cron は 5 分間隔 (*/5)。締切5分前を狙う T-5min の許容窓を
@@ -41,6 +43,16 @@ LOCK_NAME = "boatrace-odds-scheduler-v1"
 RENDER_SNAPSHOT_RULES = [
     ("T-5min", 5, 2.5),
 ]
+
+
+def _notify_failure(message: str, detail: dict) -> None:
+    try:
+        notify_cron_failure(CRON_JOB_NAME, message, detail=detail)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[odds-cron] failure mail skipped: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
 
 @contextmanager
@@ -63,16 +75,36 @@ def odds_lock() -> Iterator[bool]:
 
 
 def main() -> int:
-    log_deploy_revision("boatrace-odds-cron")
-    with odds_lock() as locked:
-        if not locked:
-            # 前回実行が継続中。何も実行せず、成功も記録しない。
-            print("[odds-cron] skip: previous run still active", flush=True)
-            return 0
-        base.SNAPSHOT_RULES = list(RENDER_SNAPSHOT_RULES)
-        base.BIG_SNAPSHOT_RULES = [("T-1d", 24 * 60, 5), *base.SNAPSHOT_RULES]
-        base.main()
-    return 0
+    try:
+        log_deploy_revision(CRON_JOB_NAME)
+        with odds_lock() as locked:
+            if not locked:
+                # 前回実行が継続中。何も実行せず、成功も記録しない。
+                print("[odds-cron] skip: previous run still active", flush=True)
+                return 0
+            base.SNAPSHOT_RULES = list(RENDER_SNAPSHOT_RULES)
+            base.BIG_SNAPSHOT_RULES = [("T-1d", 24 * 60, 5), *base.SNAPSHOT_RULES]
+            result = base.main()
+        exit_code = int(result or 0)
+        if exit_code:
+            _notify_failure(
+                "odds cron completed with a failure status",
+                {"exit_code": exit_code},
+            )
+        return exit_code
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            _notify_failure(
+                "odds cron exited before completion",
+                {"exit_code": str(exc.code)},
+            )
+        raise
+    except Exception as exc:
+        _notify_failure(
+            f"odds cron raised {type(exc).__name__}: {exc}"[:500],
+            {"error_type": type(exc).__name__, "error": str(exc)[:1000]},
+        )
+        raise
 
 
 if __name__ == "__main__":

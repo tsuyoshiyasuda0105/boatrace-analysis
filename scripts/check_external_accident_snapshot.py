@@ -31,6 +31,7 @@ if str(ROOT_DIR) not in sys.path:
 
 import config  # noqa: E402
 from src.deploy_info import log_deploy_revision  # noqa: E402
+from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
 from src.db.connection import assert_safe_production_write, connect as db_connect  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -561,8 +562,11 @@ def build_and_compare(check_date: str, *, dry_run: bool = False) -> dict[str, An
     return summary
 
 
-def main() -> int:
-    log_deploy_revision("boatrace-accident-external-check-cron")
+CRON_JOB_NAME = "boatrace-accident-external-check-cron"
+
+
+def _main_impl() -> int:
+    log_deploy_revision(CRON_JOB_NAME)
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=date.today().isoformat(), help="check_date written into snapshots/system_status")
     ap.add_argument("--no-write-status", action="store_true")
@@ -615,6 +619,41 @@ def main() -> int:
         with db_connect() as conn:
             upsert_status(conn, CHECK_NAME, args.date, status, message, summary)
     return 0 if status in {"ok", "warning"} else 1
+
+
+def _notify_failure(message: str, detail: dict) -> None:
+    try:
+        notify_cron_failure(CRON_JOB_NAME, message, detail=detail)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "accident-external failure mail skipped: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+
+
+def main() -> int:
+    try:
+        exit_code = _main_impl()
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            _notify_failure(
+                "accident-external cron exited before completion",
+                {"exit_code": str(exc.code)},
+            )
+        raise
+    except Exception as exc:
+        _notify_failure(
+            f"accident-external cron raised {type(exc).__name__}: {exc}"[:500],
+            {"error_type": type(exc).__name__, "error": str(exc)[:1000]},
+        )
+        raise
+    if exit_code:
+        _notify_failure(
+            "accident-external cron completed with a failure status",
+            {"exit_code": exit_code},
+        )
+    return exit_code
 
 
 if __name__ == "__main__":

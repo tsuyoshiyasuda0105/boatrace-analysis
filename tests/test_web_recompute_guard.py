@@ -611,6 +611,7 @@ def test_main_returns_failure_when_lite_bootstrap_fails(monkeypatch):
     monkeypatch.setattr(scheduler, "jst_now", lambda: now)
     monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
     monkeypatch.setattr(scheduler, "reap_stale_task_runs", lambda _now: 0)
+    monkeypatch.setattr(scheduler, "run_cron_watchdog", lambda *_a, **_k: True)
     monkeypatch.setattr(scheduler, "_regular_run_lock", unlocked)
     monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: True)
     monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
@@ -636,6 +637,7 @@ def test_main_does_not_contain_heavy_accident_refresh(monkeypatch):
     monkeypatch.setattr(scheduler, "jst_now", lambda: now)
     monkeypatch.setattr(scheduler, "ensure_task_runs_table", lambda: None)
     monkeypatch.setattr(scheduler, "reap_stale_task_runs", lambda _now: 0)
+    monkeypatch.setattr(scheduler, "run_cron_watchdog", lambda *_a, **_k: True)
     monkeypatch.setattr(scheduler, "_regular_run_lock", unlocked)
     monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: True)
     monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
@@ -664,6 +666,11 @@ def test_main_reaps_stale_tasks_before_regular_tick_work(monkeypatch):
         "reap_stale_task_runs",
         lambda received_now: calls.append(("reap", received_now)) or 2,
     )
+    monkeypatch.setattr(
+        scheduler,
+        "run_cron_watchdog",
+        lambda received_now, **kwargs: calls.append(("watchdog", (received_now, kwargs))) or True,
+    )
     monkeypatch.setattr(scheduler, "render_daytime_lite_mode", lambda: False)
     monkeypatch.setattr(
         scheduler,
@@ -678,6 +685,7 @@ def test_main_reaps_stale_tasks_before_regular_tick_work(monkeypatch):
 
     assert scheduler.main() == 0
     assert calls[0] == ("reap", now)
+    assert calls[1] == ("watchdog", (now, {"initial_reaped": 2}))
 
 
 def test_stale_task_reaper_failure_is_nonfatal(monkeypatch, capsys):

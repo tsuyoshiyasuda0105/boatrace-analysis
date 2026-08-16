@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 if __name__ == "__main__":
@@ -25,6 +25,7 @@ from src.db.cron_runtime import (
 )
 from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature
 from src.deploy_info import log_deploy_revision
+from src.notifications.cron_alerts import notify_cron_failure
 import config
 
 
@@ -44,6 +45,16 @@ DETAIL_SELFHEAL_TAG_BUDGET_SEC = 240
 DETAIL_SELFHEAL_PAGE_BUDGET_SEC = 240
 DETAIL_SELFHEAL_TIMEOUT_SEC = 360
 DETAIL_SELFHEAL_MIN_INTERVAL_MINUTES = 30
+WATCHDOG_CACHE_MIN_COVERAGE = 0.5
+WATCHDOG_RESULT_MISSING_THRESHOLD = 3
+WATCHDOG_FAILURE_RUN_COUNT_THRESHOLD = 3
+WATCHDOG_FAILURE_LOOKBACK_HOURS = 6
+WATCHDOG_POOL_EVENT_THRESHOLD = 3
+WATCHDOG_POOL_LOOKBACK_MINUTES = 30
+WATCHDOG_STALE_RUNNING_HOURS = 6
+WATCHDOG_ALERT_COOLDOWN_HOURS = 24.0
+WATCHDOG_STATUS_PREFIX = "cron_watchdog_"
+REGULAR_CRON_JOB_NAME = "boatrace-regular-cron"
 REGULAR_RUN_LOCK_NAME = "boatrace-regular-scheduler-v1"
 _TASK_RUNS_SCHEMA_READY = False
 
@@ -72,6 +83,26 @@ def reap_stale_task_runs(now: datetime) -> int:
     if reaped:
         print(f"[render-regular] stale-running reaped={reaped}", flush=True)
     return reaped
+
+
+def _notify_failure_best_effort(
+    job: str,
+    message: str,
+    *,
+    detail: dict[str, Any] | None = None,
+    cooldown_hours: float | None = None,
+) -> None:
+    """Send an alert without ever changing the cron's control flow."""
+    try:
+        kwargs: dict[str, Any] = {"detail": detail or {}}
+        if cooldown_hours is not None:
+            kwargs["cooldown_hours"] = cooldown_hours
+        notify_cron_failure(job, message, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[render-regular] failure mail skipped: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
 
 @contextmanager
@@ -142,11 +173,19 @@ def _regular_run_lock() -> Iterator[bool]:
 def _with_regular_run_lock(func: Callable[[], int]) -> Callable[[], int]:
     @wraps(func)
     def wrapped() -> int:
-        with _regular_run_lock() as locked:
-            if not locked:
-                print("[render-regular] skip: previous run active", flush=True)
-                return 0
-            return func()
+        try:
+            with _regular_run_lock() as locked:
+                if not locked:
+                    print("[render-regular] skip: previous run active", flush=True)
+                    return 0
+                return func()
+        except Exception as exc:
+            _notify_failure_best_effort(
+                REGULAR_CRON_JOB_NAME,
+                f"regular cron raised {type(exc).__name__}: {exc}"[:500],
+                detail={"error_type": type(exc).__name__, "error": str(exc)[:1000]},
+            )
+            raise
 
     return wrapped
 
@@ -609,29 +648,341 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
     return ok
 
 
-def race_detail_page_cache_coverage(run_date: str) -> dict[str, int]:
+def _race_detail_page_cache_coverage_on_connection(conn: Any, run_date: str) -> dict[str, int]:
     """Count races covered by the current version of the detail-page cache."""
-    from src.web.app import RACE_DETAIL_PAGE_CACHE_VERSION
+    from src.web.app import _race_detail_page_cache_key
 
-    key_prefix = f"race_detail_page:{RACE_DETAIL_PAGE_CACHE_VERSION}:"
-    with db_connect() as conn:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS race_count,
-                   SUM(CASE WHEN EXISTS (
-                       SELECT 1
-                         FROM page_html_cache p
-                        WHERE p.cache_key = ? || r.race_id
-                   ) THEN 1 ELSE 0 END) AS covered_races
-              FROM races r
-             WHERE r.race_date = ?
-            """,
-            (key_prefix, run_date),
-        ).fetchone()
+    key_prefix = _race_detail_page_cache_key("")
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS race_count,
+               SUM(CASE WHEN EXISTS (
+                   SELECT 1
+                     FROM page_html_cache p
+                    WHERE p.cache_key = ? || r.race_id
+               ) THEN 1 ELSE 0 END) AS covered_races
+          FROM races r
+         WHERE r.race_date = ?
+        """,
+        (key_prefix, run_date),
+    ).fetchone()
     return {
         "races": int(row[0] or 0) if row else 0,
         "covered": int(row[1] or 0) if row else 0,
     }
+
+
+def race_detail_page_cache_coverage(run_date: str) -> dict[str, int]:
+    """Count current-version detail pages without hardcoding the version."""
+    with db_connect() as conn:
+        return _race_detail_page_cache_coverage_on_connection(conn, run_date)
+
+
+def _parse_jst_timestamp(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=JST)
+    return parsed.astimezone(JST)
+
+
+def _watchdog_missing_result_count_on_connection(conn: Any, target_date: str) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+          FROM races r
+          LEFT JOIN (
+              SELECT race_id, COUNT(*) AS result_rows
+                FROM race_results
+               WHERE finishing_position IS NOT NULL
+               GROUP BY race_id
+          ) rr ON rr.race_id = r.race_id
+         WHERE r.race_date = ?
+           AND COALESCE(rr.result_rows, 0) < 6
+        """,
+        (target_date,),
+    ).fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def _watchdog_missing_result_count(target_date: str) -> int:
+    with db_connect() as conn:
+        return _watchdog_missing_result_count_on_connection(conn, target_date)
+
+
+def _watchdog_stale_running_on_connection(conn: Any, now: datetime) -> list[dict[str, str]]:
+    stale_cutoff = now - timedelta(hours=WATCHDOG_STALE_RUNNING_HOURS)
+    running_rows = conn.execute(
+        """
+        SELECT task_name, run_date, started_at
+          FROM task_runs
+         WHERE status = 'running' AND started_at IS NOT NULL
+        """
+    ).fetchall()
+    return [
+        {
+            "task_name": str(row[0]),
+            "run_date": str(row[1]),
+            "started_at": str(row[2]),
+        }
+        for row in running_rows
+        if (_parse_jst_timestamp(row[2]) or now) < stale_cutoff
+    ]
+
+
+def _watchdog_stale_running(now: datetime) -> list[dict[str, str]]:
+    with db_connect() as conn:
+        return _watchdog_stale_running_on_connection(conn, now)
+
+
+def _watchdog_snapshot(now: datetime) -> dict[str, Any]:
+    """Read the watchdog signals in a bounded, query-light snapshot."""
+    today = now.date().isoformat()
+    yesterday = (now.date() - timedelta(days=1)).isoformat()
+    failure_cutoff = now - timedelta(hours=WATCHDOG_FAILURE_LOOKBACK_HOURS)
+    pool_cutoff = now - timedelta(minutes=WATCHDOG_POOL_LOOKBACK_MINUTES)
+
+    with db_connect() as conn:
+        coverage = _race_detail_page_cache_coverage_on_connection(conn, today)
+
+        missing_results: int | None = None
+        if now.hour == 8:
+            missing_results = _watchdog_missing_result_count_on_connection(conn, yesterday)
+
+        failure_rows = conn.execute(
+            """
+            SELECT task_name, run_count, finished_at, detail, success_at
+              FROM task_runs
+             WHERE status = 'failure'
+               AND finished_at IS NOT NULL
+            """
+        ).fetchall()
+        repeated_failures = [
+            {
+                "task_name": str(row[0]),
+                "run_count": int(row[1] or 0),
+                "finished_at": str(row[2]),
+                "detail": str(row[3] or "")[:300],
+            }
+            for row in failure_rows
+            if int(row[1] or 0) >= WATCHDOG_FAILURE_RUN_COUNT_THRESHOLD
+            and not row[4]
+            and (_parse_jst_timestamp(row[2]) or datetime.min.replace(tzinfo=JST)) >= failure_cutoff
+        ]
+
+        pool_row = conn.execute(
+            """
+            SELECT detail_json
+              FROM system_status
+             WHERE check_name = 'transient_db_error' AND check_date = ?
+            """,
+            (today,),
+        ).fetchone()
+        try:
+            pool_detail = json.loads(str(pool_row[0])) if pool_row and pool_row[0] else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pool_detail = {}
+        recent_pool_events = [
+            event
+            for event in pool_detail.get("recent", [])
+            if isinstance(event, dict)
+            and (_parse_jst_timestamp(event.get("at")) or datetime.min.replace(tzinfo=JST))
+            >= pool_cutoff
+        ]
+
+        stale_running = _watchdog_stale_running_on_connection(conn, now)
+
+    return {
+        "detail_cache": coverage,
+        "yesterday": yesterday,
+        "missing_results": missing_results,
+        "repeated_failures": repeated_failures,
+        "pool_events": len(recent_pool_events),
+        "pool_recent": recent_pool_events[-10:],
+        "stale_running": stale_running,
+    }
+
+
+def _write_watchdog_status(
+    issue: str,
+    now: datetime,
+    status: str,
+    message: str,
+    detail: dict[str, Any],
+) -> None:
+    """Best-effort daily upsert using the existing system_status table."""
+    check_name = WATCHDOG_STATUS_PREFIX + issue
+    check_date = now.date().isoformat()
+    checked_at = now.replace(tzinfo=None).isoformat(timespec="seconds")
+    payload = json.dumps(detail, ensure_ascii=True, sort_keys=True, default=str)
+    try:
+        with db_connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM system_status WHERE check_name=? AND check_date=?",
+                (check_name, check_date),
+            ).fetchone()
+            if exists:
+                conn.execute(
+                    """
+                    UPDATE system_status
+                       SET status=?, message=?, detail_json=?, checked_at=?
+                     WHERE check_name=? AND check_date=?
+                    """,
+                    (status, message, payload, checked_at, check_name, check_date),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO system_status
+                        (check_name, check_date, status, message, detail_json, checked_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (check_name, check_date, status, message, payload, checked_at),
+                )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[cron-watchdog] status write failed issue={issue}: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
+def _watchdog_alert(issue: str, message: str, detail: dict[str, Any]) -> None:
+    _notify_failure_best_effort(
+        f"boatrace-watchdog-{issue}",
+        message,
+        detail=detail,
+        cooldown_hours=WATCHDOG_ALERT_COOLDOWN_HOURS,
+    )
+
+
+def run_cron_watchdog(now: datetime, *, initial_reaped: int = 0) -> bool:
+    """Detect, repair, persist, and alert without ever owning cron control flow."""
+    try:
+        snapshot = _watchdog_snapshot(now)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cron-watchdog] snapshot failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+
+    coverage = snapshot["detail_cache"]
+    races = int(coverage.get("races", 0))
+    covered = int(coverage.get("covered", 0))
+    if races > 0 and covered / races < WATCHDOG_CACHE_MIN_COVERAGE:
+        repaired = False
+        try:
+            repaired = bool(run_detail_pages_selfheal(now))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[cron-watchdog] detail selfheal failed: {type(exc).__name__}: {exc}", flush=True)
+        after = coverage
+        if repaired:
+            try:
+                after = race_detail_page_cache_coverage(now.date().isoformat())
+            except Exception as exc:  # noqa: BLE001
+                print(f"[cron-watchdog] detail recheck failed: {type(exc).__name__}: {exc}", flush=True)
+        after_races = int(after.get("races", 0))
+        after_covered = int(after.get("covered", 0))
+        resolved = bool(
+            repaired
+            and after_races > 0
+            and after_covered / after_races >= WATCHDOG_CACHE_MIN_COVERAGE
+        )
+        detail = {"before": coverage, "after": after, "repair_ok": repaired}
+        _write_watchdog_status(
+            "detail_cache",
+            now,
+            "ok" if resolved else "error",
+            f"current detail cache coverage {covered}/{races}; after={after_covered}/{after_races}",
+            detail,
+        )
+        if not resolved:
+            _watchdog_alert("detail-cache", "detail cache coverage remains low after selfheal", detail)
+
+    missing_results = snapshot.get("missing_results")
+    if isinstance(missing_results, int) and missing_results >= WATCHDOG_RESULT_MISSING_THRESHOLD:
+        repaired = False
+        try:
+            repaired = bool(run_yesterday_results_backfill(now))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[cron-watchdog] result backfill failed: {type(exc).__name__}: {exc}", flush=True)
+        remaining = missing_results
+        if repaired:
+            try:
+                remaining = _watchdog_missing_result_count(snapshot["yesterday"])
+            except Exception as exc:  # noqa: BLE001
+                print(f"[cron-watchdog] result recheck failed: {type(exc).__name__}: {exc}", flush=True)
+        detail = {
+            "date": snapshot["yesterday"],
+            "before_missing": missing_results,
+            "remaining_missing": remaining,
+            "repair_ok": repaired,
+        }
+        resolved = repaired and remaining < WATCHDOG_RESULT_MISSING_THRESHOLD
+        _write_watchdog_status(
+            "yesterday_results",
+            now,
+            "ok" if resolved else "error",
+            f"yesterday result gaps before={missing_results} remaining={remaining}",
+            detail,
+        )
+        if not resolved:
+            _watchdog_alert("yesterday-results", "yesterday result gaps remain after backfill", detail)
+
+    repeated_failures = snapshot["repeated_failures"]
+    if repeated_failures:
+        detail = {"threshold": WATCHDOG_FAILURE_RUN_COUNT_THRESHOLD, "tasks": repeated_failures}
+        _write_watchdog_status(
+            "cron_failures",
+            now,
+            "error",
+            f"repeated cron failures detected for {len(repeated_failures)} task(s)",
+            detail,
+        )
+        _watchdog_alert("cron-failures", "repeated cron failures detected", detail)
+
+    pool_events = int(snapshot["pool_events"])
+    if pool_events >= WATCHDOG_POOL_EVENT_THRESHOLD:
+        detail = {
+            "lookback_minutes": WATCHDOG_POOL_LOOKBACK_MINUTES,
+            "event_count": pool_events,
+            "recent": snapshot["pool_recent"],
+        }
+        _write_watchdog_status(
+            "pool_exhaustion",
+            now,
+            "error",
+            f"transient DB errors repeated {pool_events} times in {WATCHDOG_POOL_LOOKBACK_MINUTES}m",
+            detail,
+        )
+        _watchdog_alert("pool-exhaustion", "transient DB/pool failures are recurring", detail)
+
+    stale_running = snapshot["stale_running"]
+    if stale_running or initial_reaped:
+        if stale_running:
+            reap_stale_task_runs(now)
+        try:
+            remaining_stale = _watchdog_stale_running(now)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[cron-watchdog] stale recheck failed: {type(exc).__name__}: {exc}", flush=True)
+            remaining_stale = stale_running
+        detail = {
+            "initial_reaped": initial_reaped,
+            "detected_after_reaper": stale_running,
+            "remaining": remaining_stale,
+        }
+        _write_watchdog_status(
+            "stale_running",
+            now,
+            "error" if remaining_stale else "ok",
+            f"stale running tasks remaining={len(remaining_stale)}",
+            detail,
+        )
+        if remaining_stale:
+            _watchdog_alert("stale-running", "stale running tasks remain after reaper", detail)
+    return True
 
 
 def run_yesterday_results_backfill(now: datetime) -> bool:
@@ -1159,7 +1510,11 @@ def main() -> int:
     if not os.getenv("DATABASE_URL", "").strip():
         raise RuntimeError("DATABASE_URL is required for Render regular scheduler")
     ensure_task_runs_table()
-    reap_stale_task_runs(now)
+    reaped = reap_stale_task_runs(now)
+    try:
+        run_cron_watchdog(now, initial_reaped=reaped)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cron-watchdog] nonfatal failure: {type(exc).__name__}: {exc}", flush=True)
     lite_mode = render_daytime_lite_mode()
     exit_code = 0
 
@@ -1186,6 +1541,12 @@ def main() -> int:
         run_top_page_snapshot(now, lightweight=True, environment_only=True)
 
     print("[render-regular] done", flush=True)
+    if exit_code:
+        _notify_failure_best_effort(
+            REGULAR_CRON_JOB_NAME,
+            "regular cron completed with a failure status",
+            detail={"date": today, "exit_code": exit_code, "lite_mode": lite_mode},
+        )
     return exit_code
 
 
