@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PORT = 8091
+PORT = int(os.environ.get("KACHISUJI_E2E_PORT", "8091"))
 BASE_URL = f"http://127.0.0.1:{PORT}"
 
 

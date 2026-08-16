@@ -123,6 +123,10 @@ button.is-loading::before { display: inline-block; width: 10px; height: 10px; ma
 .empty { padding: 60px 10px; color: var(--ink-3); text-align: center; font-size: 13.5px; }
 .loading::before { display: inline-block; width: 10px; height: 10px; margin-right: 9px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; content: ""; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.condition-summary { min-width: 0; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); overflow-wrap: anywhere; word-break: normal; }
+.condition-summary h2 { margin: 0; color: var(--ink-2); font-size: 13px; }
+.condition-summary p { margin: 4px 0 0; color: var(--ink-2); font-size: 12px; line-height: 1.65; }
+.condition-summary strong { color: var(--ink); }
 .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
 .kpi { min-width: 0; padding: 12px 14px 10px; border-radius: 10px; background: var(--surface-2); }
 .kpi .v { overflow-wrap: anywhere; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }

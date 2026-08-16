@@ -87,6 +87,30 @@ def get_url(page, path: str, **kwargs):
     return page.request.get(urljoin(page.url, path), **kwargs)
 
 
+def mock_search_result(page):
+    payloads = []
+    result = {
+        "roi": 100.0,
+        "roi_ci_low": 90.0,
+        "roi_ci_high": 110.0,
+        "hit_rate": 20.0,
+        "hits": 2,
+        "n": 10,
+        "effective_date_range": ["2026-01-01", "2026-08-16"],
+        "excluded": {"result_missing": 0, "condition_null": 0},
+        "warnings": [],
+        "yearly": [],
+        "monthly": [],
+    }
+
+    def handle(route, request):
+        payloads.append(request.post_data_json)
+        route.fulfill(status=200, json=result)
+
+    page.route("**/api/search", handle)
+    return payloads
+
+
 # S1: basic rendering, search and bet-type UI.
 def test_s1_top_sections_and_default_state(page):
     expect(page).to_have_title("勝ち筋サーチ")
@@ -143,6 +167,109 @@ def test_s1_search_renders_result_kpis(page):
     expect(page.locator(".kpis")).to_be_visible(timeout=30_000)
     expect(page.locator(".kpi")).to_have_count(4)
     expect(page.locator("#btnSaveStrategy")).to_be_enabled()
+
+
+def test_s16_result_summary_shows_exact_configured_conditions(page):
+    payloads = mock_search_result(page)
+    page.locator("#venue").select_option("3")
+    page.locator("#betType").select_option("nirentan")
+    page.locator("#pos2").select_option("3")
+    page.locator("#boat2 summary").click()
+    page.locator("#b2AccidentPeriodCmp").select_option("min")
+    page.locator("#b2AccidentPeriod").fill("0.5")
+    page.locator("#b2AvgStCmp").select_option("min")
+    page.locator("#b2AvgSt").fill("0.15")
+    page.locator("#boat3 summary").click()
+    page.locator("#b3AvgStCmp").select_option("max")
+    page.locator("#b3AvgSt").fill("0.16")
+    page.locator("#btnAddCompare").click()
+    comparison = page.locator(".compare-row")
+    comparison.locator(".compare-boat").select_option("2")
+    comparison.locator(".compare-metric").select_option("avg_st")
+    comparison.locator(".compare-other").select_option("3")
+    comparison.locator(".compare-op").select_option("ge")
+    comparison.locator(".compare-margin").fill("0.02")
+    page.locator("#dateFrom").fill("2016-06-01")
+    page.locator("#dateTo").fill("2026-08-16")
+
+    page.locator("#btnSearch").click()
+
+    summary = page.locator(".condition-summary")
+    expect(summary).to_be_visible()
+    expect(summary.locator("h2")).to_have_text("検索条件（8項目）")
+    expect(summary).to_contain_text("[レース] 会場: 江戸川 ／ 買い目: 2連単 1-3")
+    expect(summary).to_contain_text("2号艇: 平均ST0.15秒以上・事故率（審査期・検証用）0.5%以上")
+    expect(summary).to_contain_text("3号艇: 平均ST0.16秒以下")
+    expect(summary).to_contain_text("[比較] 2号艇の平均ST ≥ 3号艇 +0.02秒")
+    expect(summary).to_contain_text("[期間] 2016-06-01 〜 2026-08-16")
+    expect(summary).not_to_contain_text("天候:")
+    assert payloads == [{
+        "venue": [3],
+        "bet": {"type": "nirentan", "first": 1, "second": 3},
+        "date_from": "2016-06-01",
+        "date_to": "2026-08-16",
+        "boats": {
+            "2": {"avg_st": {"min": 0.15}, "accident_rate_period": {"min": 0.5}},
+            "3": {"avg_st": {"max": 0.16}},
+        },
+        "compare": [{"metric": "avg_st", "boat": 2, "op": "ge", "other": 3, "margin": 0.02}],
+    }]
+
+
+def test_s16_result_summary_shows_no_conditions_for_default_search(page):
+    payloads = mock_search_result(page)
+    page.locator("#btnSearch").click()
+
+    expect(page.locator(".condition-summary h2")).to_have_text("検索条件: 指定なし（全レース）")
+    assert payloads == [{}]
+
+
+@pytest.mark.parametrize(
+    ("kind", "positions", "expected"),
+    [
+        ("tansho", (4,), "買い目: 単勝 4"),
+        ("nirentan", (2, 5), "買い目: 2連単 2-5"),
+        ("sanrentan", (3, 1, 6), "買い目: 3連単 3-1-6"),
+    ],
+)
+def test_s16_result_summary_formats_all_bet_types(page, kind, positions, expected):
+    mock_search_result(page)
+    page.locator("#betType").select_option(kind)
+    for selector, value in zip(("#pos1", "#pos2", "#pos3"), positions):
+        page.locator(selector).select_option(str(value))
+    page.locator("#btnSearch").click()
+    expect(page.locator(".condition-summary")).to_contain_text(expected)
+
+
+@pytest.mark.parametrize(
+    ("operation", "symbol", "sign"),
+    [("ge", "≥", "+"), ("le", "≤", "−")],
+)
+def test_s16_result_summary_formats_comparison_direction_and_margin(page, operation, symbol, sign):
+    mock_search_result(page)
+    page.locator("#btnAddCompare").click()
+    comparison = page.locator(".compare-row")
+    comparison.locator(".compare-boat").select_option("2")
+    comparison.locator(".compare-metric").select_option("motor_rate2")
+    comparison.locator(".compare-other").select_option("5")
+    comparison.locator(".compare-op").select_option(operation)
+    comparison.locator(".compare-margin").fill("3.5")
+    page.locator("#btnSearch").click()
+    expect(page.locator(".condition-summary")).to_contain_text(
+        f"2号艇のモーター2連対率 {symbol} 5号艇 {sign}3.5%"
+    )
+
+
+def test_s16_result_summary_does_not_overflow_mobile_viewport(page):
+    mock_search_result(page)
+    page.set_viewport_size({"width": 390, "height": 800})
+    page.locator("#venue").select_option(["1", "2", "3", "4", "5", "6"])
+    page.locator("#weatherChips .wchip").nth(0).click()
+    page.locator("#weatherChips .wchip").nth(1).click()
+    page.locator("#windDirection").select_option(["追い風", "向かい風", "横風(右)"])
+    page.locator("#btnSearch").click()
+    expect(page.locator(".condition-summary")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
 
 
 def test_s9_year_row_toggles_monthly_breakdown_accessibly(page):

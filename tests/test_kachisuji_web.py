@@ -129,6 +129,7 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="boats"',
         'id="compareRows"',
         'id="conditionCount"',
+        'class="condition-summary"',
         'id="miniKpi"',
         "全国2連対率",
         "事故率（審査期・本日判定用）",
@@ -143,6 +144,7 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="dateFrom"',
         'id="dateTo"',
         "条件判定不能で除外した件数",
+        "検索条件: 指定なし（全レース）",
     ):
         assert marker in html
     for removed_marker in (

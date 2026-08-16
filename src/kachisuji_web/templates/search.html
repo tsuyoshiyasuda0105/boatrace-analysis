@@ -227,6 +227,7 @@
       ['national_rate2', '全国2連対率', 'pt'],
       ['age', '年齢', '歳']
     ];
+    var betConditionTouched = false;
     var lastConditions = null;
     var lastBacktest = null;
 
@@ -317,6 +318,9 @@
       byId('pos2wrap').hidden = kind === 'tansho';
       byId('pos3wrap').hidden = kind !== 'sanrentan';
     }
+    ['betType', 'pos1', 'pos2', 'pos3'].forEach(function (id) {
+      byId(id).addEventListener('change', function () { betConditionTouched = true; });
+    });
     byId('betType').addEventListener('change', refreshBetUI);
     refreshBetUI();
 
@@ -374,9 +378,12 @@
     byId('boats').addEventListener('input', refreshBoatSummaries);
 
     function collectConditions() {
-      var result = {bet: {type: byId('betType').value, first: Number(byId('pos1').value)}};
-      if (result.bet.type !== 'tansho') result.bet.second = Number(byId('pos2').value);
-      if (result.bet.type === 'sanrentan') result.bet.third = Number(byId('pos3').value);
+      var result = {};
+      if (betConditionTouched) {
+        result.bet = {type: byId('betType').value, first: Number(byId('pos1').value)};
+        if (result.bet.type !== 'tansho') result.bet.second = Number(byId('pos2').value);
+        if (result.bet.type === 'sanrentan') result.bet.third = Number(byId('pos3').value);
+      }
       var venues = Array.from(byId('venue').selectedOptions).map(function (option) { return Number(option.value); });
       if (venues.length) result.venue = venues;
       var raceNo = {};
@@ -419,11 +426,10 @@
       return result;
     }
 
-    function activeConditionCount() {
-      var conditions = collectConditions();
-      var count = 1;
+    function countConfiguredConditions(conditions) {
+      var count = 0;
       Object.keys(conditions).forEach(function (key) {
-        if (key === 'bet' || key === 'fast') return;
+        if (key === 'fast') return;
         if (key === 'boats') {
           Object.keys(conditions.boats).forEach(function (boat) {
             count += Object.keys(conditions.boats[boat]).length;
@@ -436,6 +442,9 @@
       });
       return count;
     }
+    function activeConditionCount() {
+      return countConfiguredConditions(collectConditions());
+    }
     function refreshConditionCount() {
       byId('conditionCount').textContent = '条件 ' + activeConditionCount() + '個';
     }
@@ -446,7 +455,116 @@
     function escapeHtml(value) {
       var node = document.createElement('span'); node.textContent = String(value); return node.innerHTML;
     }
-    function renderResult(data) {
+    function optionText(selectId, value) {
+      var option = Array.from(byId(selectId).options).find(function (item) { return String(item.value) === String(value); });
+      return option ? option.textContent.trim() : String(value);
+    }
+    function controlLabel(controlId, fallback) {
+      var control = byId(controlId);
+      var row = control && control.closest('.cond, .row');
+      if (!row) return fallback;
+      var strong = row.querySelector('strong');
+      if (strong) return strong.textContent.trim().replace(/（直近180日）$/, '');
+      var label = row.querySelector('label[for="' + controlId + '"]');
+      if (label && label.firstChild) return label.firstChild.textContent.trim();
+      var text = Array.from(row.childNodes).find(function (node) {
+        return node.nodeType === Node.TEXT_NODE && node.textContent.trim();
+      });
+      return text ? text.textContent.trim() : fallback;
+    }
+    function numberText(value) {
+      return Number.isFinite(Number(value)) ? String(Number(value)) : String(value);
+    }
+    function rangeText(label, range, unit) {
+      var hasMin = range && range.min !== undefined;
+      var hasMax = range && range.max !== undefined;
+      if (hasMin && hasMax) return label + numberText(range.min) + unit + '〜' + numberText(range.max) + unit;
+      if (hasMin) return label + numberText(range.min) + unit + '以上';
+      if (hasMax) return label + numberText(range.max) + unit + '以下';
+      return '';
+    }
+    function conditionSummaryHtml(conditions) {
+      var count = countConfiguredConditions(conditions);
+      if (!count) {
+        return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件: 指定なし（全レース）</h2></section>';
+      }
+      var groups = [];
+      var race = [];
+      if (conditions.venue !== undefined) {
+        var venues = Array.isArray(conditions.venue) ? conditions.venue : [conditions.venue];
+        race.push(controlLabel('venue', '会場') + ': ' + venues.map(function (value) { return optionText('venue', value); }).join('・'));
+      }
+      if (conditions.race_no) race.push(rangeText(controlLabel('raceNoFrom', 'レース番号'), conditions.race_no, 'R'));
+      if (conditions.bet) {
+        var ticket = [conditions.bet.first];
+        if (conditions.bet.second !== undefined) ticket.push(conditions.bet.second);
+        if (conditions.bet.third !== undefined) ticket.push(conditions.bet.third);
+        race.push(controlLabel('betType', '買い目') + ': ' + optionText('betType', conditions.bet.type) + ' ' + ticket.join('-'));
+      }
+      if (conditions.weather) race.push('天候: ' + conditions.weather.join('・'));
+      if (conditions.wind_dir) race.push(controlLabel('windDirection', '風向き') + ': ' + conditions.wind_dir.join('・'));
+      if (conditions.wind_speed) race.push(rangeText('風速', conditions.wind_speed, 'm'));
+      if (conditions.tide_phase !== undefined) race.push(controlLabel('tide', '潮') + ': ' + conditions.tide_phase);
+      if (race.length) groups.push(['レース', race]);
+
+      var program = [];
+      if (conditions.female_present !== undefined) program.push(controlLabel('female', '性別構成') + ': ' + optionText('female', conditions.female_present));
+      if (conditions.class_mix !== undefined) program.push(controlLabel('classMix', '級別構成') + ': ' + conditions.class_mix);
+      if (conditions.day_index !== undefined) program.push(controlLabel('dayIndex', '開催日程') + ': ' + conditions.day_index);
+      if (conditions.daypart !== undefined) program.push('時間帯: ' + conditions.daypart);
+      if (program.length) groups.push(['番組', program]);
+
+      var boatControls = {
+        'class': ['Classes', ''], racer_id: ['Racer', ''], age: ['Age', '歳'], avg_st: ['AvgSt', '秒'],
+        national_rate: ['National', '点'], local_rate: ['Local', '点'], national_rate2: ['National2', '%'],
+        local_rate2: ['Local2', '%'], motor_rate2: ['Motor', '%'], ex_rank: ['ExFrom', '位'],
+        ex_dev: ['ExDev', '秒'], ex_st: ['ExSt', '秒'], kimarite: ['Kimarite', ''],
+        accident_rate: ['Accident', '%'], accident_rate_period: ['AccidentPeriod', '%'],
+        accident_count_period: ['AccidentCountPeriod', '件'], accident_points: ['AccidentPoints', '点'],
+        accident_rate_365d: ['Accident365', '%']
+      };
+      var boatRows = [];
+      Object.keys(conditions.boats || {}).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (boatNumber) {
+        var boatItems = [];
+        var boat = conditions.boats[boatNumber];
+        Object.keys(boat).forEach(function (key) {
+          var definition = boatControls[key];
+          if (!definition) return;
+          var label = controlLabel('b' + boatNumber + definition[0], key);
+          var value = boat[key];
+          if (key === 'class') boatItems.push(label + ': ' + value.join('・'));
+          else if (key === 'racer_id') boatItems.push(label + ': ' + String(value).trim().split(/\s+/)[0]);
+          else if (key === 'kimarite') {
+            var technique = kimarite.find(function (item) { return item[0] === value.name; });
+            boatItems.push(label + ': ' + (technique ? technique[1] : value.name) + '・勝率' + numberText(value.rate_min) + '%以上');
+          } else if (key === 'ex_dev') {
+            if (value.faster_by !== undefined) boatItems.push(label + 'が会場平均より' + numberText(value.faster_by) + '秒以上速い');
+            if (value.slower_by !== undefined) boatItems.push(label + 'が会場平均より' + numberText(value.slower_by) + '秒以上遅い');
+          } else boatItems.push(rangeText(label, value, definition[1]));
+        });
+        if (boatItems.length) boatRows.push(boatNumber + '号艇: ' + boatItems.join('・'));
+      });
+      if (boatRows.length) groups.push(['艇別', boatRows]);
+
+      var comparisons = (conditions.compare || []).map(function (comparison) {
+        var metric = compareMetrics.find(function (item) { return item[0] === comparison.metric; });
+        var unit = {motor_rate2: '%', avg_st: '秒', ex_time: '秒', ex_st: '秒', national_rate: '点', local_rate: '点', national_rate2: '%', age: '歳'}[comparison.metric] || '';
+        var symbol = comparison.op === 'le' ? '≤' : '≥';
+        var sign = comparison.op === 'le' ? '−' : '+';
+        return comparison.boat + '号艇の' + (metric ? metric[1] : comparison.metric) + ' ' + symbol + ' ' + comparison.other + '号艇 ' + sign + numberText(comparison.margin || 0) + unit;
+      });
+      if (comparisons.length) groups.push(['比較', comparisons]);
+
+      var period = '全期間';
+      if (conditions.date_from && conditions.date_to) period = conditions.date_from + ' 〜 ' + conditions.date_to;
+      else if (conditions.date_from) period = conditions.date_from + ' 以降';
+      else if (conditions.date_to) period = conditions.date_to + ' 以前';
+      groups.push(['期間', [period]]);
+      return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件（' + count + '項目）</h2>' + groups.map(function (group) {
+        return '<p><strong>[' + escapeHtml(group[0]) + ']</strong> ' + group[1].map(escapeHtml).join(' ／ ') + '</p>';
+      }).join('') + '</section>';
+    }
+    function renderResult(data, conditions) {
       var roiClass = data.roi >= 110 ? 'roi-good' : (data.roi >= 90 ? 'roi-mid' : 'roi-bad');
       var warnings = data.warnings.map(function (warning) {
         var level = warning.indexOf('n<30') === 0 ? 'critical' : 'warning';
@@ -471,6 +589,7 @@
       var range = data.effective_date_range[0] ? escapeHtml(data.effective_date_range[0]) + ' 〜 ' + escapeHtml(data.effective_date_range[1]) : '対象データなし';
       var excludedTotal = data.excluded.result_missing + data.excluded.condition_null;
       byId('resultArea').innerHTML =
+        conditionSummaryHtml(conditions) +
         '<div class="kpis">' +
         '<div class="kpi"><div class="v ' + roiClass + '">' + data.roi.toFixed(1) + '%</div><div class="l">回収率</div><div class="ci">95%CI ' + data.roi_ci_low.toFixed(1) + '〜' + data.roi_ci_high.toFixed(1) + '%</div></div>' +
         '<div class="kpi"><div class="v">' + data.hit_rate.toFixed(1) + '%</div><div class="l">的中率</div><div class="ci">' + data.hits + ' / ' + data.n + ' 本</div></div>' +
@@ -601,7 +720,7 @@
       try {
         var conditions = collectConditions();
         var data = await requestJson('/api/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(conditions)});
-        renderResult(data);
+        renderResult(data, conditions);
         lastConditions = conditions;
         lastBacktest = data;
         byId('btnSaveStrategy').disabled = false;
@@ -617,6 +736,7 @@
       window.setTimeout(function () {
         document.querySelectorAll('.wchip.on').forEach(function (chip) { chip.classList.remove('on'); chip.setAttribute('aria-pressed', 'false'); });
         byId('compareRows').innerHTML = '';
+        betConditionTouched = false;
         refreshBetUI(); refreshVenueUI(); refreshBoatSummaries(); refreshConditionCount();
         lastConditions = null; lastBacktest = null; byId('btnSaveStrategy').disabled = true;
         byId('miniKpi').hidden = true;
