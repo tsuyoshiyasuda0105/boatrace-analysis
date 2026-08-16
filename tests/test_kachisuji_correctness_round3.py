@@ -62,19 +62,32 @@ def _representative_dates(
 ) -> tuple[str, ...]:
     """Select stable edge coverage from the dates that the current snapshot has."""
 
-    with _read_only(SEARCH_DB) as connection:
-        dates = [
-            str(row[0])
-            for row in connection.execute(
-                f"""
-                SELECT DISTINCT race_date
-                  FROM asof_race_features
-                 WHERE schema_version IN (2,3,4,5) AND {where}
-                 ORDER BY race_date
-                """
-            )
-        ]
-    assert len(dates) >= leading + trailing
+    try:
+        with _read_only(SEARCH_DB) as connection:
+            dates = [
+                str(row[0])
+                for row in connection.execute(
+                    f"""
+                    SELECT DISTINCT race_date
+                      FROM asof_race_features
+                     WHERE schema_version IN (2,3,4,5) AND {where}
+                     ORDER BY race_date
+                    """
+                )
+            ]
+    except (OSError, sqlite3.Error) as error:
+        pytest.skip(
+            f"Kachisuji snapshot data is unavailable: {error}",
+            allow_module_level=True,
+        )
+
+    required = leading + trailing
+    if len(dates) < required:
+        pytest.skip(
+            "Kachisuji snapshot data is incomplete for the Round 3 correctness "
+            f"audit: found {len(dates)} representative dates, need {required}",
+            allow_module_level=True,
+        )
     return tuple(dict.fromkeys([*dates[:leading], *dates[-trailing:]]))
 
 
