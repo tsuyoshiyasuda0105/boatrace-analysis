@@ -135,6 +135,7 @@
   }[ch]));
   const pct = (value) => value == null ? "-" : `${Number(value).toFixed(1)}%`;
   const num = (value, digits = 2) => value == null ? "-" : Number(value).toFixed(digits);
+  const footTime = (value) => value == null ? "—" : num(value);
   const posClass = (value) => value ? `f-${Number(value)}` : "";
   const classLabelFromNumber = (value) => ({
     1: "A1",
@@ -369,6 +370,19 @@
       </div>`;
   };
 
+  const renderCurrentFootTimes = (current = {}) => `
+    <div class="motor-current-foot-times" aria-label="本日の展示足">
+      <div class="motor-history-head">
+        <strong>本日の展示足</strong>
+        <span>実測タイム</span>
+      </div>
+      <div class="motor-history-summary" style="grid-template-columns:repeat(3,minmax(72px,1fr));">
+        <div><span>回り足</span><b>${footTime(current.turn_time)}</b></div>
+        <div><span>直線</span><b>${footTime(current.straight_time)}</b></div>
+        <div><span>一周</span><b>${footTime(current.lap_time)}</b></div>
+      </div>
+    </div>`;
+
   const courseStatsGrid = (title, rows) => `
     <div class="racer-course-block">
       <div class="racer-course-title">${esc(title)}</div>
@@ -399,6 +413,7 @@
   const renderHistoryOnly = (historyData) => `
     <div class="motor-inspector-stack">
       <div class="motor-history-panel">
+        ${renderCurrentFootTimes(historyData.current)}
         ${renderPositionChart(historyData, historyData.current?.boat_number)}
         ${renderHistoryTable(historyData)}
       </div>

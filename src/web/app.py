@@ -5860,6 +5860,7 @@ def _motor_history_payload(race_id: str, boat_number: int, info: Optional[dict[s
         "start_timing_exhibition": current_ex_st,
         "course_number": current_course_number,
         "finishing_position": current_finishing_position,
+        "lap_time": current_dash_time,
         "dash_time": current_dash_time,
         "turn_time": current_turn_time,
         "straight_time": current_straight_time,
