@@ -1226,6 +1226,18 @@ def _effective_force_recompute() -> bool:
     """User-visible recompute flag, guarded so web clicks cannot run heavy SQL."""
     return _wants_recompute() and _is_expensive_recompute_allowed()
 
+
+def _effective_market_signals_recompute() -> bool:
+    """Allow the all-race signal scan only for an identified background task.
+
+    Race-detail maintenance still has a legacy explicit override for its
+    bounded per-race rebuilds.  Market signals are substantially different:
+    one request scans every race for the date, so a process-wide override must
+    never turn a member-supplied ``recompute=1`` into that expensive scan.
+    """
+    trigger = (os.getenv("BOATRACE_TASK_TRIGGER") or "").strip().lower()
+    return _wants_recompute() and trigger in EXPENSIVE_RECOMPUTE_TRIGGERS
+
 def cached(ttl: int = _CACHE_DEFAULT_TTL, past_ttl: int = 3600):
     """Flask view 用 TTL キャッシュデコレータ。
     Args:
@@ -8551,7 +8563,7 @@ def create_app(version: str = config.DEFAULT_MODEL_VERSION) -> Flask:
         target_date = request.args.get("date") or _today_jst_iso()
         today_iso = _today_jst_iso()
         cache_ttl = 15 if target_date >= today_iso else 3600
-        force_recompute = _effective_force_recompute()
+        force_recompute = _effective_market_signals_recompute()
         # v6: avoid serving stale empty signals after race data catches up.
         cache_key = _market_signals_cache_key(target_date)
         def _market_json_response(payload: Any, cache_state: str):

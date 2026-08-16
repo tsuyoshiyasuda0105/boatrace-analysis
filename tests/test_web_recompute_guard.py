@@ -1,8 +1,10 @@
 import os
+from datetime import date
 from pathlib import Path
 
 os.environ["DATABASE_URL"] = ""
 
+import pytest
 from flask import Flask
 
 from src.web import app as web_app
@@ -39,13 +41,23 @@ def test_render_maintenance_recompute_flag_allows_expensive_sql(monkeypatch):
         assert web_app._effective_force_recompute() is True
 
 
-def test_explicit_override_allows_expensive_sql_for_maintenance(monkeypatch):
+def test_market_signals_ignore_process_wide_recompute_override(monkeypatch):
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setenv("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
 
     app = Flask(__name__)
-    with app.test_request_context("/member/strategy?recompute=1"):
+    with app.test_request_context("/api/market-signals?recompute=1"):
         assert web_app._effective_force_recompute() is True
+        assert web_app._effective_market_signals_recompute() is False
+
+
+def test_render_prewarm_allows_market_signals_recompute(monkeypatch):
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-prewarm")
+    monkeypatch.delenv("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", raising=False)
+
+    app = Flask(__name__)
+    with app.test_request_context("/api/market-signals?recompute=1"):
+        assert web_app._effective_market_signals_recompute() is True
 
 
 def test_market_signal_cache_miss_never_self_heals_in_web_worker():
@@ -79,6 +91,98 @@ def test_market_signals_do_not_use_a_second_flask_response_cache():
     route_prefix = route_prefix.rsplit("@app.route", 1)[1]
 
     assert "@cached(" not in route_prefix
+
+
+def _market_signals_view(app):
+    # member_only_api uses functools.wraps, so this calls only the route body
+    # while the test supplies an isolated request context.
+    return app.view_functions["market_signals_for_date"].__wrapped__
+
+
+def test_human_market_signals_cache_miss_returns_pending_without_db(monkeypatch):
+    target_date = "2026-08-16"
+    app = web_app.create_app()
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setenv("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: target_date)
+    monkeypatch.setattr(web_app, "_today_jst_date", lambda: date.fromisoformat(target_date))
+    monkeypatch.setattr(web_app, "_read_best_market_signals_snapshot", lambda *_args, **_kwargs: (None, "missing"))
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda _key: None)
+    monkeypatch.setattr(web_app, "_market_signals_compat_cache_keys", lambda _date: [])
+    monkeypatch.setattr(
+        web_app,
+        "db_connect",
+        lambda: (_ for _ in ()).throw(AssertionError("human cache miss must not touch the heavy DB path")),
+    )
+
+    with app.test_request_context(f"/api/market-signals?date={target_date}&recompute=1"):
+        response = _market_signals_view(app)()
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert response.headers["X-Boatrace-Cache"] == "pending"
+    assert payload["data_status"] == {"cache_miss": True, "cache_only": True}
+    assert payload["signals"] == {}
+
+
+def test_human_market_signals_returns_last_good_with_numeric_payload_unchanged(monkeypatch):
+    target_date = "2026-08-16"
+    app = web_app.create_app()
+    last_good = {
+        "date": target_date,
+        "cache_version": "v-previous-signature",
+        "n_races": 192,
+        "n_positive_ev": 1,
+        "signals": {
+            "20260816-01-01": {
+                "race_id": "20260816-01-01",
+                "expected_roi": 0.758,
+                "l4": {"recovery": 175.8, "n": 12, "hit_rate": 25.0},
+            }
+        },
+    }
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(
+        web_app,
+        "_read_best_market_signals_snapshot",
+        lambda *_args, **_kwargs: (last_good, "last-good"),
+    )
+    monkeypatch.setattr(
+        web_app,
+        "db_connect",
+        lambda: (_ for _ in ()).throw(AssertionError("last-good delivery must not recompute")),
+    )
+
+    with app.test_request_context(f"/api/market-signals?date={target_date}"):
+        response = _market_signals_view(app)()
+
+    payload = response.get_json()
+    assert response.headers["X-Boatrace-Cache"] == "last-good"
+    assert payload["n_races"] == 192
+    assert payload["signals"]["20260816-01-01"]["expected_roi"] == 0.758
+    assert payload["signals"]["20260816-01-01"]["l4"] == {
+        "recovery": 175.8,
+        "n": 12,
+        "hit_rate": 25.0,
+    }
+
+
+def test_authorized_market_signals_recompute_enters_existing_heavy_path(monkeypatch):
+    class RecomputeReached(BaseException):
+        pass
+
+    target_date = "2026-08-16"
+    app = web_app.create_app()
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-prewarm")
+    monkeypatch.setattr(
+        web_app,
+        "db_connect",
+        lambda: (_ for _ in ()).throw(RecomputeReached()),
+    )
+
+    with app.test_request_context(f"/api/market-signals?date={target_date}&recompute=1"):
+        with pytest.raises(RecomputeReached):
+            _market_signals_view(app)()
 
 
 def test_daily_source_complete_requires_all_races_entries_and_predictions():
