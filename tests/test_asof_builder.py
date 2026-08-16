@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from src.features.accident_history import ensure_accident_history_schema
 from src.features.asof_builder import (
     ALL_COLUMNS,
     build_features,
@@ -347,7 +348,7 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 5
+    assert row["schema_version"] == 6
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
@@ -560,6 +561,42 @@ def test_history_ignores_nonwinner_kimarite_and_numeric_finish_accident(tmp_path
     assert row["b1_kimarite_rate_nige"] == pytest.approx(0.0)
     assert row["b1_accident_rate"] == pytest.approx(0.55)
     assert row["b1_accident_rate_365d"] == pytest.approx(0.0)
+
+
+def test_restored_period_accidents_are_cut_off_before_race_day(tmp_path):
+    source = _complete_fixture()
+    output = tmp_path / "restored-accidents.db"
+    with sqlite3.connect(output) as connection:
+        create_output_schema(connection)
+        ensure_accident_history_schema(connection)
+        connection.executemany(
+            "INSERT INTO racer_starts VALUES (?,?,?)",
+            [
+                ("before-1", "2025-05-01", 1001),
+                ("before-2", "2025-06-01", 1001),
+                ("same-day", "2025-06-02", 1001),
+                ("future", "2025-06-03", 1001),
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO accident_events VALUES (?,?,?,?,?,?)",
+            [
+                ("before-2", "2025-06-01", 1001, 1, "F", 1),
+                ("same-day", "2025-06-02", 1001, 1, "S1", 1),
+                ("future", "2025-06-03", 1001, 1, "S2", 1),
+            ],
+        )
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert row["b1_accident_count_period"] == 1
+    assert row["b1_starts_period"] == 2
+    assert row["b1_accident_rate_period"] == pytest.approx(50.0)
+    assert row["b2_accident_count_period"] == 0
+    assert row["b2_starts_period"] == 0
+    assert row["b2_accident_rate_period"] is None
+    assert verify_features(source, output, sample=1)["ok"] is True
 
 
 def test_append_only_rerun_skips_and_preserves_row(tmp_path):

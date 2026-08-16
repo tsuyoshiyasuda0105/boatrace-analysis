@@ -285,7 +285,7 @@ def test_snapshot_result_and_payout_match_final_finishing_order(
             f"SELECT schema_version,{result_column},{payout_column} "
             "FROM asof_race_features WHERE race_id='20160613-13-01'"
         ).fetchone()
-    assert row == (5, expected_result, expected_payout)
+    assert row == (6, expected_result, expected_payout)
 
 
 @pytest.mark.parametrize(

@@ -28,8 +28,13 @@ import sqlite3
 import sys
 from typing import Any, Iterable, Mapping, Sequence
 
+from src.features.accident_history import (
+    RestoredAccidentHistory,
+    load_restored_histories,
+)
 
-SCHEMA_VERSION = 5
+
+SCHEMA_VERSION = 6
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -80,6 +85,9 @@ def _boat_columns() -> list[tuple[str, str]]:
                 (f"b{boat}_accident_rate_365d", "REAL"),
                 (f"b{boat}_accident_points", "REAL"),
                 (f"b{boat}_accident_source", "TEXT"),
+                (f"b{boat}_accident_rate_period", "REAL"),
+                (f"b{boat}_accident_count_period", "INTEGER"),
+                (f"b{boat}_starts_period", "INTEGER"),
             ]
         )
     return columns
@@ -523,6 +531,27 @@ def _period_accident_values(
     return float(value[0]), float(value[1]), "period"
 
 
+def _restored_period_accident_values(
+    histories: Mapping[int, RestoredAccidentHistory],
+    race_date: str,
+    racer_id: Any,
+) -> tuple[float | None, int, int]:
+    """Return restored counts in ``[assessment start, race_date)``.
+
+    The exclusive upper bound is the Step 13 as-of guarantee: an accident or
+    start on the target race date, and every later event, is ineligible.
+    """
+
+    if racer_id is None:
+        return None, 0, 0
+    history = histories.get(int(racer_id))
+    if history is None:
+        return None, 0, 0
+    return history.period_values(
+        _accident_period_start_for_date(race_date), race_date
+    )
+
+
 def _load_t5_favorite_odds(
     source: Any, race_ids: Sequence[str]
 ) -> dict[str, float]:
@@ -795,6 +824,7 @@ def _build_row(
     results: list[dict[str, Any]],
     histories: dict[int, RacerHistory],
     period_accidents: Mapping[str, Any],
+    restored_accidents: Mapping[int, RestoredAccidentHistory],
     t5_favorite_odds: Mapping[str, float],
     day_index: str | None,
     built_at: str,
@@ -842,6 +872,11 @@ def _build_row(
         accident_rate, accident_points, accident_source = _period_accident_values(
             period_accidents, race_date, entry.get("racer_number")
         )
+        restored_rate, restored_count, restored_starts = (
+            _restored_period_accident_values(
+                restored_accidents, race_date, entry.get("racer_number")
+            )
+        )
         row.update(
             {
                 f"b{boat}_racer_id": entry.get("racer_number"),
@@ -867,6 +902,9 @@ def _build_row(
                 f"b{boat}_accident_rate_365d": rates["accident"],
                 f"b{boat}_accident_points": accident_points,
                 f"b{boat}_accident_source": accident_source,
+                f"b{boat}_accident_rate_period": restored_rate,
+                f"b{boat}_accident_count_period": restored_count,
+                f"b{boat}_starts_period": restored_starts,
             }
         )
     messages = warning_messages if warning_messages is not None else []
@@ -1004,6 +1042,12 @@ def build_features(
         racer_ids,
     )
     period_accidents = _load_period_accidents(source, pending, racer_ids)
+    restored_accidents = load_restored_histories(
+        output,
+        min(_accident_period_start_for_date(_iso(race["race_date"])) for race in pending),
+        max(_iso(race["race_date"]) for race in pending),
+        racer_ids,
+    )
     t5_favorite_odds = _load_t5_favorite_odds(source, race_ids)
     day_indexes = _day_indexes(source, pending)
     timestamp = built_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1027,6 +1071,7 @@ def build_features(
                 by_results[race_id],
                 histories,
                 period_accidents,
+                restored_accidents,
                 t5_favorite_odds,
                 day_indexes.get(race_id),
                 timestamp,
@@ -1107,6 +1152,17 @@ def verify_features(
         )
     chosen_races = [dict(row) for row in chosen]
     period_accidents = _load_period_accidents(source, chosen_races, racer_ids)
+    restored_accidents: dict[int, RestoredAccidentHistory] = {}
+    if chosen_races:
+        restored_accidents = load_restored_histories(
+            output,
+            min(
+                _accident_period_start_for_date(str(race["race_date"]))
+                for race in chosen_races
+            ),
+            max(str(race["race_date"]) for race in chosen_races),
+            racer_ids,
+        )
     mismatches: list[str] = []
     for row in chosen:
         for boat in BOATS:
@@ -1133,6 +1189,25 @@ def verify_features(
                     equal = (
                         actual == expected
                         if isinstance(expected, str)
+                        else _equal_rate(actual, expected)
+                    )
+                    if not equal:
+                        mismatches.append(f"{row['race_id']}:{period_column}")
+            if int(row["schema_version"]) >= 6:
+                rate, count, starts = _restored_period_accident_values(
+                    restored_accidents,
+                    str(row["race_date"]),
+                    row[f"b{boat}_racer_id"],
+                )
+                for period_column, expected in (
+                    (f"b{boat}_accident_rate_period", rate),
+                    (f"b{boat}_accident_count_period", count),
+                    (f"b{boat}_starts_period", starts),
+                ):
+                    actual = row[period_column]
+                    equal = (
+                        actual == expected
+                        if isinstance(expected, int)
                         else _equal_rate(actual, expected)
                     )
                     if not equal:

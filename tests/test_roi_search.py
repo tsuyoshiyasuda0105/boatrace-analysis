@@ -631,6 +631,58 @@ def test_period_accident_365d_and_wind_filters_are_distinct(tmp_path: Path) -> N
     assert result["excluded"]["condition_null"] == 1
 
 
+def test_restored_period_rate_and_count_filters_use_2016_cutoff(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "step13-filters.db",
+        [
+            _row(
+                "old-null",
+                "2016-05-31",
+                schema_version=6,
+                b1_accident_rate_period=None,
+                b1_accident_count_period=None,
+                result_sanrentan_json='["1-2-3"]',
+                payout_sanrentan_json='{"1-2-3":1230}',
+            ),
+            _row(
+                "match",
+                "2016-06-13",
+                schema_version=6,
+                b1_accident_rate_period=2.5,
+                b1_accident_count_period=1,
+                result_sanrentan_json='["1-2-3"]',
+                payout_sanrentan_json='{"1-2-3":1230}',
+            ),
+            _row(
+                "below",
+                "2016-06-14",
+                schema_version=6,
+                b1_accident_rate_period=0.0,
+                b1_accident_count_period=0,
+                result_sanrentan_json='["1-2-3"]',
+                payout_sanrentan_json='{"1-2-3":1230}',
+            ),
+        ],
+    )
+
+    result = search_roi(
+        db,
+        {
+            "date_from": "2016-01-01",
+            "boats": {
+                "1": {
+                    "accident_rate_period": {"min": 1.0},
+                    "accident_count_period": {"min": 1},
+                }
+            },
+        },
+        fast=True,
+    )
+
+    assert result["n"] == 1
+    assert result["effective_date_range"] == ["2016-06-13", "2016-06-13"]
+
+
 def test_database_connection_is_explicitly_read_only(
     fixture_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -55,6 +55,8 @@ BOAT_KEYS = frozenset(
         "accident_rate",
         "accident_points",
         "accident_rate_365d",
+        "accident_rate_period",
+        "accident_count_period",
     }
 )
 RANGE_KEYS = frozenset({"min", "max"})
@@ -75,9 +77,10 @@ EX_DEV_KEYS = frozenset({"faster_by", "slower_by"})
 KIMARITE_KEYS = frozenset({"nige", "sashi", "makuri", "makurizashi", "nuki", "megumare"})
 BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
 HISTORY_CUTOFF = "2023-05-01"
+RESTORED_ACCIDENT_CUTOFF = "2016-06-01"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
-READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5)
+READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6)
 RETIRED_ODDS_CONDITION_KEYS = frozenset({"odds", "t5_odds_favorite"})
 ODDS_FILTER_REMOVED_MESSAGE = (
     "オッズによる絞り込みは廃止されました。"
@@ -302,6 +305,7 @@ def _compile_conditions(
             _add_predicate(filters, params, null_columns, "race_no", " AND ".join(comparisons), values)
 
     history_condition = False
+    restored_accident_condition = False
     boats = conditions.get("boats")
     if boats is not None:
         boat_map = _mapping(boats, "boats")
@@ -335,6 +339,8 @@ def _compile_conditions(
                 "accident_rate",
                 "accident_points",
                 "accident_rate_365d",
+                "accident_rate_period",
+                "accident_count_period",
             ):
                 if boat.get(key) is not None:
                     active = _add_range(
@@ -347,6 +353,10 @@ def _compile_conditions(
                     )
                     history_condition = history_condition or (
                         key in {"accident_rate", "accident_points", "accident_rate_365d"}
+                        and active
+                    )
+                    restored_accident_condition = restored_accident_condition or (
+                        key in {"accident_rate_period", "accident_count_period"}
                         and active
                     )
             if boat.get("ex_dev") is not None:
@@ -428,6 +438,10 @@ def _compile_conditions(
     end = _iso_date(date_to, "date_to") if date_to is not None else None
     if history_condition and (start is None or start < HISTORY_CUTOFF):
         start = HISTORY_CUTOFF
+    elif restored_accident_condition and (
+        start is None or start < RESTORED_ACCIDENT_CUTOFF
+    ):
+        start = RESTORED_ACCIDENT_CUTOFF
     if start is not None:
         filters.append("race_date >= ?")
         params.append(start)
