@@ -12,7 +12,12 @@ import sqlite3
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from src.search.roi_search import READABLE_SCHEMA_VERSIONS, _compile_conditions, search_roi
+from src.search.roi_search import (
+    READABLE_SCHEMA_VERSIONS,
+    RETIRED_ODDS_CONDITION_KEYS,
+    _compile_conditions,
+    search_roi,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,12 +42,11 @@ CREATE INDEX IF NOT EXISTS idx_strategies_owner_active
 # These are the only Step 2 condition columns whose values are established on
 # race day.  All other columns returned by _compile_conditions are prior-day
 # facts; a NULL in one of those must not become a morning candidate.
-_SAME_DAY_COLUMNS = frozenset({"weather", "wind_dir", "wind_speed", "t5_odds_favorite"}) | frozenset(
+_SAME_DAY_COLUMNS = frozenset({"weather", "wind_dir", "wind_speed"}) | frozenset(
     f"b{boat}_{suffix}"
     for boat in range(1, 7)
     for suffix in ("ex_time", "ex_rank", "ex_dev", "ex_st")
 )
-_SAME_DAY_COLUMNS = _SAME_DAY_COLUMNS | frozenset({"odds"})
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 _BET_LABELS = {"tansho": "単勝", "nirentan": "2連単", "sanrentan": "3連単"}
 _JST = ZoneInfo("Asia/Tokyo")
@@ -52,6 +56,14 @@ _VERDICT_LABELS = {
     "demote": "降格候補",
     "pending": "判定待ち",
 }
+_RETIRED_ODDS_STRATEGY_MESSAGE = (
+    "この手法はオッズ条件を含むため実行できません。条件を編集してください"
+)
+
+
+def _reject_retired_odds_strategy(conditions: Mapping[str, Any]) -> None:
+    if RETIRED_ODDS_CONDITION_KEYS.intersection(conditions):
+        raise ValueError(_RETIRED_ODDS_STRATEGY_MESSAGE)
 
 
 def _strategy_db_path() -> Path:
@@ -270,6 +282,7 @@ def _strategy_performance(
     forward evaluation.
     """
 
+    _reject_retired_odds_strategy(strategy["conditions"])
     created_jst = _created_at_in_jst(str(strategy["created_at"]))
     now_jst = now.astimezone(_JST) if now.tzinfo is not None else now.replace(tzinfo=timezone.utc).astimezone(_JST)
     overall_conditions = dict(strategy["conditions"])
@@ -387,6 +400,7 @@ def match_races(
         strategy_id = strategy["id"]
         strategy_name = strategy["name"]
         conditions = strategy["conditions"]
+        _reject_retired_odds_strategy(conditions)
     else:
         strategy_id = None
         strategy_name = None
@@ -395,34 +409,14 @@ def match_races(
     daily_conditions = dict(conditions)
     daily_conditions.pop("date_from", None)
     daily_conditions.pop("date_to", None)
-    where, params, referenced_columns, bet, odds = _compile_conditions(daily_conditions)
+    where, params, referenced_columns, bet, _unused_odds = _compile_conditions(daily_conditions)
     if any(_IDENTIFIER.fullmatch(column) is None for column in referenced_columns):
         raise ValueError("condition compiler returned an invalid column")
 
     selected_columns = ["asof.race_id", "jcd", "race_no", *referenced_columns]
-    join_sql = ""
-    odds_filter = ""
-    query_params: list[Any] = []
-    if odds is not None:
-        join_sql = (
-            " LEFT JOIN odds_snapshot AS ticket_odds"
-            " ON ticket_odds.race_id = asof.race_id"
-            " AND ticket_odds.combination = ? AND ticket_odds.snapshot = ?"
-        )
-        query_params.extend((str(bet.expected), odds.snapshot))
-        comparisons: list[str] = []
-        if odds.minimum is not None:
-            comparisons.append("ticket_odds.odds >= ?")
-            params.append(odds.minimum)
-        if odds.maximum is not None:
-            comparisons.append("ticket_odds.odds <= ?")
-            params.append(odds.maximum)
-        odds_filter = " AND ((" + " AND ".join(comparisons) + ") OR ticket_odds.odds IS NULL)"
-        selected_columns.append("ticket_odds.odds AS odds")
-        referenced_columns = [*referenced_columns, "odds"]
     sql = (
-        f"SELECT {', '.join(selected_columns)} FROM asof_race_features AS asof{join_sql} "
-        f"WHERE race_date = ? AND {where}{odds_filter} ORDER BY jcd, race_no, asof.race_id"
+        f"SELECT {', '.join(selected_columns)} FROM asof_race_features AS asof "
+        f"WHERE race_date = ? AND {where} ORDER BY jcd, race_no, asof.race_id"
     )
     with _read_connect(search_db) as connection:
         schema_placeholders = ", ".join("?" for _ in READABLE_SCHEMA_VERSIONS)
@@ -433,9 +427,7 @@ def match_races(
                 (normalized_date, *READABLE_SCHEMA_VERSIONS),
             ).fetchone()[0]
         )
-        rows = connection.execute(
-            sql, [*query_params, normalized_date, *params]
-        ).fetchall()
+        rows = connection.execute(sql, [normalized_date, *params]).fetchall()
 
     matched: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []

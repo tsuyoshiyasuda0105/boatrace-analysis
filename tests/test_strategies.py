@@ -366,63 +366,26 @@ def test_same_day_compare_null_is_pending(
     assert result["pending"][0]["undetermined_columns"] == ["b2_ex_time"]
 
 
-def test_odds_condition_is_confirmed_when_present_and_pending_when_missing(
-    search_db: Path, strategy_db: Path
-) -> None:
-    with sqlite3.connect(search_db) as connection:
-        connection.execute(
-            "CREATE TABLE odds_snapshot (race_id TEXT, combination TEXT, snapshot TEXT, odds REAL, "
-            "PRIMARY KEY (race_id, combination, snapshot))"
-        )
-        connection.executemany(
-            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'T-5min', ?)",
-            [("confirmed", 10.0), ("prior-miss", 20.0), ("prior-null", 20.0)],
-        )
-
-    result = match_races(
-        {"bet": BET, "odds": {"snapshot": "T-5min", "min": 5, "max": 15}},
-        "2026-08-16",
-        search_db,
-        strategy_db,
-    )
-
-    assert [item["race_id"] for item in result["matched"]] == ["confirmed"]
-    assert [item["race_id"] for item in result["pending"]] == ["pending"]
-    assert result["pending"][0]["undetermined_columns"] == ["odds"]
-
-
-def test_favorite_odds_is_pending_when_same_day_value_is_missing(
-    search_db: Path, strategy_db: Path
-) -> None:
-    with sqlite3.connect(search_db) as connection:
-        connection.execute(
-            "UPDATE asof_race_features SET t5_odds_favorite=NULL WHERE race_id='pending'"
-        )
-    result = match_races(
-        {
-            "boats": {"1": {"class": ["A1"]}},
-            "t5_odds_favorite": {"min": 5, "max": 15},
-            "bet": BET,
-        },
-        "2026-08-16",
-        search_db,
-        strategy_db,
-    )
-    assert [item["race_id"] for item in result["matched"]] == ["confirmed"]
-    assert [item["race_id"] for item in result["pending"]] == ["pending"]
-    assert result["pending"][0]["undetermined_columns"] == ["t5_odds_favorite"]
-
-
-def test_legacy_saved_final_strategy_stays_listed_but_match_is_rejected_with_guidance(
-    search_db: Path, strategy_db: Path
+@pytest.mark.parametrize(
+    ("condition_key", "condition_value"),
+    [
+        ("odds", {"snapshot": "T-5min", "min": 5}),
+        ("t5_odds_favorite", {"min": 5, "max": 15}),
+    ],
+)
+def test_saved_odds_strategy_stays_listed_but_execution_is_rejected_with_guidance(
+    search_db: Path,
+    strategy_db: Path,
+    condition_key: str,
+    condition_value: dict[str, object],
 ) -> None:
     strategy_id = save_strategy(
-        "旧確定オッズ手法",
-        {"bet": BET, "odds": {"snapshot": "T-5min", "min": 5}},
+        "旧オッズ手法",
+        {"bet": BET},
         db_path=strategy_db,
     )
     legacy_conditions = json.dumps(
-        {"bet": BET, "odds": {"snapshot": "final", "min": 5}},
+        {"bet": BET, condition_key: condition_value},
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -438,11 +401,17 @@ def test_legacy_saved_final_strategy_stays_listed_but_match_is_rejected_with_gui
 
     listed = client.get("/api/strategies")
     matched = client.get(f"/api/strategies/{strategy_id}/matches?date=2026-08-16")
+    all_matches = client.get("/api/matches?date=2026-08-16")
+    performance = client.get(f"/api/strategies/{strategy_id}/performance")
+    performance_list = client.get("/api/strategies/performance")
 
     assert listed.status_code == 200
-    assert listed.get_json()[0]["conditions"]["odds"]["snapshot"] == "final"
-    assert matched.status_code == 400
-    assert matched.get_json()["error"] == "オッズ条件は5分前オッズ(T-5min)のみ対応しています"
+    assert listed.get_json()[0]["conditions"][condition_key] == condition_value
+    for response in (matched, all_matches, performance, performance_list):
+        assert response.status_code == 400
+        assert response.get_json()["error"] == (
+            "この手法はオッズ条件を含むため実行できません。条件を編集してください"
+        )
 
 
 def test_no_races_on_date_is_safe(search_db: Path, strategy_db: Path) -> None:

@@ -38,7 +38,6 @@
       <span><span class="chip live">⏱ 直前確定</span> 天候・風・展示</span>
       <span><span class="chip lim">📅 2023/5〜</span> 決まり手・事故率</span>
       <span><span class="chip lim2">📅 2024/12〜</span> 展示順位・展示タイム・展示ST</span>
-      <span><span class="chip live">⏱</span> <span class="chip lim">📅 確定 2026/4〜5</span> 3連単オッズ</span>
     </div>
 
     <div class="cols">
@@ -118,34 +117,6 @@
                 <option>上げ潮</option><option>下げ潮</option>
               </select>
             </div>
-          </fieldset>
-
-          <fieldset class="odds-fieldset">
-            <legend>3連単オッズ（5分前・T-5）</legend>
-            <div class="row">
-              <label class="odds-toggle"><input type="checkbox" id="oddsEnabled"> オッズ帯を使う</label>
-              <span class="chip live">⏱</span>
-              <span class="chip lim" id="oddsPeriod">📅 2024/6〜</span>
-            </div>
-            <div class="row">
-              <input type="number" id="oddsMin" value="5.0" min="0" step="0.1" aria-label="オッズ下限"><span class="unit">倍以上</span>
-              <input type="number" id="oddsMax" value="15.0" min="0" step="0.1" aria-label="オッズ上限"><span class="unit">倍以下</span>
-            </div>
-            <p class="odds-note" id="oddsNote">5分前オッズで絞り込みます。締切前に分かる値なので当日照合でも使えます。データは2024年6月以降です。</p>
-          </fieldset>
-
-          <fieldset class="favorite-fieldset favorite-band">
-            <legend>レース全体の人気帯（T-5・1番人気）</legend>
-            <div class="row">
-              <label class="odds-toggle"><input type="checkbox" id="favoriteOddsEnabled"> 人気帯を使う</label>
-              <span class="chip live">⏱</span>
-              <span class="chip lim">📅 2024/6〜</span>
-            </div>
-            <div class="row">
-              <input type="number" id="favoriteOddsMin" value="5.0" min="0" step="0.1" aria-label="1番人気オッズ下限"><span class="unit">倍以上</span>
-              <input type="number" id="favoriteOddsMax" value="15.0" min="0" step="0.1" aria-label="1番人気オッズ上限"><span class="unit">倍以下</span>
-            </div>
-            <p class="odds-note">レース全体の人気度（1番人気のオッズ帯）で絞り込みます。<strong>締切前には確定しない情報</strong>のため、傾向分析用です。当日の照合では未確定として扱われます。</p>
           </fieldset>
 
           <fieldset>
@@ -420,16 +391,6 @@
         if (byId(pair[0]).value) result[pair[1]] = byId(pair[0]).value;
       });
       if (byId('female').value) result.female_present = Number(byId('female').value);
-      if (byId('oddsEnabled').checked) {
-        result.odds = {snapshot: 'T-5min'};
-        if (byId('oddsMin').value.trim()) result.odds.min = Number(byId('oddsMin').value);
-        if (byId('oddsMax').value.trim()) result.odds.max = Number(byId('oddsMax').value);
-      }
-      if (byId('favoriteOddsEnabled').checked) {
-        result.t5_odds_favorite = {};
-        if (byId('favoriteOddsMin').value.trim()) result.t5_odds_favorite.min = Number(byId('favoriteOddsMin').value);
-        if (byId('favoriteOddsMax').value.trim()) result.t5_odds_favorite.max = Number(byId('favoriteOddsMax').value);
-      }
       if (byId('dateFrom').value) result.date_from = byId('dateFrom').value;
       if (byId('dateTo').value) result.date_to = byId('dateTo').value;
       var boats = {};

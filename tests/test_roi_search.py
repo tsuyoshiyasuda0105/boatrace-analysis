@@ -320,71 +320,23 @@ def test_compare_omitted_margin_is_equivalent_to_zero(tmp_path: Path) -> None:
     assert omitted == explicit
 
 
-def test_t5_odds_range_is_inclusive_and_missing_rows_are_condition_null(tmp_path: Path) -> None:
-    db = _make_db(
-        tmp_path / "odds.db",
-        [
-            _row("lower", "2026-05-02"),
-            _row("upper", "2026-05-02"),
-            _row("outside", "2026-05-02"),
-            _row("missing", "2026-05-02"),
-        ],
-    )
-    with sqlite3.connect(db) as connection:
-        connection.execute(
-            "CREATE TABLE odds_snapshot (race_id TEXT, combination TEXT, snapshot TEXT, odds REAL, "
-            "PRIMARY KEY (race_id, combination, snapshot))"
-        )
-        connection.executemany(
-            "INSERT INTO odds_snapshot VALUES (?, '1-2-3', 'T-5min', ?)",
-            [("lower", 5.0), ("upper", 15.0), ("outside", 15.1)],
-        )
-
-    result = search_roi(
-        db,
+@pytest.mark.parametrize(
+    "retired_condition",
+    [
         {"odds": {"snapshot": "T-5min", "min": 5.0, "max": 15.0}},
-        fast=True,
-    )
-
-    assert result["n"] == 2
-    assert result["excluded"] == {"result_missing": 0, "condition_null": 1}
-
-
-def test_odds_defaults_to_t5_and_no_condition_join_isolation(tmp_path: Path) -> None:
-    db = _make_db(tmp_path / "odds-switch.db", [_row("race", "2026-05-02")])
-    baseline = search_roi(db, {}, fast=True)
-    with sqlite3.connect(db) as connection:
-        connection.execute(
-            "CREATE TABLE odds_snapshot (race_id TEXT, combination TEXT, snapshot TEXT, odds REAL, "
-            "PRIMARY KEY (race_id, combination, snapshot))"
-        )
-        connection.executemany(
-            "INSERT INTO odds_snapshot VALUES ('race', '1-2-3', ?, ?)",
-            [("final", 20.0), ("T-5min", 10.0)],
-        )
-
-    assert search_roi(db, {}, fast=True) == baseline
-    assert search_roi(db, {"odds": {"max": 15}}, fast=True)["n"] == 1
-    assert search_roi(db, {"odds": {"snapshot": "T-5min", "max": 15}}, fast=True)["n"] == 1
-
-
-@pytest.mark.parametrize("snapshot", ["final", "T-1min", ""])
-def test_odds_rejects_snapshots_other_than_t5_with_japanese_guidance(
-    fixture_db: Path, snapshot: str
+        {"t5_odds_favorite": {"min": 5.0, "max": 15.0}},
+        {"odds": None},
+        {"t5_odds_favorite": None},
+    ],
+)
+def test_retired_odds_conditions_are_rejected_with_japanese_guidance(
+    fixture_db: Path, retired_condition: dict[str, object]
 ) -> None:
     with pytest.raises(
-        ValueError, match=r"オッズ条件は5分前オッズ\(T-5min\)のみ対応しています"
+        ValueError,
+        match="オッズによる絞り込みは廃止されました。回収率は条件に合う全レースを分母に計算します",
     ):
-        search_roi(fixture_db, {"odds": {"snapshot": snapshot, "min": 5}}, fast=True)
-
-
-@pytest.mark.parametrize("kind", ["tansho", "nirentan"])
-def test_odds_condition_rejects_non_trifecta_bets(fixture_db: Path, kind: str) -> None:
-    bet = {"type": kind, "first": 1}
-    if kind == "nirentan":
-        bet["second"] = 2
-    with pytest.raises(ValueError, match="オッズ条件は現在3連単のみ対応しています"):
-        search_roi(fixture_db, {"bet": bet, "odds": {"min": 5}}, fast=True)
+        search_roi(fixture_db, retired_condition, fast=True)
 
 
 @pytest.mark.parametrize(
@@ -661,7 +613,7 @@ def test_invalid_venue_values_are_rejected(fixture_db: Path, venue: object) -> N
         search_roi(fixture_db, {"venue": venue}, fast=True)
 
 
-def test_period_accident_365d_favorite_and_wind_filters_are_distinct(tmp_path: Path) -> None:
+def test_period_accident_365d_and_wind_filters_are_distinct(tmp_path: Path) -> None:
     db = _make_db(
         tmp_path / "step11-filters.db",
         [
@@ -672,7 +624,6 @@ def test_period_accident_365d_favorite_and_wind_filters_are_distinct(tmp_path: P
     )
     conditions = {
         "boats": {"1": {"accident_rate": {"min": 0.5}, "accident_points": {"min": 2}, "accident_rate_365d": {"min": 10}}},
-        "t5_odds_favorite": {"min": 5, "max": 15},
         "wind_dir": ["追い風", "向かい風"],
     }
     result = search_roi(db, conditions, fast=True)

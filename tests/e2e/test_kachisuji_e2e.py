@@ -97,15 +97,23 @@ def test_s1_top_sections_and_default_state(page):
     expect(page.locator("#pos3wrap")).to_be_visible()
 
 
-def test_s8_odds_snapshot_is_fixed_to_t5(page):
-    expect(page.locator("#oddsSnapshot")).to_have_count(0)
-    expect(page.locator("select option[value='final']")).to_have_count(0)
-    expect(page.locator(".odds-fieldset")).to_contain_text("5分前・T-5")
-    expect(page.locator("#oddsPeriod")).to_have_text("📅 2024/6〜")
-    expect(page.locator("#oddsNote")).to_contain_text("締切前に分かる値")
+def test_s12_odds_filter_controls_and_labels_are_absent(page):
+    for selector in (
+        "#oddsEnabled",
+        "#oddsMin",
+        "#oddsMax",
+        "#favoriteOddsEnabled",
+        "#favoriteOddsMin",
+        "#favoriteOddsMax",
+        ".odds-fieldset",
+        ".favorite-fieldset",
+    ):
+        expect(page.locator(selector)).to_have_count(0)
+    expect(page.get_by_text("3連単オッズ", exact=False)).to_have_count(0)
+    expect(page.get_by_text("人気帯", exact=False)).to_have_count(0)
 
 
-def test_s11_multi_venue_favorite_band_and_wind_controls(page):
+def test_s11_multi_venue_and_wind_controls(page):
     venue = page.locator("#venue")
     venue.select_option(["12", "15", "24"])
     expect(page.locator("#venueCount")).to_have_text("3会場")
@@ -116,8 +124,6 @@ def test_s11_multi_venue_favorite_band_and_wind_controls(page):
 
     expect(page.locator("#windDirection")).to_be_enabled()
     expect(page.locator("#windDirection option[value='追い風']")).to_have_count(1)
-    expect(page.locator(".favorite-fieldset")).to_contain_text("レース全体の人気帯")
-    expect(page.locator(".favorite-fieldset")).to_contain_text("締切前には確定しない情報")
 
 
 @pytest.mark.parametrize(

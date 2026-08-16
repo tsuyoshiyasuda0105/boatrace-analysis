@@ -35,8 +35,6 @@ TOP_LEVEL_KEYS = frozenset(
         "date_to",
         "boats",
         "compare",
-        "odds",
-        "t5_odds_favorite",
     }
 )
 BOAT_KEYS = frozenset(
@@ -60,7 +58,6 @@ BOAT_KEYS = frozenset(
     }
 )
 RANGE_KEYS = frozenset({"min", "max"})
-ODDS_KEYS = frozenset({"snapshot", "min", "max"})
 COMPARE_KEYS = frozenset({"metric", "boat", "op", "other", "margin"})
 COMPARE_METRICS = frozenset(
     {
@@ -81,6 +78,11 @@ HISTORY_CUTOFF = "2023-05-01"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5)
+RETIRED_ODDS_CONDITION_KEYS = frozenset({"odds", "t5_odds_favorite"})
+ODDS_FILTER_REMOVED_MESSAGE = (
+    "オッズによる絞り込みは廃止されました。"
+    "回収率は条件に合う全レースを分母に計算します"
+)
 
 
 @dataclass(frozen=True)
@@ -89,13 +91,6 @@ class _Bet:
     result_column: str
     payout_column: str
     expected: int | str
-
-
-@dataclass(frozen=True)
-class _Odds:
-    snapshot: str
-    minimum: float | None
-    maximum: float | None
 
 
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
@@ -209,7 +204,7 @@ def _add_range(
 
 def _compile_conditions(
     conditions: Mapping[str, Any],
-) -> tuple[str, list[Any], list[str], _Bet, _Odds | None]:
+) -> tuple[str, list[Any], list[str], _Bet, None]:
     """Compile validated conditions into parameterized SQL.
 
     A comparison always evaluates the signed difference between two boats:
@@ -219,36 +214,10 @@ def _compile_conditions(
     fixed whitelist above; every margin remains a bound SQL parameter.
     """
 
+    if RETIRED_ODDS_CONDITION_KEYS.intersection(conditions):
+        raise ValueError(ODDS_FILTER_REMOVED_MESSAGE)
     _known_keys(conditions, TOP_LEVEL_KEYS, "condition")
     bet = _parse_bet(conditions.get("bet"))
-    odds: _Odds | None = None
-    if conditions.get("odds") is not None:
-        raw_odds = _mapping(conditions["odds"], "odds")
-        _known_keys(raw_odds, ODDS_KEYS, "odds")
-        if bet.kind != "sanrentan":
-            raise ValueError("オッズ条件は現在3連単のみ対応しています（単勝・2連単のオッズは未収集）")
-        snapshot = raw_odds.get("snapshot", "T-5min")
-        if snapshot != "T-5min":
-            raise ValueError("オッズ条件は5分前オッズ(T-5min)のみ対応しています")
-        minimum = (
-            _number(raw_odds["min"], "odds.min")
-            if raw_odds.get("min") is not None
-            else None
-        )
-        maximum = (
-            _number(raw_odds["max"], "odds.max")
-            if raw_odds.get("max") is not None
-            else None
-        )
-        if minimum is None and maximum is None:
-            raise ValueError("odds requires min or max")
-        if minimum is not None and minimum < 0:
-            raise ValueError("odds.min must be non-negative")
-        if maximum is not None and maximum < 0:
-            raise ValueError("odds.max must be non-negative")
-        if minimum is not None and maximum is not None and minimum > maximum:
-            raise ValueError("odds.min must not exceed max")
-        odds = _Odds(str(snapshot), minimum, maximum)
     filters: list[str] = [f"schema_version IN ({','.join('?' for _ in READABLE_SCHEMA_VERSIONS)})"]
     params: list[Any] = list(READABLE_SCHEMA_VERSIONS)
     null_columns: set[str] = set()
@@ -308,16 +277,6 @@ def _compile_conditions(
 
     if conditions.get("wind_speed") is not None:
         _add_range(filters, params, null_columns, "wind_speed", conditions["wind_speed"], "wind_speed")
-
-    if conditions.get("t5_odds_favorite") is not None:
-        _add_range(
-            filters,
-            params,
-            null_columns,
-            "t5_odds_favorite",
-            conditions["t5_odds_favorite"],
-            "t5_odds_favorite",
-        )
 
     if conditions.get("race_no") is not None:
         label = "race_no"
@@ -479,7 +438,9 @@ def _compile_conditions(
         raise ValueError("date_from must not be after date_to")
 
     where = " AND ".join(filters) if filters else "1=1"
-    return where, params, sorted(null_columns), bet, odds
+    # Keep the final slot for internal callers that predate Step 12.  Retired
+    # odds conditions are rejected above, so it is always empty.
+    return where, params, sorted(null_columns), bet, None
 
 
 def _percentile(values: np.ndarray, percentile: float) -> float:
@@ -536,8 +497,7 @@ def search_roi(
     """Search a Step 1 SQLite snapshot without ever opening it writable.
 
     Payout values are JPY returned per JPY 100 ticket, as preserved by Step 1.
-    The function adds the odds join only when an odds condition is active;
-    bootstrap work is in Python.  When requested, ``profit_curve`` is the
+    Bootstrap work is in Python.  When requested, ``profit_curve`` is the
     date-ordered cumulative profit for one fixed JPY 100 ticket per race.
     """
 
@@ -549,7 +509,7 @@ def search_roi(
         raise ValueError("seed must be an integer")
     if isinstance(bootstrap_iterations, bool) or not isinstance(bootstrap_iterations, int) or bootstrap_iterations <= 0:
         raise ValueError("bootstrap_iterations must be a positive integer")
-    where, params, null_columns, bet, odds = _compile_conditions(conditions)
+    where, params, null_columns, bet, _unused_odds = _compile_conditions(conditions)
     null_expression = " OR ".join(f"{column} IS NULL" for column in null_columns) or "0"
     resolved = Path(db_path).resolve()
     uri = resolved.as_uri() + "?mode=ro"
@@ -561,34 +521,15 @@ def search_roi(
         payout_json_column = f"{bet.payout_column}_json"
         result_json_sql = result_json_column if result_json_column in columns else "NULL"
         payout_json_sql = payout_json_column if payout_json_column in columns else "NULL"
-        join_sql = ""
-        odds_filter = ""
-        query_params: list[Any] = []
-        if odds is not None:
-            join_sql = (
-                " LEFT JOIN odds_snapshot AS ticket_odds"
-                " ON ticket_odds.race_id = asof.race_id"
-                " AND ticket_odds.combination = ? AND ticket_odds.snapshot = ?"
-            )
-            query_params.extend((str(bet.expected), odds.snapshot))
-            comparisons: list[str] = []
-            if odds.minimum is not None:
-                comparisons.append("ticket_odds.odds >= ?")
-                params.append(odds.minimum)
-            if odds.maximum is not None:
-                comparisons.append("ticket_odds.odds <= ?")
-                params.append(odds.maximum)
-            odds_filter = " AND ((" + " AND ".join(comparisons) + ") OR ticket_odds.odds IS NULL)"
-            null_expression = f"({null_expression}) OR ticket_odds.odds IS NULL"
         sql = (
             f"SELECT race_date, schema_version, {bet.result_column} AS result_value, "
             f"{bet.payout_column} AS payout_value, "
             f"{result_json_sql} AS result_values_json, "
             f"{payout_json_sql} AS payout_values_json, "
             f"CASE WHEN {null_expression} THEN 1 ELSE 0 END AS condition_null "
-            f"FROM asof_race_features AS asof{join_sql} WHERE {where}{odds_filter}"
+            f"FROM asof_race_features AS asof WHERE {where}"
         )
-        rows = conn.execute(sql, [*query_params, *params]).fetchall()
+        rows = conn.execute(sql, params).fetchall()
 
     excluded_condition = 0
     excluded_result = 0

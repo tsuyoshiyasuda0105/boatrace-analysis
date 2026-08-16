@@ -104,10 +104,6 @@ button.wchip.on { border-color: var(--accent); background: var(--accent-soft); c
 .cond.limited { margin-left: -8px; padding: 3px 8px; border-radius: 6px; background: var(--warn-soft); }
 .cond.limited2 { margin-left: -8px; padding: 3px 8px; border-radius: 6px; background: var(--crit-soft); }
 .compare-help { margin: 0 0 8px; color: var(--ink-3); font-size: 11.5px; }
-.odds-fieldset { background: var(--surface); }
-.favorite-band { border-left: 3px solid var(--accent); background: var(--accent-soft); }
-.odds-toggle { display: inline-flex; min-width: auto !important; gap: 6px; align-items: center; font-weight: 700; }
-.odds-note { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--warn-soft); color: var(--warn); font-size: 11.5px; }
 #compareRows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .compare-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px; border-radius: 7px; background: var(--surface-2); }
 .compare-row select, .compare-row input { padding: 4px 6px; font-size: 12px; }

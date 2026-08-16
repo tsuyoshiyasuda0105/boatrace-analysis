@@ -128,8 +128,6 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="raceNoFrom"',
         'id="boats"',
         'id="compareRows"',
-        'id="oddsEnabled"',
-        'id="favoriteOddsEnabled"',
         'id="conditionCount"',
         'id="miniKpi"',
         "全国2連対率",
@@ -142,36 +140,44 @@ def test_index_renders_major_condition_fields(client) -> None:
         "条件判定不能で除外した件数",
     ):
         assert marker in html
-    assert 'id="oddsSnapshot"' not in html
-    assert 'value="final"' not in html
-    assert "3連単オッズ（5分前・T-5）" in html
-    assert "5分前オッズで絞り込みます" in html
-    assert "レース全体の人気帯（T-5・1番人気）" in html
-    assert "締切前には確定しない情報" in html
+    for removed_marker in (
+        'id="oddsEnabled"',
+        'id="oddsMin"',
+        'id="oddsMax"',
+        'id="favoriteOddsEnabled"',
+        'id="favoriteOddsMin"',
+        'id="favoriteOddsMax"',
+        "3連単オッズ",
+        "人気帯",
+        "T-5",
+    ):
+        assert removed_marker not in html
 
 
 @pytest.mark.parametrize("endpoint", ["/api/search", "/api/strategies"])
-def test_api_rejects_final_odds_snapshot_with_japanese_guidance(client, endpoint: str) -> None:
+@pytest.mark.parametrize(
+    "retired_condition",
+    [
+        {"odds": {"snapshot": "T-5min", "min": 5}},
+        {"t5_odds_favorite": {"min": 5}},
+    ],
+)
+def test_api_rejects_retired_odds_conditions_with_japanese_guidance(
+    client, endpoint: str, retired_condition: dict[str, object]
+) -> None:
     conditions = {
         "bet": {"type": "sanrentan", "first": 1, "second": 2, "third": 3},
-        "odds": {"snapshot": "final", "min": 5},
+        **retired_condition,
     }
-    payload = conditions if endpoint == "/api/search" else {"name": "確定オッズ手法", "conditions": conditions}
+    payload = conditions if endpoint == "/api/search" else {"name": "旧オッズ手法", "conditions": conditions}
 
     response = client.post(endpoint, json=payload)
 
     assert response.status_code == 400
-    assert response.get_json()["error"] == "オッズ条件は5分前オッズ(T-5min)のみ対応しています"
-
-
-def test_api_rejects_odds_for_non_trifecta_with_japanese_guidance(client) -> None:
-    response = client.post(
-        "/api/search",
-        json={"bet": {"type": "tansho", "first": 1}, "odds": {"min": 5}},
+    assert response.get_json()["error"] == (
+        "オッズによる絞り込みは廃止されました。"
+        "回収率は条件に合う全レースを分母に計算します"
     )
-
-    assert response.status_code == 400
-    assert response.get_json()["error"] == "オッズ条件は現在3連単のみ対応しています（単勝・2連単のオッズは未収集）"
 
 
 def test_search_returns_expected_step2_json_structure(client) -> None:

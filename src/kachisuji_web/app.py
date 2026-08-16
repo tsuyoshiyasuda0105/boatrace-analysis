@@ -41,6 +41,8 @@ def _user_validation_message(error: ValueError) -> str:
         "買い目は",
         "艇間比較は",
         "オッズ条件は",
+        "オッズによる絞り込みは",
+        "この手法はオッズ条件を含むため",
         "バックテスト結果は",
     )
     if message.startswith(user_message_prefixes):
