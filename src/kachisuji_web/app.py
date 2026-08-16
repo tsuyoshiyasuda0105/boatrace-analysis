@@ -6,7 +6,9 @@ from copy import deepcopy
 import os
 from pathlib import Path
 import re
+import sqlite3
 from typing import Any, Mapping
+import unicodedata
 
 from flask import Flask, jsonify, render_template, request
 
@@ -27,6 +29,57 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "kachisuji_search.db"
 DEFAULT_STRATEGY_DB_PATH = PROJECT_ROOT / "data" / "kachisuji_strategies.db"
 _RACER_NUMBER = re.compile(r"^\s*(\d+)(?:\s+.*)?$")
+
+
+def _normalize_racer_text(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", value or "")
+    katakana = "".join(
+        chr(ord(character) + 0x60) if "ぁ" <= character <= "ゖ" else character
+        for character in normalized
+    )
+    return "".join(katakana.split()).casefold()
+
+
+def _is_single_cjk_name_query(value: str) -> bool:
+    return len(value) == 1 and "\u3400" <= value <= "\u9fff"
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _search_racers(db_path: str | Path, query: str, limit: int) -> list[dict[str, Any]]:
+    normalized = _normalize_racer_text(query)
+    if len(normalized) < 2 and not _is_single_cjk_name_query(normalized):
+        return []
+
+    pattern = f"%{_escape_like(normalized)}%"
+    prefix = f"{_escape_like(normalized)}%"
+    resolved = Path(db_path).resolve()
+    connection = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    connection.create_function("normalize_racer_text", 1, _normalize_racer_text, deterministic=True)
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        rows = connection.execute(
+            """
+            SELECT racer_number, name, name_kana
+            FROM racers
+            WHERE normalize_racer_text(name) LIKE ? ESCAPE '\\'
+               OR normalize_racer_text(name_kana) LIKE ? ESCAPE '\\'
+            ORDER BY CASE
+                       WHEN normalize_racer_text(name) LIKE ? ESCAPE '\\' THEN 0
+                       WHEN normalize_racer_text(name_kana) LIKE ? ESCAPE '\\' THEN 1
+                       ELSE 2
+                     END,
+                     racer_number
+            LIMIT ?
+            """,
+            (pattern, pattern, prefix, prefix, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
 
 
 def _user_validation_message(error: ValueError) -> str:
@@ -99,6 +152,20 @@ def create_app(
     @app.get("/")
     def index() -> str:
         return render_template("search.html")
+
+    @app.get("/api/racers")
+    def api_racers():
+        query = request.args.get("q", "")
+        try:
+            requested_limit = int(request.args.get("limit", 15))
+        except (TypeError, ValueError):
+            requested_limit = 15
+        limit = min(50, max(1, requested_limit))
+        try:
+            return jsonify(_search_racers(app.config["KACHISUJI_DB"], query, limit))
+        except sqlite3.Error as exc:
+            app.logger.exception("kachisuji racer search failed")
+            return jsonify(error=str(exc)), 500
 
     @app.post("/api/search")
     def api_search():

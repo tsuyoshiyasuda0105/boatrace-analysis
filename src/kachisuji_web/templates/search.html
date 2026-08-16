@@ -248,7 +248,7 @@
         '<summary><span class="bnum b' + i + '">' + i + '</span>' + i + '号艇 <span class="bsum" id="boatSummary' + i + '">条件なし</span></summary>' +
         '<div class="conds">' +
         '<div class="cond">級別 <span class="chip day">📋</span><span class="wchips boat-classes" id="b' + i + 'Classes">' + classes + '</span><span class="unit">複数選択可</span></div>' +
-        '<div class="cond">選手 <span class="chip day">📋</span><input type="text" id="b' + i + 'Racer" inputmode="numeric" placeholder="例: 4320 または 4320 峰竜太"><span class="unit">番号で検索</span></div>' +
+        '<div class="cond racer-condition">選手 <span class="chip day">📋</span><span class="racer-autocomplete"><input type="text" class="racer-input" id="b' + i + 'Racer" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="b' + i + 'RacerOptions" aria-expanded="false" placeholder="名前または選手番号"><span class="racer-options" id="b' + i + 'RacerOptions" role="listbox" hidden></span></span><span class="unit">名前・カナ・番号</span></div>' +
         '<div class="cond">年齢 <span class="chip day">📋</span>' + compareSelect('b' + i + 'AgeCmp') + '<input type="number" id="b' + i + 'Age" value="30" min="16" max="100" step="1"><span class="unit">歳</span></div>' +
         '<div class="cond restored-condition"><strong>平均ST（直近180日）</strong> <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span>' + compareSelect('b' + i + 'AvgStCmp') + '<input type="number" id="b' + i + 'AvgSt" value="0.15" min="0" max="0.5" step="0.01"><span class="unit">秒・F除外</span></div>' +
         '<div class="cond">全国勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'NationalCmp') + '<input type="number" id="b' + i + 'National" value="6.00" min="0" max="10" step="0.1"></div>' +
@@ -274,6 +274,118 @@
     byId('raceNoFrom').innerHTML += optionList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '');
     byId('raceNoTo').innerHTML += optionList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '');
     byId('boats').innerHTML = boatNumbers.map(boatBlock).join('');
+
+    var racerSearchTimers = {};
+    var racerRequestVersions = {};
+    function closeRacerOptions(input) {
+      var options = byId(input.getAttribute('aria-controls'));
+      options.hidden = true;
+      options.replaceChildren();
+      options.dataset.activeIndex = '-1';
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    }
+    function setActiveRacerOption(input, index) {
+      var options = byId(input.getAttribute('aria-controls'));
+      var items = Array.from(options.querySelectorAll('.racer-option'));
+      if (!items.length) return;
+      var active = (index + items.length) % items.length;
+      items.forEach(function (item, itemIndex) {
+        item.setAttribute('aria-selected', String(itemIndex === active));
+      });
+      options.dataset.activeIndex = String(active);
+      input.setAttribute('aria-activedescendant', items[active].id);
+      items[active].scrollIntoView({block: 'nearest'});
+    }
+    function selectRacer(input, option) {
+      input.dataset.racerNumber = option.dataset.racerNumber;
+      input.dataset.racerName = option.dataset.racerName;
+      input.value = option.dataset.racerName + ' (' + option.dataset.racerNumber + ')';
+      closeRacerOptions(input);
+      refreshBoatSummaries();
+      refreshConditionCount();
+      input.focus();
+    }
+    function renderRacerOptions(input, racers) {
+      var options = byId(input.getAttribute('aria-controls'));
+      options.replaceChildren();
+      racers.forEach(function (racer, index) {
+        var option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'racer-option';
+        option.id = options.id + '-' + index;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', 'false');
+        option.dataset.racerNumber = String(racer.racer_number);
+        option.dataset.racerName = racer.name || '';
+        var primary = document.createElement('strong');
+        primary.textContent = (racer.name || '名前未登録') + ' (' + racer.racer_number + ')';
+        var kana = document.createElement('span');
+        kana.textContent = racer.name_kana || '';
+        option.append(primary, kana);
+        options.appendChild(option);
+      });
+      options.hidden = racers.length === 0;
+      options.dataset.activeIndex = '-1';
+      input.setAttribute('aria-expanded', String(racers.length > 0));
+      input.removeAttribute('aria-activedescendant');
+    }
+    byId('boats').addEventListener('input', function (event) {
+      var input = event.target.closest('.racer-input');
+      if (!input) return;
+      delete input.dataset.racerNumber;
+      delete input.dataset.racerName;
+      var boat = input.id.match(/^b(\d)Racer$/)[1];
+      window.clearTimeout(racerSearchTimers[boat]);
+      racerRequestVersions[boat] = (racerRequestVersions[boat] || 0) + 1;
+      var version = racerRequestVersions[boat];
+      var query = input.value.trim();
+      closeRacerOptions(input);
+      if (!query || /^\d+(?:\s|$)/.test(query)) return;
+      racerSearchTimers[boat] = window.setTimeout(async function () {
+        try {
+          var racers = await requestJson('/api/racers?q=' + encodeURIComponent(query));
+          if (racerRequestVersions[boat] === version && input.value.trim() === query) {
+            renderRacerOptions(input, racers);
+          }
+        } catch (_error) {
+          if (racerRequestVersions[boat] === version) closeRacerOptions(input);
+        }
+      }, 250);
+    });
+    byId('boats').addEventListener('keydown', function (event) {
+      var input = event.target.closest('.racer-input');
+      if (!input) return;
+      var options = byId(input.getAttribute('aria-controls'));
+      var items = Array.from(options.querySelectorAll('.racer-option'));
+      if (event.key === 'Escape') {
+        closeRacerOptions(input);
+        return;
+      }
+      if (options.hidden || !items.length) return;
+      var active = Number(options.dataset.activeIndex || -1);
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        var next = event.key === 'ArrowDown' ? active + 1 : (active < 0 ? items.length - 1 : active - 1);
+        setActiveRacerOption(input, next);
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        selectRacer(input, items[active < 0 ? 0 : active]);
+      }
+    });
+    byId('boats').addEventListener('mousedown', function (event) {
+      if (event.target.closest('.racer-option')) event.preventDefault();
+    });
+    byId('boats').addEventListener('click', function (event) {
+      var option = event.target.closest('.racer-option');
+      if (!option) return;
+      selectRacer(option.closest('.racer-autocomplete').querySelector('.racer-input'), option);
+    });
+    document.addEventListener('click', function (event) {
+      document.querySelectorAll('.racer-input[aria-expanded="true"]').forEach(function (input) {
+        if (!input.closest('.racer-autocomplete').contains(event.target)) closeRacerOptions(input);
+      });
+    });
 
     function compareRow() {
       var metricOptions = compareMetrics.map(function (item) {
@@ -345,8 +457,13 @@
       var boat = {};
       var classes = Array.from(document.querySelectorAll('#b' + i + 'Classes .wchip.on')).map(function (chip) { return chip.dataset.value; });
       if (classes.length) boat.class = classes;
-      var racer = byId('b' + i + 'Racer').value.trim();
-      if (racer) boat.racer_id = racer;
+      var racerInput = byId('b' + i + 'Racer');
+      var racer = racerInput.value.trim();
+      if (racerInput.dataset.racerNumber) boat.racer_id = Number(racerInput.dataset.racerNumber);
+      else if (racer) {
+        var racerNumber = racer.match(/^\s*(\d+)(?:\s|$)/);
+        boat.racer_id = racerNumber ? Number(racerNumber[1]) : racer;
+      }
       addRange(boat, 'age', 'b' + i + 'AgeCmp', 'b' + i + 'Age');
       addRange(boat, 'avg_st', 'b' + i + 'AvgStCmp', 'b' + i + 'AvgSt');
       addRange(boat, 'national_rate', 'b' + i + 'NationalCmp', 'b' + i + 'National');
@@ -483,6 +600,14 @@
       if (hasMax) return label + numberText(range.max) + unit + '以下';
       return '';
     }
+    function racerSummaryText(boatNumber, value) {
+      var input = byId('b' + boatNumber + 'Racer');
+      var number = String(value).trim().split(/\s+/)[0];
+      if (input.dataset.racerNumber === number && input.dataset.racerName) {
+        return input.dataset.racerName + '(' + number + ')';
+      }
+      return number;
+    }
     function conditionSummaryHtml(conditions) {
       var count = countConfiguredConditions(conditions);
       if (!count) {
@@ -533,7 +658,7 @@
           var label = controlLabel('b' + boatNumber + definition[0], key);
           var value = boat[key];
           if (key === 'class') boatItems.push(label + ': ' + value.join('・'));
-          else if (key === 'racer_id') boatItems.push(label + ': ' + String(value).trim().split(/\s+/)[0]);
+          else if (key === 'racer_id') boatItems.push(label + ': ' + racerSummaryText(boatNumber, value));
           else if (key === 'kimarite') {
             var technique = kimarite.find(function (item) { return item[0] === value.name; });
             boatItems.push(label + ': ' + (technique ? technique[1] : value.name) + '・勝率' + numberText(value.rate_min) + '%以上');
@@ -736,6 +861,9 @@
       window.setTimeout(function () {
         document.querySelectorAll('.wchip.on').forEach(function (chip) { chip.classList.remove('on'); chip.setAttribute('aria-pressed', 'false'); });
         byId('compareRows').innerHTML = '';
+        document.querySelectorAll('.racer-input').forEach(function (input) {
+          delete input.dataset.racerNumber; delete input.dataset.racerName; closeRacerOptions(input);
+        });
         betConditionTouched = false;
         refreshBetUI(); refreshVenueUI(); refreshBoatSummaries(); refreshConditionCount();
         lastConditions = null; lastBacktest = null; byId('btnSaveStrategy').disabled = true;

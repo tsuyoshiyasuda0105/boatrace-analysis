@@ -111,6 +111,49 @@ def mock_search_result(page):
     return payloads
 
 
+def test_s17_racer_autocomplete_selects_number_and_shows_name_in_summary(page):
+    payloads = mock_search_result(page)
+    racer = page.locator("#b1Racer")
+
+    racer.fill("峰")
+    expect(racer).to_have_attribute("aria-expanded", "true", timeout=5_000)
+    expect(page.locator("#b1RacerOptions")).to_contain_text("峰竜太 (4320)")
+    racer.press("ArrowDown")
+    expect(racer).to_have_attribute("aria-activedescendant", "b1RacerOptions-0")
+    racer.press("Enter")
+
+    expect(racer).to_have_value("峰竜太 (4320)")
+    expect(racer).to_have_attribute("aria-expanded", "false")
+    page.locator("#btnSearch").click()
+    expect(page.locator(".condition-summary")).to_contain_text("選手: 峰竜太(4320)")
+    assert len(payloads) == 1
+    assert payloads[0]["boats"]["1"]["racer_id"] == 4320
+
+
+def test_s17_direct_racer_number_entry_remains_supported(page):
+    payloads = mock_search_result(page)
+    page.locator("#b1Racer").fill("4320")
+    page.locator("#btnSearch").click()
+
+    expect(page.locator(".condition-summary")).to_contain_text("選手: 4320")
+    assert len(payloads) == 1
+    assert payloads[0]["boats"]["1"]["racer_id"] == 4320
+
+
+def test_s17_racer_autocomplete_escape_and_click_are_supported(page):
+    racer = page.locator("#b1Racer")
+    racer.fill("ミネ")
+    expect(racer).to_have_attribute("aria-expanded", "true", timeout=5_000)
+    racer.press("Escape")
+    expect(racer).to_have_attribute("aria-expanded", "false")
+
+    racer.fill("ミネ")
+    option = page.locator("#b1RacerOptions .racer-option").filter(has_text="峰竜太").first
+    expect(option).to_be_visible(timeout=5_000)
+    option.click()
+    expect(racer).to_have_value("峰竜太 (4320)")
+
+
 # S1: basic rendering, search and bet-type UI.
 def test_s1_top_sections_and_default_state(page):
     expect(page).to_have_title("勝ち筋サーチ")

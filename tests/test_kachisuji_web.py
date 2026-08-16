@@ -93,6 +93,18 @@ def fixture_db(tmp_path: Path) -> Path:
     ]
     with sqlite3.connect(path) as conn:
         create_output_schema(conn)
+        conn.execute(
+            "CREATE TABLE racers (racer_number INTEGER PRIMARY KEY, name TEXT, name_kana TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO racers VALUES (?, ?, ?)",
+            [
+                (4190, "長嶋万記", "ﾅｶﾞｼﾏ ﾏｷ"),
+                (4320, "峰竜太", "ﾐﾈ ﾘｭｳﾀ"),
+                (4714, "喜多須杏奈", "ｷﾀｽﾞ ｱﾝﾅ"),
+                (5000, "赤峰和也", "ｱｶﾐﾈ ｶｽﾞﾔ"),
+            ],
+        )
         for row in rows:
             columns = list(row)
             conn.execute(
@@ -127,6 +139,11 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="classMix"',
         'id="raceNoFrom"',
         'id="boats"',
+        'class="racer-input"',
+        'role="combobox"',
+        'aria-autocomplete="list"',
+        'role="listbox"',
+        'aria-expanded="false"',
         'id="compareRows"',
         'id="conditionCount"',
         'class="condition-summary"',
@@ -327,6 +344,45 @@ def test_number_and_number_plus_name_racer_inputs_are_supported(client) -> None:
         )
         assert response.status_code == 200
         assert response.get_json()["n"] == 1
+
+
+@pytest.mark.parametrize("query", ["峰", "竜太", "峰竜", "みね", "ミネ", "ﾐﾈ", "りゅうた"])
+def test_racer_api_matches_name_and_normalized_kana_parts(client, query: str) -> None:
+    response = client.get("/api/racers", query_string={"q": query})
+
+    assert response.status_code == 200
+    assert any(item["racer_number"] == 4320 for item in response.get_json())
+
+
+@pytest.mark.parametrize("query", ["", " ", "a", "み", "%", "_"])
+def test_racer_api_rejects_too_short_non_kanji_queries(client, query: str) -> None:
+    response = client.get("/api/racers", query_string={"q": query})
+
+    assert response.status_code == 200
+    assert response.get_json() == []
+
+
+def test_racer_api_applies_limit_and_caps_it_at_fifty(client) -> None:
+    limited = client.get("/api/racers", query_string={"q": "ミネ", "limit": 1})
+    capped = client.get("/api/racers", query_string={"q": "ミネ", "limit": 999})
+
+    assert len(limited.get_json()) == 1
+    assert len(capped.get_json()) <= 50
+
+
+def test_racer_api_invalid_limit_falls_back_without_error(client) -> None:
+    response = client.get("/api/racers", query_string={"q": "ミネ", "limit": "bad"})
+
+    assert response.status_code == 200
+    assert any(item["racer_number"] == 4320 for item in response.get_json())
+
+
+@pytest.mark.parametrize("query", ["' OR 1=1 --", "峰%", "峰_", "不存在選手"])
+def test_racer_api_treats_injection_and_wildcards_as_literal_text(client, query: str) -> None:
+    response = client.get("/api/racers", query_string={"q": query})
+
+    assert response.status_code == 200
+    assert response.get_json() == []
 
 
 def test_name_only_racer_input_returns_actionable_400(client) -> None:
