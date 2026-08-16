@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import traceback
 from collections import defaultdict
@@ -36,9 +37,20 @@ class EmailErrorHandler(logging.Handler):
         self._last_sent: dict[str, float] = defaultdict(float)
 
     def _key(self, record: logging.LogRecord) -> str:
-        # logger 名 + module:line + メッセージ先頭 80 文字でユニーク化
-        msg_head = (record.getMessage() or "")[:80]
-        return f"{record.name}|{record.module}:{record.lineno}|{msg_head}"
+        """Return a stable error-family key, excluding per-event statistics."""
+        message = record.getMessage() or ""
+        # Pool diagnostics append a changing dict (available/waiting/size and
+        # similar counters).  It is useful in the mail body but must not create
+        # a new cooldown bucket for every checkout failure.
+        message = re.sub(r"\s+stats\s*=\s*\{.*$", "", message, flags=re.IGNORECASE)
+        message = re.sub(r"\b\d+(?:\.\d+)?\b", "<n>", message)
+        message = re.sub(r"\s+", " ", message).strip()
+        error_type = (
+            record.exc_info[0].__name__
+            if record.exc_info and record.exc_info[0]
+            else record.levelname
+        )
+        return f"{record.name}|{error_type}|{message[:160]}"
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
