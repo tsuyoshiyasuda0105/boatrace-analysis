@@ -100,6 +100,8 @@ def test_races_without_stale_snapshot_returns_calm_retry_page(monkeypatch):
 
 def test_race_detail_transient_error_uses_stale_then_preparing(monkeypatch):
     _app, client = _member_client(monkeypatch)
+    # Keep the fixed race IDs on the route's "today" path on every run date.
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-15")
     monkeypatch.setattr(
         web_app,
         "_read_page_html_cache",

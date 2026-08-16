@@ -10,21 +10,33 @@ INSERT_OR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 EXCLUDED_DIRS = {".git", ".venv", "tests", "__pycache__"}
+EXCLUDED_LOCAL_SQLITE_FILES = {
+    # Offline as-of builder output: this module writes through sqlite3.connect()
+    # directly and never passes SQL through src.db.connection's Postgres shim.
+    "src/features/odds_sync.py",
+}
 
 
-def _production_insert_or_targets():
+def _record_insert_or_targets(targets, source, location):
+    for match in INSERT_OR_PATTERN.finditer(source):
+        table = match.group(1).lower()
+        if table == "t":  # Generic table name in the shim documentation.
+            continue
+        targets.setdefault(table, []).append(location)
+
+
+def _production_insert_or_targets(root=ROOT):
     targets = {}
-    for path in ROOT.rglob("*"):
+    for path in root.rglob("*"):
         if path.suffix.lower() not in {".py", ".sql"}:
             continue
         if any(part in EXCLUDED_DIRS for part in path.parts):
             continue
+        relative_path = path.relative_to(root).as_posix()
+        if relative_path in EXCLUDED_LOCAL_SQLITE_FILES:
+            continue
         source = path.read_text(encoding="utf-8", errors="ignore")
-        for match in INSERT_OR_PATTERN.finditer(source):
-            table = match.group(1).lower()
-            if table == "t":  # Generic table name in the shim documentation.
-                continue
-            targets.setdefault(table, []).append(str(path.relative_to(ROOT)))
+        _record_insert_or_targets(targets, source, str(path.relative_to(root)))
     return targets
 
 
@@ -37,6 +49,19 @@ def test_all_static_insert_or_targets_have_primary_key_map_entries():
     }
 
     assert not missing, f"INSERT OR target tables missing PK mappings: {missing}"
+
+
+def test_pk_guard_still_detects_unmapped_production_shim_target():
+    targets = {}
+    _record_insert_or_targets(
+        targets,
+        "from src.db.connection import connect\n"
+        "SQL = 'INSERT OR IGNORE INTO future_production_table (id) VALUES (?)'\n",
+        "src/web/future_writer.py",
+    )
+    missing = {table for table in targets if table not in _TABLE_PRIMARY_KEYS}
+
+    assert "future_production_table" in missing
 
 
 def test_newly_registered_primary_keys_match_verified_definitions():
