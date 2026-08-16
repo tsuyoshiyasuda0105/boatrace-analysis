@@ -36,7 +36,7 @@ from src.features.accident_history import (
 )
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -356,35 +356,58 @@ class RacerHistory:
 
 @dataclass(frozen=True)
 class CourseKimariteHistory:
-    """Actual-entry-course denominators and winning-technique prefix sums.
+    """Actual-entry histories split by course, with kimarite win prefixes.
 
-    Escape (``nige``) is possible only from actual course 1.  The attacking
-    techniques sashi/makuri/makurizashi use actual courses 2 through 6.
-    Nuki and megumare can occur from any actual course, so their denominator
-    is all valid course 1-through-6 entries.  Rows with a missing/invalid
-    actual course never enter either a denominator or numerator.
+    Each historical event belongs to exactly one restored actual course from
+    ``start_timing_events.course_number``.  Keeping a separate date sequence
+    per course lets schema-v9 rows use only boat N's assumed course N while
+    still allowing schema-v8 verification to reproduce its former
+    kimarite-specific valid-course denominator.
     """
 
-    dates: tuple[str, ...]
-    entries_prefix: dict[str, tuple[int, ...]]
-    wins_prefix: dict[str, tuple[int, ...]]
+    course_dates: dict[int, tuple[str, ...]]
+    course_wins_prefix: dict[int, dict[str, tuple[int, ...]]]
 
     def rates(
+        self,
+        course_number: int,
+        window_start: str,
+        asof_date: str,
+        min_entries: int = KIMARITE_MIN_ENTRIES,
+    ) -> dict[str, float | None]:
+        dates = self.course_dates.get(course_number, ())
+        left = bisect_left(dates, window_start)
+        right = bisect_right(dates, asof_date)
+        entries = right - left
+        if entries < min_entries:
+            return {key: None for key in KIMARITE_KEYS}
+        prefixes = self.course_wins_prefix[course_number]
+        return {
+            key: (prefixes[key][right] - prefixes[key][left]) * 100.0 / entries
+            for key in KIMARITE_KEYS
+        }
+
+    def legacy_rates(
         self,
         window_start: str,
         asof_date: str,
         min_entries: int = KIMARITE_MIN_ENTRIES,
     ) -> dict[str, float | None]:
-        left = bisect_left(self.dates, window_start)
-        right = bisect_right(self.dates, asof_date)
+        """Reproduce schema-v8 valid-course denominators for verification."""
+
         output: dict[str, float | None] = {}
         for key in KIMARITE_KEYS:
-            entries = self.entries_prefix[key][right] - self.entries_prefix[key][left]
-            if entries < min_entries:
-                output[key] = None
-                continue
-            wins = self.wins_prefix[key][right] - self.wins_prefix[key][left]
-            output[key] = wins * 100.0 / entries
+            entries = 0
+            wins = 0
+            for course_number in KIMARITE_VALID_COURSES[key]:
+                dates = self.course_dates.get(course_number, ())
+                left = bisect_left(dates, window_start)
+                right = bisect_right(dates, asof_date)
+                entries += right - left
+                prefixes = self.course_wins_prefix.get(course_number)
+                if prefixes is not None:
+                    wins += prefixes[key][right] - prefixes[key][left]
+            output[key] = wins * 100.0 / entries if entries >= min_entries else None
         return output
 
 
@@ -522,17 +545,27 @@ def _load_course_kimarite_histories(
             (window_start, window_end, *chunk),
         )
         active_racer: int | None = None
-        dates: list[str] = []
-        entries = {key: [0] for key in KIMARITE_KEYS}
-        wins = {key: [0] for key in KIMARITE_KEYS}
+        course_dates = {course: [] for course in BOATS}
+        course_wins = {
+            course: {key: [0] for key in KIMARITE_KEYS} for course in BOATS
+        }
 
         def finish_active() -> None:
             if active_racer is None:
                 return
             histories[active_racer] = CourseKimariteHistory(
-                tuple(dates),
-                {key: tuple(values) for key, values in entries.items()},
-                {key: tuple(values) for key, values in wins.items()},
+                {
+                    course: tuple(dates)
+                    for course, dates in course_dates.items()
+                    if dates
+                },
+                {
+                    course: {
+                        key: tuple(values) for key, values in prefixes.items()
+                    }
+                    for course, prefixes in course_wins.items()
+                    if course_dates[course]
+                },
             )
 
         for event in cursor:
@@ -540,29 +573,40 @@ def _load_course_kimarite_histories(
             if active_racer != racer_id:
                 finish_active()
                 active_racer = racer_id
-                dates = []
-                entries = {key: [0] for key in KIMARITE_KEYS}
-                wins = {key: [0] for key in KIMARITE_KEYS}
-            dates.append(_iso(event["race_date"]))
+                course_dates = {course: [] for course in BOATS}
+                course_wins = {
+                    course: {key: [0] for key in KIMARITE_KEYS} for course in BOATS
+                }
             course = int(event["course_number"])
+            course_dates[course].append(_iso(event["race_date"]))
             winner_key = winners.get(
                 (str(event["race_id"]), int(event["boat_number"]), racer_id)
             )
             for key in KIMARITE_KEYS:
-                eligible = course in KIMARITE_VALID_COURSES[key]
-                entries[key].append(entries[key][-1] + int(eligible))
-                wins[key].append(wins[key][-1] + int(eligible and winner_key == key))
+                prefixes = course_wins[course][key]
+                prefixes.append(prefixes[-1] + int(winner_key == key))
         finish_active()
     return histories
 
 
 def _course_kimarite_rates(
-    histories: Mapping[int, CourseKimariteHistory], racer_id: Any, asof_date: str
+    histories: Mapping[int, CourseKimariteHistory],
+    racer_id: Any,
+    assumed_course: int,
+    asof_date: str,
 ) -> dict[str, float | None]:
+    """Return rates for boat N using N as its previous-day assumed course.
+
+    The program fixes boat/frame number N by the previous day, while an actual
+    entry course can later shift through course-taking.  To keep the feature
+    leakage-safe, the target boat therefore maps to assumed course N; its
+    history denominator contains only restored actual entries from course N.
+    """
+
     if racer_id is None or int(racer_id) not in histories:
         return {key: None for key in KIMARITE_KEYS}
     window_start = (date.fromisoformat(asof_date) - timedelta(days=364)).isoformat()
-    return histories[int(racer_id)].rates(window_start, asof_date)
+    return histories[int(racer_id)].rates(assumed_course, window_start, asof_date)
 
 
 ACCIDENT_SOURCE_KIND = "reconstructed"
@@ -1038,7 +1082,7 @@ def _build_row(
         preview = preview_by_boat.get(boat, {})
         rates = _history_rates(histories, entry.get("racer_number"), asof_date)
         kimarite_rates = _course_kimarite_rates(
-            course_kimarite_histories, entry.get("racer_number"), asof_date
+            course_kimarite_histories, entry.get("racer_number"), boat, asof_date
         )
         accident_rate, accident_points, accident_source = _period_accident_values(
             period_accidents, race_date, entry.get("racer_number")
@@ -1378,16 +1422,29 @@ def verify_features(
     for row in chosen:
         for boat in BOATS:
             rates = _history_rates(histories, row[f"b{boat}_racer_id"], row["asof_date"])
-            kimarite_rates = _course_kimarite_rates(
-                course_kimarite_histories,
-                row[f"b{boat}_racer_id"],
-                row["asof_date"],
-            )
+            racer_id = row[f"b{boat}_racer_id"]
+            window_start = (
+                date.fromisoformat(row["asof_date"]) - timedelta(days=364)
+            ).isoformat()
+            schema_version = int(row["schema_version"])
+            if schema_version >= 9:
+                kimarite_rates = _course_kimarite_rates(
+                    course_kimarite_histories,
+                    racer_id,
+                    boat,
+                    row["asof_date"],
+                )
+            elif racer_id is not None and int(racer_id) in course_kimarite_histories:
+                kimarite_rates = course_kimarite_histories[int(racer_id)].legacy_rates(
+                    window_start, row["asof_date"]
+                )
+            else:
+                kimarite_rates = {key: None for key in KIMARITE_KEYS}
             for key in KIMARITE_KEYS:
                 column = f"b{boat}_kimarite_rate_{key}"
                 expected_rate = (
                     kimarite_rates[key]
-                    if int(row["schema_version"]) >= 8
+                    if schema_version >= 8
                     else rates[key]
                 )
                 if not _equal_rate(row[column], expected_rate):

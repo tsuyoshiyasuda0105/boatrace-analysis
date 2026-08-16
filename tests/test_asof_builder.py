@@ -284,6 +284,7 @@ def _course_rate_fixture(
     prior_courses: list[int],
     winning_indexes: set[int],
     kimarite: str = "逃げ",
+    target_boat: int = 1,
 ) -> sqlite3.Connection:
     source = _source()
     events = []
@@ -301,7 +302,7 @@ def _course_rate_fixture(
         )
         events.append((race_id, race_date, 1001, 1, course, 0.15, 0, 0))
     _race(source, "target", "2025-06-02")
-    _entry(source, "target", 1, 1001, class_number=1)
+    _entry(source, "target", target_boat, 1001, class_number=1)
     source.commit()
     with sqlite3.connect(output) as connection:
         create_output_schema(connection)
@@ -312,32 +313,52 @@ def _course_rate_fixture(
     return source
 
 
-def test_kimarite_rate_uses_actual_entry_course_denominator(tmp_path):
+def test_boat1_nige_rate_is_unchanged_from_schema_v8_definition(tmp_path):
     output = tmp_path / "course-denominator.db"
     source = _course_rate_fixture(
         output,
-        prior_courses=[1, 1, 1, 1, 1],
+        prior_courses=[1, 1, 1, 1, 1, 2, 2, 2, 2, 2],
         winning_indexes={1, 2, 3},
     )
 
     build_features(source, output, "2025-06-02", "2025-06-02")
 
     row = _read_row(output)
+    # Schema v8's nige denominator was also course 1 only: 3 / 5 = 60%.
     assert row["b1_kimarite_rate_nige"] == pytest.approx(60.0)
 
 
-def test_attack_kimarite_rate_uses_only_non_first_course_entries(tmp_path):
+def test_boat2_sashi_rate_uses_only_course2_entries(tmp_path):
     output = tmp_path / "attack-course-denominator.db"
     source = _course_rate_fixture(
         output,
-        prior_courses=[2, 2, 2, 2, 2, 1, 1, 1, 1, 1],
-        winning_indexes={1, 2, 3},
+        prior_courses=[2] * 10 + [3] * 5,
+        winning_indexes={1, 2, 3, 11, 12, 13, 14, 15},
         kimarite="差し",
+        target_boat=2,
     )
 
     build_features(source, output, "2025-06-02", "2025-06-02")
 
-    assert _read_row(output)["b1_kimarite_rate_sashi"] == pytest.approx(60.0)
+    # Course 3's five wins must not dilute or inflate boat 2's 3 / 10 rate.
+    assert _read_row(output)["b2_kimarite_rate_sashi"] == pytest.approx(30.0)
+
+
+def test_boat_course_without_entries_has_null_kimarite_rates(tmp_path):
+    output = tmp_path / "no-matching-course.db"
+    source = _course_rate_fixture(
+        output,
+        prior_courses=[3, 3, 3, 3, 3],
+        winning_indexes={1, 2, 3},
+        kimarite="差し",
+        target_boat=2,
+    )
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert row["b2_kimarite_rate_sashi"] is None
+    assert row["b2_kimarite_rate_makuri"] is None
 
 
 def test_kimarite_rate_excludes_target_day_and_future_events(tmp_path):
@@ -464,7 +485,7 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 8
+    assert row["schema_version"] == 9
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)

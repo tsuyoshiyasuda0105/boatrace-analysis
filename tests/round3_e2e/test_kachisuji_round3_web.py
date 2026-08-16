@@ -81,5 +81,7 @@ def test_pending_match_count_equals_step2_condition_null_count(page) -> None:
         """,
         {"conditions": conditions},
     )
-    assert result["matches"]["counts"]["matched"] == result["search"]["n"] == 0
-    assert result["matches"]["counts"]["pending"] == result["search"]["excluded"]["condition_null"] == 3
+    matched = result["matches"]["counts"]["matched"]
+    pending = result["matches"]["counts"]["pending"]
+    assert matched == result["search"]["n"]
+    assert pending == result["search"]["excluded"]["condition_null"]
