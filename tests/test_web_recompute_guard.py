@@ -60,6 +60,14 @@ def test_render_prewarm_allows_market_signals_recompute(monkeypatch):
         assert web_app._effective_market_signals_recompute() is True
 
 
+def test_exhibition_parent_trigger_does_not_directly_authorize_market_signals(monkeypatch):
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-exhibition-detail-refresh")
+
+    app = Flask(__name__)
+    with app.test_request_context("/api/market-signals?recompute=1"):
+        assert web_app._effective_market_signals_recompute() is False
+
+
 def test_market_signal_cache_miss_never_self_heals_in_web_worker():
     source = Path("src/web/app.py").read_text(encoding="utf-8")
     route_source = source.split("def market_signals_for_date():", 1)[1]

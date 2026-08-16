@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timedelta
 
 from scripts import render_regular_scheduler as scheduler
@@ -100,3 +101,44 @@ def test_exhibition_refresh_daytime_lite_skips_market_signal_refresh(monkeypatch
 
     assert summary["triggered"] is False
     assert summary["reason"] == "daytime-lite"
+
+
+def test_exhibition_cron_succeeds_when_signal_prewarm_succeeds(monkeypatch):
+    from scripts import refresh_race_detail_after_exhibition as exhibition
+
+    recorded = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["refresh_race_detail_after_exhibition.py", "--date", "2026-07-22"],
+    )
+    monkeypatch.setattr(exhibition, "log_deploy_revision", lambda _name: None)
+    monkeypatch.setattr(exhibition, "_ensure_task_runs_table", lambda: None)
+    monkeypatch.setattr(
+        exhibition,
+        "_exhibition_refresh_recently_running",
+        lambda *_args: (False, ""),
+    )
+    monkeypatch.setattr(
+        exhibition,
+        "_record_task",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        exhibition,
+        "collect_live_exhibition",
+        lambda _date: {"beforeinfo_rows": 6},
+    )
+    monkeypatch.setattr(
+        exhibition,
+        "refresh",
+        lambda *_args, **_kwargs: {"due": 1, "race_ids": [], "refreshed": 1, "failed": 0},
+    )
+    monkeypatch.setattr(
+        exhibition,
+        "refresh_market_signals_if_needed",
+        lambda *_args: {"triggered": True, "ok": True, "reason": "recomputed"},
+    )
+
+    assert exhibition._main_impl() == 0
+    assert recorded[-1][0][2] == "success"

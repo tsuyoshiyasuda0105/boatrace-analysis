@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
+os.environ["BOATRACE_TASK_TRIGGER"] = "render-prewarm"
 
 from src.web.app import (  # noqa: E402
     create_app,

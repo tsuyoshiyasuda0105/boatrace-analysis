@@ -1,4 +1,5 @@
 import os
+import runpy
 from datetime import date
 from pathlib import Path
 
@@ -15,6 +16,14 @@ from scripts.prewarm_strategy_pages import (
 
 
 TODAY = date(2026, 7, 18)
+
+
+def test_prewarm_overrides_inherited_exhibition_trigger(monkeypatch):
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-exhibition-detail-refresh")
+
+    runpy.run_path("scripts/prewarm_strategy_pages.py")
+
+    assert os.environ["BOATRACE_TASK_TRIGGER"] == "render-prewarm"
 
 
 def test_internal_prewarm_session_has_admin_role():
