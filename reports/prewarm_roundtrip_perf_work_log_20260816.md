@@ -51,4 +51,7 @@ Render cron は Singapore、Supabase は東京 (`ap-northeast-1`) で、約70ms/
 
 ## コミット
 
-ローカルコミットを2〜4個作成し、IDは作成後に追記する。origin/mainへのpushは行わない。
+- `0dd5026` — 接続共有と一括プリフェッチの実装
+- `4c71265` — バイト一致・接続所有・往復削減テストと本作業ログ
+
+この追記は最終ログ更新コミットに含める。origin/mainへのpushは行わない。
