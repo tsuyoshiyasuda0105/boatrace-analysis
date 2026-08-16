@@ -91,12 +91,14 @@ def _notify_failure_best_effort(
     *,
     detail: dict[str, Any] | None = None,
     cooldown_hours: float | None = None,
+    incident_category: str = "cron_failure",
 ) -> None:
     """Send an alert without ever changing the cron's control flow."""
     try:
         kwargs: dict[str, Any] = {"detail": detail or {}}
         if cooldown_hours is not None:
             kwargs["cooldown_hours"] = cooldown_hours
+        kwargs["incident_category"] = incident_category
         notify_cron_failure(job, message, **kwargs)
     except Exception as exc:  # noqa: BLE001
         print(
@@ -857,6 +859,7 @@ def _watchdog_alert(issue: str, message: str, detail: dict[str, Any]) -> None:
         message,
         detail=detail,
         cooldown_hours=WATCHDOG_ALERT_COOLDOWN_HOURS,
+        incident_category="watchdog",
     )
 
 

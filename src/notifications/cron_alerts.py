@@ -110,6 +110,7 @@ def notify_cron_failure(
     *,
     detail: dict | None = None,
     cooldown_hours: float = DEFAULT_COOLDOWN_HOURS,
+    incident_category: str = "cron_failure",
 ) -> bool:
     """cron の最終失敗を管理者へメール通知する (同一 job は cooldown_hours に 1 通)。
 
@@ -117,6 +118,28 @@ def notify_cron_failure(
         True:  送信を試みた (クールダウン開始)
         False: 送信しなかった (宛先未設定 / クールダウン中 / 内部エラー)
     """
+    ledger_recorded = False
+
+    def finish(result: bool, *, notified: bool) -> bool:
+        nonlocal ledger_recorded
+        if not ledger_recorded:
+            ledger_recorded = True
+            try:
+                from src.notifications.incident_ledger import record_incident
+
+                record_incident(
+                    category=incident_category,
+                    source=job,
+                    title=message[:160],
+                    detail=detail,
+                    severity="error",
+                    dedup_key=f"{incident_category}|{job}",
+                    notified=notified,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("cron incident ledger write failed (%s): %s", job, exc)
+        return result
+
     try:
         to_addr = os.environ.get("BOATRACE_ERROR_NOTIFY_TO", "").strip()
         if not to_addr:
@@ -125,7 +148,7 @@ def notify_cron_failure(
                 job,
                 message,
             )
-            return False
+            return finish(False, notified=False)
 
         now = _now_jst()
         check_name = _CHECK_PREFIX + job
@@ -135,7 +158,7 @@ def notify_cron_failure(
             with db_connect() as conn:
                 if _cooldown_active(conn, check_name, now, cooldown_hours):
                     logger.info("cron failure mail suppressed by cooldown: %s", job)
-                    return False
+                    return finish(False, notified=False)
         except Exception as exc:  # noqa: BLE001
             # 可視性優先: クールダウン状態が読めなくても通知は出す
             logger.warning("cron alert cooldown read failed (%s): %s", job, exc)
@@ -177,7 +200,7 @@ def notify_cron_failure(
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("cron alert state write failed (%s): %s", job, exc)
-        return True
+        return finish(True, notified=sent)
     except Exception:  # noqa: BLE001
         logger.exception("notify_cron_failure failed for %s", job)
-        return False
+        return finish(False, notified=False)

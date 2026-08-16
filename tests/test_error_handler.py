@@ -17,6 +17,7 @@ def _record(logger_name: str, message: str) -> logging.LogRecord:
 
 def test_variable_pool_stats_share_one_cooldown_key(monkeypatch):
     sent = []
+    monkeypatch.setattr("src.notifications.error_handler.record_incident", lambda **_kwargs: None)
     monkeypatch.setattr("src.notifications.mailer._send", lambda *args, **kwargs: sent.append(args))
     monkeypatch.setattr("src.notifications.error_handler.time.time", lambda: 10_000.0)
     handler = EmailErrorHandler("owner@example.com", rate_limit_sec=3600)
@@ -39,6 +40,7 @@ def test_variable_pool_stats_share_one_cooldown_key(monkeypatch):
 
 def test_distinct_error_families_and_loggers_keep_separate_notifications(monkeypatch):
     sent = []
+    monkeypatch.setattr("src.notifications.error_handler.record_incident", lambda **_kwargs: None)
     monkeypatch.setattr("src.notifications.mailer._send", lambda *args, **kwargs: sent.append(args))
     monkeypatch.setattr("src.notifications.error_handler.time.time", lambda: 10_000.0)
     handler = EmailErrorHandler("owner@example.com", rate_limit_sec=3600)
@@ -52,6 +54,7 @@ def test_distinct_error_families_and_loggers_keep_separate_notifications(monkeyp
 
 def test_normalized_error_family_sends_again_at_one_hour_boundary(monkeypatch):
     sent = []
+    monkeypatch.setattr("src.notifications.error_handler.record_incident", lambda **_kwargs: None)
     times = iter((10_000.0, 13_599.0, 13_600.0))
     monkeypatch.setattr("src.notifications.mailer._send", lambda *args, **kwargs: sent.append(args))
     monkeypatch.setattr("src.notifications.error_handler.time.time", lambda: next(times))
