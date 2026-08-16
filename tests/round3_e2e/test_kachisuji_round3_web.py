@@ -71,10 +71,10 @@ def test_pending_match_count_equals_step2_condition_null_count(page) -> None:
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({name: 'round3-pending', conditions}),
           }).then(r => r.json());
-          const matches = await fetch(`/api/strategies/${saved.id}/matches?date=2026-08-15`).then(r => r.json());
+          const matches = await fetch(`/api/strategies/${saved.id}/matches?date=2026-08-16`).then(r => r.json());
           const search = await fetch('/api/search', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({...conditions, date_from: '2026-08-15', date_to: '2026-08-15', fast: true}),
+            body: JSON.stringify({...conditions, date_from: '2026-08-16', date_to: '2026-08-16', fast: true}),
           }).then(r => r.json());
           return {matches, search};
         }
@@ -82,4 +82,4 @@ def test_pending_match_count_equals_step2_condition_null_count(page) -> None:
         {"conditions": conditions},
     )
     assert result["matches"]["counts"]["matched"] == result["search"]["n"] == 0
-    assert result["matches"]["counts"]["pending"] == result["search"]["excluded"]["condition_null"] == 4
+    assert result["matches"]["counts"]["pending"] == result["search"]["excluded"]["condition_null"] == 3

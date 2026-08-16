@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "definition": "Compass bearing in degrees, clockwise from north, for boat travel from turn 1 toward turn 2 on the home stretch.",
+  "policy": "Only citable public water-layout evidence is accepted. Unknown or low-confidence headings are null so wind filters exclude them as condition_null.",
+  "venues": {
+    "1": {"name": "桐生", "home_stretch_heading_deg": null, "source": null, "basis": "Repository evidence only identifies empirical tailwind code 6 and explicitly says the absolute bearing needs confirmation; not converted into a course heading."},
+    "2": {"name": "戸田", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "3": {"name": "江戸川", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "4": {"name": "平和島", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "5": {"name": "多摩川", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "6": {"name": "浜名湖", "home_stretch_heading_deg": null, "source": null, "basis": "The existing production seed says north wind is tailwind-like but is marked best-effort; it is insufficient as a public course-bearing source."},
+    "7": {"name": "蒲郡", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "8": {"name": "常滑", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "9": {"name": "津", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "10": {"name": "三国", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "11": {"name": "びわこ", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "12": {"name": "住之江", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "13": {"name": "尼崎", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "14": {"name": "鳴門", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "15": {"name": "丸亀", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "16": {"name": "児島", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "17": {"name": "宮島", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "18": {"name": "徳山", "home_stretch_heading_deg": null, "source": null, "basis": "The existing production seed says north wind is tailwind-like but is marked best-effort; it is insufficient as a public course-bearing source."},
+    "19": {"name": "下関", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "20": {"name": "若松", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "21": {"name": "芦屋", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "22": {"name": "福岡", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "23": {"name": "唐津", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."},
+    "24": {"name": "大村", "home_stretch_heading_deg": null, "source": null, "basis": "No citable public water-layout bearing is stored in this network-prohibited repository context."}
+  }
+}

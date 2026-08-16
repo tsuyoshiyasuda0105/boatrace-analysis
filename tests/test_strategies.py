@@ -37,7 +37,9 @@ def _row(race_id: str, race_no: int, **overrides: object) -> dict[str, object]:
         "jcd": 14,
         "race_no": race_no,
         "weather": "晴",
+        "wind_dir": "追い風",
         "wind_speed": 2.0,
+        "t5_odds_favorite": 10.0,
         "tide_phase": "満潮前後",
         "female_present": 0,
         "class_mix": "A1単騎",
@@ -58,6 +60,8 @@ def _row(race_id: str, race_no: int, **overrides: object) -> dict[str, object]:
         "b1_ex_st": 0.08,
         "b1_kimarite_rate_nige": 70.0,
         "b1_accident_rate": 0.4,
+        "b1_accident_rate_365d": 9.0,
+        "b1_accident_points": 2.0,
         "b2_age": 35,
         "b2_avg_st": 0.15,
         "b2_national_rate": 5.5,
@@ -124,6 +128,25 @@ def test_invalid_or_empty_strategy_is_rejected(strategy_db: Path) -> None:
     with pytest.raises(ValueError, match="name must not be empty"):
         save_strategy("  ", {"bet": BET})
     assert list_strategies() == []
+
+
+def test_legacy_saved_accident_rate_is_read_as_365d(strategy_db: Path) -> None:
+    strategy_id = save_strategy(
+        "旧事故率",
+        {"boats": {"2": {"accident_rate": {"min": 0.5}}}, "bet": BET},
+        db_path=strategy_db,
+    )
+    with sqlite3.connect(strategy_db) as connection:
+        connection.execute(
+            "UPDATE strategies SET conditions_schema_version=4 WHERE id=?",
+            (strategy_id,),
+        )
+    saved = get_strategy(strategy_id, db_path=strategy_db)
+    assert saved is not None
+    assert saved["conditions_schema_version"] == 4
+    assert saved["conditions"]["boats"]["2"] == {
+        "accident_rate_365d": {"min": 0.5}
+    }
 
 
 @pytest.mark.parametrize("backtest", ["not-an-object", [], 123, True])
@@ -366,6 +389,28 @@ def test_odds_condition_is_confirmed_when_present_and_pending_when_missing(
     assert [item["race_id"] for item in result["matched"]] == ["confirmed"]
     assert [item["race_id"] for item in result["pending"]] == ["pending"]
     assert result["pending"][0]["undetermined_columns"] == ["odds"]
+
+
+def test_favorite_odds_is_pending_when_same_day_value_is_missing(
+    search_db: Path, strategy_db: Path
+) -> None:
+    with sqlite3.connect(search_db) as connection:
+        connection.execute(
+            "UPDATE asof_race_features SET t5_odds_favorite=NULL WHERE race_id='pending'"
+        )
+    result = match_races(
+        {
+            "boats": {"1": {"class": ["A1"]}},
+            "t5_odds_favorite": {"min": 5, "max": 15},
+            "bet": BET,
+        },
+        "2026-08-16",
+        search_db,
+        strategy_db,
+    )
+    assert [item["race_id"] for item in result["matched"]] == ["confirmed"]
+    assert [item["race_id"] for item in result["pending"]] == ["pending"]
+    assert result["pending"][0]["undetermined_columns"] == ["t5_odds_favorite"]
 
 
 def test_legacy_saved_final_strategy_stays_listed_but_match_is_rejected_with_guidance(

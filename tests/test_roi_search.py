@@ -23,7 +23,9 @@ def _row(race_id: str, race_date: str, **overrides: object) -> dict[str, object]
         "jcd": 12,
         "race_no": 1,
         "weather": "晴",
+        "wind_dir": "追い風",
         "wind_speed": 0.8,
+        "t5_odds_favorite": 8.0,
         "tide_phase": "満潮前後",
         "female_present": 0,
         "class_mix": "A1単騎",
@@ -44,6 +46,8 @@ def _row(race_id: str, race_date: str, **overrides: object) -> dict[str, object]
         "b1_ex_st": 0.08,
         "b1_kimarite_rate_nige": 70.0,
         "b1_accident_rate": 0.6,
+        "b1_accident_rate_365d": 12.5,
+        "b1_accident_points": 3.0,
         "b2_age": 35,
         "b2_avg_st": 0.14,
         "b2_national_rate": 5.5,
@@ -639,6 +643,41 @@ def test_empty_result_is_safe(fixture_db: Path) -> None:
     assert result["hits"] == 0
     assert result["roi"] == 0.0
     assert result["effective_date_range"] == [None, None]
+
+
+def test_venue_accepts_single_or_array_and_uses_or_semantics(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "venues.db",
+        [_row("v12", "2025-01-01", jcd=12), _row("v15", "2025-01-02", jcd=15), _row("v24", "2025-01-03", jcd=24)],
+    )
+    assert search_roi(db, {"venue": 15}, fast=True)["n"] == 1
+    assert search_roi(db, {"venue": [12, 24]}, fast=True)["n"] == 2
+    assert search_roi(db, {}, fast=True)["n"] == 3
+
+
+@pytest.mark.parametrize("venue", [[], 0, 25, [12, 0], [25], "12", [12, "15"]])
+def test_invalid_venue_values_are_rejected(fixture_db: Path, venue: object) -> None:
+    with pytest.raises(ValueError, match="venue"):
+        search_roi(fixture_db, {"venue": venue}, fast=True)
+
+
+def test_period_accident_365d_favorite_and_wind_filters_are_distinct(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path / "step11-filters.db",
+        [
+            _row("match", "2025-01-01", schema_version=3, b1_accident_rate=0.6, b1_accident_points=3, b1_accident_rate_365d=12.5, t5_odds_favorite=5.0, wind_dir="追い風"),
+            _row("boundary", "2025-01-02", schema_version=3, b1_accident_rate=0.5, b1_accident_points=2, b1_accident_rate_365d=10.0, t5_odds_favorite=15.0, wind_dir="向かい風"),
+            _row("null", "2025-01-03", schema_version=3, b1_accident_rate=None, b1_accident_points=None, b1_accident_rate_365d=None, t5_odds_favorite=None, wind_dir=None),
+        ],
+    )
+    conditions = {
+        "boats": {"1": {"accident_rate": {"min": 0.5}, "accident_points": {"min": 2}, "accident_rate_365d": {"min": 10}}},
+        "t5_odds_favorite": {"min": 5, "max": 15},
+        "wind_dir": ["追い風", "向かい風"],
+    }
+    result = search_roi(db, conditions, fast=True)
+    assert result["n"] == 2
+    assert result["excluded"]["condition_null"] == 1
 
 
 def test_database_connection_is_explicitly_read_only(

@@ -23,6 +23,7 @@ TOP_LEVEL_KEYS = frozenset(
         "venue",
         "bet",
         "weather",
+        "wind_dir",
         "wind_speed",
         "tide_phase",
         "female_present",
@@ -35,6 +36,7 @@ TOP_LEVEL_KEYS = frozenset(
         "boats",
         "compare",
         "odds",
+        "t5_odds_favorite",
     }
 )
 BOAT_KEYS = frozenset(
@@ -53,6 +55,8 @@ BOAT_KEYS = frozenset(
         "ex_st",
         "kimarite",
         "accident_rate",
+        "accident_points",
+        "accident_rate_365d",
     }
 )
 RANGE_KEYS = frozenset({"min", "max"})
@@ -76,7 +80,7 @@ BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
 HISTORY_CUTOFF = "2023-05-01"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
-READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4)
+READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5)
 
 
 @dataclass(frozen=True)
@@ -245,7 +249,7 @@ def _compile_conditions(
         if minimum is not None and maximum is not None and minimum > maximum:
             raise ValueError("odds.min must not exceed max")
         odds = _Odds(str(snapshot), minimum, maximum)
-    filters: list[str] = ["schema_version IN (?, ?, ?)"]
+    filters: list[str] = [f"schema_version IN ({','.join('?' for _ in READABLE_SCHEMA_VERSIONS)})"]
     params: list[Any] = list(READABLE_SCHEMA_VERSIONS)
     null_columns: set[str] = set()
 
@@ -262,9 +266,23 @@ def _compile_conditions(
         if value is None:
             continue
         if key == "venue":
-            value = _integer(value, key)
-            if not 1 <= value <= 24:
-                raise ValueError("venue must be from 1 through 24")
+            raw_values = _sequence(value, key) if isinstance(value, (list, tuple)) else [value]
+            if any(isinstance(item, bool) or not isinstance(item, int) for item in raw_values):
+                raise ValueError("venue must be an integer or an array of integers")
+            values = [_integer(item, f"{key}[{index}]") for index, item in enumerate(raw_values)]
+            if any(not 1 <= item <= 24 for item in values):
+                raise ValueError("venue must contain integers from 1 through 24")
+            values = list(dict.fromkeys(values))
+            placeholders = ",".join("?" for _ in values)
+            _add_predicate(
+                filters,
+                params,
+                null_columns,
+                column,
+                f"{column} IN ({placeholders})",
+                values,
+            )
+            continue
         elif key == "female_present":
             value = _integer(value, key)
             if value not in (0, 1):
@@ -279,8 +297,27 @@ def _compile_conditions(
         placeholders = ",".join("?" for _ in values)
         _add_predicate(filters, params, null_columns, "weather", f"weather IN ({placeholders})", values)
 
+    wind_dir = conditions.get("wind_dir")
+    if wind_dir is not None:
+        values = _sequence(wind_dir, "wind_dir")
+        allowed_wind = {"追い風", "向かい風", "横風(右)", "横風(左)", "無風"}
+        if any(not isinstance(item, str) or item not in allowed_wind for item in values):
+            raise ValueError("wind_dir contains an invalid value")
+        placeholders = ",".join("?" for _ in values)
+        _add_predicate(filters, params, null_columns, "wind_dir", f"wind_dir IN ({placeholders})", values)
+
     if conditions.get("wind_speed") is not None:
         _add_range(filters, params, null_columns, "wind_speed", conditions["wind_speed"], "wind_speed")
+
+    if conditions.get("t5_odds_favorite") is not None:
+        _add_range(
+            filters,
+            params,
+            null_columns,
+            "t5_odds_favorite",
+            conditions["t5_odds_favorite"],
+            "t5_odds_favorite",
+        )
 
     if conditions.get("race_no") is not None:
         label = "race_no"
@@ -337,6 +374,8 @@ def _compile_conditions(
                 "ex_rank",
                 "ex_st",
                 "accident_rate",
+                "accident_points",
+                "accident_rate_365d",
             ):
                 if boat.get(key) is not None:
                     active = _add_range(
@@ -347,7 +386,10 @@ def _compile_conditions(
                         boat[key],
                         f"boats.{boat_key}.{key}",
                     )
-                    history_condition = history_condition or (key == "accident_rate" and active)
+                    history_condition = history_condition or (
+                        key in {"accident_rate", "accident_points", "accident_rate_365d"}
+                        and active
+                    )
             if boat.get("ex_dev") is not None:
                 label = f"boats.{boat_key}.ex_dev"
                 raw = _mapping(boat["ex_dev"], label)

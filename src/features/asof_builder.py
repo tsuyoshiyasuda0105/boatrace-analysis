@@ -26,10 +26,10 @@ from pathlib import Path
 import random
 import sqlite3
 import sys
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -42,6 +42,7 @@ KIMARITE_LABELS = {
     "恵まれ": "megumare",
 }
 CLASS_LABELS = {1: "A1", 2: "A2", 3: "B1", 4: "B2"}
+ORIENTATION_MASTER_PATH = Path(__file__).resolve().parents[2] / "master" / "stadium_orientations.json"
 
 # Codes accepted by the official K parser when a numeric finishing position is
 # unavailable.  The production SQLite snapshot inspected on 2026-08-15
@@ -73,7 +74,14 @@ def _boat_columns() -> list[tuple[str, str]]:
             ]
         )
         columns.extend((f"b{boat}_kimarite_rate_{key}", "REAL") for key in KIMARITE_KEYS)
-        columns.append((f"b{boat}_accident_rate", "REAL"))
+        columns.extend(
+            [
+                (f"b{boat}_accident_rate", "REAL"),
+                (f"b{boat}_accident_rate_365d", "REAL"),
+                (f"b{boat}_accident_points", "REAL"),
+                (f"b{boat}_accident_source", "TEXT"),
+            ]
+        )
     return columns
 
 
@@ -95,6 +103,7 @@ BASE_COLUMNS: list[tuple[str, str]] = [
     ("wind_dir", "TEXT"),
     ("wind_dir_raw", "INTEGER"),
     ("wind_speed", "REAL"),
+    ("t5_odds_favorite", "REAL"),
 ]
 RESULT_COLUMNS: list[tuple[str, str]] = [
     ("result_sanrentan", "TEXT"),
@@ -128,6 +137,16 @@ def create_output_schema(conn: sqlite3.Connection) -> None:
     for name, kind in ALL_COLUMNS:
         if name not in existing:
             conn.execute(f"ALTER TABLE asof_race_features ADD COLUMN {name} {kind}")
+    if "b1_accident_rate_365d" not in existing:
+        # Schema <=4 stored the 365-day remark rate under bN_accident_rate.
+        # Move it before schema v5 reuses that name for the legacy-ROI period
+        # rate.  The update is idempotent and preserves the historical value.
+        for boat in BOATS:
+            conn.execute(
+                f"UPDATE asof_race_features "
+                f"SET b{boat}_accident_rate_365d=b{boat}_accident_rate, "
+                f"b{boat}_accident_rate=NULL WHERE schema_version < 5"
+            )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_asof_race_features_date "
         "ON asof_race_features(race_date)"
@@ -395,6 +414,215 @@ def _history_rates(
     return histories[int(racer_id)].rates(window_start, asof_date)
 
 
+ACCIDENT_SOURCE_KIND = "reconstructed"
+ACCIDENT_RULE_VERSION = "official_table_2025_05_reconstructed_v2"
+
+
+def _accident_period_start_for_date(race_date: str) -> str:
+    """Return the legacy ROI assessment-period start for a race date."""
+
+    value = date.fromisoformat(race_date)
+    if 5 <= value.month <= 10:
+        return f"{value.year:04d}-05-01"
+    if value.month >= 11:
+        return f"{value.year:04d}-11-01"
+    return f"{value.year - 1:04d}-11-01"
+
+
+def _source_has_table(source: Any, table: str) -> bool:
+    try:
+        return source.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is not None
+    except Exception:
+        return False
+
+
+def _load_period_accidents(
+    source: Any,
+    races: Sequence[dict[str, Any]],
+    racer_ids: set[int],
+) -> dict[str, Any]:
+    """Load the exact race-safe accident snapshots used by legacy ROI.
+
+    The effective snapshot is the maximum ``period_end`` across the whole
+    assessment period with ``period_end < race_date`` after filtering to the
+    production ``source_kind`` and ``rule_version``.  It is deliberately not
+    the latest row per racer: if the selected global snapshot has no row for a
+    racer, legacy ROI's LEFT JOIN plus COALESCE treats that racer as zero.
+    """
+
+    if not races or not _source_has_table(source, "racer_accident_period_stats"):
+        return {"ends": {}, "rows": {}}
+    period_starts = sorted(
+        {_accident_period_start_for_date(_iso(race["race_date"])) for race in races}
+    )
+    placeholders = ",".join("?" for _ in period_starts)
+    latest_race_date = max(_iso(race["race_date"]) for race in races)
+    end_rows = _rows(
+        source,
+        f"""SELECT DISTINCT period_start,period_end
+              FROM racer_accident_period_stats
+             WHERE period_start IN ({placeholders})
+               AND source_kind=? AND rule_version=? AND period_end < ?
+             ORDER BY period_start,period_end""",
+        (*period_starts, ACCIDENT_SOURCE_KIND, ACCIDENT_RULE_VERSION, latest_race_date),
+    )
+    ends: dict[str, list[str]] = defaultdict(list)
+    for item in end_rows:
+        if item.get("period_start") and item.get("period_end"):
+            ends[str(item["period_start"])].append(_iso(item["period_end"]))
+
+    values: dict[tuple[str, str, int], tuple[float, float]] = {}
+    if racer_ids:
+        for offset in range(0, len(racer_ids), SQLITE_VARIABLE_CHUNK_SIZE):
+            racer_chunk = sorted(racer_ids)[offset : offset + SQLITE_VARIABLE_CHUNK_SIZE]
+            racer_placeholders = ",".join("?" for _ in racer_chunk)
+            rows = _rows(
+                source,
+                f"""SELECT racer_number,period_start,period_end,
+                            accident_rate,accident_points
+                       FROM racer_accident_period_stats
+                      WHERE period_start IN ({placeholders})
+                        AND racer_number IN ({racer_placeholders})
+                        AND source_kind=? AND rule_version=?""",
+                (
+                    *period_starts,
+                    *racer_chunk,
+                    ACCIDENT_SOURCE_KIND,
+                    ACCIDENT_RULE_VERSION,
+                ),
+            )
+            for item in rows:
+                key = (
+                    str(item["period_start"]),
+                    _iso(item["period_end"]),
+                    int(item["racer_number"]),
+                )
+                values[key] = (
+                    float(item.get("accident_rate") or 0.0),
+                    float(item.get("accident_points") or 0.0),
+                )
+    return {"ends": dict(ends), "rows": values}
+
+
+def _period_accident_values(
+    loaded: Mapping[str, Any], race_date: str, racer_id: Any
+) -> tuple[float, float, str]:
+    """Return legacy-compatible rate/points plus a missingness provenance."""
+
+    period_start = _accident_period_start_for_date(race_date)
+    candidates = loaded.get("ends", {}).get(period_start, [])
+    index = bisect_left(candidates, race_date) - 1
+    if index < 0 or racer_id is None:
+        return 0.0, 0.0, "missing_zero"
+    key = (period_start, candidates[index], int(racer_id))
+    value = loaded.get("rows", {}).get(key)
+    if value is None:
+        return 0.0, 0.0, "missing_zero"
+    return float(value[0]), float(value[1]), "period"
+
+
+def _load_t5_favorite_odds(
+    source: Any, race_ids: Sequence[str]
+) -> dict[str, float]:
+    """Return each race's minimum positive odds from its latest T-5 rows."""
+
+    if not race_ids or not _source_has_table(source, "odds_trifecta"):
+        return {}
+    rows = _rows_for_ids(
+        source,
+        """WITH latest AS (
+               SELECT race_id,combination,MAX(recorded_at) AS recorded_at
+                 FROM odds_trifecta
+                WHERE snapshot_label='T-5min' AND race_id IN ({placeholders})
+                GROUP BY race_id,combination
+             )
+             SELECT odds.race_id,MIN(odds.odds) AS favorite_odds
+               FROM odds_trifecta AS odds
+               JOIN latest
+                 ON latest.race_id=odds.race_id
+                AND latest.combination=odds.combination
+                AND latest.recorded_at=odds.recorded_at
+              WHERE odds.snapshot_label='T-5min' AND odds.odds > 0
+              GROUP BY odds.race_id""",
+        race_ids,
+    )
+    return {
+        str(item["race_id"]): float(item["favorite_odds"])
+        for item in rows
+        if item.get("favorite_odds") is not None
+    }
+
+
+def load_stadium_orientations(
+    path: str | Path = ORIENTATION_MASTER_PATH,
+) -> dict[int, float | None]:
+    """Load and validate all 24 home-stretch course headings."""
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    venues = payload.get("venues")
+    if not isinstance(venues, dict) or set(venues) != {str(i) for i in range(1, 25)}:
+        raise ValueError("stadium orientation master must define venues 1 through 24")
+    output: dict[int, float | None] = {}
+    for venue in range(1, 25):
+        item = venues[str(venue)]
+        if not isinstance(item, dict) or "home_stretch_heading_deg" not in item:
+            raise ValueError(f"stadium orientation venue {venue} is invalid")
+        raw = item["home_stretch_heading_deg"]
+        if raw is None:
+            output[venue] = None
+            continue
+        heading = _finite_float(raw)
+        if heading is None or not 0 <= heading < 360:
+            raise ValueError(f"stadium orientation venue {venue} heading is invalid")
+        output[venue] = heading
+    return output
+
+
+STADIUM_ORIENTATIONS = load_stadium_orientations()
+
+
+def relative_wind_direction(
+    stadium_number: Any,
+    wind_direction_number: Any,
+    wind_speed: Any,
+    *,
+    orientations: Mapping[int, float | None] = STADIUM_ORIENTATIONS,
+) -> str | None:
+    """Classify a meteorological wind source relative to boat travel.
+
+    BOATRACE's 16-point code is interpreted as the compass bearing the wind
+    blows *from* (1=north, clockwise in 22.5-degree steps).  The venue master
+    stores the bearing boats travel from turn 1 toward turn 2.  Therefore a
+    signed shortest angle ``theta = wind_from - travel_heading`` of +/-45
+    degrees is a headwind; absolute theta from 135 through 180 degrees is a
+    tailwind.  Remaining positive/clockwise angles are right crosswinds and
+    negative/counter-clockwise angles are left crosswinds.  Both 45 and 135
+    degree boundaries belong to the head/tail bands respectively.
+    """
+
+    try:
+        venue = int(stadium_number)
+        raw_direction = int(wind_direction_number)
+    except (TypeError, ValueError):
+        return None
+    speed = _finite_float(wind_speed)
+    if speed == 0 or raw_direction == 17:
+        return "無風"
+    heading = orientations.get(venue)
+    if heading is None or speed is None or not 1 <= raw_direction <= 16:
+        return None
+    wind_from = (raw_direction - 1) * 22.5
+    theta = (wind_from - heading + 180.0) % 360.0 - 180.0
+    absolute = abs(theta)
+    if absolute <= 45.0:
+        return "向かい風"
+    if absolute >= 135.0:
+        return "追い風"
+    return "横風(右)" if theta > 0 else "横風(左)"
+
+
 def _day_indexes(source: Any, races: list[dict[str, Any]]) -> dict[str, str | None]:
     keys = {(int(r["stadium_number"]), str(r.get("race_title") or "")) for r in races}
     output: dict[str, str | None] = {}
@@ -566,6 +794,8 @@ def _build_row(
     payouts: list[dict[str, Any]],
     results: list[dict[str, Any]],
     histories: dict[int, RacerHistory],
+    period_accidents: Mapping[str, Any],
+    t5_favorite_odds: Mapping[str, float],
     day_index: str | None,
     built_at: str,
     warning_messages: list[str] | None = None,
@@ -596,16 +826,22 @@ def _build_row(
         "class_mix": _class_mix(entry_by_boat),
         "tide_phase": normalize_tide_phase(tide),
         "weather": weather_label(preview_header.get("weather_number")),
-        # No audited venue-heading table exists in the source schema.  Preserve
-        # the observed compass code without inventing a tail/head/cross mapping.
-        "wind_dir": None,
+        "wind_dir": relative_wind_direction(
+            race.get("stadium_number"),
+            preview_header.get("wind_direction_number"),
+            preview_header.get("wind_speed"),
+        ),
         "wind_dir_raw": preview_header.get("wind_direction_number"),
         "wind_speed": _finite_float(preview_header.get("wind_speed")),
+        "t5_odds_favorite": t5_favorite_odds.get(str(race["race_id"])),
     }
     for boat in BOATS:
         entry = entry_by_boat.get(boat, {})
         preview = preview_by_boat.get(boat, {})
         rates = _history_rates(histories, entry.get("racer_number"), asof_date)
+        accident_rate, accident_points, accident_source = _period_accident_values(
+            period_accidents, race_date, entry.get("racer_number")
+        )
         row.update(
             {
                 f"b{boat}_racer_id": entry.get("racer_number"),
@@ -627,7 +863,10 @@ def _build_row(
                     f"b{boat}_kimarite_rate_{key}": rates[key]
                     for key in KIMARITE_KEYS
                 },
-                f"b{boat}_accident_rate": rates["accident"],
+                f"b{boat}_accident_rate": accident_rate,
+                f"b{boat}_accident_rate_365d": rates["accident"],
+                f"b{boat}_accident_points": accident_points,
+                f"b{boat}_accident_source": accident_source,
             }
         )
     messages = warning_messages if warning_messages is not None else []
@@ -764,6 +1003,8 @@ def build_features(
         (end - timedelta(days=1)).isoformat(),
         racer_ids,
     )
+    period_accidents = _load_period_accidents(source, pending, racer_ids)
+    t5_favorite_odds = _load_t5_favorite_odds(source, race_ids)
     day_indexes = _day_indexes(source, pending)
     timestamp = built_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
     names = [name for name, _ in ALL_COLUMNS]
@@ -785,6 +1026,8 @@ def build_features(
                 by_payouts[race_id],
                 by_results[race_id],
                 histories,
+                period_accidents,
+                t5_favorite_odds,
                 day_indexes.get(race_id),
                 timestamp,
                 race_warnings,
@@ -862,6 +1105,8 @@ def verify_features(
             latest.isoformat(),
             racer_ids,
         )
+    chosen_races = [dict(row) for row in chosen]
+    period_accidents = _load_period_accidents(source, chosen_races, racer_ids)
     mismatches: list[str] = []
     for row in chosen:
         for boat in BOATS:
@@ -870,9 +1115,28 @@ def verify_features(
                 column = f"b{boat}_kimarite_rate_{key}"
                 if not _equal_rate(row[column], rates[key]):
                     mismatches.append(f"{row['race_id']}:{column}")
-            column = f"b{boat}_accident_rate"
-            if not _equal_rate(row[column], rates["accident"]):
+            column = f"b{boat}_accident_rate_365d"
+            if column in row.keys() and not _equal_rate(row[column], rates["accident"]):
                 mismatches.append(f"{row['race_id']}:{column}")
+            if int(row["schema_version"]) >= 5:
+                rate, points, source_kind = _period_accident_values(
+                    period_accidents,
+                    str(row["race_date"]),
+                    row[f"b{boat}_racer_id"],
+                )
+                for period_column, expected in (
+                    (f"b{boat}_accident_rate", rate),
+                    (f"b{boat}_accident_points", points),
+                    (f"b{boat}_accident_source", source_kind),
+                ):
+                    actual = row[period_column]
+                    equal = (
+                        actual == expected
+                        if isinstance(expected, str)
+                        else _equal_rate(actual, expected)
+                    )
+                    if not equal:
+                        mismatches.append(f"{row['race_id']}:{period_column}")
     output.close()
     return {
         "ok": chronology_errors == 0 and not mismatches,

@@ -57,6 +57,12 @@ legend { padding: 0 6px; font-size: 12.5px; font-weight: 700; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 7px 0; }
 .row > label, .field-label { min-width: 7.5em; color: var(--ink-2); font-size: 13px; }
 .row > .short-label { min-width: auto; }
+.row > .all-venues { display: inline-flex; min-width: auto; gap: 5px; align-items: center; }
+.selection-count { display: inline-block; margin-left: 4px; color: var(--accent-ink); font-size: 10.5px; font-weight: 800; white-space: nowrap; }
+#venue { min-width: 145px; }
+#windDirection { min-width: 125px; }
+select[multiple] { padding: 4px; }
+select[multiple] option { padding: 3px 7px; border-radius: 3px; }
 select, input[type="number"], input[type="text"], input[type="date"] {
   padding: 5px 8px;
   border: 1px solid var(--line);
@@ -99,6 +105,7 @@ button.wchip.on { border-color: var(--accent); background: var(--accent-soft); c
 .cond.limited2 { margin-left: -8px; padding: 3px 8px; border-radius: 6px; background: var(--crit-soft); }
 .compare-help { margin: 0 0 8px; color: var(--ink-3); font-size: 11.5px; }
 .odds-fieldset { background: var(--surface); }
+.favorite-band { border-left: 3px solid var(--accent); background: var(--accent-soft); }
 .odds-toggle { display: inline-flex; min-width: auto !important; gap: 6px; align-items: center; font-weight: 700; }
 .odds-note { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--warn-soft); color: var(--warn); font-size: 11.5px; }
 #compareRows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }

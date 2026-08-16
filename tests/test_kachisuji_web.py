@@ -118,17 +118,24 @@ def test_index_renders_major_condition_fields(client) -> None:
     for marker in (
         "勝ち筋サーチ",
         'id="venue"',
+        'id="venueAll"',
+        'id="venueCount"',
         'id="betType"',
         'id="weatherChips"',
         'id="windStrength"',
+        'id="windDirection"',
         'id="classMix"',
         'id="raceNoFrom"',
         'id="boats"',
         'id="compareRows"',
         'id="oddsEnabled"',
+        'id="favoriteOddsEnabled"',
         'id="conditionCount"',
         'id="miniKpi"',
         "全国2連対率",
+        "事故率（審査期・既存ROI互換）",
+        "事故点（審査期）",
+        "事故率（過去365日・参考）",
         "⚖ 艇間比較",
         'id="dateFrom"',
         'id="dateTo"',
@@ -139,6 +146,8 @@ def test_index_renders_major_condition_fields(client) -> None:
     assert 'value="final"' not in html
     assert "3連単オッズ（5分前・T-5）" in html
     assert "5分前オッズで絞り込みます" in html
+    assert "レース全体の人気帯（T-5・1番人気）" in html
+    assert "締切前には確定しない情報" in html
 
 
 @pytest.mark.parametrize("endpoint", ["/api/search", "/api/strategies"])

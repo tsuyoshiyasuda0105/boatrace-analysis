@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS strategies (
   conditions_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   backtest_json TEXT,
-  is_active INTEGER NOT NULL DEFAULT 1
+  is_active INTEGER NOT NULL DEFAULT 1,
+  conditions_schema_version INTEGER NOT NULL DEFAULT 4
 );
 CREATE INDEX IF NOT EXISTS idx_strategies_owner_active
   ON strategies(owner, is_active);
@@ -36,7 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_strategies_owner_active
 # These are the only Step 2 condition columns whose values are established on
 # race day.  All other columns returned by _compile_conditions are prior-day
 # facts; a NULL in one of those must not become a morning candidate.
-_SAME_DAY_COLUMNS = frozenset({"weather", "wind_speed"}) | frozenset(
+_SAME_DAY_COLUMNS = frozenset({"weather", "wind_dir", "wind_speed", "t5_odds_favorite"}) | frozenset(
     f"b{boat}_{suffix}"
     for boat in range(1, 7)
     for suffix in ("ex_time", "ex_rank", "ex_dev", "ex_st")
@@ -75,6 +76,33 @@ def _validated_conditions(conditions: Any) -> dict[str, Any]:
     return normalized
 
 
+def _migrate_legacy_conditions(
+    conditions: dict[str, Any], schema_version: int
+) -> dict[str, Any]:
+    """Preserve the pre-v5 meaning of saved ``accident_rate`` filters."""
+
+    if schema_version >= 5:
+        return conditions
+    boats = conditions.get("boats")
+    if not isinstance(boats, dict):
+        return conditions
+    migrated = json.loads(_json_text(conditions, "conditions"))
+    for raw_boat in migrated.get("boats", {}).values():
+        if not isinstance(raw_boat, dict) or "accident_rate" not in raw_boat:
+            continue
+        raw_boat.setdefault("accident_rate_365d", raw_boat.pop("accident_rate"))
+    return migrated
+
+
+def _ensure_strategy_schema(connection: sqlite3.Connection) -> None:
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(strategies)")}
+    if "conditions_schema_version" not in columns:
+        connection.execute(
+            "ALTER TABLE strategies ADD COLUMN conditions_schema_version "
+            "INTEGER NOT NULL DEFAULT 4"
+        )
+
+
 @contextmanager
 def _write_connect(path: str | Path):
     resolved = Path(path).resolve()
@@ -84,6 +112,7 @@ def _write_connect(path: str | Path):
     try:
         with connection:
             connection.executescript(_SCHEMA)
+            _ensure_strategy_schema(connection)
             yield connection
     finally:
         connection.close()
@@ -102,11 +131,20 @@ def _read_connect(path: str | Path):
 
 
 def _decode_strategy(row: sqlite3.Row) -> dict[str, Any]:
+    schema_version = (
+        int(row["conditions_schema_version"])
+        if "conditions_schema_version" in row.keys()
+        else 4
+    )
+    conditions = _migrate_legacy_conditions(
+        json.loads(row["conditions_json"]), schema_version
+    )
     return {
         "id": row["id"],
         "owner": row["owner"],
         "name": row["name"],
-        "conditions": json.loads(row["conditions_json"]),
+        "conditions": conditions,
+        "conditions_schema_version": schema_version,
         "created_at": row["created_at"],
         "backtest": json.loads(row["backtest_json"]) if row["backtest_json"] is not None else None,
         "is_active": bool(row["is_active"]),
@@ -136,8 +174,8 @@ def save_strategy(
     with _write_connect(db_path or _strategy_db_path()) as connection:
         cursor = connection.execute(
             "INSERT INTO strategies "
-            "(owner, name, conditions_json, created_at, backtest_json) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "(owner, name, conditions_json, created_at, backtest_json, conditions_schema_version) "
+            "VALUES (?, ?, ?, ?, ?, 5)",
             (owner.strip(), name.strip(), conditions_json, created_at, backtest_json),
         )
         return int(cursor.lastrowid)

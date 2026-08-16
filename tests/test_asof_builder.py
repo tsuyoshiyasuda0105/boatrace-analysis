@@ -13,6 +13,8 @@ from src.features.asof_builder import (
     coverage_rows,
     create_output_schema,
     exhibition_metrics,
+    load_stadium_orientations,
+    relative_wind_direction,
     verify_features,
 )
 
@@ -73,6 +75,15 @@ def _source() -> sqlite3.Connection:
           tide_range_cm REAL, tide_delta_60m_cm REAL,
           is_high_tide_zone INTEGER, is_low_tide_zone INTEGER,
           source TEXT, fetched_at TEXT
+        );
+        CREATE TABLE racer_accident_period_stats (
+          racer_number INTEGER, period_start TEXT, period_end TEXT,
+          source_kind TEXT, rule_version TEXT, accident_rate REAL,
+          accident_points REAL
+        );
+        CREATE TABLE odds_trifecta (
+          race_id TEXT, combination TEXT, odds REAL, is_final INTEGER,
+          recorded_at TEXT, snapshot_label TEXT
         );
         """
     )
@@ -228,6 +239,27 @@ def _complete_fixture() -> sqlite3.Connection:
             ("target", "win", "1", 120, 1),
         ],
     )
+    conn.executemany(
+        "INSERT INTO racer_accident_period_stats VALUES (?,?,?,?,?,?,?)",
+        [
+            (1001, "2025-05-01", "2025-05-31", "reconstructed", "official_table_2025_05_reconstructed_v2", 0.40, 2),
+            (1002, "2025-05-01", "2025-05-31", "reconstructed", "official_table_2025_05_reconstructed_v2", 0.90, 9),
+            (1001, "2025-05-01", "2025-06-01", "reconstructed", "official_table_2025_05_reconstructed_v2", 0.55, 3),
+            (1001, "2025-05-01", "2025-06-01", "other", "official_table_2025_05_reconstructed_v2", 9.99, 99),
+            (1001, "2025-05-01", "2025-06-01", "reconstructed", "other-rule", 8.88, 88),
+            (1001, "2025-05-01", "2025-06-02", "reconstructed", "official_table_2025_05_reconstructed_v2", 7.77, 77),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO odds_trifecta VALUES (?,?,?,?,?,?)",
+        [
+            ("target", "1-2-3", 9.0, 0, "2025-06-02T09:00:00", "T-5min"),
+            ("target", "1-2-3", 8.0, 0, "2025-06-02T09:01:00", "T-5min"),
+            ("target", "1-3-2", 5.5, 0, "2025-06-02T09:01:00", "T-5min"),
+            ("target", "2-1-3", 0.0, 0, "2025-06-02T09:01:00", "T-5min"),
+            ("target", "1-3-2", 2.0, 1, "2025-06-02T09:10:00", "final"),
+        ],
+    )
     conn.commit()
     return conn
 
@@ -253,7 +285,12 @@ def test_future_cutoff_boundaries_and_verify(tmp_path):
     assert row["asof_date"] == "2025-06-01"
     assert row["b1_kimarite_rate_nige"] == pytest.approx(50.0)
     assert row["b1_kimarite_rate_makuri"] == pytest.approx(0.0)
-    assert row["b1_accident_rate"] == pytest.approx(50.0)
+    assert row["b1_accident_rate"] == pytest.approx(0.55)
+    assert row["b1_accident_points"] == pytest.approx(3.0)
+    assert row["b1_accident_source"] == "period"
+    assert row["b2_accident_rate"] == pytest.approx(0.0)
+    assert row["b2_accident_source"] == "missing_zero"
+    assert row["b1_accident_rate_365d"] == pytest.approx(50.0)
     checked = verify_features(
         source, output, 20, date_from="2025-06-02", date_to="2025-06-02"
     )
@@ -277,7 +314,7 @@ def test_future_insert_does_not_change_rebuilt_past_aggregates(tmp_path):
     build_features(source, output, "2025-06-02", "2025-06-02", built_at="fixed")
     before = tuple(
         _read_row(output)[name]
-        for name in ("b1_kimarite_rate_nige", "b1_kimarite_rate_makuri", "b1_accident_rate")
+        for name in ("b1_kimarite_rate_nige", "b1_kimarite_rate_makuri", "b1_accident_rate_365d")
     )
     _race(source, "future-new", "2025-06-03")
     _entry(source, "future-new", 1, 1001)
@@ -293,7 +330,7 @@ def test_future_insert_does_not_change_rebuilt_past_aggregates(tmp_path):
     )
     after = tuple(
         _read_row(output)[name]
-        for name in ("b1_kimarite_rate_nige", "b1_kimarite_rate_makuri", "b1_accident_rate")
+        for name in ("b1_kimarite_rate_nige", "b1_kimarite_rate_makuri", "b1_accident_rate_365d")
     )
     assert after == before
 
@@ -310,13 +347,14 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 4
+    assert row["schema_version"] == 5
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
     assert [row[f"b{boat}_ex_rank"] for boat in range(1, 7)] == [1, 2, 2, 4, 5, 6]
     assert row["b1_ex_dev"] == pytest.approx(6.70 - (6.70 + 6.80 + 6.80 + 7.00 + 7.10 + 7.20) / 6)
     assert row["b6_ex_dev"] == pytest.approx(7.20 - (6.70 + 6.80 + 6.80 + 7.00 + 7.10 + 7.20) / 6)
+    assert row["t5_odds_favorite"] == pytest.approx(5.5)
 
 
 def test_missing_or_invalid_birth_date_keeps_age_null(tmp_path):
@@ -356,6 +394,46 @@ def test_schema_v2_rows_are_additively_migrated_and_preserved(tmp_path):
         ).fetchone()
 
     assert row == (2, None, None, None, None, None)
+
+
+def test_schema_v4_accident_rate_is_moved_to_365d_before_name_reuse(tmp_path):
+    output = tmp_path / "legacy-v4.db"
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "CREATE TABLE asof_race_features (race_id TEXT PRIMARY KEY, "
+            "race_date TEXT, asof_date TEXT, built_at TEXT, schema_version INTEGER, "
+            "b1_accident_rate REAL)"
+        )
+        connection.execute(
+            "INSERT INTO asof_race_features VALUES ('legacy','2025-01-01',"
+            "'2024-12-31','fixed',4,37.5)"
+        )
+        create_output_schema(connection)
+        row = connection.execute(
+            "SELECT b1_accident_rate,b1_accident_rate_365d "
+            "FROM asof_race_features WHERE race_id='legacy'"
+        ).fetchone()
+    assert row == (None, 37.5)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(1, "向かい風"), (3, "向かい風"), (5, "横風(右)"), (7, "追い風"), (9, "追い風"), (13, "横風(左)"), (15, "向かい風")],
+)
+def test_relative_wind_direction_includes_45_and_135_degree_boundaries(raw, expected):
+    assert relative_wind_direction(5, raw, 3, orientations={5: 0.0}) == expected
+
+
+def test_relative_wind_direction_handles_calm_and_unknown_orientation():
+    assert relative_wind_direction(5, 17, 3, orientations={5: None}) == "無風"
+    assert relative_wind_direction(5, 1, 0, orientations={5: None}) == "無風"
+    assert relative_wind_direction(5, 1, 3, orientations={5: None}) is None
+
+
+def test_orientation_master_covers_every_venue_without_invented_headings():
+    orientations = load_stadium_orientations()
+    assert set(orientations) == set(range(1, 25))
+    assert all(value is None for value in orientations.values())
 
 
 def test_class_gender_conditions_and_three_payout_types(tmp_path):
@@ -480,7 +558,8 @@ def test_history_ignores_nonwinner_kimarite_and_numeric_finish_accident(tmp_path
 
     row = _read_row(output)
     assert row["b1_kimarite_rate_nige"] == pytest.approx(0.0)
-    assert row["b1_accident_rate"] == pytest.approx(0.0)
+    assert row["b1_accident_rate"] == pytest.approx(0.55)
+    assert row["b1_accident_rate_365d"] == pytest.approx(0.0)
 
 
 def test_append_only_rerun_skips_and_preserves_row(tmp_path):

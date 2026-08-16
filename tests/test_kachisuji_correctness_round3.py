@@ -69,7 +69,7 @@ def _representative_dates(
                 f"""
                 SELECT DISTINCT race_date
                   FROM asof_race_features
-                 WHERE schema_version IN (2,3,4) AND {where}
+                 WHERE schema_version IN (2,3,4,5) AND {where}
                  ORDER BY race_date
                 """
             )
@@ -182,7 +182,7 @@ def test_roi_matches_independent_sql_for_all_bet_types(
                {payout_column}_json AS payout_values_json,
                b1_motor_rate2, b2_national_rate, b1_age, b2_age
           FROM asof_race_features
-         WHERE schema_version IN (2, 3, 4)
+         WHERE schema_version IN (2, 3, 4, 5)
            AND jcd = 12
            AND race_date BETWEEN '2025-01-01' AND '2025-03-31'
            AND race_no BETWEEN 7 AND 12
@@ -285,7 +285,7 @@ def test_snapshot_result_and_payout_match_final_finishing_order(
             f"SELECT schema_version,{result_column},{payout_column} "
             "FROM asof_race_features WHERE race_id='20160613-13-01'"
         ).fetchone()
-    assert row == (4, expected_result, expected_payout)
+    assert row == (5, expected_result, expected_payout)
 
 
 @pytest.mark.parametrize(
@@ -435,7 +435,7 @@ def test_previous_day_features_match_independent_raw_recomputation() -> None:
                 )
                 columns = [
                     *(f"b{boat}_kimarite_rate_{key}" for key in HISTORY_LABELS),
-                    f"b{boat}_accident_rate",
+                    f"b{boat}_accident_rate_365d",
                 ]
                 for column, expected in zip(columns, expected_rates):
                     actual = row[column]
@@ -521,7 +521,7 @@ def test_comparison_margin_boundaries_match_signed_difference_sql(
             SELECT schema_version,result_tansho,payout_tansho,
                    result_tansho_json,payout_tansho_json,b1_age,b2_age
               FROM asof_race_features
-             WHERE schema_version IN (2,3,4)
+             WHERE schema_version IN (2,3,4,5)
                AND race_date BETWEEN '2025-01-01' AND '2025-01-31'
                AND ((b1_age - b2_age) {operator} ? OR b1_age IS NULL OR b2_age IS NULL)
             """,
@@ -565,7 +565,7 @@ def test_negative_comparison_margin_is_rejected_and_null_side_is_excluded() -> N
             """
             SELECT race_date
               FROM asof_race_features
-             WHERE schema_version IN (2,3,4)
+             WHERE schema_version IN (2,3,4,5)
              GROUP BY race_date
             HAVING SUM(b1_ex_time IS NULL OR b2_ex_time IS NULL) > 0
              ORDER BY race_date DESC
@@ -577,7 +577,7 @@ def test_negative_comparison_margin_is_rejected_and_null_side_is_excluded() -> N
             SELECT schema_version,result_tansho,payout_tansho,
                    result_tansho_json,payout_tansho_json,b1_ex_time,b2_ex_time
               FROM asof_race_features
-             WHERE schema_version IN (2,3,4) AND race_date=?
+             WHERE schema_version IN (2,3,4,5) AND race_date=?
                AND ((b1_ex_time-b2_ex_time)>=0 OR b1_ex_time IS NULL OR b2_ex_time IS NULL)
             """,
             (target_date,),
@@ -642,7 +642,7 @@ def test_match_races_sets_equal_independent_step2_predicates(
                 """
                 SELECT race_id,b1_motor_rate2,b1_ex_rank,b1_ex_time,b2_ex_time
                   FROM asof_race_features
-                 WHERE schema_version IN (2,3,4) AND race_date=? AND jcd=12
+                 WHERE schema_version IN (2,3,4,5) AND race_date=? AND jcd=12
                    AND race_no BETWEEN 7 AND 12
                    AND (b1_motor_rate2>=35 OR b1_motor_rate2 IS NULL)
                    AND (b1_ex_rank<=3 OR b1_ex_rank IS NULL)
@@ -669,7 +669,7 @@ def test_match_races_sets_equal_independent_step2_predicates(
                 """
                 SELECT race_id,b1_motor_rate2,b1_age,b2_age
                   FROM asof_race_features
-                 WHERE schema_version IN (2,3,4) AND race_date=? AND jcd=12
+                 WHERE schema_version IN (2,3,4,5) AND race_date=? AND jcd=12
                    AND race_no BETWEEN 7 AND 12
                    AND (b1_motor_rate2>=35 OR b1_motor_rate2 IS NULL)
                    AND ((b1_age-b2_age)<=0 OR b1_age IS NULL OR b2_age IS NULL)
@@ -710,7 +710,7 @@ def test_date_bounds_are_inclusive_and_effective_range_uses_included_rows(
             SELECT schema_version,result_tansho,payout_tansho,
                    result_tansho_json,payout_tansho_json
               FROM asof_race_features
-             WHERE schema_version IN (2,3,4) AND race_date=?
+             WHERE schema_version IN (2,3,4,5) AND race_date=?
             """,
             (target_date,),
         ).fetchall()
@@ -739,7 +739,7 @@ def test_history_cutoff_controls_effective_date_range() -> None:
         {
             "date_from": "2020-01-01",
             "date_to": "2023-05-02",
-            "boats": {"1": {"accident_rate": {"min": 0}}},
+            "boats": {"1": {"accident_rate_365d": {"min": 0}}},
             "bet": {"type": "tansho", "first": 1},
         },
         fast=True,
