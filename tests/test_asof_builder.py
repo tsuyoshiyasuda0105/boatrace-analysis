@@ -278,6 +278,117 @@ def _read_row(path, race_id="target"):
     return row
 
 
+def _course_rate_fixture(
+    output,
+    *,
+    prior_courses: list[int],
+    winning_indexes: set[int],
+    kimarite: str = "逃げ",
+) -> sqlite3.Connection:
+    source = _source()
+    events = []
+    for index, course in enumerate(prior_courses, 1):
+        race_id = f"history-{index}"
+        race_date = f"2025-05-{index:02d}"
+        _race(source, race_id, race_date)
+        _entry(source, race_id, 1, 1001, class_number=1)
+        _result(
+            source,
+            race_id,
+            1,
+            1 if index in winning_indexes else 2,
+            kimarite=kimarite if index in winning_indexes else None,
+        )
+        events.append((race_id, race_date, 1001, 1, course, 0.15, 0, 0))
+    _race(source, "target", "2025-06-02")
+    _entry(source, "target", 1, 1001, class_number=1)
+    source.commit()
+    with sqlite3.connect(output) as connection:
+        create_output_schema(connection)
+        ensure_start_timing_schema(connection)
+        connection.executemany(
+            "INSERT INTO start_timing_events VALUES (?,?,?,?,?,?,?,?)", events
+        )
+    return source
+
+
+def test_kimarite_rate_uses_actual_entry_course_denominator(tmp_path):
+    output = tmp_path / "course-denominator.db"
+    source = _course_rate_fixture(
+        output,
+        prior_courses=[1, 1, 1, 1, 1],
+        winning_indexes={1, 2, 3},
+    )
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert row["b1_kimarite_rate_nige"] == pytest.approx(60.0)
+
+
+def test_attack_kimarite_rate_uses_only_non_first_course_entries(tmp_path):
+    output = tmp_path / "attack-course-denominator.db"
+    source = _course_rate_fixture(
+        output,
+        prior_courses=[2, 2, 2, 2, 2, 1, 1, 1, 1, 1],
+        winning_indexes={1, 2, 3},
+        kimarite="差し",
+    )
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    assert _read_row(output)["b1_kimarite_rate_sashi"] == pytest.approx(60.0)
+
+
+def test_kimarite_rate_excludes_target_day_and_future_events(tmp_path):
+    output = tmp_path / "course-asof.db"
+    source = _course_rate_fixture(
+        output,
+        prior_courses=[1, 1, 1, 1, 1],
+        winning_indexes={1, 2, 3},
+    )
+    with sqlite3.connect(output) as connection:
+        connection.executemany(
+            "INSERT INTO start_timing_events VALUES (?,?,?,?,?,?,?,?)",
+            [
+                ("same-day", "2025-06-02", 1001, 1, 1, 0.10, 0, 0),
+                ("future-course", "2025-06-03", 1001, 1, 1, 0.10, 0, 0),
+            ],
+        )
+    for race_id, race_date in (
+        ("same-day", "2025-06-02"),
+        ("future-course", "2025-06-03"),
+    ):
+        _race(source, race_id, race_date)
+        _entry(source, race_id, 1, 1001, class_number=1)
+        _result(source, race_id, 1, 1, kimarite="逃げ")
+    source.commit()
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    assert _read_row(output)["b1_kimarite_rate_nige"] == pytest.approx(60.0)
+    assert verify_features(
+        source, output, sample=1, date_from="2025-06-02", date_to="2025-06-02"
+    )["ok"] is True
+
+
+def test_kimarite_rate_is_null_below_entry_threshold_or_without_entries(tmp_path):
+    output = tmp_path / "course-threshold.db"
+    source = _course_rate_fixture(
+        output,
+        prior_courses=[1, 1, 1, 1],
+        winning_indexes={1, 2, 3},
+    )
+    _entry(source, "target", 2, 1002, class_number=1)
+    source.commit()
+
+    build_features(source, output, "2025-06-02", "2025-06-02")
+
+    row = _read_row(output)
+    assert row["b1_kimarite_rate_nige"] is None
+    assert row["b2_kimarite_rate_nige"] is None
+
+
 def test_future_cutoff_boundaries_and_verify(tmp_path):
     source = _complete_fixture()
     output = tmp_path / "features.db"
@@ -287,8 +398,8 @@ def test_future_cutoff_boundaries_and_verify(tmp_path):
     assert result == {"selected": 1, "inserted": 1, "skipped_existing": 0, "warnings": 0}
     row = _read_row(output)
     assert row["asof_date"] == "2025-06-01"
-    assert row["b1_kimarite_rate_nige"] == pytest.approx(50.0)
-    assert row["b1_kimarite_rate_makuri"] == pytest.approx(0.0)
+    assert row["b1_kimarite_rate_nige"] is None
+    assert row["b1_kimarite_rate_makuri"] is None
     assert row["b1_accident_rate"] == pytest.approx(0.55)
     assert row["b1_accident_points"] == pytest.approx(3.0)
     assert row["b1_accident_source"] == "period"
@@ -353,7 +464,7 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 7
+    assert row["schema_version"] == 8
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
@@ -569,7 +680,7 @@ def test_history_ignores_nonwinner_kimarite_and_numeric_finish_accident(tmp_path
     build_features(source, output, "2025-06-02", "2025-06-02")
 
     row = _read_row(output)
-    assert row["b1_kimarite_rate_nige"] == pytest.approx(0.0)
+    assert row["b1_kimarite_rate_nige"] is None
     assert row["b1_accident_rate"] == pytest.approx(0.55)
     assert row["b1_accident_rate_365d"] == pytest.approx(0.0)
 

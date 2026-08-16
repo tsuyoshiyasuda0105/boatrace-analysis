@@ -36,10 +36,11 @@ from src.features.accident_history import (
 )
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
+KIMARITE_MIN_ENTRIES = 5
 KIMARITE_LABELS = {
     "逃げ": "nige",
     "差し": "sashi",
@@ -47,6 +48,14 @@ KIMARITE_LABELS = {
     "まくり差し": "makurizashi",
     "抜き": "nuki",
     "恵まれ": "megumare",
+}
+KIMARITE_VALID_COURSES = {
+    "nige": frozenset({1}),
+    "sashi": frozenset(range(2, 7)),
+    "makuri": frozenset(range(2, 7)),
+    "makurizashi": frozenset(range(2, 7)),
+    "nuki": frozenset(range(1, 7)),
+    "megumare": frozenset(range(1, 7)),
 }
 CLASS_LABELS = {1: "A1", 2: "A2", 3: "B1", 4: "B2"}
 ORIENTATION_MASTER_PATH = Path(__file__).resolve().parents[2] / "master" / "stadium_orientations.json"
@@ -345,6 +354,40 @@ class RacerHistory:
         return output
 
 
+@dataclass(frozen=True)
+class CourseKimariteHistory:
+    """Actual-entry-course denominators and winning-technique prefix sums.
+
+    Escape (``nige``) is possible only from actual course 1.  The attacking
+    techniques sashi/makuri/makurizashi use actual courses 2 through 6.
+    Nuki and megumare can occur from any actual course, so their denominator
+    is all valid course 1-through-6 entries.  Rows with a missing/invalid
+    actual course never enter either a denominator or numerator.
+    """
+
+    dates: tuple[str, ...]
+    entries_prefix: dict[str, tuple[int, ...]]
+    wins_prefix: dict[str, tuple[int, ...]]
+
+    def rates(
+        self,
+        window_start: str,
+        asof_date: str,
+        min_entries: int = KIMARITE_MIN_ENTRIES,
+    ) -> dict[str, float | None]:
+        left = bisect_left(self.dates, window_start)
+        right = bisect_right(self.dates, asof_date)
+        output: dict[str, float | None] = {}
+        for key in KIMARITE_KEYS:
+            entries = self.entries_prefix[key][right] - self.entries_prefix[key][left]
+            if entries < min_entries:
+                output[key] = None
+                continue
+            wins = self.wins_prefix[key][right] - self.wins_prefix[key][left]
+            output[key] = wins * 100.0 / entries
+        return output
+
+
 def _load_histories(
     source: Any,
     window_start: str,
@@ -422,6 +465,102 @@ def _history_rates(
 ) -> dict[str, float | None]:
     if racer_id is None or int(racer_id) not in histories:
         return {**{key: None for key in KIMARITE_KEYS}, "accident": None}
+    window_start = (date.fromisoformat(asof_date) - timedelta(days=364)).isoformat()
+    return histories[int(racer_id)].rates(window_start, asof_date)
+
+
+def _load_course_kimarite_histories(
+    source: Any,
+    output: sqlite3.Connection,
+    window_start: str,
+    window_end: str,
+    racer_ids: Iterable[int] | None = None,
+) -> dict[int, CourseKimariteHistory]:
+    """Join restored actual courses to authoritative winner kimarite rows.
+
+    ``start_timing_events`` is populated by the existing shared official-K
+    parse path.  This loader consumes those rows instead of parsing result
+    files again.  Both inputs are bounded through ``window_end``; callers pass
+    the day before the latest target race, and per-row prefix lookups apply the
+    exact earlier target's ``asof_date``.
+    """
+
+    ids = sorted({int(value) for value in racer_ids or []})
+    if not ids or not _source_has_table(output, "start_timing_events"):
+        return {}
+    winner_sql = """SELECT e.racer_number, e.race_id, e.boat_number, rr.kimarite
+                      FROM races r
+                      JOIN race_entries e ON e.race_id=r.race_id
+                      JOIN race_results rr
+                        ON rr.race_id=e.race_id AND rr.boat_number=e.boat_number
+                     WHERE r.race_date BETWEEN ? AND ?
+                       AND rr.finishing_position=1
+                       AND e.racer_number IN ({placeholders})"""
+    winner_rows = _rows_for_ids(
+        source,
+        winner_sql,
+        ids,
+        (window_start, window_end),
+    )
+    winners = {
+        (str(row["race_id"]), int(row["boat_number"]), int(row["racer_number"])):
+        KIMARITE_LABELS.get(str(row.get("kimarite") or "").strip())
+        for row in winner_rows
+        if row.get("racer_number") is not None and row.get("boat_number") is not None
+    }
+
+    histories: dict[int, CourseKimariteHistory] = {}
+    for offset in range(0, len(ids), SQLITE_VARIABLE_CHUNK_SIZE):
+        chunk = ids[offset : offset + SQLITE_VARIABLE_CHUNK_SIZE]
+        placeholders = ",".join("?" for _ in chunk)
+        cursor = output.execute(
+            "SELECT race_id,race_date,racer_number,boat_number,course_number "
+            "FROM start_timing_events WHERE race_date BETWEEN ? AND ? "
+            "AND course_number BETWEEN 1 AND 6 "
+            f"AND racer_number IN ({placeholders}) "
+            "ORDER BY racer_number,race_date,race_id",
+            (window_start, window_end, *chunk),
+        )
+        active_racer: int | None = None
+        dates: list[str] = []
+        entries = {key: [0] for key in KIMARITE_KEYS}
+        wins = {key: [0] for key in KIMARITE_KEYS}
+
+        def finish_active() -> None:
+            if active_racer is None:
+                return
+            histories[active_racer] = CourseKimariteHistory(
+                tuple(dates),
+                {key: tuple(values) for key, values in entries.items()},
+                {key: tuple(values) for key, values in wins.items()},
+            )
+
+        for event in cursor:
+            racer_id = int(event["racer_number"])
+            if active_racer != racer_id:
+                finish_active()
+                active_racer = racer_id
+                dates = []
+                entries = {key: [0] for key in KIMARITE_KEYS}
+                wins = {key: [0] for key in KIMARITE_KEYS}
+            dates.append(_iso(event["race_date"]))
+            course = int(event["course_number"])
+            winner_key = winners.get(
+                (str(event["race_id"]), int(event["boat_number"]), racer_id)
+            )
+            for key in KIMARITE_KEYS:
+                eligible = course in KIMARITE_VALID_COURSES[key]
+                entries[key].append(entries[key][-1] + int(eligible))
+                wins[key].append(wins[key][-1] + int(eligible and winner_key == key))
+        finish_active()
+    return histories
+
+
+def _course_kimarite_rates(
+    histories: Mapping[int, CourseKimariteHistory], racer_id: Any, asof_date: str
+) -> dict[str, float | None]:
+    if racer_id is None or int(racer_id) not in histories:
+        return {key: None for key in KIMARITE_KEYS}
     window_start = (date.fromisoformat(asof_date) - timedelta(days=364)).isoformat()
     return histories[int(racer_id)].rates(window_start, asof_date)
 
@@ -850,6 +989,7 @@ def _build_row(
     payouts: list[dict[str, Any]],
     results: list[dict[str, Any]],
     histories: dict[int, RacerHistory],
+    course_kimarite_histories: Mapping[int, CourseKimariteHistory],
     period_accidents: Mapping[str, Any],
     restored_accidents: Mapping[int, RestoredAccidentHistory],
     restored_start_timings: Mapping[int, RestoredStartTimingHistory],
@@ -897,6 +1037,9 @@ def _build_row(
         entry = entry_by_boat.get(boat, {})
         preview = preview_by_boat.get(boat, {})
         rates = _history_rates(histories, entry.get("racer_number"), asof_date)
+        kimarite_rates = _course_kimarite_rates(
+            course_kimarite_histories, entry.get("racer_number"), asof_date
+        )
         accident_rate, accident_points, accident_source = _period_accident_values(
             period_accidents, race_date, entry.get("racer_number")
         )
@@ -930,7 +1073,7 @@ def _build_row(
                 # an unparseable exhibition start remains NULL.
                 f"b{boat}_ex_st": _finite_float(preview.get("start_timing_exhibition")),
                 **{
-                    f"b{boat}_kimarite_rate_{key}": rates[key]
+                    f"b{boat}_kimarite_rate_{key}": kimarite_rates[key]
                     for key in KIMARITE_KEYS
                 },
                 f"b{boat}_accident_rate": accident_rate,
@@ -1076,6 +1219,13 @@ def build_features(
         (end - timedelta(days=1)).isoformat(),
         racer_ids,
     )
+    course_kimarite_histories = _load_course_kimarite_histories(
+        source,
+        output,
+        history_start.isoformat(),
+        (end - timedelta(days=1)).isoformat(),
+        racer_ids,
+    )
     period_accidents = _load_period_accidents(source, pending, racer_ids)
     restored_accidents = load_restored_histories(
         output,
@@ -1111,6 +1261,7 @@ def build_features(
                 by_payouts[race_id],
                 by_results[race_id],
                 histories,
+                course_kimarite_histories,
                 period_accidents,
                 restored_accidents,
                 restored_start_timings,
@@ -1183,11 +1334,19 @@ def verify_features(
         if row[f"b{boat}_racer_id"] is not None
     }
     histories: dict[int, RacerHistory] = {}
+    course_kimarite_histories: dict[int, CourseKimariteHistory] = {}
     if chosen:
         earliest = min(date.fromisoformat(row["asof_date"]) for row in chosen)
         latest = max(date.fromisoformat(row["asof_date"]) for row in chosen)
         histories = _load_histories(
             source,
+            (earliest - timedelta(days=364)).isoformat(),
+            latest.isoformat(),
+            racer_ids,
+        )
+        course_kimarite_histories = _load_course_kimarite_histories(
+            source,
+            output,
             (earliest - timedelta(days=364)).isoformat(),
             latest.isoformat(),
             racer_ids,
@@ -1219,9 +1378,19 @@ def verify_features(
     for row in chosen:
         for boat in BOATS:
             rates = _history_rates(histories, row[f"b{boat}_racer_id"], row["asof_date"])
+            kimarite_rates = _course_kimarite_rates(
+                course_kimarite_histories,
+                row[f"b{boat}_racer_id"],
+                row["asof_date"],
+            )
             for key in KIMARITE_KEYS:
                 column = f"b{boat}_kimarite_rate_{key}"
-                if not _equal_rate(row[column], rates[key]):
+                expected_rate = (
+                    kimarite_rates[key]
+                    if int(row["schema_version"]) >= 8
+                    else rates[key]
+                )
+                if not _equal_rate(row[column], expected_rate):
                     mismatches.append(f"{row['race_id']}:{column}")
             column = f"b{boat}_accident_rate_365d"
             if column in row.keys() and not _equal_rate(row[column], rates["accident"]):

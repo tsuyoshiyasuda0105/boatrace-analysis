@@ -116,6 +116,7 @@ button.racer-option span { color: var(--ink-3); font-size: 10.5px; }
 .cond.limited { margin-left: -8px; padding: 3px 8px; border-radius: 6px; background: var(--warn-soft); }
 .cond.limited2 { margin-left: -8px; padding: 3px 8px; border-radius: 6px; background: var(--crit-soft); }
 .cond.restored-condition { margin-left: -8px; padding: 4px 8px; border-radius: 6px; background: var(--good-soft); }
+.kimarite-help { flex-basis: 100%; color: var(--ink-3); font-size: 10.5px; line-height: 1.45; }
 .accident-guide { margin: 0 0 9px; color: var(--ink-3); font-size: 11.5px; line-height: 1.6; }
 .compare-help { margin: 0 0 8px; color: var(--ink-3); font-size: 11.5px; }
 #compareRows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }

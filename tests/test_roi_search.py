@@ -359,6 +359,30 @@ def test_restored_average_st_filters_and_comparisons_use_2016_cutoff(
     assert ranged["n"] == compared["n"] == 1
 
 
+def test_schema_v8_rows_are_searchable(tmp_path: Path) -> None:
+    database = _make_db(
+        tmp_path / "schema-v8.db",
+        [
+            _row(
+                "v8",
+                "2025-01-01",
+                schema_version=8,
+                b1_kimarite_rate_nige=70.0,
+                result_sanrentan_json='["1-2-3"]',
+                payout_sanrentan_json='{"1-2-3":1230}',
+            )
+        ],
+    )
+
+    result = search_roi(
+        database,
+        {"boats": {"1": {"kimarite": {"name": "nige", "rate_min": 65}}}},
+        fast=True,
+    )
+
+    assert result["n"] == 1
+
+
 def test_compare_omitted_margin_is_equivalent_to_zero(tmp_path: Path) -> None:
     db = _make_db(tmp_path / "compare-zero.db", [_row("equal", "2026-01-01", b2_age=30)])
     base = {"metric": "age", "boat": 1, "op": "ge", "other": 2}
