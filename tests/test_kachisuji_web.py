@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sqlite3
 
 import pytest
@@ -137,6 +138,10 @@ def test_index_renders_major_condition_fields(client) -> None:
         'id="windStrength"',
         'id="windDirection"',
         'id="classMix"',
+        'value="1号艇A1・単騎"',
+        'value="1号艇A1・複数"',
+        'value="1号艇非A1・A1あり"',
+        'value="A1なし"',
         'id="raceNoFrom"',
         'id="boats"',
         'class="racer-input"',
@@ -170,6 +175,21 @@ def test_index_renders_major_condition_fields(client) -> None:
         "検索条件: 指定なし（全レース）",
     ):
         assert marker in html
+
+    assert 'value="A1が2人以上"' not in html
+    assert 'value="A1単騎"' not in html
+    assert 'value="1号艇A1"' not in html
+    class_mix_block = re.search(
+        r'<select id="classMix">(.*?)</select>', html, re.DOTALL
+    )
+    assert class_mix_block is not None
+    assert re.findall(r'<option value="([^"]*)">', class_mix_block.group(1)) == [
+        "",
+        "1号艇A1・単騎",
+        "1号艇A1・複数",
+        "1号艇非A1・A1あり",
+        "A1なし",
+    ]
     for removed_marker in (
         'id="oddsEnabled"',
         'id="oddsMin"',

@@ -13,6 +13,7 @@ from src.features.accident_history import (
 )
 from src.features.asof_builder import (
     ALL_COLUMNS,
+    _class_mix,
     build_features,
     coverage_rows,
     create_output_schema,
@@ -485,7 +486,7 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 9
+    assert row["schema_version"] == 10
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
@@ -585,7 +586,7 @@ def test_class_gender_conditions_and_three_payout_types(tmp_path):
     output = tmp_path / "features.db"
     build_features(source, output, "2025-06-02", "2025-06-02")
     row = _read_row(output)
-    assert row["class_mix"] == "A1単騎"
+    assert row["class_mix"] == "1号艇非A1・A1あり"
     assert row["female_present"] == 1
     assert row["result_sanrentan"] == "1-2-3"
     assert row["payout_sanrentan"] == 1230
@@ -603,6 +604,31 @@ def test_class_gender_conditions_and_three_payout_types(tmp_path):
     assert row["wind_dir"] is None
     assert row["wind_dir_raw"] == 9
     assert row["tide_phase"] == "上げ潮"
+
+
+@pytest.mark.parametrize(
+    ("classes", "expected"),
+    [
+        ([1, 2, 3, 3, 4, 3], "1号艇A1・単騎"),
+        ([1, 1, 3, 3, 4, 3], "1号艇A1・複数"),
+        ([3, 2, 1, 3, 4, 3], "1号艇非A1・A1あり"),
+        ([2, 2, 3, 3, 4, 3], "A1なし"),
+        ([1, 2, 3, None, 4, 3], None),
+    ],
+)
+def test_class_mix_has_four_exhaustive_categories_and_null_boundary(classes, expected):
+    entries = {
+        boat: {"class_number": class_number}
+        for boat, class_number in enumerate(classes, 1)
+    }
+
+    assert _class_mix(entries) == expected
+
+
+def test_class_mix_is_null_unless_all_six_program_entries_exist():
+    entries = {boat: {"class_number": 1 if boat == 1 else 3} for boat in range(1, 6)}
+
+    assert _class_mix(entries) is None
 
 
 def test_results_come_from_finish_order_and_payout_is_matched_by_combination(tmp_path):

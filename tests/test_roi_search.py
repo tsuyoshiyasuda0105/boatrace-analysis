@@ -359,14 +359,17 @@ def test_restored_average_st_filters_and_comparisons_use_2016_cutoff(
     assert ranged["n"] == compared["n"] == 1
 
 
-def test_schema_v8_rows_are_searchable(tmp_path: Path) -> None:
+@pytest.mark.parametrize("schema_version", [8, 9, 10])
+def test_schema_v8_through_v10_rows_are_searchable(
+    tmp_path: Path, schema_version: int
+) -> None:
     database = _make_db(
-        tmp_path / "schema-v8.db",
+        tmp_path / f"schema-v{schema_version}.db",
         [
             _row(
-                "v8",
+                f"v{schema_version}",
                 "2025-01-01",
-                schema_version=8,
+                schema_version=schema_version,
                 b1_kimarite_rate_nige=70.0,
                 result_sanrentan_json='["1-2-3"]',
                 payout_sanrentan_json='{"1-2-3":1230}',
@@ -379,6 +382,32 @@ def test_schema_v8_rows_are_searchable(tmp_path: Path) -> None:
         {"boats": {"1": {"kimarite": {"name": "nige", "rate_min": 65}}}},
         fast=True,
     )
+
+    assert result["n"] == 1
+
+
+@pytest.mark.parametrize(
+    "class_mix",
+    ["1号艇A1・単騎", "1号艇A1・複数", "1号艇非A1・A1あり", "A1なし"],
+)
+def test_schema_v10_class_mix_categories_are_searchable(
+    tmp_path: Path, class_mix: str
+) -> None:
+    database = _make_db(
+        tmp_path / "class-mix-v10.db",
+        [
+            _row(
+                "v10",
+                "2025-01-01",
+                schema_version=10,
+                class_mix=class_mix,
+                result_sanrentan_json='["1-2-3"]',
+                payout_sanrentan_json='{"1-2-3":1230}',
+            )
+        ],
+    )
+
+    result = search_roi(database, {"class_mix": class_mix}, fast=True)
 
     assert result["n"] == 1
 

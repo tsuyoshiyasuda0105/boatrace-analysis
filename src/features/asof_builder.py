@@ -36,7 +36,7 @@ from src.features.accident_history import (
 )
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -909,11 +909,11 @@ def _day_indexes(source: Any, races: list[dict[str, Any]]) -> dict[str, str | No
 def _class_mix(entries: dict[int, dict[str, Any]]) -> str | None:
     if set(entries) != set(BOATS) or any(row.get("class_number") is None for row in entries.values()):
         return None
-    a1 = [boat for boat, row in entries.items() if int(row["class_number"]) == 1]
-    if len(a1) == 1:
-        return "1号艇A1" if a1[0] == 1 else "A1単騎"
-    if len(a1) > 1:
-        return "1号艇A1" if 1 in a1 else "A1複数_1号艇非A1"
+    a1_boats = {boat for boat, row in entries.items() if int(row["class_number"]) == 1}
+    if 1 in a1_boats:
+        return "1号艇A1・単騎" if len(a1_boats) == 1 else "1号艇A1・複数"
+    if a1_boats:
+        return "1号艇非A1・A1あり"
     return "A1なし"
 
 
