@@ -1,0 +1,47 @@
+<!-- リーガルチェック前の雛形です。公開前に事業者本人と専門家による確認が必要です。 -->
+{% extends "base.html" %}
+
+{% block title %}特定商取引法に基づく表記 | BOATRACE WEB{% endblock %}
+
+{% block head_extra %}
+<style>
+  .legal-page { max-width: 900px; margin: 2rem auto; line-height: 1.8; }
+  .legal-table { width: 100%; border-collapse: collapse; margin-top: 1.25rem; }
+  .legal-table th, .legal-table td { padding: .8rem; border: 1px solid #d7dde5; text-align: left; vertical-align: top; }
+  .legal-table th { width: 32%; background: #f5f7fa; }
+  .legal-alert { margin: 1.25rem 0; padding: 1rem; border: 2px solid #b42318; background: #fff1f0; color: #7a271a; }
+  .legal-alert code { overflow-wrap: anywhere; }
+  .legal-meta { color: #5d6673; }
+</style>
+{% endblock %}
+
+{% block content %}
+<article class="legal-page">
+  <h1>特定商取引法に基づく表記</h1>
+  <p class="legal-meta">制定・最終改定: {{ legal.effective_date }}</p>
+
+  {% if legal_incomplete %}
+  <section class="legal-alert" role="alert" aria-label="事業者情報の未設定警告">
+    <strong>この表記は未完成です。事業者情報を設定してください。</strong>
+    <div>未設定の環境変数: <code>{{ missing_legal_fields | join(', ') }}</code></div>
+  </section>
+  {% endif %}
+
+  <table class="legal-table">
+    <tbody>
+      <tr><th scope="row">販売事業者名</th><td>{{ legal.operator_name }}</td></tr>
+      <tr><th scope="row">運営統括責任者名</th><td>{{ legal.responsible_person }}</td></tr>
+      <tr><th scope="row">所在地</th><td>{{ legal.address }}</td></tr>
+      <tr><th scope="row">電話番号</th><td>{{ legal.phone }}</td></tr>
+      <tr><th scope="row">メールアドレス</th><td>{{ legal.email }}</td></tr>
+      <tr><th scope="row">販売価格（税込）</th><td>{{ legal.price }}</td></tr>
+      <tr><th scope="row">商品代金以外の必要料金</th><td>{{ legal.additional_fees }}</td></tr>
+      <tr><th scope="row">支払方法</th><td>{{ legal.payment_method }}</td></tr>
+      <tr><th scope="row">支払時期</th><td>{{ legal.payment_timing }}</td></tr>
+      <tr><th scope="row">サービス提供時期</th><td>{{ legal.service_start }}</td></tr>
+      <tr><th scope="row">返品・キャンセル（返金）条件</th><td>{{ legal.refund_policy }}</td></tr>
+      <tr><th scope="row">動作環境</th><td>{{ legal.system_requirements }}</td></tr>
+    </tbody>
+  </table>
+</article>
+{% endblock %}

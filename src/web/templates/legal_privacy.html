@@ -1,0 +1,69 @@
+<!-- リーガルチェック前の雛形です。公開前に事業者本人と専門家による確認が必要です。 -->
+{% extends "base.html" %}
+
+{% block title %}プライバシーポリシー | BOATRACE WEB{% endblock %}
+
+{% block head_extra %}
+<style>
+  .legal-page { max-width: 900px; margin: 2rem auto; line-height: 1.8; }
+  .legal-page h1 { margin-bottom: .5rem; }
+  .legal-page h2 { margin-top: 2rem; border-bottom: 1px solid #d7dde5; padding-bottom: .35rem; }
+  .legal-alert { margin: 1.25rem 0; padding: 1rem; border: 2px solid #b42318; background: #fff1f0; color: #7a271a; }
+  .legal-alert code { overflow-wrap: anywhere; }
+  .legal-meta { color: #5d6673; }
+</style>
+{% endblock %}
+
+{% block content %}
+<article class="legal-page">
+  <h1>プライバシーポリシー</h1>
+  <p class="legal-meta">制定・最終改定: {{ legal.effective_date }}</p>
+
+  {% if legal_incomplete %}
+  <section class="legal-alert" role="alert" aria-label="事業者情報の未設定警告">
+    <strong>この表記は未完成です。事業者情報を設定してください。</strong>
+    <div>未設定の環境変数: <code>{{ missing_legal_fields | join(', ') }}</code></div>
+  </section>
+  {% endif %}
+
+  <p>{{ legal.operator_name }}（以下「当方」といいます）は、本サービスにおける利用者情報を次のとおり取り扱います。</p>
+
+  <h2>1. 取得する情報</h2>
+  <ul>
+    <li>アカウント登録に使用するメールアドレス</li>
+    <li>アクセス日時、利用機能、端末・ブラウザ情報、IPアドレス等の利用ログ</li>
+    <li>問い合わせ時に利用者が提供する情報</li>
+  </ul>
+  <p>カード番号等の決済情報はStripeが処理し、当方は保持しません。当方は、決済状態、契約識別子その他サービス提供に必要な決済関連情報を取得することがあります。</p>
+
+  <h2>2. 利用目的</h2>
+  <ul>
+    <li>アカウントの作成、本人確認および本サービスの提供</li>
+    <li>料金の請求、契約状態の確認および問い合わせ対応</li>
+    <li>不正利用の防止、セキュリティ確保および障害調査</li>
+    <li>利用状況の分析と本サービスの改善</li>
+    <li>法令上の義務への対応</li>
+  </ul>
+
+  <h2>3. 第三者提供</h2>
+  <p>当方は、本人の同意がある場合、法令に基づく場合、人の生命・身体・財産の保護に必要な場合その他法令で認められる場合を除き、個人情報を第三者に提供しません。</p>
+
+  <h2>4. 外部サービスへの委託</h2>
+  <p>当方は、本サービスの提供に必要な範囲で、決済処理にStripe、認証・データ管理にSupabase、アプリケーション提供基盤にRender等の外部サービスを利用します。各サービスでは、その提供者のプライバシーに関する条件に従って情報が取り扱われます。</p>
+
+  <h2>5. Cookie等の利用</h2>
+  <p>本サービスは、ログイン状態の維持、セキュリティ確保、利用状況の把握および機能改善のため、Cookieその他の類似技術を利用することがあります。ブラウザの設定でCookieを無効にすると、一部の機能を利用できない場合があります。</p>
+
+  <h2>6. 安全管理と保存期間</h2>
+  <p>当方は、取得した情報への不正アクセス、漏えい、滅失または毀損を防ぐため、合理的な安全管理措置を講じます。情報は、利用目的の達成および法令上必要な期間に限って保持します。</p>
+
+  <h2>7. 開示・訂正・削除等の請求</h2>
+  <p>利用者は、法令に基づき、本人に関する保有個人データの利用目的の通知、開示、訂正、追加、削除、利用停止、消去または第三者提供の停止を請求できます。本人確認に必要な情報を添えて、下記の問い合わせ窓口へ連絡してください。法令上対応できない場合は、その理由を説明します。</p>
+
+  <h2>8. 問い合わせ窓口</h2>
+  <p>事業者: {{ legal.operator_name }}<br>メールアドレス: {{ legal.email }}</p>
+
+  <h2>9. 本ポリシーの変更</h2>
+  <p>当方は、法令またはサービス内容の変更に応じて本ポリシーを変更することがあります。重要な変更は、本サービス上で事前に周知します。</p>
+</article>
+{% endblock %}

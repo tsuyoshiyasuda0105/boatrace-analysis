@@ -6802,6 +6802,7 @@ def create_app(
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
     register_billing_routes(app)
+    app.register_blueprint(__import__("src.web.legal_bp", fromlist=["bp"]).bp)
     app.register_blueprint(kachisuji_bp)
     if start_prediction_bp is not None:
         app.register_blueprint(start_prediction_bp)
