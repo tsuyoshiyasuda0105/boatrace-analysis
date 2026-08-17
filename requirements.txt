@@ -1,5 +1,6 @@
 # コア依存関係 (本番ランタイムに必要)
 requests>=2.31
+httpx>=0.28,<1
 pandas>=2.0
 numpy>=1.24
 stripe>=11.0

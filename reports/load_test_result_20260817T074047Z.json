@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-08-17T07:40:47.114777+00:00",
+  "finished_at": "2026-08-17T07:41:07.293418+00:00",
+  "base_url": "https://boatrace-web.onrender.com",
+  "authentication": "off",
+  "race_ids": [],
+  "configuration": {
+    "stages": [
+      2,
+      5
+    ],
+    "stage_seconds": 10.0,
+    "max_concurrency": 100,
+    "error_rate_stop": 0.1,
+    "p95_stop_sec": 15.0,
+    "request_interval_sec": 1.0,
+    "request_method": "GET"
+  },
+  "stages": [
+    {
+      "concurrency": 2,
+      "elapsed_sec": 10.00538,
+      "requests": 18,
+      "successes": 18,
+      "failures": 0,
+      "error_rate": 0.0,
+      "p50_sec": 0.10804669999924954,
+      "p95_sec": 0.28803784499323215,
+      "p99_sec": 0.3407013290215399,
+      "throughput_rps": 1.7990321926391581,
+      "status_breakdown": {
+        "200": 18
+      },
+      "endpoint_breakdown": {
+        "healthz": 18
+      },
+      "stopped": false,
+      "stop_reason": null
+    },
+    {
+      "concurrency": 5,
+      "elapsed_sec": 10.008713,
+      "requests": 45,
+      "successes": 45,
+      "failures": 0,
+      "error_rate": 0.0,
+      "p50_sec": 0.10604920002515428,
+      "p95_sec": 0.247134999994887,
+      "p99_sec": 0.4008071400073823,
+      "throughput_rps": 4.496082742955981,
+      "status_breakdown": {
+        "200": 45
+      },
+      "endpoint_breakdown": {
+        "healthz": 45
+      },
+      "stopped": false,
+      "stop_reason": null
+    }
+  ],
+  "safe_max_concurrency": 5,
+  "knee_concurrency": null,
+  "bottleneck_hypothesis": "No knee was observed; bottleneck is not identifiable from this run."
+}
