@@ -32,6 +32,13 @@ services:
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
         value: "8192"
+    # Optional paid persistent disk sample for kachisuji search (not enabled):
+    # disk:
+    #   name: kachisuji-data
+    #   mountPath: /data
+    #   sizeGB: 1
+    # KACHISUJI_DB=/data/kachisuji_slim.db
+    # KACHISUJI_STRATEGY_DB=/data/kachisuji_strategies.db
 
   - type: cron
     name: boatrace-program-bootstrap-cron

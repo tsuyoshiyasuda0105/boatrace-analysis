@@ -1,0 +1,1013 @@
+{% extends "base.html" %}
+{% block title %}勝ち筋サーチ{% endblock %}
+{% block head_extra %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='kachisuji.css') }}?v={{ static_version }}">
+  <style>
+    .divider { border: 0; border-top: 1px solid var(--line); margin: 18px 0 14px; }
+    .h3row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 2px 0 8px; }
+    .h3row h2 { margin: 0; font-size: 13.5px; color: var(--ink); letter-spacing: 0; text-transform: none; }
+    .h3row .sub, .strategy-meta { color: var(--ink-3); font-size: 11.5px; }
+    .mylist { display: flex; flex-direction: column; gap: 8px; }
+    .mycard { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+    .mycard .nm { font-size: 13.5px; font-weight: 700; }
+    .mycard button { padding: 5px 10px; font-size: 12px; }
+    .match-group { margin-top: 12px; }
+    .match-group h3 { margin: 0 0 6px; font-size: 13px; }
+    .matchcard { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--surface-2); font-size: 12.8px; }
+    .stat { padding: 2px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700; }
+    .stat-confirmed { background: var(--good-soft); color: var(--good); }
+    .stat-pending { background: var(--warn-soft); color: var(--warn); }
+    .strategy-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .strategy-tools input[type="date"] { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--ink); font: inherit; }
+    .section-message { min-height: 1.5em; margin: 6px 0; color: var(--ink-3); font-size: 12px; }
+  </style>
+{% endblock %}
+{% block content %}
+{% if not kachisuji_ready %}
+  <section class="kachisuji-preparing" aria-labelledby="kachisuji-preparing-title">
+    <h2 id="kachisuji-preparing-title">勝ち筋サーチは準備中です</h2>
+    <p>検索データの準備が整うまで、しばらくお待ちください。ほかの機能は通常どおりご利用いただけます。</p>
+  </section>
+{% else %}
+  <div class="app kachisuji-app">
+    <header class="top">
+      <div class="logo"><span class="mark">◤</span> 勝ち筋サーチ</div>
+      <div class="tagline">条件を組む → 過去データで答え合わせ</div>
+    </header>
+    <div class="demo-note">会員限定 — 過去データを使って検索条件を検証できます。</div>
+
+    <div class="legendbar">
+      <span><span class="chip day">📋 前日確定</span> 番組表・前日までの集計・潮汐計算</span>
+      <span><span class="chip live">⏱ 直前確定</span> 天候・風・展示</span>
+      <span><span class="chip restored">📅 2016/6〜</span> 復元事故率・直近180日平均ST</span>
+      <span><span class="chip lim">📅 2023/5〜</span> 決まり手・過去1年事故率</span>
+      <span><span class="chip lim2">📅 2024/12〜</span> 展示順位・展示タイム・展示ST</span>
+    </div>
+
+    <div class="cols">
+      <section class="panel" aria-labelledby="conditions-title">
+        <h1 id="conditions-title">検索条件</h1>
+        <form id="searchForm">
+          <fieldset>
+            <legend>レース条件</legend>
+            <div class="row">
+              <label for="venue">会場 <span id="venueCount" class="selection-count">全会場</span></label>
+              <label class="all-venues"><input type="checkbox" id="venueAll" checked> 全会場</label>
+              <select id="venue" name="venue" multiple size="6" aria-describedby="venueHelp">
+                <option value="1">桐生</option><option value="2">戸田</option>
+                <option value="3">江戸川</option><option value="4">平和島</option>
+                <option value="5">多摩川</option><option value="6">浜名湖</option>
+                <option value="7">蒲郡</option><option value="8">常滑</option>
+                <option value="9">津</option><option value="10">三国</option>
+                <option value="11">びわこ</option><option value="12">住之江</option>
+                <option value="13">尼崎</option><option value="14">鳴門</option>
+                <option value="15">丸亀</option><option value="16">児島</option>
+                <option value="17">宮島</option><option value="18">徳山</option>
+                <option value="19">下関</option><option value="20">若松</option>
+                <option value="21">芦屋</option><option value="22">福岡</option>
+                <option value="23">唐津</option><option value="24">大村</option>
+              </select>
+              <span class="unit" id="venueHelp">複数選択可</span>
+            </div>
+            <div class="row">
+              <label for="raceNoFrom">レース番号</label>
+              <select id="raceNoFrom"><option value="">指定なし</option></select>
+              <span class="unit">〜</span>
+              <select id="raceNoTo" aria-label="レース番号上限"><option value="">指定なし</option></select>
+              <span class="unit">R</span>
+            </div>
+            <div class="row">
+              <label for="betType">買い目</label>
+              <select id="betType" name="bet_type">
+                <option value="sanrentan">3連単</option>
+                <option value="nirentan">2連単</option>
+                <option value="tansho">単勝</option>
+              </select>
+              <span class="unit">1着</span><select id="pos1" aria-label="1着艇番"></select>
+              <span id="pos2wrap"><span class="unit">2着</span><select id="pos2" aria-label="2着艇番"></select></span>
+              <span id="pos3wrap"><span class="unit">3着</span><select id="pos3" aria-label="3着艇番"></select></span>
+              <span class="unit">号艇</span>
+            </div>
+            <div class="row">
+              <span class="field-label">天候 <span class="chip live">⏱</span></span>
+              <div class="wchips" id="weatherChips">
+                <button type="button" class="wchip" data-value="晴" aria-pressed="false">☀ 晴</button>
+                <button type="button" class="wchip" data-value="曇" aria-pressed="false">☁ 曇</button>
+                <button type="button" class="wchip" data-value="雨" aria-pressed="false">☔ 雨</button>
+              </div>
+            </div>
+            <div class="row">
+              <label for="windDirection">風向き <span class="chip live">⏱</span></label>
+              <select id="windDirection" multiple size="3" aria-label="風向き（複数選択可）">
+                <option value="追い風">追い風</option>
+                <option value="向かい風">向かい風</option>
+                <option value="横風(右)">横風（右）</option>
+                <option value="横風(左)">横風（左）</option>
+                <option value="無風">無風</option>
+              </select>
+              <label for="windStrength" class="short-label">強さ</label>
+              <select id="windStrength">
+                <option value="">指定なし</option>
+                <option value="0,1">無風（0〜1m）</option>
+                <option value="2,3">弱風（2〜3m）</option>
+                <option value="4,5">中風（4〜5m）</option>
+                <option value="6,">強風（6m以上）</option>
+              </select>
+            </div>
+            <div class="row">
+              <label for="tide">潮 <span class="chip day">📋</span></label>
+              <select id="tide">
+                <option value="">指定なし</option><option>満潮前後</option><option>干潮前後</option>
+                <option>上げ潮</option><option>下げ潮</option>
+              </select>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>番組・市場条件</legend>
+            <div class="row">
+              <label for="female">性別構成 <span class="chip day">📋</span></label>
+              <select id="female"><option value="">指定なし</option><option value="0">男性のみ</option><option value="1">女性選手あり</option></select>
+            </div>
+            <div class="row">
+              <label for="classMix">級別構成 <span class="chip day">📋</span></label>
+              <select id="classMix">
+                <option value="">指定なし</option>
+                <option value="1号艇A1・単騎">1号艇A1・単騎（1号艇だけがA1）</option>
+                <option value="1号艇A1・複数">1号艇A1・複数（1号艇A1＋他にもA1）</option>
+                <option value="1号艇非A1・A1あり">1号艇はA1でない（他にA1あり）</option>
+                <option value="A1なし">A1なし</option>
+              </select>
+            </div>
+            <div class="row">
+              <label for="dayIndex">開催日程 <span class="chip day">📋</span></label>
+              <select id="dayIndex"><option value="">指定なし</option><option>初日</option><option>中日</option><option>最終日</option></select>
+              <select id="daypart" aria-label="時間帯"><option value="">時間帯指定なし</option><option>モーニング</option><option>デイ</option><option>ナイター</option></select>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>艇別条件（1〜6号艇）</legend>
+            <p class="accident-guide">平均STはレース前日までの直近180日を公式成績から自前集計し、F・L・欠測を除いた有効走数 n と併記します。n=0 は平均NULLです。事故率の過去検証には「審査期・検証用」を推奨します。</p>
+            <div id="boats"></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>⚖ 艇間比較</legend>
+            <p class="compare-help">艇同士の差を比較します。複数行はすべて満たすレースだけが対象です。</p>
+            <div id="compareRows"></div>
+            <button type="button" id="btnAddCompare" class="compact-button">＋ 比較条件を追加</button>
+          </fieldset>
+
+          <fieldset>
+            <legend>検索期間</legend>
+            <div class="row">
+              <label for="dateFrom">開始日</label><input type="date" id="dateFrom" name="date_from">
+            </div>
+            <div class="row">
+              <label for="dateTo">終了日</label><input type="date" id="dateTo" name="date_to">
+            </div>
+            <label class="fast-option"><input type="checkbox" id="fast"> 高速計算（正規近似95%CI）</label>
+          </fieldset>
+
+        </form>
+      </section>
+
+      <section class="panel results" id="resultsPanel" aria-labelledby="results-title">
+        <h1 id="results-title">検索結果</h1>
+        <div id="resultArea" aria-live="polite">
+          <div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>
+        </div>
+        <div id="strategyMessage" class="section-message" role="status" aria-live="polite"></div>
+
+        <hr class="divider">
+        <div class="h3row">
+          <h2>★ マイ手法</h2>
+          <span class="sub">保存日の翌日以降がフォワード検証の起点です</span>
+        </div>
+        <p class="forward-section-note">フォワードは保存日の翌日以降のレースだけで集計した成績です。探索時の数値は上振れを含むため、実力に近いのはフォワードです。判定はN30以上から。</p>
+        <div id="myStrategies" class="mylist" aria-live="polite">
+          <div class="mycard"><span class="strategy-meta">読み込み中…</span></div>
+        </div>
+
+        <hr class="divider">
+        <div class="h3row">
+          <h2>レース照合</h2>
+          <span class="sub">📋 前日条件で絞り、⏱ 当日条件の未確定は朝候補として表示</span>
+        </div>
+        <div class="strategy-tools">
+          <label for="matchDate">対象日</label>
+          <input type="date" id="matchDate">
+          <button id="btnMatch" type="button">合致レースを表示</button>
+        </div>
+        <div id="matchResults" class="mylist" aria-live="polite"></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="actionbar" role="region" aria-label="検索操作">
+    <div class="actionbar-inner">
+      <button class="primary" id="btnSearch" type="submit" form="searchForm">🔍 検索</button>
+      <button id="btnSaveStrategy" type="button" disabled>★ 保存</button>
+      <span class="condition-count" id="conditionCount" aria-live="polite">条件 1個</span>
+      <button class="mini-kpi" id="miniKpi" type="button" hidden>回収率 — / N —</button>
+      <button class="bar-reset" id="btnReset" type="reset" form="searchForm">リセット</button>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+    var byId = function (id) { return document.getElementById(id); };
+    var boatNumbers = [1, 2, 3, 4, 5, 6];
+    var classNames = ['A1', 'A2', 'B1', 'B2'];
+    var kimarite = [['', '指定なし'], ['nige', '逃げ'], ['sashi', '差し'], ['makuri', 'まくり'], ['makurizashi', 'まくり差し'], ['nuki', '抜き'], ['megumare', '恵まれ']];
+    var compareMetrics = [
+      ['', '指標を選択', ''],
+      ['motor_rate2', 'モーター2連対率', 'pt'],
+      ['avg_st', '平均ST', '秒'],
+      ['ex_time', '展示タイム', '秒'],
+      ['ex_st', '展示ST', '秒'],
+      ['national_rate', '全国勝率', 'pt'],
+      ['local_rate', '当地勝率', 'pt'],
+      ['national_rate2', '全国2連対率', 'pt'],
+      ['age', '年齢', '歳']
+    ];
+    var betConditionTouched = false;
+    var lastConditions = null;
+    var lastBacktest = null;
+
+    function optionList(values, selected) {
+      return values.map(function (value) {
+        return '<option value="' + value + '"' + (String(value) === String(selected) ? ' selected' : '') + '>' + value + '</option>';
+      }).join('');
+    }
+    function compareSelect(id) {
+      return '<select id="' + id + '"><option value="">指定なし</option><option value="min">以上</option><option value="max">以下</option></select>';
+    }
+    function boatBlock(i) {
+      var classes = classNames.map(function (name) {
+        return '<button type="button" class="wchip" data-value="' + name + '" aria-pressed="false">' + name + '</button>';
+      }).join('');
+      var kimOptions = kimarite.map(function (item) { return '<option value="' + item[0] + '">' + item[1] + '</option>'; }).join('');
+      return '<details class="boatdet" id="boat' + i + '"' + (i === 1 ? ' open' : '') + '>' +
+        '<summary><span class="bnum b' + i + '">' + i + '</span>' + i + '号艇 <span class="bsum" id="boatSummary' + i + '">条件なし</span></summary>' +
+        '<div class="conds">' +
+        '<div class="cond">級別 <span class="chip day">📋</span><span class="wchips boat-classes" id="b' + i + 'Classes">' + classes + '</span><span class="unit">複数選択可</span></div>' +
+        '<div class="cond racer-condition">選手 <span class="chip day">📋</span><span class="racer-autocomplete"><input type="text" class="racer-input" id="b' + i + 'Racer" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="b' + i + 'RacerOptions" aria-expanded="false" placeholder="名前または選手番号"><span class="racer-options" id="b' + i + 'RacerOptions" role="listbox" hidden></span></span><span class="unit">名前・カナ・番号</span></div>' +
+        '<div class="cond">年齢 <span class="chip day">📋</span>' + compareSelect('b' + i + 'AgeCmp') + '<input type="number" id="b' + i + 'Age" value="30" min="16" max="100" step="1"><span class="unit">歳</span></div>' +
+        '<div class="cond restored-condition"><strong>平均ST（直近180日）</strong> <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span>' + compareSelect('b' + i + 'AvgStCmp') + '<input type="number" id="b' + i + 'AvgSt" value="0.15" min="0" max="0.5" step="0.01"><span class="unit">秒・F除外</span></div>' +
+        '<div class="cond">全国勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'NationalCmp') + '<input type="number" id="b' + i + 'National" value="6.00" min="0" max="10" step="0.1"></div>' +
+        '<div class="cond">当地勝率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'LocalCmp') + '<input type="number" id="b' + i + 'Local" value="6.00" min="0" max="10" step="0.1"></div>' +
+        '<div class="cond">全国2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'National2Cmp') + '<input type="number" id="b' + i + 'National2" value="40" min="0" max="100" step="0.1"><span class="unit">%</span></div>' +
+        '<div class="cond">当地2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'Local2Cmp') + '<input type="number" id="b' + i + 'Local2" value="40" min="0" max="100" step="0.1"><span class="unit">%</span></div>' +
+        '<div class="cond">モーター2連対率 <span class="chip day">📋</span>' + compareSelect('b' + i + 'MotorCmp') + '<input type="number" id="b' + i + 'Motor" value="35" min="0" max="100" step="1"><span class="unit">%</span></div>' +
+        '<div class="cond limited2">展示順位 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExFrom"><option value="">指定なし</option>' + optionList(boatNumbers, '') + '</select><span class="unit">〜</span><select id="b' + i + 'ExTo">' + optionList(boatNumbers, 3) + '</select></div>' +
+        '<div class="cond limited2">展示タイム 会場平均比 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExDevDir"><option value="">指定なし</option><option value="faster_by">平均より速い</option><option value="slower_by">平均より遅い</option></select><input type="number" id="b' + i + 'ExDev" value="0.10" min="0" max="1" step="0.05"><span class="unit">秒以上</span></div>' +
+        '<div class="cond limited2">展示ST <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span>' + compareSelect('b' + i + 'ExStCmp') + '<input type="number" id="b' + i + 'ExSt" value="0.10" min="-0.1" max="0.5" step="0.01"><span class="unit">秒</span></div>' +
+        '<div class="cond limited"><strong>決まり手 勝率（進入コース時）</strong> <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span><select id="b' + i + 'Kimarite">' + kimOptions + '</select><input type="number" id="b' + i + 'KimariteRate" value="50" min="0" max="100" step="5"><span class="unit">%以上</span><span class="kimarite-help">1コースに入ったときの逃げ率など、そのコースに入ったときの決まり手成功率です。</span></div>' +
+        '<div class="cond limited">事故率（審査期・本日判定用） <span class="chip day">📋</span><span class="chip current">📅 2026/7〜</span>' + compareSelect('b' + i + 'AccidentCmp') + '<input type="number" id="b' + i + 'Accident" value="0.30" min="0" max="5" step="0.05"></div>' +
+        '<div class="cond restored-condition"><strong>事故率（審査期・検証用）</strong> <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜・推奨</span>' + compareSelect('b' + i + 'AccidentPeriodCmp') + '<input type="number" id="b' + i + 'AccidentPeriod" value="1.00" min="0" max="100" step="0.05"><span class="unit">%</span></div>' +
+        '<div class="cond restored-condition">事故件数（審査期・検証用） <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span>' + compareSelect('b' + i + 'AccidentCountPeriodCmp') + '<input type="number" id="b' + i + 'AccidentCountPeriod" value="1" min="0" step="1"><span class="unit">件</span></div>' +
+        '<div class="cond limited">事故点（審査期） <span class="chip day">📋</span>' + compareSelect('b' + i + 'AccidentPointsCmp') + '<input type="number" id="b' + i + 'AccidentPoints" value="2" min="0" step="1"><span class="unit">点</span></div>' +
+        '<div class="cond limited">事故率（過去1年・参考） <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span>' + compareSelect('b' + i + 'Accident365Cmp') + '<input type="number" id="b' + i + 'Accident365" value="0.30" min="0" max="100" step="0.05"><span class="unit">%</span></div>' +
+        '</div></details>';
+    }
+
+    byId('pos1').innerHTML = optionList(boatNumbers, 1);
+    byId('pos2').innerHTML = optionList(boatNumbers, 2);
+    byId('pos3').innerHTML = optionList(boatNumbers, 3);
+    byId('raceNoFrom').innerHTML += optionList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '');
+    byId('raceNoTo').innerHTML += optionList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '');
+    byId('boats').innerHTML = boatNumbers.map(boatBlock).join('');
+
+    var racerSearchTimers = {};
+    var racerRequestVersions = {};
+    function closeRacerOptions(input) {
+      var options = byId(input.getAttribute('aria-controls'));
+      options.hidden = true;
+      options.replaceChildren();
+      options.dataset.activeIndex = '-1';
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    }
+    function setActiveRacerOption(input, index) {
+      var options = byId(input.getAttribute('aria-controls'));
+      var items = Array.from(options.querySelectorAll('.racer-option'));
+      if (!items.length) return;
+      var active = (index + items.length) % items.length;
+      items.forEach(function (item, itemIndex) {
+        item.setAttribute('aria-selected', String(itemIndex === active));
+      });
+      options.dataset.activeIndex = String(active);
+      input.setAttribute('aria-activedescendant', items[active].id);
+      items[active].scrollIntoView({block: 'nearest'});
+    }
+    function selectRacer(input, option) {
+      input.dataset.racerNumber = option.dataset.racerNumber;
+      input.dataset.racerName = option.dataset.racerName;
+      input.value = option.dataset.racerName + ' (' + option.dataset.racerNumber + ')';
+      closeRacerOptions(input);
+      refreshBoatSummaries();
+      refreshConditionCount();
+      input.focus();
+    }
+    function renderRacerOptions(input, racers) {
+      var options = byId(input.getAttribute('aria-controls'));
+      options.replaceChildren();
+      racers.forEach(function (racer, index) {
+        var option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'racer-option';
+        option.id = options.id + '-' + index;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', 'false');
+        option.dataset.racerNumber = String(racer.racer_number);
+        option.dataset.racerName = racer.name || '';
+        var primary = document.createElement('strong');
+        primary.textContent = (racer.name || '名前未登録') + ' (' + racer.racer_number + ')';
+        var kana = document.createElement('span');
+        kana.textContent = racer.name_kana || '';
+        option.append(primary, kana);
+        options.appendChild(option);
+      });
+      options.hidden = racers.length === 0;
+      options.dataset.activeIndex = '-1';
+      input.setAttribute('aria-expanded', String(racers.length > 0));
+      input.removeAttribute('aria-activedescendant');
+    }
+    byId('boats').addEventListener('input', function (event) {
+      var input = event.target.closest('.racer-input');
+      if (!input) return;
+      delete input.dataset.racerNumber;
+      delete input.dataset.racerName;
+      var boat = input.id.match(/^b(\d)Racer$/)[1];
+      window.clearTimeout(racerSearchTimers[boat]);
+      racerRequestVersions[boat] = (racerRequestVersions[boat] || 0) + 1;
+      var version = racerRequestVersions[boat];
+      var query = input.value.trim();
+      closeRacerOptions(input);
+      if (!query || /^\d+(?:\s|$)/.test(query)) return;
+      racerSearchTimers[boat] = window.setTimeout(async function () {
+        try {
+          var racers = await requestJson('/kachisuji/api/racers?q=' + encodeURIComponent(query));
+          if (racerRequestVersions[boat] === version && input.value.trim() === query) {
+            renderRacerOptions(input, racers);
+          }
+        } catch (_error) {
+          if (racerRequestVersions[boat] === version) closeRacerOptions(input);
+        }
+      }, 250);
+    });
+    byId('boats').addEventListener('keydown', function (event) {
+      var input = event.target.closest('.racer-input');
+      if (!input) return;
+      var options = byId(input.getAttribute('aria-controls'));
+      var items = Array.from(options.querySelectorAll('.racer-option'));
+      if (event.key === 'Escape') {
+        closeRacerOptions(input);
+        return;
+      }
+      if (options.hidden || !items.length) return;
+      var active = Number(options.dataset.activeIndex || -1);
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        var next = event.key === 'ArrowDown' ? active + 1 : (active < 0 ? items.length - 1 : active - 1);
+        setActiveRacerOption(input, next);
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        selectRacer(input, items[active < 0 ? 0 : active]);
+      }
+    });
+    byId('boats').addEventListener('mousedown', function (event) {
+      if (event.target.closest('.racer-option')) event.preventDefault();
+    });
+    byId('boats').addEventListener('click', function (event) {
+      var option = event.target.closest('.racer-option');
+      if (!option) return;
+      selectRacer(option.closest('.racer-autocomplete').querySelector('.racer-input'), option);
+    });
+    document.addEventListener('click', function (event) {
+      document.querySelectorAll('.racer-input[aria-expanded="true"]').forEach(function (input) {
+        if (!input.closest('.racer-autocomplete').contains(event.target)) closeRacerOptions(input);
+      });
+    });
+
+    function compareRow() {
+      var metricOptions = compareMetrics.map(function (item) {
+        return '<option value="' + item[0] + '">' + item[1] + '</option>';
+      }).join('');
+      return '<div class="compare-row">' +
+        '<select class="compare-boat" aria-label="比較する艇">' + optionList(boatNumbers, 1) + '</select><span class="unit">号艇の</span>' +
+        '<select class="compare-metric">' + metricOptions + '</select><span class="unit">が</span>' +
+        '<select class="compare-other" aria-label="比較相手の艇">' + optionList(boatNumbers, 2) + '</select><span class="unit">号艇</span>' +
+        '<select class="compare-op"><option value="ge">以上</option><option value="le">以下</option></select>' +
+        '<span class="unit">差:</span><input class="compare-margin" type="number" min="0" step="0.01" placeholder="任意（0）" aria-label="差（任意）"><span class="compare-unit unit"></span>' +
+        '<button type="button" class="remove-compare compact-button" aria-label="比較条件を削除">削除</button></div>';
+    }
+    function updateCompareUnit(row) {
+      var metric = row.querySelector('.compare-metric').value;
+      var definition = compareMetrics.find(function (item) { return item[0] === metric; });
+      row.querySelector('.compare-unit').textContent = definition ? definition[2] : '';
+    }
+    byId('btnAddCompare').addEventListener('click', function () {
+      byId('compareRows').insertAdjacentHTML('beforeend', compareRow());
+    });
+    byId('compareRows').addEventListener('change', function (event) {
+      var row = event.target.closest('.compare-row');
+      if (row) updateCompareUnit(row);
+    });
+    byId('compareRows').addEventListener('click', function (event) {
+      var button = event.target.closest('.remove-compare');
+      if (button) button.closest('.compare-row').remove();
+    });
+
+    document.addEventListener('click', function (event) {
+      var chip = event.target.closest('.wchip');
+      if (!chip) return;
+      var active = chip.getAttribute('aria-pressed') !== 'true';
+      chip.setAttribute('aria-pressed', String(active));
+      chip.classList.toggle('on', active);
+      refreshBoatSummaries();
+    });
+
+    function refreshBetUI() {
+      var kind = byId('betType').value;
+      byId('pos2wrap').hidden = kind === 'tansho';
+      byId('pos3wrap').hidden = kind !== 'sanrentan';
+    }
+    ['betType', 'pos1', 'pos2', 'pos3'].forEach(function (id) {
+      byId(id).addEventListener('change', function () { betConditionTouched = true; });
+    });
+    byId('betType').addEventListener('change', refreshBetUI);
+    refreshBetUI();
+
+    function refreshVenueUI() {
+      var count = byId('venue').selectedOptions.length;
+      byId('venueAll').checked = count === 0;
+      byId('venueCount').textContent = count ? count + '会場' : '全会場';
+    }
+    byId('venueAll').addEventListener('change', function () {
+      if (this.checked) {
+        Array.from(byId('venue').options).forEach(function (option) { option.selected = false; });
+      }
+      refreshVenueUI();
+    });
+    byId('venue').addEventListener('change', refreshVenueUI);
+
+    function addRange(target, key, cmpId, valueId) {
+      var direction = byId(cmpId).value;
+      if (direction) target[key] = Object.fromEntries([[direction, Number(byId(valueId).value)]]);
+    }
+    function collectBoat(i) {
+      var boat = {};
+      var classes = Array.from(document.querySelectorAll('#b' + i + 'Classes .wchip.on')).map(function (chip) { return chip.dataset.value; });
+      if (classes.length) boat.class = classes;
+      var racerInput = byId('b' + i + 'Racer');
+      var racer = racerInput.value.trim();
+      if (racerInput.dataset.racerNumber) boat.racer_id = Number(racerInput.dataset.racerNumber);
+      else if (racer) {
+        var racerNumber = racer.match(/^\s*(\d+)(?:\s|$)/);
+        boat.racer_id = racerNumber ? Number(racerNumber[1]) : racer;
+      }
+      addRange(boat, 'age', 'b' + i + 'AgeCmp', 'b' + i + 'Age');
+      addRange(boat, 'avg_st', 'b' + i + 'AvgStCmp', 'b' + i + 'AvgSt');
+      addRange(boat, 'national_rate', 'b' + i + 'NationalCmp', 'b' + i + 'National');
+      addRange(boat, 'local_rate', 'b' + i + 'LocalCmp', 'b' + i + 'Local');
+      addRange(boat, 'national_rate2', 'b' + i + 'National2Cmp', 'b' + i + 'National2');
+      addRange(boat, 'local_rate2', 'b' + i + 'Local2Cmp', 'b' + i + 'Local2');
+      addRange(boat, 'motor_rate2', 'b' + i + 'MotorCmp', 'b' + i + 'Motor');
+      addRange(boat, 'ex_st', 'b' + i + 'ExStCmp', 'b' + i + 'ExSt');
+      addRange(boat, 'accident_rate', 'b' + i + 'AccidentCmp', 'b' + i + 'Accident');
+      addRange(boat, 'accident_rate_period', 'b' + i + 'AccidentPeriodCmp', 'b' + i + 'AccidentPeriod');
+      addRange(boat, 'accident_count_period', 'b' + i + 'AccidentCountPeriodCmp', 'b' + i + 'AccidentCountPeriod');
+      addRange(boat, 'accident_points', 'b' + i + 'AccidentPointsCmp', 'b' + i + 'AccidentPoints');
+      addRange(boat, 'accident_rate_365d', 'b' + i + 'Accident365Cmp', 'b' + i + 'Accident365');
+      var exFrom = byId('b' + i + 'ExFrom').value;
+      if (exFrom) boat.ex_rank = {min: Number(exFrom), max: Number(byId('b' + i + 'ExTo').value)};
+      var exDirection = byId('b' + i + 'ExDevDir').value;
+      if (exDirection) boat.ex_dev = Object.fromEntries([[exDirection, Number(byId('b' + i + 'ExDev').value)]]);
+      var technique = byId('b' + i + 'Kimarite').value;
+      if (technique) boat.kimarite = {name: technique, rate_min: Number(byId('b' + i + 'KimariteRate').value)};
+      return boat;
+    }
+    function refreshBoatSummaries() {
+      boatNumbers.forEach(function (i) {
+        var count = Object.keys(collectBoat(i)).length;
+        byId('boatSummary' + i).textContent = count ? '条件 ' + count + ' 個' : '条件なし';
+      });
+    }
+    byId('boats').addEventListener('change', refreshBoatSummaries);
+    byId('boats').addEventListener('input', refreshBoatSummaries);
+
+    function collectConditions() {
+      var result = {};
+      if (betConditionTouched) {
+        result.bet = {type: byId('betType').value, first: Number(byId('pos1').value)};
+        if (result.bet.type !== 'tansho') result.bet.second = Number(byId('pos2').value);
+        if (result.bet.type === 'sanrentan') result.bet.third = Number(byId('pos3').value);
+      }
+      var venues = Array.from(byId('venue').selectedOptions).map(function (option) { return Number(option.value); });
+      if (venues.length) result.venue = venues;
+      var raceNo = {};
+      if (byId('raceNoFrom').value) raceNo.min = Number(byId('raceNoFrom').value);
+      if (byId('raceNoTo').value) raceNo.max = Number(byId('raceNoTo').value);
+      if (Object.keys(raceNo).length) result.race_no = raceNo;
+      var weather = Array.from(document.querySelectorAll('#weatherChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
+      if (weather.length) result.weather = weather;
+      var windDirections = Array.from(byId('windDirection').selectedOptions).map(function (option) { return option.value; });
+      if (windDirections.length) result.wind_dir = windDirections;
+      var wind = byId('windStrength').value;
+      if (wind) {
+        var bounds = wind.split(','); result.wind_speed = {};
+        if (bounds[0]) result.wind_speed.min = Number(bounds[0]);
+        if (bounds[1]) result.wind_speed.max = Number(bounds[1]);
+      }
+      [['tide', 'tide_phase'], ['classMix', 'class_mix'], ['dayIndex', 'day_index'], ['daypart', 'daypart']].forEach(function (pair) {
+        if (byId(pair[0]).value) result[pair[1]] = byId(pair[0]).value;
+      });
+      if (byId('female').value) result.female_present = Number(byId('female').value);
+      if (byId('dateFrom').value) result.date_from = byId('dateFrom').value;
+      if (byId('dateTo').value) result.date_to = byId('dateTo').value;
+      var boats = {};
+      boatNumbers.forEach(function (i) { var boat = collectBoat(i); if (Object.keys(boat).length) boats[String(i)] = boat; });
+      if (Object.keys(boats).length) result.boats = boats;
+      var comparisons = Array.from(document.querySelectorAll('#compareRows .compare-row')).map(function (row) {
+        var metric = row.querySelector('.compare-metric').value;
+        if (!metric) return null;
+        return {
+          metric: metric,
+          boat: Number(row.querySelector('.compare-boat').value),
+          op: row.querySelector('.compare-op').value,
+          other: Number(row.querySelector('.compare-other').value),
+          margin: row.querySelector('.compare-margin').value.trim()
+            ? Number(row.querySelector('.compare-margin').value) : 0
+        };
+      }).filter(Boolean);
+      if (comparisons.length) result.compare = comparisons;
+      if (byId('fast').checked) result.fast = true;
+      return result;
+    }
+
+    function countConfiguredConditions(conditions) {
+      var count = 0;
+      Object.keys(conditions).forEach(function (key) {
+        if (key === 'fast') return;
+        if (key === 'boats') {
+          Object.keys(conditions.boats).forEach(function (boat) {
+            count += Object.keys(conditions.boats[boat]).length;
+          });
+        } else if (key === 'compare') {
+          count += conditions.compare.length;
+        } else {
+          count += 1;
+        }
+      });
+      return count;
+    }
+    function activeConditionCount() {
+      return countConfiguredConditions(collectConditions());
+    }
+    function refreshConditionCount() {
+      byId('conditionCount').textContent = '条件 ' + activeConditionCount() + '個';
+    }
+    byId('searchForm').addEventListener('input', refreshConditionCount);
+    byId('searchForm').addEventListener('change', refreshConditionCount);
+    byId('searchForm').addEventListener('click', function () { window.setTimeout(refreshConditionCount, 0); });
+
+    function escapeHtml(value) {
+      var node = document.createElement('span'); node.textContent = String(value); return node.innerHTML;
+    }
+    function optionText(selectId, value) {
+      var option = Array.from(byId(selectId).options).find(function (item) { return String(item.value) === String(value); });
+      return option ? option.textContent.trim() : String(value);
+    }
+    function controlLabel(controlId, fallback) {
+      var control = byId(controlId);
+      var row = control && control.closest('.cond, .row');
+      if (!row) return fallback;
+      var strong = row.querySelector('strong');
+      if (strong) return strong.textContent.trim().replace(/（直近180日）$/, '');
+      var label = row.querySelector('label[for="' + controlId + '"]');
+      if (label && label.firstChild) return label.firstChild.textContent.trim();
+      var text = Array.from(row.childNodes).find(function (node) {
+        return node.nodeType === Node.TEXT_NODE && node.textContent.trim();
+      });
+      return text ? text.textContent.trim() : fallback;
+    }
+    function numberText(value) {
+      return Number.isFinite(Number(value)) ? String(Number(value)) : String(value);
+    }
+    function rangeText(label, range, unit) {
+      var hasMin = range && range.min !== undefined;
+      var hasMax = range && range.max !== undefined;
+      if (hasMin && hasMax) return label + numberText(range.min) + unit + '〜' + numberText(range.max) + unit;
+      if (hasMin) return label + numberText(range.min) + unit + '以上';
+      if (hasMax) return label + numberText(range.max) + unit + '以下';
+      return '';
+    }
+    function racerSummaryText(boatNumber, value) {
+      var input = byId('b' + boatNumber + 'Racer');
+      var number = String(value).trim().split(/\s+/)[0];
+      if (input.dataset.racerNumber === number && input.dataset.racerName) {
+        return input.dataset.racerName + '(' + number + ')';
+      }
+      return number;
+    }
+    function conditionSummaryHtml(conditions) {
+      var count = countConfiguredConditions(conditions);
+      if (!count) {
+        return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件: 指定なし（全レース）</h2></section>';
+      }
+      var groups = [];
+      var race = [];
+      if (conditions.venue !== undefined) {
+        var venues = Array.isArray(conditions.venue) ? conditions.venue : [conditions.venue];
+        race.push(controlLabel('venue', '会場') + ': ' + venues.map(function (value) { return optionText('venue', value); }).join('・'));
+      }
+      if (conditions.race_no) race.push(rangeText(controlLabel('raceNoFrom', 'レース番号'), conditions.race_no, 'R'));
+      if (conditions.bet) {
+        var ticket = [conditions.bet.first];
+        if (conditions.bet.second !== undefined) ticket.push(conditions.bet.second);
+        if (conditions.bet.third !== undefined) ticket.push(conditions.bet.third);
+        race.push(controlLabel('betType', '買い目') + ': ' + optionText('betType', conditions.bet.type) + ' ' + ticket.join('-'));
+      }
+      if (conditions.weather) race.push('天候: ' + conditions.weather.join('・'));
+      if (conditions.wind_dir) race.push(controlLabel('windDirection', '風向き') + ': ' + conditions.wind_dir.join('・'));
+      if (conditions.wind_speed) race.push(rangeText('風速', conditions.wind_speed, 'm'));
+      if (conditions.tide_phase !== undefined) race.push(controlLabel('tide', '潮') + ': ' + conditions.tide_phase);
+      if (race.length) groups.push(['レース', race]);
+
+      var program = [];
+      if (conditions.female_present !== undefined) program.push(controlLabel('female', '性別構成') + ': ' + optionText('female', conditions.female_present));
+      if (conditions.class_mix !== undefined) program.push(controlLabel('classMix', '級別構成') + ': ' + conditions.class_mix);
+      if (conditions.day_index !== undefined) program.push(controlLabel('dayIndex', '開催日程') + ': ' + conditions.day_index);
+      if (conditions.daypart !== undefined) program.push('時間帯: ' + conditions.daypart);
+      if (program.length) groups.push(['番組', program]);
+
+      var boatControls = {
+        'class': ['Classes', ''], racer_id: ['Racer', ''], age: ['Age', '歳'], avg_st: ['AvgSt', '秒'],
+        national_rate: ['National', '点'], local_rate: ['Local', '点'], national_rate2: ['National2', '%'],
+        local_rate2: ['Local2', '%'], motor_rate2: ['Motor', '%'], ex_rank: ['ExFrom', '位'],
+        ex_dev: ['ExDev', '秒'], ex_st: ['ExSt', '秒'], kimarite: ['Kimarite', ''],
+        accident_rate: ['Accident', '%'], accident_rate_period: ['AccidentPeriod', '%'],
+        accident_count_period: ['AccidentCountPeriod', '件'], accident_points: ['AccidentPoints', '点'],
+        accident_rate_365d: ['Accident365', '%']
+      };
+      var boatRows = [];
+      Object.keys(conditions.boats || {}).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (boatNumber) {
+        var boatItems = [];
+        var boat = conditions.boats[boatNumber];
+        Object.keys(boat).forEach(function (key) {
+          var definition = boatControls[key];
+          if (!definition) return;
+          var label = controlLabel('b' + boatNumber + definition[0], key);
+          var value = boat[key];
+          if (key === 'class') boatItems.push(label + ': ' + value.join('・'));
+          else if (key === 'racer_id') boatItems.push(label + ': ' + racerSummaryText(boatNumber, value));
+          else if (key === 'kimarite') {
+            var technique = kimarite.find(function (item) { return item[0] === value.name; });
+            boatItems.push(label + ': ' + (technique ? technique[1] : value.name) + '・勝率' + numberText(value.rate_min) + '%以上');
+          } else if (key === 'ex_dev') {
+            if (value.faster_by !== undefined) boatItems.push(label + 'が会場平均より' + numberText(value.faster_by) + '秒以上速い');
+            if (value.slower_by !== undefined) boatItems.push(label + 'が会場平均より' + numberText(value.slower_by) + '秒以上遅い');
+          } else boatItems.push(rangeText(label, value, definition[1]));
+        });
+        if (boatItems.length) boatRows.push(boatNumber + '号艇: ' + boatItems.join('・'));
+      });
+      if (boatRows.length) groups.push(['艇別', boatRows]);
+
+      var comparisons = (conditions.compare || []).map(function (comparison) {
+        var metric = compareMetrics.find(function (item) { return item[0] === comparison.metric; });
+        var unit = {motor_rate2: '%', avg_st: '秒', ex_time: '秒', ex_st: '秒', national_rate: '点', local_rate: '点', national_rate2: '%', age: '歳'}[comparison.metric] || '';
+        var symbol = comparison.op === 'le' ? '≤' : '≥';
+        var sign = comparison.op === 'le' ? '−' : '+';
+        return comparison.boat + '号艇の' + (metric ? metric[1] : comparison.metric) + ' ' + symbol + ' ' + comparison.other + '号艇 ' + sign + numberText(comparison.margin || 0) + unit;
+      });
+      if (comparisons.length) groups.push(['比較', comparisons]);
+
+      var period = '全期間';
+      if (conditions.date_from && conditions.date_to) period = conditions.date_from + ' 〜 ' + conditions.date_to;
+      else if (conditions.date_from) period = conditions.date_from + ' 以降';
+      else if (conditions.date_to) period = conditions.date_to + ' 以前';
+      groups.push(['期間', [period]]);
+      return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件（' + count + '項目）</h2>' + groups.map(function (group) {
+        return '<p><strong>[' + escapeHtml(group[0]) + ']</strong> ' + group[1].map(escapeHtml).join(' ／ ') + '</p>';
+      }).join('') + '</section>';
+    }
+    function renderResult(data, conditions) {
+      var roiClass = data.roi >= 110 ? 'roi-good' : (data.roi >= 90 ? 'roi-mid' : 'roi-bad');
+      var warnings = data.warnings.map(function (warning) {
+        var level = warning.indexOf('n<30') === 0 ? 'critical' : 'warning';
+        return '<div class="warnbox ' + level + '">⚠ ' + escapeHtml(warning) + '</div>';
+      }).join('');
+      if (!warnings) warnings = '<div class="okbox">✓ 小標本警告はありません。</div>';
+      var monthlyByYear = (data.monthly || []).reduce(function (groups, month) {
+        (groups[month.year] = groups[month.year] || []).push(month); return groups;
+      }, {});
+      var years = data.yearly.map(function (year) {
+        var months = monthlyByYear[year.year] || [];
+        var controlId = 'monthly-' + year.year;
+        var toggle = months.length
+          ? '<button type="button" class="month-toggle" aria-expanded="false" aria-controls="' + controlId + '" aria-label="' + year.year + '年の月別内訳を開く">＋</button>'
+          : '<span class="month-toggle-placeholder" aria-hidden="true"></span>';
+        var monthRows = months.map(function (month) {
+          return '<tr class="month-row"><td><span class="month-indent">' + month.year + '年' + month.month + '月</span></td><td>' + month.n + '</td><td>' + month.hits + '</td><td class="' + (month.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + month.roi.toFixed(1) + '%</td></tr>';
+        }).join('');
+        return '<tbody class="year-group"><tr class="year-row"><td>' + toggle + '<span>' + year.year + '年</span></td><td>' + year.n + '</td><td>' + year.hits + '</td><td class="' + (year.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + year.roi.toFixed(1) + '%</td></tr></tbody>' +
+          (months.length ? '<tbody id="' + controlId + '" class="month-rows" hidden>' + monthRows + '</tbody>' : '');
+      }).join('') || '<tbody><tr><td colspan="4">対象データなし</td></tr></tbody>';
+      var range = data.effective_date_range[0] ? escapeHtml(data.effective_date_range[0]) + ' 〜 ' + escapeHtml(data.effective_date_range[1]) : '対象データなし';
+      var excludedTotal = data.excluded.result_missing + data.excluded.condition_null;
+      byId('resultArea').innerHTML =
+        conditionSummaryHtml(conditions) +
+        discoveryStatusHtml(data) +
+        '<div class="kpis">' +
+        '<div class="kpi"><div class="v ' + roiClass + '">' + data.roi.toFixed(1) + '%</div><div class="l">回収率</div><div class="ci">95%CI ' + data.roi_ci_low.toFixed(1) + '〜' + data.roi_ci_high.toFixed(1) + '%</div></div>' +
+        '<div class="kpi"><div class="v">' + data.hit_rate.toFixed(1) + '%</div><div class="l">的中率</div><div class="ci">' + data.hits + ' / ' + data.n + ' 本</div></div>' +
+        '<div class="kpi"><div class="v">' + data.n + '</div><div class="l">合致レース数 N</div><div class="ci">' + range + '</div></div>' +
+        '<div class="kpi"><div class="v">' + excludedTotal + '</div><div class="l">除外件数</div><div class="ci">結果欠損 ' + data.excluded.result_missing + '件</div></div></div>' +
+        warnings +
+        '<div class="exclusions"><h2>除外の内訳</h2><dl><div><dt>結果・払戻欠損</dt><dd>' + data.excluded.result_missing + '件</dd></div><div class="condition-null"><dt>条件判定不能で除外した件数</dt><dd>' + data.excluded.condition_null + '件</dd></div></dl></div>' +
+        '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年月</th><th>N</th><th>的中</th><th>回収率</th></tr></thead>' + years + '</table>';
+      byId('miniKpi').hidden = false;
+      byId('miniKpi').textContent = '回収率 ' + data.roi.toFixed(1) + '% / N ' + data.n;
+      byId('resultArea').classList.remove('result-updated');
+      void byId('resultArea').offsetWidth;
+      byId('resultArea').classList.add('result-updated');
+    }
+
+    function discoveryStatusHtml(data) {
+      var n = Number(data.n);
+      var roi = Number(data.roi);
+      var roiCiLow = Number(data.roi_ci_low);
+      var rank;
+      if (n < 30) {
+        rank = {
+          key: 'unexplored',
+          label: '🌫️ 未探査',
+          description: '母数が少なすぎて判定できません。検証を続けましょう。'
+        };
+      } else if (n >= 100 && roi >= 100 && roiCiLow >= 100) {
+        rank = {
+          key: 'gold',
+          label: '⛏️ 金脈発見',
+          description: '十分な検証量があり、95%信頼区間の下限も100%以上です。'
+        };
+      } else if (roi >= 100) {
+        rank = {
+          key: 'vein',
+          label: '✨ 鉱脈の気配',
+          description: n < 100
+            ? '回収率は100%以上ですが、十分な検証量まであと' + (100 - n) + 'レースです。'
+            : '回収率は100%以上ですが、95%信頼区間の下限が100%未満のため検証継続です。'
+        };
+      } else if (roi >= 70) {
+        rank = {
+          key: 'review',
+          label: '🪨 要検証',
+          description: '条件を見直しながら、さらに検証を重ねる段階です。'
+        };
+      } else {
+        rank = {
+          key: 'miss',
+          label: '⛰️ ハズレ鉱区',
+          description: '外れを知るのも発掘のうち。この条件は避ける判断材料になります。'
+        };
+      }
+      return '<section class="discovery-status discovery-' + rank.key + '" aria-label="発掘ステータス">' +
+        '<strong>' + rank.label + '</strong><span>' + rank.description + '</span></section>';
+    }
+
+    function showResultsOnMobile() {
+      if (!window.matchMedia('(max-width: 879px)').matches) return;
+      var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      byId('resultsPanel').scrollIntoView({behavior: reduced ? 'auto' : 'smooth', block: 'start'});
+    }
+
+    async function requestJson(url, options) {
+      var response = await fetch(url, options);
+      var data = await response.json();
+      if (!response.ok) throw new Error(data.error || '処理に失敗しました');
+      return data;
+    }
+    function metricText(metric) {
+      if (!metric || !Number.isFinite(Number(metric.roi)) || !Number.isFinite(Number(metric.n))) return '<strong>—</strong><span>N —</span>';
+      return '<strong>' + Number(metric.roi).toFixed(1) + '%</strong><span>N ' + Number(metric.n) + '</span>';
+    }
+    function sparkline(curve, name) {
+      var points = Array.isArray(curve) ? curve : [];
+      var width = 180, height = 48, pad = 4;
+      var values = points.map(function (point) { return Number(point.cumulative); }).filter(Number.isFinite);
+      var min = Math.min.apply(null, values.concat([0]));
+      var max = Math.max.apply(null, values.concat([0]));
+      var span = Math.max(1, max - min);
+      function y(value) { return (height - pad - ((value - min) / span) * (height - pad * 2)).toFixed(1); }
+      var path = values.map(function (value, index) {
+        var x = values.length < 2 ? width / 2 : pad + index * (width - pad * 2) / (values.length - 1);
+        return (index ? 'L' : 'M') + x.toFixed(1) + ',' + y(value);
+      }).join(' ');
+      var end = values.length ? values[values.length - 1] : 0;
+      var endX = values.length < 2 ? width / 2 : width - pad;
+      return '<svg class="forward-sparkline ' + (end >= 0 ? 'spark-positive' : 'spark-negative') + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escapeHtml(name) + 'のフォワード累積収支">' +
+        '<line class="spark-zero" x1="0" x2="' + width + '" y1="' + y(0) + '" y2="' + y(0) + '"></line>' +
+        (path ? '<path class="spark-path" d="' + path + '"></path><circle class="spark-end" cx="' + endX.toFixed(1) + '" cy="' + y(end) + '" r="3"></circle>' : '') +
+        '</svg>';
+    }
+    function formatSavedDate(createdAt) {
+      var parsed = new Date(createdAt);
+      if (Number.isNaN(parsed.getTime())) return escapeHtml(String(createdAt).slice(0, 10));
+      return parsed.toLocaleDateString('ja-JP', {timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'});
+    }
+    function strategyGrowthHtml(item) {
+      var forwardN = Math.max(0, Number(item.forward && item.forward.n) || 0);
+      var level = forwardN < 30
+        ? ['0', '🌱', '育成中']
+        : (forwardN < 100
+          ? ['1', '🌿', '判定可能']
+          : (forwardN < 300 ? ['2', '🌳', '実績あり'] : ['3', '🏔️', '長期検証済み']));
+      var note = '<span class="growth-note">レベルは検証したレース数を表します。成績は判定バッジで確認します。</span>';
+      var growth = '<div class="strategy-growth-head"><span class="strategy-level">Lv.' + level[0] + ' ' + level[1] + ' ' + level[2] + '</span>' +
+        '<span class="growth-volume">フォワード N ' + forwardN + '</span></div>' + note;
+      if (forwardN >= 30) return '<div class="strategy-growth">' + growth + '</div>';
+      var remainingValue = Number(item.races_until_verdict);
+      var remaining = Number.isFinite(remainingValue) ? Math.max(0, remainingValue) : Math.max(0, 30 - forwardN);
+      var progress = Math.min(100, forwardN / 30 * 100);
+      return '<div class="strategy-growth">' + growth +
+        '<div class="growth-progress" role="progressbar" aria-label="判定に必要な30レースまでの検証進捗" aria-valuemin="0" aria-valuemax="30" aria-valuenow="' + forwardN + '">' +
+        '<span style="width:' + progress.toFixed(1) + '%"></span></div>' +
+        '<div class="growth-remaining">🌱 判定まで あと' + remaining + 'レース</div></div>';
+    }
+    function performanceCard(item) {
+        var icon = {promote: '🟢', watch: '⚪', demote: '🔴', pending: '🟡'}[item.verdict] || '';
+        return '<article class="mycard strategy-performance" data-strategy-id="' + Number(item.strategy_id) + '">' +
+          '<div class="strategy-card-head"><div><div class="nm">★ ' + escapeHtml(item.name) + '</div>' +
+          '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + '</div></div>' +
+          '<button type="button" class="delete-strategy" data-id="' + Number(item.strategy_id) + '">削除</button></div>' +
+          '<div class="strategy-elapsed">保存から' + Number(item.days_since_saved) + '日 / フォワード' + Math.max(0, Number(item.forward && item.forward.n) || 0) + 'レース消化</div>' +
+          '<div class="performance-grid" aria-label="3成績"><div class="performance-row"><span>探索時</span>' + metricText(item.backtest) + '</div>' +
+          '<div class="performance-row"><span>全期間</span>' + metricText(item.overall) + '</div>' +
+          '<div class="performance-row performance-forward"><span>フォワード</span>' + metricText(item.forward) + '</div></div>' +
+          strategyGrowthHtml(item) +
+          '<div class="strategy-outcome"><span class="verdict verdict-' + escapeHtml(item.verdict) + '">' + icon + ' ' + escapeHtml(item.verdict_label) + '</span>' +
+          sparkline(item.forward_curve, item.name) + '</div>' +
+          '<p class="forward-note">フォワードは保存日の翌日以降のレースだけで集計した成績です。探索時の数値は上振れを含むため、実力に近いのはフォワードです。判定はN30以上から。</p></article>';
+    }
+    function renderStrategies(items) {
+      var area = byId('myStrategies');
+      if (!items.length) {
+        area.innerHTML = '<div class="mycard"><span class="strategy-meta">保存した手法はまだありません。</span></div>';
+        return;
+      }
+      area.innerHTML = items.map(function (item) {
+        return '<article class="mycard strategy-performance strategy-unloaded" data-strategy-id="' + Number(item.id) + '">' +
+          '<div class="strategy-card-head"><div><div class="nm">★ ' + escapeHtml(item.name) + '</div>' +
+          '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + '</div></div>' +
+          '<button type="button" class="delete-strategy" data-id="' + Number(item.id) + '">削除</button></div>' +
+          '<button type="button" class="load-performance" data-id="' + Number(item.id) + '">成績を見る</button></article>';
+      }).join('');
+    }
+    async function loadStrategies() {
+      try {
+        renderStrategies(await requestJson('/kachisuji/api/strategies'));
+      } catch (error) {
+        byId('myStrategies').innerHTML = '<div class="errorbox" role="alert"></div>';
+        byId('myStrategies').querySelector('.errorbox').textContent = error.message;
+      }
+    }
+
+    byId('resultArea').addEventListener('click', function (event) {
+      var button = event.target.closest('.month-toggle');
+      if (!button) return;
+      var rows = document.getElementById(button.getAttribute('aria-controls'));
+      var expanded = button.getAttribute('aria-expanded') === 'true';
+      button.setAttribute('aria-expanded', String(!expanded));
+      button.textContent = expanded ? '＋' : '−';
+      button.setAttribute('aria-label', button.getAttribute('aria-label').replace(expanded ? '閉じる' : '開く', expanded ? '開く' : '閉じる'));
+      rows.hidden = expanded;
+    });
+    function renderMatches(groups) {
+      var area = byId('matchResults');
+      if (!groups.length) {
+        area.innerHTML = '<div class="mycard"><span class="strategy-meta">有効なマイ手法がありません。</span></div>';
+        return;
+      }
+      area.innerHTML = groups.map(function (group) {
+        var races = group.matched.concat(group.pending);
+        var cards = races.map(function (race) {
+          var pending = race.status === 'pending';
+          var status = pending
+            ? '🌅 未確定項目あり（' + escapeHtml(race.undetermined_columns.join(', ')) + '）'
+            : '✓ 合致確定';
+          return '<div class="matchcard"><b>' + escapeHtml(race.jcd) + '場 ' + escapeHtml(race.race_no) + 'R</b>' +
+            '<span>' + escapeHtml(race.bet) + '</span><span class="stat ' + (pending ? 'stat-pending' : 'stat-confirmed') + '">' + status + '</span></div>';
+        }).join('') || '<div class="matchcard"><span class="strategy-meta">この日の合致レースはありません。</span></div>';
+        return '<section class="match-group"><h3>★ ' + escapeHtml(group.strategy_name) +
+          '（確定 ' + group.counts.matched + ' / 未確定 ' + group.counts.pending + '）</h3><div class="mylist">' + cards + '</div></section>';
+      }).join('');
+    }
+
+    byId('searchForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var button = byId('btnSearch'); button.disabled = true; button.classList.add('is-loading'); button.textContent = '検索中…';
+      byId('resultArea').innerHTML = '<div class="empty loading">データを集計しています…</div>';
+      try {
+        var conditions = collectConditions();
+        var data = await requestJson('/kachisuji/api/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(conditions)});
+        renderResult(data, conditions);
+        lastConditions = conditions;
+        lastBacktest = data;
+        byId('btnSaveStrategy').disabled = false;
+        showResultsOnMobile();
+      } catch (error) {
+        byId('resultArea').innerHTML = '<div class="errorbox" role="alert"></div>';
+        byId('resultArea').querySelector('.errorbox').textContent = error.message;
+      } finally {
+        button.disabled = false; button.classList.remove('is-loading'); button.textContent = '🔍 検索';
+      }
+    });
+    byId('searchForm').addEventListener('reset', function () {
+      window.setTimeout(function () {
+        document.querySelectorAll('.wchip.on').forEach(function (chip) { chip.classList.remove('on'); chip.setAttribute('aria-pressed', 'false'); });
+        byId('compareRows').innerHTML = '';
+        document.querySelectorAll('.racer-input').forEach(function (input) {
+          delete input.dataset.racerNumber; delete input.dataset.racerName; closeRacerOptions(input);
+        });
+        betConditionTouched = false;
+        refreshBetUI(); refreshVenueUI(); refreshBoatSummaries(); refreshConditionCount();
+        lastConditions = null; lastBacktest = null; byId('btnSaveStrategy').disabled = true;
+        byId('miniKpi').hidden = true;
+        byId('resultArea').innerHTML = '<div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>';
+      }, 0);
+    });
+
+    byId('miniKpi').addEventListener('click', function () {
+      byId('resultsPanel').scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+
+    byId('btnSaveStrategy').addEventListener('click', async function () {
+      if (!lastConditions || !lastBacktest) return;
+      var name = window.prompt('マイ手法の名前を入力してください');
+      if (name === null) return;
+      var button = byId('btnSaveStrategy'); button.disabled = true;
+      try {
+        await requestJson('/kachisuji/api/strategies', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: name, conditions: lastConditions, backtest: lastBacktest})
+        });
+        byId('strategyMessage').textContent = 'マイ手法を保存しました。';
+        await loadStrategies();
+      } catch (error) {
+        byId('strategyMessage').textContent = error.message;
+        button.disabled = false;
+      }
+    });
+    byId('myStrategies').addEventListener('click', async function (event) {
+      var performanceButton = event.target.closest('.load-performance');
+      if (performanceButton) {
+        performanceButton.disabled = true; performanceButton.textContent = '計算中…';
+        try {
+          var performance = await requestJson('/kachisuji/api/strategies/' + performanceButton.dataset.id + '/performance');
+          performanceButton.closest('.strategy-performance').outerHTML = performanceCard(performance);
+        } catch (error) {
+          byId('strategyMessage').textContent = error.message;
+          performanceButton.disabled = false; performanceButton.textContent = '成績を見る';
+        }
+        return;
+      }
+      var button = event.target.closest('.delete-strategy');
+      if (!button || !window.confirm('この手法を一覧から削除しますか？')) return;
+      button.disabled = true;
+      try {
+        await requestJson('/kachisuji/api/strategies/' + button.dataset.id, {method: 'DELETE'});
+        byId('strategyMessage').textContent = 'マイ手法を削除しました。';
+        await loadStrategies();
+      } catch (error) {
+        byId('strategyMessage').textContent = error.message;
+        button.disabled = false;
+      }
+    });
+    byId('btnMatch').addEventListener('click', async function () {
+      var date = byId('matchDate').value;
+      if (!date) { byId('matchResults').textContent = '対象日を選んでください。'; return; }
+      var button = byId('btnMatch'); button.disabled = true;
+      byId('matchResults').innerHTML = '<div class="mycard"><span class="strategy-meta">照合中…</span></div>';
+      try {
+        renderMatches(await requestJson('/kachisuji/api/matches?date=' + encodeURIComponent(date)));
+      } catch (error) {
+        byId('matchResults').innerHTML = '<div class="errorbox" role="alert"></div>';
+        byId('matchResults').querySelector('.errorbox').textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    var today = new Date();
+    byId('matchDate').value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'), String(today.getDate()).padStart(2, '0')].join('-');
+    loadStrategies();
+    refreshVenueUI();
+    refreshBoatSummaries();
+    refreshConditionCount();
+  }());
+  </script>
+{% endif %}
+{% endblock %}

@@ -112,6 +112,7 @@ from src.web.auth import (
     is_supabase_auth_enabled, login_required, member_only_api, register_auth_routes,
 )
 from src.web.billing import register_billing_routes
+from src.web.kachisuji_bp import bp as kachisuji_bp
 if TYPE_CHECKING:
     from src.web.predictor import Predictor
 try:
@@ -6801,6 +6802,7 @@ def create_app(
     app.jinja_env.auto_reload = True
     register_auth_routes(app)
     register_billing_routes(app)
+    app.register_blueprint(kachisuji_bp)
     if start_prediction_bp is not None:
         app.register_blueprint(start_prediction_bp)
     # メール購読 UI
