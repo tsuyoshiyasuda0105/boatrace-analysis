@@ -155,7 +155,7 @@ def _normalize_request(payload: Any) -> tuple[dict[str, Any], bool]:
 
 
 def _database_unavailable_response():
-    return jsonify(error="kachisuji_unavailable", message="勝ち筋サーチは準備中です"), 503
+    return jsonify(error="kachisuji_unavailable", message="バックテストは準備中です"), 503
 
 
 def _paid_member_api_forbidden():

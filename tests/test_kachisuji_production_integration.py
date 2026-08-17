@@ -116,8 +116,37 @@ def test_kachisuji_page_reuses_login_and_paid_member_checks(monkeypatch, tmp_pat
     _set_role(paid_client, "paid_member")
     paid = paid_client.get("/kachisuji")
     html = paid.get_data(as_text=True)
+    base_source = (
+        Path(web_app.__file__).resolve().parent / "templates" / "base.html"
+    ).read_text(encoding="utf-8")
     assert paid.status_code == 200
-    assert "勝ち筋サーチ" in html
+    assert "<title>バックテスト</title>" in html
+    assert "{% block title %}競艇｜バックテストLAB{% endblock %}" in base_source
+    assert "バックテスト" in html
+    assert "競艇｜バックテストLAB" in html
+    assert (
+        html.index("バックテスト</span>")
+        < html.index("プラン申込</span>")
+        < html.index("本日のレース</span>")
+    )
+    assert 'href="/kachisuji/"' in html or 'href="/kachisuji"' in html
+    kachisuji_rules = {
+        rule.rule
+        for rule in app.url_map.iter_rules()
+        if rule.endpoint == "kachisuji.index"
+    }
+    assert kachisuji_rules == {"/kachisuji", "/kachisuji/"}
+    assert 'id="venue" class="venue-grid"' in html
+    assert html.count('<input type="checkbox" name="venue" value=') == 24
+    assert '<select id="venue"' not in html
+    assert "#venue input[name=\"venue\"]:checked" in html
+    assert 'id="windDirection"' in html
+    assert 'aria-disabled="true"' in html
+    assert html.count(' disabled>') >= 5
+    assert "#windDirection input:checked:not(:disabled)" in html
+    assert "準備中：会場ごとの水面向きを整備中" in html
+    assert html.index('class="lab-ad"') < html.index("★ マイ手法")
+    assert "勝ち筋サーチ" not in html
     assert "/kachisuji/api/search" in html
     assert "/static/kachisuji.css" in html
 
@@ -200,10 +229,11 @@ def test_missing_search_db_does_not_break_app_or_existing_routes(monkeypatch, tm
     assert client.get("/races?date=2026-08-17").status_code == 200
     preparing = client.get("/kachisuji")
     assert preparing.status_code == 200
-    assert "勝ち筋サーチは準備中です" in preparing.get_data(as_text=True)
+    assert "バックテストは準備中です" in preparing.get_data(as_text=True)
     unavailable = client.post("/kachisuji/api/search", json={"fast": True})
     assert unavailable.status_code == 503
     assert unavailable.get_json()["error"] == "kachisuji_unavailable"
+    assert unavailable.get_json()["message"] == "バックテストは準備中です"
     assert not missing_db.exists()
 
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}勝ち筋サーチ{% endblock %}
+{% block title %}バックテスト{% endblock %}
 {% block head_extra %}
   <link rel="stylesheet" href="{{ url_for('static', filename='kachisuji.css') }}?v={{ static_version }}">
   <style>
@@ -25,13 +25,13 @@
 {% block content %}
 {% if not kachisuji_ready %}
   <section class="kachisuji-preparing" aria-labelledby="kachisuji-preparing-title">
-    <h2 id="kachisuji-preparing-title">勝ち筋サーチは準備中です</h2>
+    <h2 id="kachisuji-preparing-title">バックテストは準備中です</h2>
     <p>検索データの準備が整うまで、しばらくお待ちください。ほかの機能は通常どおりご利用いただけます。</p>
   </section>
 {% else %}
   <div class="app kachisuji-app">
     <header class="top">
-      <div class="logo"><span class="mark">◤</span> 勝ち筋サーチ</div>
+      <div class="logo"><span class="mark">◤</span> バックテスト</div>
       <div class="tagline">条件を組む → 過去データで答え合わせ</div>
     </header>
     <div class="demo-note">会員限定 — 過去データを使って検索条件を検証できます。</div>
@@ -50,24 +50,38 @@
         <form id="searchForm">
           <fieldset>
             <legend>レース条件</legend>
-            <div class="row">
-              <label for="venue">会場 <span id="venueCount" class="selection-count">全会場</span></label>
-              <label class="all-venues"><input type="checkbox" id="venueAll" checked> 全会場</label>
-              <select id="venue" name="venue" multiple size="6" aria-describedby="venueHelp">
-                <option value="1">桐生</option><option value="2">戸田</option>
-                <option value="3">江戸川</option><option value="4">平和島</option>
-                <option value="5">多摩川</option><option value="6">浜名湖</option>
-                <option value="7">蒲郡</option><option value="8">常滑</option>
-                <option value="9">津</option><option value="10">三国</option>
-                <option value="11">びわこ</option><option value="12">住之江</option>
-                <option value="13">尼崎</option><option value="14">鳴門</option>
-                <option value="15">丸亀</option><option value="16">児島</option>
-                <option value="17">宮島</option><option value="18">徳山</option>
-                <option value="19">下関</option><option value="20">若松</option>
-                <option value="21">芦屋</option><option value="22">福岡</option>
-                <option value="23">唐津</option><option value="24">大村</option>
-              </select>
-              <span class="unit" id="venueHelp">複数選択可</span>
+            <div class="row venue-row">
+              <span class="field-label" id="venueLabel">会場 <span id="venueCount" class="selection-count" aria-live="polite">全会場</span></span>
+              <div class="venue-control">
+                <label class="all-venues"><input type="checkbox" id="venueAll" checked> 全会場（絞り込みなし）</label>
+                <div id="venue" class="venue-grid" role="group" aria-labelledby="venueLabel" aria-describedby="venueHelp">
+                  <label><input type="checkbox" name="venue" value="1"><span>桐生</span></label>
+                  <label><input type="checkbox" name="venue" value="2"><span>戸田</span></label>
+                  <label><input type="checkbox" name="venue" value="3"><span>江戸川</span></label>
+                  <label><input type="checkbox" name="venue" value="4"><span>平和島</span></label>
+                  <label><input type="checkbox" name="venue" value="5"><span>多摩川</span></label>
+                  <label><input type="checkbox" name="venue" value="6"><span>浜名湖</span></label>
+                  <label><input type="checkbox" name="venue" value="7"><span>蒲郡</span></label>
+                  <label><input type="checkbox" name="venue" value="8"><span>常滑</span></label>
+                  <label><input type="checkbox" name="venue" value="9"><span>津</span></label>
+                  <label><input type="checkbox" name="venue" value="10"><span>三国</span></label>
+                  <label><input type="checkbox" name="venue" value="11"><span>びわこ</span></label>
+                  <label><input type="checkbox" name="venue" value="12"><span>住之江</span></label>
+                  <label><input type="checkbox" name="venue" value="13"><span>尼崎</span></label>
+                  <label><input type="checkbox" name="venue" value="14"><span>鳴門</span></label>
+                  <label><input type="checkbox" name="venue" value="15"><span>丸亀</span></label>
+                  <label><input type="checkbox" name="venue" value="16"><span>児島</span></label>
+                  <label><input type="checkbox" name="venue" value="17"><span>宮島</span></label>
+                  <label><input type="checkbox" name="venue" value="18"><span>徳山</span></label>
+                  <label><input type="checkbox" name="venue" value="19"><span>下関</span></label>
+                  <label><input type="checkbox" name="venue" value="20"><span>若松</span></label>
+                  <label><input type="checkbox" name="venue" value="21"><span>芦屋</span></label>
+                  <label><input type="checkbox" name="venue" value="22"><span>福岡</span></label>
+                  <label><input type="checkbox" name="venue" value="23"><span>唐津</span></label>
+                  <label><input type="checkbox" name="venue" value="24"><span>大村</span></label>
+                </div>
+                <span class="unit" id="venueHelp">複数選択できます。全会場を選ぶと個別指定を解除します。</span>
+              </div>
             </div>
             <div class="row">
               <label for="raceNoFrom">レース番号</label>
@@ -96,15 +110,18 @@
                 <button type="button" class="wchip" data-value="雨" aria-pressed="false">☔ 雨</button>
               </div>
             </div>
-            <div class="row">
-              <label for="windDirection">風向き <span class="chip live">⏱</span></label>
-              <select id="windDirection" multiple size="3" aria-label="風向き（複数選択可）">
-                <option value="追い風">追い風</option>
-                <option value="向かい風">向かい風</option>
-                <option value="横風(右)">横風（右）</option>
-                <option value="横風(左)">横風（左）</option>
-                <option value="無風">無風</option>
-              </select>
+            <div class="row wind-row">
+              <span class="field-label" id="windDirectionLabel">風向き <span class="chip live">⏱</span></span>
+              <div class="wind-control">
+                <div id="windDirection" class="wind-options" role="group" aria-labelledby="windDirectionLabel" aria-describedby="windDirectionNote" aria-disabled="true">
+                  <label><input type="checkbox" value="追い風" disabled>追い風</label>
+                  <label><input type="checkbox" value="向かい風" disabled>向かい風</label>
+                  <label><input type="checkbox" value="横風(右)" disabled>横風（右）</label>
+                  <label><input type="checkbox" value="横風(左)" disabled>横風（左）</label>
+                  <label><input type="checkbox" value="無風" disabled>無風</label>
+                </div>
+                <span class="wind-preparing" id="windDirectionNote">準備中：会場ごとの水面向きを整備中</span>
+              </div>
               <label for="windStrength" class="short-label">強さ</label>
               <select id="windStrength">
                 <option value="">指定なし</option>
@@ -181,6 +198,7 @@
         <div id="strategyMessage" class="section-message" role="status" aria-live="polite"></div>
 
         <hr class="divider">
+        <aside class="lab-ad" aria-label="広告"><span>広告</span><strong>競艇｜バックテストLAB</strong></aside>
         <div class="h3row">
           <h2>★ マイ手法</h2>
           <span class="sub">保存日の翌日以降がフォワード検証の起点です</span>
@@ -443,13 +461,13 @@
     refreshBetUI();
 
     function refreshVenueUI() {
-      var count = byId('venue').selectedOptions.length;
+      var count = document.querySelectorAll('#venue input[name="venue"]:checked').length;
       byId('venueAll').checked = count === 0;
       byId('venueCount').textContent = count ? count + '会場' : '全会場';
     }
     byId('venueAll').addEventListener('change', function () {
       if (this.checked) {
-        Array.from(byId('venue').options).forEach(function (option) { option.selected = false; });
+        document.querySelectorAll('#venue input[name="venue"]').forEach(function (checkbox) { checkbox.checked = false; });
       }
       refreshVenueUI();
     });
@@ -507,7 +525,7 @@
         if (result.bet.type !== 'tansho') result.bet.second = Number(byId('pos2').value);
         if (result.bet.type === 'sanrentan') result.bet.third = Number(byId('pos3').value);
       }
-      var venues = Array.from(byId('venue').selectedOptions).map(function (option) { return Number(option.value); });
+      var venues = Array.from(document.querySelectorAll('#venue input[name="venue"]:checked')).map(function (checkbox) { return Number(checkbox.value); });
       if (venues.length) result.venue = venues;
       var raceNo = {};
       if (byId('raceNoFrom').value) raceNo.min = Number(byId('raceNoFrom').value);
@@ -515,7 +533,7 @@
       if (Object.keys(raceNo).length) result.race_no = raceNo;
       var weather = Array.from(document.querySelectorAll('#weatherChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
       if (weather.length) result.weather = weather;
-      var windDirections = Array.from(byId('windDirection').selectedOptions).map(function (option) { return option.value; });
+      var windDirections = Array.from(document.querySelectorAll('#windDirection input:checked:not(:disabled)')).map(function (checkbox) { return checkbox.value; });
       if (windDirections.length) result.wind_dir = windDirections;
       var wind = byId('windStrength').value;
       if (wind) {
@@ -579,8 +597,13 @@
       var node = document.createElement('span'); node.textContent = String(value); return node.innerHTML;
     }
     function optionText(selectId, value) {
-      var option = Array.from(byId(selectId).options).find(function (item) { return String(item.value) === String(value); });
-      return option ? option.textContent.trim() : String(value);
+      var control = byId(selectId);
+      if (control.options) {
+        var option = Array.from(control.options).find(function (item) { return String(item.value) === String(value); });
+        return option ? option.textContent.trim() : String(value);
+      }
+      var checkbox = Array.from(control.querySelectorAll('input[value]')).find(function (item) { return String(item.value) === String(value); });
+      return checkbox ? checkbox.closest('label').textContent.trim() : String(value);
     }
     function controlLabel(controlId, fallback) {
       var control = byId(controlId);
