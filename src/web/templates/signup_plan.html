@@ -80,7 +80,8 @@
   <header class="signup-hero">
     <p class="signup-kicker">PAID PLAN</p>
     <h1>{{ plan.plan_name }}</h1>
-    <p class="signup-price">{{ plan.price }} <small>（税込）</small></p>
+    <!-- 表示額と実際の課金額の一致は、Stripe Priceを管理するリッキーさんの設定責任です。 -->
+    <p class="signup-price">{{ plan.price }}</p>
     <p class="signup-cycle">課金周期: {{ plan.billing_cycle }}</p>
   </header>
 

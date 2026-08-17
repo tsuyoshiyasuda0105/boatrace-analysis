@@ -14,9 +14,9 @@ bp = Blueprint("signup", __name__, url_prefix="/signup")
 
 _PLAN_FIELDS = {
     "plan_name": ("SIGNUP_PLAN_NAME", "{{ プラン名を入力 }}"),
-    "price": ("LEGAL_PRICE", "{{ 販売価格（税込）を入力 }}"),
-    "billing_cycle": ("SIGNUP_BILLING_CYCLE", "{{ 課金周期を入力 }}"),
-    "renewal_policy": ("SIGNUP_RENEWAL_POLICY", "{{ 次回更新の条件を入力 }}"),
+    "price": ("LEGAL_PRICE", "月額1,380円（税込）"),
+    "billing_cycle": ("SIGNUP_BILLING_CYCLE", "月額"),
+    "renewal_policy": ("SIGNUP_RENEWAL_POLICY", "毎月自動更新"),
     "service_content": ("SIGNUP_SERVICE_CONTENT", "{{ 提供内容を入力 }}"),
     "service_start": ("LEGAL_SERVICE_START", "{{ サービス提供時期を入力 }}"),
     "cancellation_method": ("SIGNUP_CANCELLATION_METHOD", "{{ 解約方法を入力 }}"),

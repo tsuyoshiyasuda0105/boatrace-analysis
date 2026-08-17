@@ -17,7 +17,7 @@ _LEGAL_FIELDS = {
     "address": ("LEGAL_ADDRESS", "{{ 所在地を入力 }}"),
     "phone": ("LEGAL_PHONE", "{{ 電話番号を入力 }}"),
     "email": ("LEGAL_EMAIL", "{{ メールアドレスを入力 }}"),
-    "price": ("LEGAL_PRICE", "{{ 販売価格（税込）を入力 }}"),
+    "price": ("LEGAL_PRICE", "月額1,380円（税込）"),
     "additional_fees": ("LEGAL_ADDITIONAL_FEES", "{{ 商品代金以外の必要料金を入力 }}"),
     "payment_method": ("LEGAL_PAYMENT_METHOD", "{{ 支払方法を入力 }}"),
     "payment_timing": ("LEGAL_PAYMENT_TIMING", "{{ 支払時期を入力 }}"),
