@@ -251,7 +251,14 @@ def run_detail_phase(now: datetime) -> tuple[bool, dict]:
 def run_snapshot_phase(now: datetime) -> tuple[bool, dict]:
     today = now.date().isoformat()
     signal_ok = regular.run_signal_refresh_slot(now, source_gate_verified=True)
-    top_ok = signal_ok and regular.run_top_page_snapshot(now, lightweight=False)
+    # A failed signal refresh must not suppress the TOP rebuild. The snapshot
+    # builder reuses same-day last-good signals (or persisted race badges), so
+    # users retain a degraded but useful page while the next slot retries.
+    top_ok = regular.run_top_page_snapshot(
+        now,
+        lightweight=False,
+        signals_degraded=not signal_ok,
+    )
     return bool(signal_ok and top_ok), {
         "date": today,
         "signals_ok": bool(signal_ok),

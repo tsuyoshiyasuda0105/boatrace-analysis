@@ -1095,9 +1095,11 @@ def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]]
         )
         incoming_badges = incoming_market.get("race_badges")
         incoming_watch = incoming_market.get("accident_watch")
+        incoming_signals = incoming_market.get("signals")
         needs_badge_preserve = not incoming_badges or not isinstance(incoming_badges, dict)
         needs_watch_preserve = not incoming_watch or not isinstance(incoming_watch, dict)
-        if needs_badge_preserve or needs_watch_preserve:
+        needs_signal_preserve = not incoming_signals or not isinstance(incoming_signals, dict)
+        if needs_badge_preserve or needs_watch_preserve or needs_signal_preserve:
             previous = _read_top_page_snapshot(target_date)
             previous_market = (
                 previous.get("initial_market_signals")
@@ -1109,6 +1111,7 @@ def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]]
             )
             previous_badges = previous_market.get("race_badges")
             previous_watch = previous_market.get("accident_watch")
+            previous_signals = previous_market.get("signals")
             # 軽量フォールバックのスナップショットは、既存の詳しいバッジを
             # 上書きして貧relにしてはいけない (事故率/エースモーター/騎乗注意 等の
             # 種類別バッジを残す)。source で判定し、既存値をレース×種類単位で優先。
@@ -1135,6 +1138,10 @@ def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]]
                 merged_watch = dict(previous_watch)
                 merged_watch.update(incoming_watch)
                 incoming_market["accident_watch"] = merged_watch
+            if needs_signal_preserve and isinstance(previous_signals, dict) and previous_signals:
+                incoming_market["signals"] = dict(previous_signals)
+                if incoming_market.get("degraded"):
+                    incoming_market["degraded_source"] = "same_day_top_last_good"
             snapshot["initial_market_signals"] = incoming_market
     _write_json_cache(_top_page_snapshot_cache_key(target_date), snapshot)
     return snapshot

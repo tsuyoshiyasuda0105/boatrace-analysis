@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import wraps
 import os
 import json
@@ -192,14 +193,67 @@ def _with_regular_run_lock(func: Callable[[], int]) -> Callable[[], int]:
     return wrapped
 
 
-def run_py(args: list[str], timeout: int = 1800) -> bool:
+@dataclass(frozen=True)
+class PyRunResult:
+    returncode: int | None
+    stderr_tail: str = ""
+    timed_out: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0 and not self.timed_out
+
+
+def _stderr_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
+
+
+def run_py_detailed(args: list[str], timeout: int = 1800) -> PyRunResult:
+    """Run a Python child while retaining enough failure evidence for task_runs."""
     cmd = [sys.executable, *args]
     print("$ " + " ".join(args), flush=True)
     started = time.monotonic()
-    proc = subprocess.run(cmd, cwd=REPO, timeout=timeout, check=False)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=REPO,
+            timeout=timeout,
+            check=False,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+        )
+        stderr = _stderr_text(proc.stderr)
+        if stderr:
+            print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n", flush=True)
+        result = PyRunResult(proc.returncode, stderr[-800:])
+    except subprocess.TimeoutExpired as exc:
+        stderr = _stderr_text(exc.stderr)
+        if stderr:
+            print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n", flush=True)
+        result = PyRunResult(None, stderr[-800:], timed_out=True)
     elapsed = time.monotonic() - started
-    print(f"exit={proc.returncode} elapsed={elapsed:.1f}s", flush=True)
-    return proc.returncode == 0
+    exit_label = "timeout" if result.timed_out else str(result.returncode)
+    print(f"exit={exit_label} elapsed={elapsed:.1f}s", flush=True)
+    return result
+
+
+def run_py(args: list[str], timeout: int = 1800) -> bool:
+    return run_py_detailed(args, timeout=timeout).ok
+
+
+def _subprocess_failure_detail(result: PyRunResult) -> str:
+    exit_code = "timeout" if result.timed_out else str(result.returncode)
+    oom_suspected = result.returncode in {-9, 137}
+    stderr_tail = result.stderr_tail.strip() or "<empty>"
+    return (
+        f"exit_code={exit_code} oom_suspected={str(oom_suspected).lower()} "
+        f"stderr_tail={stderr_tail}"
+    )[-1200:]
 
 
 def run_program_source_gate(run_date: str, *, allow_official_fallback: bool = False) -> bool:
@@ -559,6 +613,7 @@ def run_top_page_snapshot(
     *,
     lightweight: bool,
     environment_only: bool = False,
+    signals_degraded: bool = False,
 ) -> bool:
     today = now.date().isoformat()
     args = ["scripts/build_top_page_snapshot.py", "--date", today]
@@ -566,6 +621,8 @@ def run_top_page_snapshot(
         args.append("--lightweight")
     if environment_only:
         args.append("--environment-only")
+    if signals_degraded:
+        args.append("--signals-degraded")
     ok = run_py(args, timeout=900)
     record_task(
         (
@@ -1298,12 +1355,17 @@ def run_signal_refresh_slot(
     if not ok:
         record_task(task, today, "failure", detail="derived_start_stats_failed")
         return False
-    ok = run_py(
+    result = run_py_detailed(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today],
         timeout=1800,
     )
-    record_task(task, today, "success" if ok else "failure")
-    return ok
+    record_task(
+        task,
+        today,
+        "success" if result.ok else "failure",
+        detail=None if result.ok else _subprocess_failure_detail(result),
+    )
+    return result.ok
 
 
 def run_original_exhibition_catchup(now: datetime, target_date: str, *, label: str) -> bool:

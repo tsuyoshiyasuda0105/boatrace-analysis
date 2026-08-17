@@ -237,8 +237,8 @@ def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
     )
     monkeypatch.setattr(
         scheduler,
-        "run_py",
-        lambda args, timeout: run_calls.append((args, timeout)) or True,
+        "run_py_detailed",
+        lambda args, timeout: run_calls.append((args, timeout)) or scheduler.PyRunResult(0),
     )
     monkeypatch.setattr(scheduler, "run_program_source_gate", lambda _date, **_kwargs: True)
 
@@ -257,6 +257,46 @@ def test_signal_refresh_uses_one_task_slot_per_five_minutes(monkeypatch):
             1800,
         )
     ]
+
+
+def test_signal_refresh_failure_records_exit_code_and_stderr_tail(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(scheduler, "task_attempt_exists", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "signal_refresh_recently_running", lambda _now: False)
+    monkeypatch.setattr(scheduler, "run_derived_start_stats", lambda *_args: True)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py_detailed",
+        lambda *_args, **_kwargs: scheduler.PyRunResult(
+            137,
+            "allocation warning\nKilled",
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "record_task",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+
+    now = scheduler.datetime(2026, 8, 18, 6, 22, tzinfo=scheduler.JST)
+
+    assert scheduler.run_signal_refresh_slot(now, source_gate_verified=True) is False
+    detail = recorded[-1][1]["detail"]
+    assert recorded[-1][0][:3] == ("render_signal_refresh_06_4", "2026-08-18", "failure")
+    assert "exit_code=137" in detail
+    assert "oom_suspected=true" in detail
+    assert detail.endswith("allocation warning\nKilled")
+
+
+def test_run_py_detailed_captures_real_child_stderr_tail():
+    result = scheduler.run_py_detailed(
+        ["-c", "import sys; sys.stderr.write('diagnostic-tail\\n'); raise SystemExit(7)"],
+        timeout=30,
+    )
+
+    assert result.returncode == 7
+    assert result.ok is False
+    assert result.stderr_tail.endswith("diagnostic-tail\n")
 
 
 def test_signal_refresh_skips_when_previous_slot_is_still_running(monkeypatch):

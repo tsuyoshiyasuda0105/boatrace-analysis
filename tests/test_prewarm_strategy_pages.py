@@ -7,6 +7,7 @@ from flask import Flask
 
 os.environ["DATABASE_URL"] = ""
 
+from scripts import prewarm_strategy_pages as prewarm_module
 from scripts.prewarm_strategy_pages import (
     _hit,
     _prepare_internal_session,
@@ -43,6 +44,19 @@ def test_signals_mode_is_the_daytime_market_signal_writer():
     assert build_targets("signals", TODAY) == [
         "/api/market-signals?date=2026-07-18&recompute=1"
     ]
+
+
+def test_strategy_prewarm_constructs_cached_predictions_only_app(monkeypatch):
+    calls = []
+    sentinel = object()
+    monkeypatch.setattr(
+        prewarm_module,
+        "create_app",
+        lambda **kwargs: calls.append(kwargs) or sentinel,
+    )
+
+    assert prewarm_module._create_prewarm_app() is sentinel
+    assert calls == [{"cached_predictions_only": True}]
 
 
 def test_realtime_mode_rebuilds_today_before_reading_strategy_page():

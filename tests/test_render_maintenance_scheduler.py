@@ -296,6 +296,33 @@ def test_detail_phase_accepts_budgeted_partial_and_still_runs_pages(monkeypatch)
     assert "--missing-only" in calls[1]
 
 
+def test_snapshot_phase_builds_degraded_top_when_signal_refresh_fails(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_signal_refresh_slot",
+        lambda *_args, **_kwargs: calls.append("signals") or False,
+    )
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_top_page_snapshot",
+        lambda *_args, **kwargs: calls.append(("top", kwargs)) or True,
+    )
+
+    ok, detail = scheduler.run_snapshot_phase(_now(6, 20))
+
+    assert ok is False
+    assert calls == [
+        "signals",
+        ("top", {"lightweight": False, "signals_degraded": True}),
+    ]
+    assert detail == {
+        "date": "2026-08-13",
+        "signals_ok": False,
+        "top_ok": True,
+    }
+
+
 def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler, "phase_success", lambda *_args: False)

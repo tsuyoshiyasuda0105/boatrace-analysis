@@ -24,6 +24,11 @@ def main() -> int:
         action="store_true",
         help="Refresh only race groups and venue environment while keeping prior market badges.",
     )
+    parser.add_argument(
+        "--signals-degraded",
+        action="store_true",
+        help="Mark signals stale and preserve the same-day last-good TOP signal payload.",
+    )
     args = parser.parse_args()
 
     payload = web_app._build_top_page_snapshot_payload(
@@ -31,6 +36,13 @@ def main() -> int:
         allow_expensive_badges=not args.lightweight,
         include_market_signals=not args.environment_only,
     )
+    if args.signals_degraded:
+        market = payload.get("initial_market_signals")
+        market = dict(market) if isinstance(market, dict) else {"date": args.date}
+        market["degraded"] = True
+        market["degraded_reason"] = "signal_refresh_failed"
+        payload["initial_market_signals"] = market
+        payload["market_signals_degraded"] = True
     web_app._write_top_page_snapshot(args.date, payload)
     groups = payload.get("stadium_groups") or []
     races = sum(len((group.get("races") or [])) for group in groups if isinstance(group, dict))

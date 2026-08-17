@@ -413,7 +413,11 @@ def test_signal_refresh_reuses_gate_verified_by_daytime_bootstrap(monkeypatch):
         ),
     )
     monkeypatch.setattr(scheduler, "run_derived_start_stats", lambda *_args: True)
-    monkeypatch.setattr(scheduler, "run_py", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        scheduler,
+        "run_py_detailed",
+        lambda *_args, **_kwargs: scheduler.PyRunResult(0),
+    )
     monkeypatch.setattr(
         scheduler,
         "record_task",

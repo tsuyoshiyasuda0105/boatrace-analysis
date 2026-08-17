@@ -270,6 +270,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _create_prewarm_app():
+    """Use persisted predictions; strategy prewarm must never load ML models."""
+    return create_app(cached_predictions_only=True)
+
+
 def main() -> int:
     args = parse_args()
     today = date.fromisoformat(args.date) if args.date else datetime.now(JST).date()
@@ -280,7 +285,7 @@ def main() -> int:
     monthly_from = "2024-06-01"
     monthly_to = today.isoformat()
 
-    app = create_app()
+    app = _create_prewarm_app()
     client = app.test_client()
     _prepare_internal_session(client)
 

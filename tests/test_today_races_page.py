@@ -363,6 +363,56 @@ def test_build_top_page_snapshot_payload_can_skip_market_signals(monkeypatch):
     assert payload["initial_market_signals"]["race_badges"] == {}
 
 
+def test_degraded_top_snapshot_preserves_same_day_last_good_signals(monkeypatch):
+    target_date = "2026-08-18"
+    previous = {
+        "version": web_app.TOP_PAGE_SNAPSHOT_VERSION,
+        "date": target_date,
+        "stadium_groups": [],
+        "initial_market_signals": {
+            "date": target_date,
+            "signals": {
+                "20260818-13-12": {
+                    "race_id": "20260818-13-12",
+                    "l4": {"level": "morning_watch_tri143_a12"},
+                }
+            },
+            "race_badges": {},
+            "accident_watch": {},
+        },
+        "empty": False,
+    }
+    written = {}
+    monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda _date: previous)
+    monkeypatch.setattr(
+        web_app,
+        "_write_json_cache",
+        lambda _key, payload: written.update(payload=payload),
+    )
+    degraded = {
+        "version": web_app.TOP_PAGE_SNAPSHOT_VERSION,
+        "date": target_date,
+        "stadium_groups": [],
+        "initial_market_signals": {
+            "date": target_date,
+            "signals": {},
+            "race_badges": {},
+            "accident_watch": {},
+            "degraded": True,
+            "degraded_reason": "signal_refresh_failed",
+        },
+        "market_signals_degraded": True,
+        "empty": False,
+    }
+
+    web_app._write_top_page_snapshot(target_date, degraded)
+
+    market = written["payload"]["initial_market_signals"]
+    assert list(market["signals"]) == ["20260818-13-12"]
+    assert market["degraded"] is True
+    assert market["degraded_source"] == "same_day_top_last_good"
+
+
 def test_races_page_does_not_self_heal_from_web_request_by_default(monkeypatch):
     monkeypatch.setenv("RENDER", "true")
     monkeypatch.delenv("BOATRACE_WEB_SELF_HEAL", raising=False)
