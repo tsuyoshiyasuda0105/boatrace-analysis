@@ -29,6 +29,9 @@
         <a href="{{ url_for('kachisuji.index') }}" class="nav-btn" title="過去データから勝ち筋を検索">
           <span class="nav-icon">筋</span><span class="nav-label">勝ち筋サーチ</span>
         </a>
+        <a href="{{ url_for('signup.plan') }}" class="nav-btn" title="有料プランの申込・契約管理">
+          <span class="nav-icon">申</span><span class="nav-label">プラン申込</span>
+        </a>
         {% if is_admin() and not cache_neutral_auth %}
         <a href="{{ url_for('member_strategy') }}" class="nav-btn nav-btn-roi" title="ROIダッシュボード">
           <span class="nav-icon">ROI</span><span class="nav-label">ROI</span>

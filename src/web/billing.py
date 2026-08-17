@@ -14,6 +14,7 @@ from src.web.membership import (
     set_stripe_customer,
     upsert_subscription,
 )
+from src.web.signup_bp import checkout_consent_is_valid
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ def register_billing_routes(app):
     @app.route("/billing/checkout", methods=["POST"])
     @login_required
     def billing_checkout():
+        if not checkout_consent_is_valid(request):
+            return jsonify({"error": "consent_required", "message": "利用規約とプライバシーポリシーへの同意が必要です"}), 400
         if not stripe_configured():
             return jsonify({"error": "stripe_not_configured"}), 503
         user_id = session.get("user_id")

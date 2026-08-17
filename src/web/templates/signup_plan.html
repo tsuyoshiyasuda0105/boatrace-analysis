@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}有料プラン申込 | BOATRACE WEB{% endblock %}
+
+{% block head_extra %}
+<style>
+  .signup-shell {
+    --ink: #17212b;
+    --muted: #5d6873;
+    --paper: #fffdf7;
+    --signal: #d34821;
+    --navy: #123047;
+    max-width: 980px;
+    margin: 2.5rem auto 4rem;
+    color: var(--ink);
+  }
+  .signup-hero {
+    position: relative;
+    overflow: hidden;
+    padding: clamp(1.5rem, 4vw, 3.4rem);
+    border-radius: 28px 28px 8px 28px;
+    background: var(--navy);
+    color: #fff;
+    box-shadow: 0 20px 55px rgba(18, 48, 71, .22);
+  }
+  .signup-hero::after {
+    content: "";
+    position: absolute;
+    right: -80px;
+    bottom: -120px;
+    width: 310px;
+    height: 310px;
+    border: 42px solid rgba(255,255,255,.08);
+    border-radius: 50%;
+  }
+  .signup-kicker { margin: 0 0 .5rem; color: #f6b99f; font-weight: 800; letter-spacing: .16em; }
+  .signup-hero h1 { position: relative; margin: 0; font-size: clamp(2rem, 5vw, 3.8rem); line-height: 1.08; }
+  .signup-price { position: relative; margin: 1.5rem 0 .35rem; font-size: clamp(1.7rem, 4vw, 2.7rem); font-weight: 800; }
+  .signup-cycle { position: relative; margin: 0; color: #d9e7ef; }
+  .signup-alert {
+    margin: 1.3rem 0;
+    padding: 1rem 1.1rem;
+    border: 2px solid #b42318;
+    border-radius: 10px;
+    background: #fff1f0;
+    color: #7a271a;
+  }
+  .signup-alert code { overflow-wrap: anywhere; }
+  .signup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.4rem 0; }
+  .signup-card { padding: 1.35rem; border: 1px solid #d9dee3; border-radius: 14px; background: var(--paper); }
+  .signup-card h2 { margin: 0 0 .7rem; color: var(--navy); font-size: 1.08rem; }
+  .signup-card p { margin: .4rem 0; line-height: 1.75; }
+  .signup-note { color: var(--muted); font-size: .94rem; }
+  .signup-legal { display: flex; flex-wrap: wrap; gap: .7rem 1.2rem; margin: 1.4rem 0; }
+  .signup-legal a { color: var(--navy); font-weight: 700; text-underline-offset: .22em; }
+  .signup-action { padding: 1.35rem; border: 1px solid #ccd5dc; border-radius: 14px; background: #fff; }
+  .signup-consent { display: flex; gap: .75rem; align-items: flex-start; line-height: 1.65; cursor: pointer; }
+  .signup-consent input { width: 1.25rem; height: 1.25rem; margin-top: .18rem; accent-color: var(--signal); }
+  .signup-submit, .signup-portal {
+    display: inline-flex;
+    justify-content: center;
+    margin-top: 1rem;
+    padding: .9rem 1.35rem;
+    border: 0;
+    border-radius: 8px;
+    background: var(--signal);
+    color: #fff;
+    font: inherit;
+    font-weight: 800;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .signup-submit:disabled { background: #a9b0b6; cursor: not-allowed; }
+  @media (max-width: 680px) { .signup-grid { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<article class="signup-shell">
+  <header class="signup-hero">
+    <p class="signup-kicker">PAID PLAN</p>
+    <h1>{{ plan.plan_name }}</h1>
+    <p class="signup-price">{{ plan.price }} <small>（税込）</small></p>
+    <p class="signup-cycle">課金周期: {{ plan.billing_cycle }}</p>
+  </header>
+
+  {% if plan_incomplete %}
+  <section class="signup-alert" role="alert" aria-label="申込条件の未設定警告">
+    <strong>申込条件の設定が未完了です。</strong>
+    <div>未設定の環境変数: <code>{{ missing_plan_fields | join(', ') }}</code></div>
+    {% if not checkout_available %}<div>価格またはStripe Priceが未設定のため、申込はできません。</div>{% endif %}
+  </section>
+  {% endif %}
+
+  <div class="signup-grid">
+    <section class="signup-card">
+      <h2>提供内容</h2>
+      <p>{{ plan.service_content }}</p>
+      <p>提供開始: {{ plan.service_start }}</p>
+      <p class="signup-note">勝ち筋サーチは過去データを分析・検証するツールです。予想の販売ではなく、将来の的中や利益を保証しません。</p>
+    </section>
+    <section class="signup-card">
+      <h2>更新と解約</h2>
+      <p><strong>次回更新:</strong> {{ plan.renewal_policy }}</p>
+      <p><strong>解約方法:</strong> {{ plan.cancellation_method }}</p>
+      <p><strong>解約後の利用・返金:</strong> {{ plan.refund_policy }}</p>
+    </section>
+  </div>
+
+  <nav class="signup-legal" aria-label="申込前に確認する法定表示">
+    <a href="{{ url_for('legal.terms') }}" target="_blank" rel="noopener">利用規約</a>
+    <a href="{{ url_for('legal.tokushoho') }}" target="_blank" rel="noopener">特定商取引法に基づく表記</a>
+    <a href="{{ url_for('legal.privacy') }}" target="_blank" rel="noopener">プライバシーポリシー</a>
+  </nav>
+
+  {% if already_paid %}
+  <section class="signup-action">
+    <h2>有料プランをご利用中です</h2>
+    <p>契約内容の確認や解約手続きはカスタマーポータルから行えます。</p>
+    <form method="post" action="{{ url_for('billing_portal') }}">
+      <button class="signup-portal" type="submit">カスタマーポータルを開く</button>
+    </form>
+  </section>
+  {% else %}
+  <form class="signup-action" method="post" action="{{ url_for('billing_checkout') }}" id="signup-form">
+    <input type="hidden" name="terms_version" value="{{ terms_version }}">
+    <label class="signup-consent" for="agree-terms">
+      <input type="checkbox" id="agree-terms" name="agree_terms" value="true"{% if not checkout_available %} disabled{% endif %}>
+      <span>利用規約およびプライバシーポリシーに同意します（規約版 {{ terms_version }}）</span>
+    </label>
+    <button class="signup-submit" id="checkout-button" type="submit" disabled>同意して申込手続きへ</button>
+  </form>
+  <script>
+    (() => {
+      const consent = document.getElementById("agree-terms");
+      const submit = document.getElementById("checkout-button");
+      if (!consent || !submit || consent.disabled) return;
+      consent.addEventListener("change", () => { submit.disabled = !consent.checked; });
+    })();
+  </script>
+  {% endif %}
+</article>
+{% endblock %}

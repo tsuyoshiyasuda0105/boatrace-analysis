@@ -8,6 +8,8 @@ from flask import Blueprint, render_template
 
 bp = Blueprint("legal", __name__, url_prefix="/legal")
 
+TERMS_VERSION = "2026-08-17"
+
 
 _LEGAL_FIELDS = {
     "operator_name": ("LEGAL_OPERATOR_NAME", "{{ 販売事業者名を入力 }}"),
