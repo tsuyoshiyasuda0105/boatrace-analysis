@@ -117,6 +117,8 @@ html.is-navigating::before {
   font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.04em;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .site-header h1 a {
   display: inline-flex;
