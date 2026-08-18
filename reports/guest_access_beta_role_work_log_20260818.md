@@ -43,4 +43,4 @@
 
 ## コミットID
 
-- 実装コミット: `PENDING`
+- 実装コミット: `56439e7` (`Add guest race access and beta backtest role`)
