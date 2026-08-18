@@ -87,7 +87,7 @@
     </section>
   {% endif %}
 
-  {% if venue_warning %}
+  {% if venue_warning and not cache_neutral_auth %}
     <div class="venue-warning venue-{{ venue_warning.level }}">
       <span class="vw-icon">{% if venue_warning.level == 'danger' %}⚠{% else %}△{% endif %}</span>
       <span class="vw-title">{{ venue_warning.venue }}</span>
@@ -95,7 +95,7 @@
     </div>
   {% endif %}
 
-  {% if sweet_spot %}
+  {% if sweet_spot and not cache_neutral_auth %}
     <div class="sweet-spot">
       <span class="ss-icon">★</span>
       <span class="ss-title">SWEET SPOT</span>
@@ -357,7 +357,7 @@
       <div class="tri-grid">
         {% if trifecta_pw %}
         <div class="tri-card tri-pw">
-          <div class="tri-label">PerWinner <span class="tri-badge">Top-1 ピンポイント (ROI -7.05%)</span></div>
+          <div class="tri-label">PerWinner <span class="tri-badge">Top-1 ピンポイント</span></div>
           <ol class="tri-list">
             {% for combo, prob in trifecta_pw %}
               {% set parts = combo.split('-') %}
@@ -380,7 +380,7 @@
         {% endif %}
         {% if trifecta_unified %}
         <div class="tri-card tri-uni">
-          <div class="tri-label">Unified <span class="tri-badge">Top-3 分散買い向け (ROI -15.6%)</span></div>
+          <div class="tri-label">Unified <span class="tri-badge">Top-3 分散買い向け</span></div>
           <ol class="tri-list">
             {% for combo, prob in trifecta_unified %}
               {% set parts = combo.split('-') %}

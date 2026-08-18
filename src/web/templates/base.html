@@ -12,7 +12,7 @@
   <header class="site-header">
     <div class="container">
       <h1>
-        <a href="{% if is_member() %}{{ url_for('member_today_races', date=today_iso_global) }}{% else %}{{ url_for('races', date=today_iso_global) }}{% endif %}" title="本日のROI候補一覧">競艇｜バックテストLAB</a>
+        <a href="{% if is_member() and not cache_neutral_auth %}{{ url_for('member_today_races', date=today_iso_global) }}{% else %}{{ url_for('races', date=today_iso_global) }}{% endif %}" title="{% if is_member() and not cache_neutral_auth %}本日のROI候補一覧{% else %}レース一覧{% endif %}">競艇｜バックテストLAB</a>
       </h1>
 
       <form method="get" action="{{ date_form_action|default(url_for('races')) }}" class="date-form">
@@ -21,7 +21,7 @@
         <button type="submit">表示</button>
       </form>
 
-      {% if is_member() %}
+      {% if is_member() and not cache_neutral_auth %}
       <nav class="nav-actions" aria-label="会員メニュー">
         <a href="{{ url_for('kachisuji.index') }}" class="nav-btn" title="過去データで条件を検証">
           <span class="nav-icon">検</span><span class="nav-label">バックテスト</span>
@@ -55,6 +55,7 @@
       {% endif %}
 
       <div class="auth-status">
+        {% if not cache_neutral_auth %}
         {% if is_member() %}
           <span class="auth-badge {% if is_admin() and not cache_neutral_auth %}pro{% endif %}">
             {% if cache_neutral_auth %}会員{% else %}{{ current_role() }} / {{ current_auth_provider() }}{% endif %}
@@ -74,6 +75,7 @@
           {% else %}
           <a href="{{ url_for('login') }}" class="account-btn account-btn-login">ログイン</a>
           {% endif %}
+        {% endif %}
         {% endif %}
       </div>
     </div>

@@ -23,7 +23,7 @@ from src.search.strategies import (
     match_races,
     save_strategy,
 )
-from src.web.auth import is_paid_member, login_required, member_only_api
+from src.web.auth import can_use_backtest, login_required, member_only_api
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -159,7 +159,7 @@ def _database_unavailable_response():
 
 
 def _paid_member_api_forbidden():
-    if is_paid_member():
+    if can_use_backtest():
         return None
     return jsonify(error="forbidden", message="有料会員のみ利用できます"), 403
 
@@ -168,7 +168,7 @@ def _paid_member_api_forbidden():
 @bp.get("/")
 @login_required
 def index():
-    if not is_paid_member():
+    if not can_use_backtest():
         abort(403)
     return render_template(
         "kachisuji_search.html",

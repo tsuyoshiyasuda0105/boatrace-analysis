@@ -37,8 +37,8 @@ def test_today_pages_default_to_jst_date(monkeypatch):
     races_response = client.get("/")
     today_response = client.get("/member/today-races")
 
-    assert races_response.status_code == 302
-    assert races_response.headers["Location"].endswith("/races?date=2026-08-04")
+    assert races_response.status_code == 200
+    assert "2026-08-04" in races_response.get_data(as_text=True)
     assert today_response.status_code == 200
     assert "2026-08-04" in today_response.get_data(as_text=True)
 

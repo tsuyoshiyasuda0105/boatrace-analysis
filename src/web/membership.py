@@ -6,7 +6,13 @@ from typing import Any
 
 from src.db.connection import connect as db_connect
 
-ROLE_RANK = {"guest": 0, "free_member": 10, "paid_member": 20, "admin": 100}
+ROLE_RANK = {
+    "guest": 0,
+    "free_member": 10,
+    "beta_member": 15,
+    "paid_member": 20,
+    "admin": 100,
+}
 ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
 _SCHEMA_CHECKED = False
 

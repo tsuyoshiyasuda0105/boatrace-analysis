@@ -6,7 +6,8 @@
   <p class="notice-box" role="status">{{ stale_data_notice }}</p>
   {% endif %}
 
-  <!-- マーク凡例 (折りたたみ) -->
+  {% if is_member() %}
+  <!-- 会員向けマーク凡例 (折りたたみ) -->
   <details class="badge-legend" hidden>
     <summary>📖 マークの説明を見る</summary>
     <div class="legend-grid">
@@ -133,6 +134,7 @@
 
     </div>
   </details>
+  {% endif %}
 
   {% if empty %}
     <p class="empty">この日のデータはありません。バックフィルされていないか、未来日です。</p>

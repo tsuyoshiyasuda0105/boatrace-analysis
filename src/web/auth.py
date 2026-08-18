@@ -47,7 +47,9 @@ _SUPABASE_ROLE_MAX_STALE_SEC = 900
 _SUPABASE_ROLE_CHECKED_AT_SESSION_KEY = "supabase_role_checked_at"
 _SUPABASE_ROLE_RETRY_AT_SESSION_KEY = "supabase_role_retry_at"
 _SUPABASE_ROLE_PENDING_AT_SESSION_KEY = "supabase_role_pending_at"
-_SUPABASE_MEMBER_ROLES = frozenset({"free_member", "paid_member", "admin"})
+_SUPABASE_MEMBER_ROLES = frozenset(
+    {"free_member", "beta_member", "paid_member", "admin"}
+)
 _LOCKOUT_THRESHOLD = 10      # 15分以内に失敗10回でロック
 _LOCKOUT_WINDOW_SEC = 900    # 15 分
 _LOCKOUT_DURATION_SEC = 1800  # ロック後30分はログイン不可
@@ -175,6 +177,24 @@ def is_paid_member() -> bool:
     return current_role() == "test_viewer" or role_allows(current_role(), "paid_member")
 
 
+def can_use_backtest() -> bool:
+    """Return whether the current session may use the Backtest feature."""
+    return current_role() in {
+        "beta_member",
+        "paid_member",
+        "admin",
+        # Preserve the existing read-only Playwright inspection role.
+        "test_viewer",
+    }
+
+
+def guest_access_enabled() -> bool:
+    """Evaluate the emergency guest-access switch for every request."""
+    import os
+
+    return os.getenv("BOATRACE_GUEST_ACCESS", "1") != "0"
+
+
 def is_playwright_test_viewer() -> bool:
     return (
         current_role() == "test_viewer"
@@ -207,7 +227,12 @@ def _set_supabase_session(
     role_validated: bool = True,
 ) -> None:
     session.clear()
-    session["is_member"] = role in {"free_member", "paid_member", "admin"}
+    session["is_member"] = role in {
+        "free_member",
+        "beta_member",
+        "paid_member",
+        "admin",
+    }
     session["user_id"] = user_id
     session["email"] = email
     session["role"] = role
@@ -222,7 +247,12 @@ def _set_supabase_session(
 
 def _set_test_session_role(role: str) -> None:
     session.clear()
-    session["is_member"] = role in {"free_member", "paid_member", "admin"}
+    session["is_member"] = role in {
+        "free_member",
+        "beta_member",
+        "paid_member",
+        "admin",
+    }
     session["role"] = role
     session["auth_provider"] = "playwright_test"
     session.permanent = True
@@ -305,6 +335,16 @@ def login_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
         if not is_member():
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def guest_access_or_login_required(view):
+    """Allow public race pages unless the request-time kill switch is off."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if not is_member() and not guest_access_enabled():
             return redirect(url_for("login", next=request.path))
         return view(*args, **kwargs)
     return wrapper

@@ -2,7 +2,7 @@
 Flask Web UI: 予測表示
 
 ルート:
-  GET /                    → 今日の日付にリダイレクト
+  GET /                    → 今日のレース一覧
   GET /races?date=YYYY-MM-DD → 指定日のレース一覧
   GET /race/<race_id>      → 1レースの予測詳細
   GET /api/race/<race_id>  → JSON
@@ -109,7 +109,8 @@ from src.strategies.signals import (
 )
 from src.web.auth import (
     admin_required, current_auth_provider, current_role, is_admin, is_member,
-    is_supabase_auth_enabled, login_required, member_only_api, register_auth_routes,
+    guest_access_or_login_required, is_supabase_auth_enabled, login_required,
+    member_only_api, register_auth_routes,
 )
 from src.web.billing import register_billing_routes
 from src.web.kachisuji_bp import bp as kachisuji_bp
@@ -5065,7 +5066,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
 
 
 RACE_DETAIL_TAG_CACHE_VERSION = "v6"
-RACE_DETAIL_PAGE_CACHE_VERSION = "v16"
+RACE_DETAIL_PAGE_CACHE_VERSION = "v17"
 
 
 def _race_detail_tag_cache_key(race_id: str) -> str:
@@ -6840,6 +6841,18 @@ def create_app(
         *,
         stale: bool = False,
     ):
+        initial_market_signals = (
+            _lightweight_top_page_market_payload(
+                snapshot.get("initial_market_signals"),
+                target_date,
+            )
+            if is_member()
+            else {
+                "date": target_date,
+                "race_badges": {},
+                "accident_watch": {},
+            }
+        )
         context = {
             "target_date": target_date,
             "today_iso": _today_jst_iso(),
@@ -6848,10 +6861,7 @@ def create_app(
             "market_signal_supported_levels": MARKET_SIGNAL_SUPPORTED_LEVELS,
             "market_signal_supported_class_prefixes": MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
             "market_signals_cache_version": MARKET_SIGNALS_CACHE_VERSION,
-            "initial_market_signals": _lightweight_top_page_market_payload(
-                snapshot.get("initial_market_signals"),
-                target_date,
-            ),
+            "initial_market_signals": initial_market_signals,
             "roi_picks_visible": False,
             "empty": bool(snapshot.get("empty")),
             "stale_data_notice": (
@@ -6862,7 +6872,7 @@ def create_app(
             "system_warnings": [],
             "static_version": app.jinja_env.globals.get("static_version", ""),
         }
-        if stale:
+        if stale or not is_member():
             # Avoid the DB-backed global context processor on the degradation path.
             html = app.jinja_env.get_template("index.html").render(**context)
         else:
@@ -7486,17 +7496,12 @@ def create_app(
         )
 
     @app.route("/")
-    @login_required
+    @guest_access_or_login_required
     def index():
-        target = request.args.get("date") or _today_jst_iso()
-        resp = redirect(url_for("races", date=target))
-        # ブラウザがリダイレクト先を日付ごとキャッシュしないように no-store を明示
-        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-        resp.headers["Pragma"] = "no-cache"
-        return resp
+        return races()
 
     @app.route("/races")
-    @login_required
+    @guest_access_or_login_required
     @cached(ttl=30, past_ttl=3600)  # 今日30秒/過去日1時間キャッシュ
     @_guard_races_transient_db
     # backlog item 11: 旧 60s → 120s。レース予定の動的要素は results_count のみで
@@ -7507,6 +7512,10 @@ def create_app(
         snapshot = _read_top_page_snapshot(target_date)
         if snapshot is not None:
             return _top_snapshot_response(snapshot, target_date)
+        if not is_member():
+            # Public traffic is cache-only. Never turn a guest cache miss into
+            # a race-table scan, self-heal collection, or snapshot write.
+            return _temporary_page_response(200)
 
         def _load_live_top_data():
             with db_connect() as conn:
@@ -7746,7 +7755,7 @@ def create_app(
         )
 
     @app.route("/race/<race_id>")
-    @login_required
+    @guest_access_or_login_required
     @cached(ttl=300, past_ttl=21600)
     @_guard_race_detail_transient_db
     def race_detail(race_id: str):
@@ -7755,7 +7764,9 @@ def create_app(
             return redirect(url_for("race_detail", race_id=canonical_race_id, **request.args))
         race_id = canonical_race_id
         started_at = time.perf_counter()
-        force_recompute = _effective_force_recompute()
+        # A guest can never opt into the maintenance-only live-build path,
+        # even if a process-wide recompute override is accidentally present.
+        force_recompute = is_member() and _effective_force_recompute()
         page_cache_key = _race_detail_page_cache_key(race_id)
         race_date = _race_date_from_race_id(race_id)
         use_fresh_page_cache = race_date >= _today_jst_iso()

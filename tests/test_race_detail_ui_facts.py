@@ -158,7 +158,7 @@ def test_race_detail_facts_and_course_skill_are_pre_result_only():
     assert "original.dash_time" in source
     assert "original.turn_time" in source
     assert "original.straight_time" in source
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v16"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v17"' in source
 
 
 def test_cached_predictions_include_same_display_facts_as_fallback_rows():
@@ -186,7 +186,7 @@ def test_cached_predictions_include_same_display_facts_as_fallback_rows():
 def test_race_detail_page_cache_version_bumped_for_template_changes():
     source = APP_SOURCE.read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v16"' in source
+    assert 'RACE_DETAIL_PAGE_CACHE_VERSION = "v17"' in source
     assert "def _race_date_from_race_id(race_id: str) -> str:" in source
 
 
