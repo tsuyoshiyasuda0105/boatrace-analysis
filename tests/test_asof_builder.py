@@ -569,10 +569,14 @@ def test_relative_wind_direction_includes_45_and_135_degree_boundaries(raw, expe
     assert relative_wind_direction(5, raw, 3, orientations={5: 0.0}) == expected
 
 
-def test_relative_wind_direction_handles_calm_and_unknown_orientation():
+def test_relative_wind_direction_handles_calm_and_course_relative_frame():
+    # Course-relative frame: classification no longer depends on any per-venue
+    # heading, so an empty orientation master still yields a wind label.
     assert relative_wind_direction(5, 17, 3, orientations={5: None}) == "無風"
     assert relative_wind_direction(5, 1, 0, orientations={5: None}) == "無風"
-    assert relative_wind_direction(5, 1, 3, orientations={5: None}) is None
+    assert relative_wind_direction(5, 1, 3, orientations={5: None}) == "向かい風"
+    assert relative_wind_direction(5, 9, 3, orientations={5: None}) == "追い風"
+    assert relative_wind_direction(5, 1, None, orientations={5: None}) is None
 
 
 def test_orientation_master_covers_every_venue_without_invented_headings():
@@ -601,7 +605,7 @@ def test_class_gender_conditions_and_three_payout_types(tmp_path):
     assert row["result_sanrentan_json"] == '["1-2-3"]'
     assert row["payout_sanrentan_json"] == '{"1-2-3":1230}'
     assert row["weather"] == "晴"
-    assert row["wind_dir"] is None
+    assert row["wind_dir"] == "追い風"  # is-wind 9 in the course-relative frame
     assert row["wind_dir_raw"] == 9
     assert row["tide_phase"] == "上げ潮"
 
@@ -889,4 +893,4 @@ def test_exhibition_derivation_requires_all_six_and_coverage_reports(tmp_path):
     coverage = {row["column"]: row for row in coverage_rows(output)}
     assert coverage["race_id"]["coverage_pct"] == 100.0
     assert coverage["b1_ex_time"]["oldest_date"] == "2025-06-02"
-    assert coverage["wind_dir"]["coverage_pct"] == 0.0
+    assert coverage["wind_dir"]["coverage_pct"] == 100.0  # course-relative frame always classifies valid wind

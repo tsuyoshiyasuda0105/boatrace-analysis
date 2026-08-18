@@ -113,14 +113,14 @@
             <div class="row wind-row">
               <span class="field-label" id="windDirectionLabel">風向き <span class="chip live">⏱</span></span>
               <div class="wind-control">
-                <div id="windDirection" class="wind-options" role="group" aria-labelledby="windDirectionLabel" aria-describedby="windDirectionNote" aria-disabled="true">
-                  <label><input type="checkbox" value="追い風" disabled>追い風</label>
-                  <label><input type="checkbox" value="向かい風" disabled>向かい風</label>
-                  <label><input type="checkbox" value="横風(右)" disabled>横風（右）</label>
-                  <label><input type="checkbox" value="横風(左)" disabled>横風（左）</label>
-                  <label><input type="checkbox" value="無風" disabled>無風</label>
+                <div id="windDirection" class="wind-options" role="group" aria-labelledby="windDirectionLabel" aria-describedby="windDirectionNote">
+                  <label><input type="checkbox" value="追い風">追い風</label>
+                  <label><input type="checkbox" value="向かい風">向かい風</label>
+                  <label><input type="checkbox" value="横風(右)">横風（右）</label>
+                  <label><input type="checkbox" value="横風(左)">横風（左）</label>
+                  <label><input type="checkbox" value="無風">無風</label>
                 </div>
-                <span class="wind-preparing" id="windDirectionNote">準備中：会場ごとの水面向きを整備中</span>
+                <span class="wind-hint" id="windDirectionNote">コース基準で判定（追い風＝1号艇が有利）。複数選択できます。</span>
               </div>
               <label for="windStrength" class="short-label">強さ</label>
               <select id="windStrength">

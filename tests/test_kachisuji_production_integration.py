@@ -140,10 +140,11 @@ def test_kachisuji_page_reuses_login_and_paid_member_checks(monkeypatch, tmp_pat
     assert '<select id="venue"' not in html
     assert "#venue input[name=\"venue\"]:checked" in html
     assert 'id="windDirection"' in html
-    assert 'aria-disabled="true"' in html
-    assert html.count(' disabled>') >= 5
+    # Wind direction is enabled (course-relative frame); no longer disabled.
+    assert 'aria-disabled="true"' not in html
+    assert "準備中：会場ごとの水面向きを整備中" not in html
+    assert html.count('<input type="checkbox" value="追い風">') == 1
     assert "#windDirection input:checked:not(:disabled)" in html
-    assert "準備中：会場ごとの水面向きを整備中" in html
     assert html.index('class="lab-ad"') < html.index("★ マイ手法")
     assert "勝ち筋サーチ" not in html
     assert "/kachisuji/api/search" in html

@@ -52,12 +52,11 @@
 .all-venues { display: inline-flex; gap: 6px; align-items: center; margin-bottom: 7px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
 .venue-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
 .venue-grid label, .wind-options label { display: inline-flex; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; gap: 5px; align-items: center; background: var(--surface-2); color: var(--ink-2); cursor: pointer; font-size: 11.5px; white-space: nowrap; }
-.venue-grid label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
+.venue-grid label:has(input:checked), .wind-options label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
 .venue-grid input, .wind-options input, .all-venues input { margin: 0; accent-color: var(--accent); }
 .venue-control .unit { display: block; margin-top: 6px; line-height: 1.45; }
-.wind-options { display: flex; gap: 5px; flex-wrap: wrap; opacity: .48; }
-.wind-options label { cursor: not-allowed; }
-.wind-preparing { display: block; margin-top: 6px; color: var(--ink-3); font-size: 11px; line-height: 1.45; }
+.wind-options { display: flex; gap: 5px; flex-wrap: wrap; }
+.wind-hint { display: block; margin-top: 6px; color: var(--ink-3); font-size: 11px; line-height: 1.45; }
 .wind-row > .short-label { margin-top: 4px; }
 .kachisuji-app select[multiple] { padding: 4px; }
 .kachisuji-app select[multiple] option { padding: 3px 7px; border-radius: 3px; }
