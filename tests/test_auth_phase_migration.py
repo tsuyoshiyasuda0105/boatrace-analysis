@@ -319,7 +319,7 @@ def test_base_template_shows_admin_menu_and_auth_badge():
     assert "url_for('login_supabase')" in base
     assert "url_for('member_today_races'" in base
     assert "url_for('public_roi')" in base
-    assert "/alerts/subscribe" in base
+    assert "/alerts/subscribe" not in base  # 通知登録ボタンは撤去済み
 
 
 def test_app_exposes_auth_context_to_templates():

@@ -124,11 +124,10 @@ def test_kachisuji_page_reuses_login_and_paid_member_checks(monkeypatch, tmp_pat
     assert "{% block title %}競艇｜バックテストLAB{% endblock %}" in base_source
     assert "バックテスト" in html
     assert "競艇｜バックテストLAB" in html
-    assert (
-        html.index("バックテスト</span>")
-        < html.index("プラン申込</span>")
-        < html.index("本日のレース</span>")
-    )
+    assert html.index("バックテスト</span>") < html.index("プラン申込</span>")
+    # 「本日のレース」ボタンは撤去し、ロゴが本日候補への導線を担う
+    assert "本日のレース</span>" not in html
+    assert '/member/today-races' in html
     assert 'href="/kachisuji/"' in html or 'href="/kachisuji"' in html
     kachisuji_rules = {
         rule.rule
