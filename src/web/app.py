@@ -37,6 +37,13 @@ if hasattr(time, "tzset"):
     time.tzset()
 
 JST = ZoneInfo("Asia/Tokyo")
+PREFLIGHT_STATUS_NAME = "preflight_0640_gate"
+_PREFLIGHT_GATE_CACHE: dict[str, Any] = {
+    "date": None,
+    "checked_monotonic": 0.0,
+    "active": False,
+}
+_PREFLIGHT_GATE_CACHE_TTL_SECONDS = 15.0
 
 
 def _now_jst() -> datetime:
@@ -55,13 +62,57 @@ def _today_jst_iso() -> str:
 
 
 def _maintenance_window_active(now: datetime | None = None) -> bool:
-    """Return whether the public UI is inside the fixed 04:00-07:00 window."""
+    """Return whether fixed maintenance or the bounded preflight gate is active."""
     enabled = str(os.environ.get("BOATRACE_MAINTENANCE_WINDOW", "1")).lower()
     if enabled not in {"1", "true", "yes", "on"}:
         return False
     current = now or _now_jst()
     minute_of_day = current.hour * 60 + current.minute
-    return 4 * 60 <= minute_of_day < 7 * 60
+    if 4 * 60 <= minute_of_day < 7 * 60:
+        return True
+    return _preflight_gate_extension_active(current)
+
+
+def _preflight_gate_extension_active(now: datetime | None = None) -> bool:
+    """Honor today's failed critical gate only from 07:00 through 07:29 JST.
+
+    Any read/parse failure publishes the site. The time condition is checked
+    before the cached DB result so a stale marker can never cause an infinite
+    maintenance response at or after 07:30.
+    """
+    current = now or _now_jst()
+    minute_of_day = current.hour * 60 + current.minute
+    if not 7 * 60 <= minute_of_day < 7 * 60 + 30:
+        return False
+
+    today = current.date().isoformat()
+    checked = float(_PREFLIGHT_GATE_CACHE.get("checked_monotonic") or 0.0)
+    if (
+        _PREFLIGHT_GATE_CACHE.get("date") == today
+        and time.monotonic() - checked < _PREFLIGHT_GATE_CACHE_TTL_SECONDS
+    ):
+        return bool(_PREFLIGHT_GATE_CACHE.get("active"))
+
+    active = False
+    try:
+        with _raw_db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT detail_json
+                  FROM system_status
+                 WHERE check_name = ? AND check_date = ?
+                """,
+                (PREFLIGHT_STATUS_NAME, today),
+            ).fetchone()
+        detail = json.loads(row[0]) if row and row[0] else {}
+        active = bool((detail.get("gate") or {}).get("extend_maintenance"))
+    except Exception:
+        logger.warning("preflight gate status read failed; publishing fail-open", exc_info=True)
+        active = False
+    _PREFLIGHT_GATE_CACHE.update(
+        {"date": today, "checked_monotonic": time.monotonic(), "active": active}
+    )
+    return active
 
 from flask import Flask, abort, g, has_request_context, jsonify, make_response, redirect, render_template, request, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -6642,12 +6693,17 @@ def create_app(
         if request.path in _MAINTENANCE_EXEMPT_PATHS:
             return None
         if request.path in {"/", "/races"}:
+            gate_extension_active = _preflight_gate_extension_active()
             # TOP はスナップショットが存在する時だけ通す (routes 側は snapshot
             # 優先で描画するため DB 重処理には入らない)。スナップショットが
             # 無い場合のみメンテページへフォールバックし、DB を保護する。
+            # 07:00以降のcritical gateは公開停止そのものなのでsnapshotも通さない。
             target_date = request.args.get("date") or _today_jst_iso()
             try:
-                if _read_top_page_snapshot(target_date) is not None:
+                if (
+                    not gate_extension_active
+                    and _read_top_page_snapshot(target_date) is not None
+                ):
                     return None
             except Exception:
                 logger.warning("maintenance snapshot probe failed", exc_info=True)
@@ -7212,10 +7268,29 @@ def create_app(
                     (today_iso,),
                 )
                 counts = {row[0]: row[1] for row in cur.fetchall()}
+                preflight_row = conn.execute(
+                    """
+                    SELECT status, message, detail_json, checked_at
+                      FROM system_status
+                     WHERE check_name = ? AND check_date = ?
+                    """,
+                    (PREFLIGHT_STATUS_NAME, today_iso),
+                ).fetchone()
             n_err = counts.get("error", 0)
             n_warn = counts.get("warning", 0)
             status_info["checks"]["data_quality_errors"] = n_err
             status_info["checks"]["data_quality_warnings"] = n_warn
+            if preflight_row:
+                try:
+                    preflight_detail = json.loads(preflight_row[2] or "{}")
+                except (TypeError, ValueError):
+                    preflight_detail = {"parse_error": True}
+                status_info["checks"]["preflight"] = {
+                    "status": preflight_row[0],
+                    "message": preflight_row[1],
+                    "detail": preflight_detail,
+                    "checked_at": preflight_row[3],
+                }
             if n_err > 0:
                 status_info["status"] = "degraded"
             elif n_warn > 0:

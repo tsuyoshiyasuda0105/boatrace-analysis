@@ -71,7 +71,10 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
         if expression not in _AUDITED_FSTRING_SQL_EXPRESSIONS
     ]
     assert not unexpected, f"未監査の f-string SQL 補間があります: {unexpected}"
-    assert len(calls) == 155, (
+    # 156th call: render_maintenance_scheduler._count_cache_keys. The only
+    # interpolation is a locally generated comma-separated sequence of "?"
+    # bind placeholders; all cache keys remain bound parameters.
+    assert len(calls) == 156, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )

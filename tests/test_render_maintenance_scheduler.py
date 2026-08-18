@@ -2,6 +2,8 @@ from contextlib import contextmanager
 from datetime import datetime
 import json
 
+import pytest
+
 from scripts import render_maintenance_scheduler as scheduler
 
 
@@ -106,7 +108,7 @@ def test_tick_runs_only_first_due_incomplete_phase(monkeypatch):
     )
     monkeypatch.setattr(scheduler, "record_phase", lambda *args: records.append(args))
 
-    result = scheduler.run_tick(_now(6, 40))
+    result = scheduler.run_tick(_now(6, 30))
 
     assert result["phase"] == "program"
     assert calls == ["program"]
@@ -173,7 +175,7 @@ def test_required_dependency_still_blocks_downstream(monkeypatch):
         lambda phase, _date: scheduler.MAX_PHASE_ATTEMPTS if phase in {"accident", "program"} else 0,
     )
 
-    result = scheduler.run_tick(_now(6, 40))
+    result = scheduler.run_tick(_now(6, 30))
 
     assert result["status"] == "degraded"
     assert "program" in result["incomplete_phases"]
@@ -412,3 +414,275 @@ def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatc
     assert ok is True
     assert detail["roi_ok"] is True
     assert "--warnings-ok" in calls[-1]
+
+
+def _healthy_preflight_measurements() -> dict[str, object]:
+    return {
+        "races": 2,
+        "entries": 12,
+        "page_cache_count": 2,
+        "motor_cache_count": 12,
+        "tag_cache_count": 2,
+        "signal_cache_exists": True,
+        "signal_cache_pending": False,
+        "signal_cache_nonempty": True,
+        "signal_count": 1,
+        "signal_cache_key": "market_signals:v:test:2026-08-13",
+        "today_races_http_status": 200,
+        "today_races_candidate_count": 0,
+        "accident_snapshot_status": "success",
+        "accident_integrity_status": "success",
+        "accident_check_status": "ok",
+        "accident_check_date": "2026-08-12",
+        "backtest_latest_date": "2026-08-12",
+        "predictions": 2,
+        "race_closed_at_count": 2,
+        "open_incidents": 0,
+        "cron_failures_12h": 0,
+        "healthz_http_status": 200,
+        "healthz_body_status": "ok",
+        "db_connections": 4,
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "failed_id"),
+    [
+        ("entries", 11, 1),
+        ("page_cache_count", 1, 2),
+        ("motor_cache_count", 11, 3),
+        ("tag_cache_count", 1, 4),
+        ("today_races_http_status", 500, 5),
+        ("accident_check_status", "warning", 6),
+        ("backtest_latest_date", "2026-08-11", 7),
+        ("predictions", 1, 8),
+        ("signal_cache_nonempty", False, 9),
+        ("race_closed_at_count", 1, 10),
+        ("open_incidents", 1, 11),
+        ("healthz_http_status", 503, 12),
+        ("db_connections", 45, 13),
+    ],
+)
+def test_each_preflight_check_has_an_independent_fail_decision(key, value, failed_id):
+    measurements = _healthy_preflight_measurements()
+    measurements[key] = value
+
+    checks = scheduler.evaluate_preflight_checks(
+        measurements,
+        target_date="2026-08-13",
+        yesterday="2026-08-12",
+    )
+
+    assert len(checks) == 13
+    assert next(item for item in checks if item["id"] == failed_id)["status"] == "fail"
+
+
+def test_all_thirteen_preflight_checks_pass_with_complete_measurements():
+    checks = scheduler.evaluate_preflight_checks(
+        _healthy_preflight_measurements(),
+        target_date="2026-08-13",
+        yesterday="2026-08-12",
+    )
+
+    assert [item["id"] for item in checks] == list(range(1, 14))
+    assert all(item["ok"] for item in checks)
+    assert {item["id"] for item in checks if item["critical"]} == {1, 2, 5}
+
+
+def test_preflight_measurements_use_mocked_database(monkeypatch):
+    class _Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+        def fetchall(self):
+            return self.rows
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, sql, params=()):
+            normalized = " ".join(sql.split())
+            if "SELECT (SELECT COUNT(*) FROM races" in normalized:
+                return _Cursor([(2, 12, 2, 2)])
+            if normalized.startswith("SELECT race_id FROM races"):
+                return _Cursor([("r1",), ("r2",)])
+            if normalized.startswith("SELECT status FROM task_runs"):
+                return _Cursor([("success",)])
+            if "check_name = 'post_run_accident'" in normalized:
+                return _Cursor([("2026-08-12", "ok")])
+            if "FROM incident_log" in normalized:
+                return _Cursor([(0,)])
+            if "task_name LIKE 'render_%'" in normalized:
+                return _Cursor([(0,)])
+            if "FROM pg_stat_activity" in normalized:
+                return _Cursor([(4,)])
+            raise AssertionError(normalized)
+
+    counts = iter([2, 2, 12])
+    monkeypatch.setattr(scheduler, "db_connect", _Connection)
+    monkeypatch.setattr(scheduler, "_count_cache_keys", lambda *_args: next(counts))
+    monkeypatch.setattr(
+        scheduler,
+        "_load_signal_cache_measurement",
+        lambda *_args: {
+            "signal_cache_exists": True,
+            "signal_cache_pending": False,
+            "signal_cache_nonempty": True,
+            "signal_count": 1,
+            "signal_cache_key": "signal-key",
+        },
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_kachisuji_latest_date",
+        lambda: {"backtest_latest_date": "2026-08-12"},
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_probe_today_races_page",
+        lambda _date: {"today_races_http_status": 200, "today_races_candidate_count": 1},
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_probe_healthz",
+        lambda: {"healthz_http_status": 200, "healthz_body_status": "ok"},
+    )
+
+    measurements = scheduler.collect_preflight_measurements(_now(6, 40))
+    checks = scheduler.evaluate_preflight_checks(
+        measurements,
+        target_date="2026-08-13",
+        yesterday="2026-08-12",
+    )
+
+    assert all(item["ok"] for item in checks)
+
+
+def test_preflight_critical_failure_repairs_once_then_extends_gate(monkeypatch):
+    measurements = _healthy_preflight_measurements()
+    measurements["entries"] = 11
+    writes = []
+    alerts = []
+    repairs = []
+    monkeypatch.setenv("BOATRACE_PREFLIGHT_GATE", "1")
+    monkeypatch.setattr(
+        scheduler,
+        "_run_preflight_signal_generation",
+        lambda _now: (True, {"return_code": 0}),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "collect_preflight_measurements",
+        lambda _now: dict(measurements),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_repair_critical_failures",
+        lambda _now, ids: repairs.append(list(ids)) or [
+            {"job": "program", "ok": False, "detail": {"return_code": 1}}
+        ],
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_write_preflight_status",
+        lambda *args: writes.append(args),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "notify_cron_failure",
+        lambda *args, **kwargs: alerts.append((args, kwargs)),
+    )
+
+    ok, detail = scheduler.run_preflight_phase(_now(6, 40))
+
+    assert ok is True
+    assert repairs == [[1]]
+    assert detail["summary"]["critical_failed_check_ids"] == [1]
+    assert detail["gate"]["extend_maintenance"] is True
+    assert detail["gate"]["hard_cap"] == "07:30 JST"
+    assert len(writes) == 1
+    assert len(alerts) == 1
+
+
+def test_critical_repair_jobs_are_each_run_at_most_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "run_program_phase",
+        lambda _now: calls.append("program") or (True, {}),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_run_detail_subprocess",
+        lambda *_args, **_kwargs: calls.append("detail_pages") or (True, {}),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_run_preflight_signal_generation",
+        lambda _now: calls.append("today_candidates") or (True, {}),
+    )
+
+    repairs = scheduler._repair_critical_failures(_now(6, 40), [1, 2, 5, 1, 2, 5])
+
+    assert calls == ["program", "detail_pages", "today_candidates"]
+    assert [item["job"] for item in repairs] == calls
+
+
+def test_preflight_gate_is_opt_in(monkeypatch):
+    monkeypatch.delenv("BOATRACE_PREFLIGHT_GATE", raising=False)
+    assert scheduler._preflight_gate_enabled() is False
+    monkeypatch.setenv("BOATRACE_PREFLIGHT_GATE", "1")
+    assert scheduler._preflight_gate_enabled() is True
+
+
+def test_preflight_signal_generation_uses_realtime_mode(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_py_detailed",
+        lambda args, **kwargs: calls.append((args, kwargs))
+        or scheduler.regular.PyRunResult(0),
+    )
+    monkeypatch.setattr(scheduler, "_child_peak_rss_mb", lambda: None)
+
+    ok, _detail = scheduler._run_preflight_signal_generation(_now(6, 40))
+
+    assert ok is True
+    assert calls == [
+        (
+            [
+                "scripts/prewarm_strategy_pages.py",
+                "--mode", "realtime",
+                "--date", "2026-08-13",
+            ],
+            {"timeout": 1800},
+        )
+    ]
+
+
+def test_0640_tick_prioritizes_preflight_over_late_phase_retry(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler, "maintenance_lock", _locked)
+    monkeypatch.setattr(scheduler, "phase_success", lambda *_args: False)
+    monkeypatch.setattr(scheduler, "phase_attempts", lambda *_args: 0)
+    monkeypatch.setattr(
+        scheduler,
+        "RUNNERS",
+        {
+            phase: (lambda _now, phase=phase: calls.append(phase) or (True, {}))
+            for phase, _ in scheduler.PHASES
+        },
+    )
+    monkeypatch.setattr(scheduler, "record_phase", lambda *_args: None)
+
+    result = scheduler.run_tick(_now(6, 40))
+
+    assert result["phase"] == "preflight"
+    assert calls == ["preflight"]
