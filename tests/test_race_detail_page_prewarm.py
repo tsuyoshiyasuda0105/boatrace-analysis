@@ -97,6 +97,7 @@ def test_manual_prewarm_verifies_every_persistent_page_and_can_repair_only_missi
     assert 'parser.add_argument("--missing-only", action="store_true")' in source
     assert 'parser.add_argument("--retry-missing", type=int, default=1)' in source
     assert 'summary["requested_races"] > 0' in source
+    assert page_prewarm.DEFAULT_BATCH_SIZE == 8
 
 
 def test_prewarm_fails_when_http_200_page_is_not_persisted(monkeypatch):
@@ -207,6 +208,7 @@ def test_page_prewarm_closes_each_sub_batch_and_collects_garbage(monkeypatch):
     connections = []
     prefetched_batches = []
     gc_calls = []
+    response_closes = []
 
     class Connection(_SharedConnection):
         def __enter__(self):
@@ -227,6 +229,9 @@ def test_page_prewarm_closes_each_sub_batch_and_collects_garbage(monkeypatch):
     class Response:
         status_code = 200
         data = b"stable-html"
+
+        def close(self):
+            response_closes.append(True)
 
     class Client:
         def session_transaction(self):
@@ -262,6 +267,7 @@ def test_page_prewarm_closes_each_sub_batch_and_collects_garbage(monkeypatch):
     assert summary["succeeded"] == 5
     assert all(connection.closed for connection in connections)
     assert len(gc_calls) == 3
+    assert len(response_closes) == 8  # five builds plus three cache-read samples
 
 
 def test_page_html_is_byte_identical_with_shared_prefetch_context(monkeypatch):

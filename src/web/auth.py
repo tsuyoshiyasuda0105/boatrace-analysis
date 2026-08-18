@@ -572,6 +572,7 @@ def register_auth_routes(app):
             request.endpoint == "static"
             or request.path.startswith("/static/")
             or request.path.startswith("/race/")
+            or request.path == "/api/session-navigation"
             or request.path in {"/", "/races", "/favicon.ico", "/healthz"}
         ):
             return None
@@ -603,6 +604,92 @@ def register_auth_routes(app):
             "SECURITY: BOATRACE_PLAYWRIGHT_PASSWORD must be 16+ characters and "
             "differ from BOATRACE_MEMBER_PASSWORD; dedicated test login is disabled."
         )
+
+    @app.route("/api/session-navigation", methods=["GET"])
+    def session_navigation():
+        """Return cookie-only header state for shared cache-neutral HTML."""
+        payload: dict[str, object] = {"is_member": is_member()}
+        if is_member():
+            items = [
+                {
+                    "href": url_for("member_today_races"),
+                    "icon": "今",
+                    "label": "本日のレース",
+                    "class_name": "nav-btn-today",
+                },
+                {
+                    "href": url_for("kachisuji.index"),
+                    "icon": "検",
+                    "label": "バックテスト",
+                    "class_name": "",
+                },
+                {
+                    "href": url_for("signup.plan"),
+                    "icon": "申",
+                    "label": "プラン申込",
+                    "class_name": "",
+                },
+            ]
+            if is_admin():
+                items.extend(
+                    [
+                        {
+                            "href": url_for("member_strategy"),
+                            "icon": "ROI",
+                            "label": "ROI",
+                            "class_name": "nav-btn-roi",
+                        },
+                        {
+                            "href": url_for("member_strategy_monthly"),
+                            "icon": "月",
+                            "label": "月別推移",
+                            "class_name": "nav-btn-monthly",
+                        },
+                        {
+                            "href": url_for("member_health"),
+                            "icon": "健",
+                            "label": "健全度",
+                            "class_name": "nav-btn-health",
+                        },
+                        {
+                            "href": url_for("member_accidents"),
+                            "icon": "注",
+                            "label": "事故率",
+                            "class_name": "nav-btn-accidents",
+                        },
+                    ]
+                )
+                if "start_prediction.prediction_metrics_page" in app.view_functions:
+                    items.append(
+                        {
+                            "href": url_for("start_prediction.prediction_metrics_page"),
+                            "icon": "ST",
+                            "label": "展示精度",
+                            "class_name": "",
+                        }
+                    )
+                items.append(
+                    {
+                        "href": url_for("admin_memberships"),
+                        "icon": "管",
+                        "label": "管理",
+                        "class_name": "nav-btn-health",
+                    }
+                )
+            payload.update(
+                {
+                    "home_url": items[0]["href"],
+                    "home_title": "本日のROI候補一覧",
+                    "items": items,
+                    "role_label": f"{current_role()} / {current_auth_provider()}",
+                    "is_admin": is_admin(),
+                    "logout_url": url_for("logout"),
+                }
+            )
+        response = jsonify(payload)
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        response.headers["Vary"] = "Cookie"
+        return response
 
     @app.route("/login", methods=["GET", "POST"])
     def login():

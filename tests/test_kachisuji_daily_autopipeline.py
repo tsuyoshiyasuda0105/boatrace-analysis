@@ -213,7 +213,7 @@ def test_corrupt_delta_restores_backup_without_changing_slim(tmp_path: Path):
         connection.close()
 
 
-def test_nightly_delta_failure_does_not_change_existing_success(monkeypatch):
+def test_nightly_delta_failure_does_not_change_existing_success(monkeypatch, tmp_path: Path):
     calls = []
 
     def fake_run(args, allow_prod_sync=False):
@@ -221,6 +221,7 @@ def test_nightly_delta_failure_does_not_change_existing_success(monkeypatch):
         return args[:1] != ["scripts/upload_kachisuji_delta.py"]
 
     monkeypatch.setattr(nightly, "_run_local", fake_run)
+    monkeypatch.setattr(nightly, "ROOT", tmp_path)
     monkeypatch.setattr(nightly, "_completed_date", lambda: "2026-08-18")
     monkeypatch.setattr(
         nightly,

@@ -190,9 +190,41 @@ def run_motor_phase(now: datetime) -> tuple[bool, dict]:
     return ok, {"date": today, "mode": "missing-only"}
 
 
+def _child_peak_rss_mb() -> float | None:
+    """Return the largest completed-child RSS observed by this Linux process."""
+    try:
+        import resource
+
+        peak = float(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+        # Linux reports KiB. Render runs Linux; keep other platforms diagnostic-only.
+        if not sys.platform.startswith("linux"):
+            return None
+        return round(peak / 1024.0, 1)
+    except (ImportError, OSError, TypeError, ValueError):
+        return None
+
+
+def _run_detail_subprocess(args: list[str], *, timeout: int) -> tuple[bool, dict]:
+    """Run one detail child without losing spawn/exit evidence."""
+    try:
+        result = regular.run_py_detailed(args, timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 - spawn failures must reach task_runs
+        result = regular.PyRunResult(
+            None,
+            f"spawn_error={type(exc).__name__}: {exc}",
+        )
+    return result.ok, {
+        "return_code": result.returncode,
+        "timed_out": bool(result.timed_out),
+        "oom_suspected": result.returncode in {-9, 137},
+        "stderr_tail": result.stderr_tail[-500:],
+        "peak_rss_mb": _child_peak_rss_mb(),
+    }
+
+
 def run_detail_phase(now: datetime) -> tuple[bool, dict]:
     today = now.date().isoformat()
-    tags_ok = regular.run_py(
+    tags_ok, tags_diagnostic = _run_detail_subprocess(
         [
             "scripts/prewarm_race_detail_tags.py",
             "--date", today,
@@ -203,7 +235,7 @@ def run_detail_phase(now: datetime) -> tuple[bool, dict]:
     # A partial tag refresh must not prevent the primary page prewarm. The final
     # integrity check below distinguishes a real cache gap from an acceptable
     # new-motor warning, so always give every page a chance to render first.
-    pages_ok = regular.run_py(
+    pages_ok, pages_diagnostic = _run_detail_subprocess(
         [
             "scripts/prewarm_race_detail_pages.py",
             "--date", today,
@@ -212,7 +244,7 @@ def run_detail_phase(now: datetime) -> tuple[bool, dict]:
         ],
         timeout=DETAIL_PREWARM_TIMEOUT_SEC,
     )
-    integrity_ok = regular.run_py(
+    integrity_ok, integrity_diagnostic = _run_detail_subprocess(
         [
             "scripts/check_post_run_integrity.py",
             "--date", today,
@@ -245,6 +277,11 @@ def run_detail_phase(now: datetime) -> tuple[bool, dict]:
         "integrity_ok": bool(integrity_ok),
         "partial": partial,
         "remaining": remaining,
+        "subprocesses": {
+            "tags": tags_diagnostic,
+            "pages": pages_diagnostic,
+            "integrity": integrity_diagnostic,
+        },
     }
 
 

@@ -260,3 +260,73 @@ def test_shared_race_detail_html_is_guest_safe_even_when_generated_by_member(
     assert "SWEET SPOT" not in html
     assert "ROI" not in html
     assert "EV+" not in html
+
+
+def test_session_navigation_restores_member_race_link_without_guest_leak(monkeypatch):
+    app = _create_app(monkeypatch)
+
+    member = app.test_client()
+    _set_role(member, "admin")
+    member_response = member.get("/api/session-navigation")
+    member_payload = member_response.get_json()
+
+    assert member_response.status_code == 200
+    assert "private" in member_response.headers["Cache-Control"]
+    assert "no-store" in member_response.headers["Cache-Control"]
+    assert member_response.headers["Vary"] == "Cookie"
+    assert member_payload["is_member"] is True
+    assert [item["label"] for item in member_payload["items"]] == [
+        "本日のレース", "バックテスト", "プラン申込", "ROI", "月別推移",
+        "健全度", "事故率", "展示精度", "管理",
+    ]
+    assert member_payload["items"][0]["href"] == "/member/today-races"
+
+    guest_response = app.test_client().get("/api/session-navigation")
+    guest_body = guest_response.get_data(as_text=True)
+    assert guest_response.get_json() == {"is_member": False}
+    assert "/member/today-races" not in guest_body
+    assert "バックテスト" not in guest_body
+
+
+def test_shared_cached_race_detail_hydrates_navigation_from_session_only(monkeypatch):
+    app = _create_app(monkeypatch)
+    with app.test_request_context(f"/race/{RACE_ID}"):
+        session["is_member"] = True
+        session["role"] = "admin"
+        shared_html = app.jinja_env.get_template("race.html").render(
+            info={
+                "race_date": TARGET_DATE,
+                "stadium_number": 1,
+                "stadium_name": "桐生",
+                "race_number": 1,
+                "race_title": "",
+                "race_subtitle": "",
+                "race_closed_at": "2026-08-18 11:00:00",
+                "boatcast_replay_url": "",
+            },
+            preds=[],
+            error=None,
+            beforeinfo=None,
+            venue_environment={},
+            venue_warning=None,
+            sweet_spot=False,
+            actual_result=None,
+            notice=None,
+            trifecta_pw=[],
+            trifecta_unified=[],
+        )
+    assert 'data-endpoint="/api/session-navigation"' in shared_html
+    assert "/member/today-races" not in shared_html
+
+    monkeypatch.setattr(web_app, "_read_page_html_cache", lambda *_args: shared_html)
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: TARGET_DATE)
+    member = app.test_client()
+    _set_role(member, "paid_member")
+    guest = app.test_client()
+
+    assert member.get(f"/race/{RACE_ID}").get_data(as_text=True) == shared_html
+    assert guest.get(f"/race/{RACE_ID}").get_data(as_text=True) == shared_html
+    member_nav = member.get("/api/session-navigation").get_json()
+    guest_nav = guest.get("/api/session-navigation").get_json()
+    assert member_nav["items"][0]["href"] == "/member/today-races"
+    assert guest_nav == {"is_member": False}

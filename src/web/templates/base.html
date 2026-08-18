@@ -23,6 +23,9 @@
 
       {% if is_member() and not cache_neutral_auth %}
       <nav class="nav-actions" aria-label="会員メニュー">
+        <a href="{{ url_for('member_today_races', date=today_iso_global) }}" class="nav-btn nav-btn-today" title="本日のROI候補一覧">
+          <span class="nav-icon">今</span><span class="nav-label">本日のレース</span>
+        </a>
         <a href="{{ url_for('kachisuji.index') }}" class="nav-btn" title="過去データで条件を検証">
           <span class="nav-icon">検</span><span class="nav-label">バックテスト</span>
         </a>
@@ -52,6 +55,8 @@
         </a>
         {% endif %}
       </nav>
+      {% elif cache_neutral_auth %}
+      <div class="nav-actions" data-session-navigation data-endpoint="{{ url_for('session_navigation') }}"></div>
       {% endif %}
 
       <div class="auth-status">
@@ -60,11 +65,6 @@
           <span class="auth-badge {% if is_admin() and not cache_neutral_auth %}pro{% endif %}">
             {% if cache_neutral_auth %}会員{% else %}{{ current_role() }} / {{ current_auth_provider() }}{% endif %}
           </span>
-          {% if is_admin() and not cache_neutral_auth %}
-          <a href="{{ url_for('public_roi') }}" class="account-btn account-btn-public-roi" title="公開ROIデータ">
-            <span class="nav-icon">ROI</span><span class="nav-label">公開ROI</span>
-          </a>
-          {% endif %}
           <a href="{{ url_for('logout') }}" class="account-btn account-btn-logout" title="ログアウト">
             <span class="nav-icon">出</span><span class="nav-label">ログアウト</span>
           </a>
@@ -78,6 +78,53 @@
         {% endif %}
         {% endif %}
       </div>
+      {% if cache_neutral_auth %}
+      <script>
+        (() => {
+          const shell = document.querySelector("[data-session-navigation]");
+          if (!shell) return;
+          fetch(shell.dataset.endpoint, { credentials: "same-origin", cache: "no-store" })
+            .then((response) => response.ok ? response.json() : null)
+            .then((state) => {
+              if (!state?.is_member) return;
+              const nav = document.createElement("nav");
+              nav.className = "nav-actions";
+              nav.setAttribute("aria-label", "会員メニュー");
+              for (const item of state.items || []) {
+                const link = document.createElement("a");
+                link.href = item.href;
+                link.className = `nav-btn ${item.class_name || ""}`.trim();
+                const icon = document.createElement("span");
+                icon.className = "nav-icon";
+                icon.textContent = item.icon;
+                const label = document.createElement("span");
+                label.className = "nav-label";
+                label.textContent = item.label;
+                link.append(icon, label);
+                nav.append(link);
+              }
+              shell.replaceWith(nav);
+              const home = document.querySelector(".site-header h1 a");
+              if (home) {
+                home.href = state.home_url;
+                home.title = state.home_title;
+              }
+              const account = document.querySelector(".auth-status");
+              if (account) {
+                const badge = document.createElement("span");
+                badge.className = `auth-badge ${state.is_admin ? "pro" : ""}`.trim();
+                badge.textContent = state.role_label;
+                const logout = document.createElement("a");
+                logout.href = state.logout_url;
+                logout.className = "account-btn account-btn-logout";
+                logout.textContent = "ログアウト";
+                account.replaceChildren(badge, logout);
+              }
+            })
+            .catch(() => {});
+        })();
+      </script>
+      {% endif %}
     </div>
   </header>
 

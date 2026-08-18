@@ -21,15 +21,14 @@ def test_public_roi_page_is_public_and_uses_leak_safe_rows():
     assert '"bet": row.get("bet") or ""' in source
 
 
-def test_public_roi_button_and_template_exist():
+def test_public_roi_template_exists_without_member_header_button():
     base = (ROOT / "src" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
     template = (ROOT / "src" / "web" / "templates" / "public_roi.html").read_text(
         encoding="utf-8"
     )
     css = (ROOT / "src" / "web" / "static" / "style.css").read_text(encoding="utf-8")
 
-    assert "url_for('public_roi')" in base
-    assert "account-btn-public-roi" in base
+    assert "url_for('public_roi')" not in base
     assert "PUBLIC ROI LIST" in template
     assert "data-toggle-public-header" in template
     assert "public-roi-table" in template

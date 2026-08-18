@@ -10,7 +10,6 @@ import argparse
 import gc
 import json
 import os
-import statistics
 import sys
 import time
 from datetime import datetime
@@ -28,7 +27,9 @@ from src.web import app as web_app  # noqa: E402
 
 
 JST = ZoneInfo("Asia/Tokyo")
-DEFAULT_BATCH_SIZE = 25
+# Eight pages keeps each prefetched input graph short-lived under Render's
+# 512 MB limit. A full 180-race day still needs only 23 bounded batches.
+DEFAULT_BATCH_SIZE = 8
 
 
 def _peak_rss_mb() -> float | None:
@@ -151,16 +152,24 @@ def prewarm(
     def generate(rid: str, index_label: str) -> None:
         race_started = time.perf_counter()
         response = client.get(f"/race/{rid}?recompute=1")
-        elapsed = time.perf_counter() - race_started
-        durations.append(elapsed)
-        if response.status_code != 200:
-            failures_by_race[rid] = {"race_id": rid, "status": response.status_code}
-        print(
-            f"[race-detail-page] {index_label} race_id={rid} "
-            f"status={response.status_code} elapsed={elapsed:.3f}s "
-            f"bytes={len(response.data)}",
-            flush=True,
-        )
+        try:
+            elapsed = time.perf_counter() - race_started
+            durations.append(elapsed)
+            status_code = response.status_code
+            response_bytes = len(response.data)
+            if status_code != 200:
+                failures_by_race[rid] = {"race_id": rid, "status": status_code}
+            print(
+                f"[race-detail-page] {index_label} race_id={rid} "
+                f"status={status_code} elapsed={elapsed:.3f}s "
+                f"bytes={response_bytes}",
+                flush=True,
+            )
+        finally:
+            # Release the buffered Flask response before the next large HTML page.
+            close_response = getattr(response, "close", None)
+            if close_response is not None:
+                close_response()
 
     persistent_missing_ids: list[str] = []
     batch_count = 0
@@ -235,6 +244,13 @@ def prewarm(
     failures = list(failures_by_race.values())
     success_count = len(processed_ids) - len(failures)
     remaining_count = (len(ids) - len(processed_ids)) + len(persistent_missing_ids)
+    ordered_durations = sorted(durations)
+    duration_midpoint = len(ordered_durations) // 2
+    median_seconds = (
+        ordered_durations[duration_midpoint]
+        if len(ordered_durations) % 2
+        else sum(ordered_durations[duration_midpoint - 1 : duration_midpoint + 1]) / 2
+    ) if ordered_durations else 0.0
     cache_read_samples: list[dict[str, object]] = []
     sample_ids = list(dict.fromkeys(
         [processed_ids[0], processed_ids[len(processed_ids) // 2], processed_ids[-1]]
@@ -247,14 +263,19 @@ def prewarm(
         web_app._PAGE_HTML_MEM_CACHE.clear()
         read_started = time.perf_counter()
         response = client.get(f"/race/{rid}")
-        cache_read_samples.append(
-            {
-                "race_id": rid,
-                "status": response.status_code,
-                "elapsed_seconds": round(time.perf_counter() - read_started, 3),
-                "bytes": len(response.data),
-            }
-        )
+        try:
+            cache_read_samples.append(
+                {
+                    "race_id": rid,
+                    "status": response.status_code,
+                    "elapsed_seconds": round(time.perf_counter() - read_started, 3),
+                    "bytes": len(response.data),
+                }
+            )
+        finally:
+            close_response = getattr(response, "close", None)
+            if close_response is not None:
+                close_response()
     summary = {
         "target_date": target_date,
         "generated_at": datetime.now(JST).isoformat(timespec="seconds"),
@@ -271,8 +292,8 @@ def prewarm(
         "batches": batch_count,
         "peak_rss_mb": _peak_rss_mb(),
         "elapsed_seconds": round(total, 3),
-        "average_seconds": round(statistics.mean(durations), 3) if durations else 0.0,
-        "median_seconds": round(statistics.median(durations), 3) if durations else 0.0,
+        "average_seconds": round(sum(durations) / len(durations), 3) if durations else 0.0,
+        "median_seconds": round(median_seconds, 3),
         "min_seconds": round(min(durations), 3) if durations else 0.0,
         "max_seconds": round(max(durations), 3) if durations else 0.0,
         "cache_read_samples": cache_read_samples,

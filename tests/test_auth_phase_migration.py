@@ -318,7 +318,8 @@ def test_base_template_shows_admin_menu_and_auth_badge():
     assert "{{ current_role() }} / {{ current_auth_provider() }}" in base
     assert "url_for('login_supabase')" in base
     assert "url_for('member_today_races'" in base
-    assert "url_for('public_roi')" in base
+    assert "url_for('public_roi')" not in base
+    assert base.index("本日のレース</span>") < base.index("バックテスト</span>")
     assert "/alerts/subscribe" not in base  # 通知登録ボタンは撤去済み
 
 

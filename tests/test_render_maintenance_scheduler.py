@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from datetime import datetime
+import json
 
 from scripts import render_maintenance_scheduler as scheduler
 
@@ -236,10 +237,11 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
     def fake_run_py(args, **_kwargs):
         calls.append(tuple(args))
         if args[0] == "scripts/prewarm_race_detail_tags.py":
-            return False
-        return True
+            return scheduler.regular.PyRunResult(7, "tag warning")
+        return scheduler.regular.PyRunResult(0)
 
-    monkeypatch.setattr(scheduler.regular, "run_py", fake_run_py)
+    monkeypatch.setattr(scheduler.regular, "run_py_detailed", fake_run_py)
+    monkeypatch.setattr(scheduler, "_child_peak_rss_mb", lambda: 123.4)
     monkeypatch.setattr(
         scheduler.regular,
         "race_detail_page_cache_coverage",
@@ -249,13 +251,16 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
     ok, detail = scheduler.run_detail_phase(_now(6, 0))
 
     assert ok is True
-    assert detail == {
-        "date": "2026-08-13",
-        "tags_ok": False,
-        "pages_ok": True,
-        "integrity_ok": True,
-        "partial": False,
-        "remaining": 0,
+    assert {key: value for key, value in detail.items() if key != "subprocesses"} == {
+        "date": "2026-08-13", "tags_ok": False, "pages_ok": True,
+        "integrity_ok": True, "partial": False, "remaining": 0,
+    }
+    assert detail["subprocesses"]["tags"] == {
+        "return_code": 7,
+        "timed_out": False,
+        "oom_suspected": False,
+        "stderr_tail": "tag warning",
+        "peak_rss_mb": 123.4,
     }
     assert [call[0] for call in calls] == [
         "scripts/prewarm_race_detail_tags.py",
@@ -273,9 +278,11 @@ def test_detail_phase_accepts_budgeted_partial_and_still_runs_pages(monkeypatch)
 
     def fake_run_py(args, **_kwargs):
         calls.append(tuple(args))
-        return args[0] != "scripts/check_post_run_integrity.py"
+        return scheduler.regular.PyRunResult(
+            0 if args[0] != "scripts/check_post_run_integrity.py" else 1
+        )
 
-    monkeypatch.setattr(scheduler.regular, "run_py", fake_run_py)
+    monkeypatch.setattr(scheduler.regular, "run_py_detailed", fake_run_py)
     monkeypatch.setattr(
         scheduler.regular,
         "race_detail_page_cache_coverage",
@@ -294,6 +301,68 @@ def test_detail_phase_accepts_budgeted_partial_and_still_runs_pages(monkeypatch)
     ]
     assert "--budget-sec" in calls[0]
     assert "--missing-only" in calls[1]
+
+
+def test_detail_phase_failure_diagnostics_are_recorded_as_task_json(monkeypatch):
+    results = iter(
+        [
+            scheduler.regular.PyRunResult(137, "x" * 600 + "tags killed"),
+            scheduler.regular.PyRunResult(None, "pages timed out", timed_out=True),
+            scheduler.regular.PyRunResult(9, "integrity failed"),
+        ]
+    )
+    recorded = []
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_py_detailed",
+        lambda *_args, **_kwargs: next(results),
+    )
+    monkeypatch.setattr(scheduler, "_child_peak_rss_mb", lambda: 511.8)
+    monkeypatch.setattr(
+        scheduler.regular,
+        "race_detail_page_cache_coverage",
+        lambda _date: {"races": 144, "covered": 0},
+    )
+    monkeypatch.setattr(
+        scheduler.regular,
+        "record_task",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+
+    ok, detail = scheduler.run_detail_phase(_now(6, 0))
+    scheduler.record_phase("detail", "2026-08-13", ok, detail)
+
+    assert ok is False
+    stored = json.loads(recorded[-1][1]["detail"])
+    assert recorded[-1][0][:3] == (
+        "render_maintenance_detail_v1", "2026-08-13", "failure"
+    )
+    assert stored["remaining"] == 144
+    assert set(stored["subprocesses"]) == {"tags", "pages", "integrity"}
+    assert stored["subprocesses"]["tags"]["return_code"] == 137
+    assert stored["subprocesses"]["tags"]["oom_suspected"] is True
+    assert stored["subprocesses"]["tags"]["stderr_tail"].endswith("tags killed")
+    assert len(stored["subprocesses"]["tags"]["stderr_tail"]) == 500
+    assert stored["subprocesses"]["pages"]["timed_out"] is True
+    assert stored["subprocesses"]["integrity"]["peak_rss_mb"] == 511.8
+
+
+def test_detail_subprocess_spawn_error_is_retained(monkeypatch):
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_py_detailed",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("cannot allocate memory")),
+    )
+    monkeypatch.setattr(scheduler, "_child_peak_rss_mb", lambda: None)
+
+    ok, diagnostic = scheduler._run_detail_subprocess(["child.py"], timeout=10)
+
+    assert ok is False
+    assert diagnostic["return_code"] is None
+    assert diagnostic["stderr_tail"] == (
+        "spawn_error=OSError: cannot allocate memory"
+    )
+    assert diagnostic["peak_rss_mb"] is None
 
 
 def test_snapshot_phase_builds_degraded_top_when_signal_refresh_fails(monkeypatch):
