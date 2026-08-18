@@ -4,12 +4,13 @@ import argparse
 import os
 import subprocess
 import sys
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+JST = timezone(timedelta(hours=9))
 
 
 def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
@@ -34,6 +35,41 @@ def _default_target_date(now: datetime | None = None) -> str:
     current = now or datetime.now()
     base = current.date() if current.hour < 12 else current.date() + timedelta(days=1)
     return base.isoformat()
+
+
+def _completed_date(now: datetime | None = None) -> str:
+    current = now or datetime.now(JST)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=JST)
+    else:
+        current = current.astimezone(JST)
+    return (current.date() - timedelta(days=1)).isoformat()
+
+
+def _run_kachisuji_daily(completed_date: str) -> bool:
+    compact_date = completed_date.replace("-", "")
+    delta_path = ROOT / "data" / f"kachisuji_delta_{compact_date}.db"
+    if delta_path.exists():
+        print(f"[kachisuji] reusing existing delta: {delta_path}", flush=True)
+    else:
+        refresh_ok = _run_local(
+            [
+                "scripts/refresh_kachisuji_daily.py",
+                "--date",
+                completed_date,
+                "--emit-delta",
+                str(delta_path),
+            ]
+        )
+        if not refresh_ok:
+            print("[kachisuji] refresh failed; upload skipped", flush=True)
+            return False
+    upload_ok = _run_local(
+        ["scripts/upload_kachisuji_delta.py", "--delta", str(delta_path)],
+        allow_prod_sync=True,
+    )
+    print(f"[kachisuji] {'ok' if upload_ok else 'upload failed'}", flush=True)
+    return upload_ok
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,36 +127,42 @@ def main() -> int:
         if not ok:
             return 1
 
-    if args.skip_sync:
-        return 0
+    if not args.skip_sync:
+        sync_tables = ",".join(
+            [
+                "races",
+                "race_entries",
+                "race_previews",
+                "race_tides",
+                "race_original_exhibitions",
+                "predictions",
+                "derived_start_stats",
+                "racer_accident_point_rules",
+                "racer_accident_events",
+                "racer_accident_period_stats",
+                "racer_accident_rank_snapshots",
+            ]
+        )
+        sync_ok = _run_local(
+            [
+                "scripts/sync_to_supabase.py",
+                "--start",
+                sync_start,
+                "--end",
+                sync_end,
+                "--tables",
+                sync_tables,
+            ],
+            allow_prod_sync=True,
+        )
+        if not sync_ok:
+            return 1
 
-    sync_tables = ",".join(
-        [
-            "races",
-            "race_entries",
-            "race_previews",
-            "race_tides",
-            "race_original_exhibitions",
-            "predictions",
-            "derived_start_stats",
-            "racer_accident_point_rules",
-            "racer_accident_events",
-            "racer_accident_period_stats",
-            "racer_accident_rank_snapshots",
-        ]
-    )
-    return 0 if _run_local(
-        [
-            "scripts/sync_to_supabase.py",
-            "--start",
-            sync_start,
-            "--end",
-            sync_end,
-            "--tables",
-            sync_tables,
-        ],
-        allow_prod_sync=True,
-    ) else 1
+    # This transport is intentionally isolated from the established nightly
+    # outcome. A failed upload remains visible in logs and can be retried by
+    # rerunning the task; the dated local delta is deliberately retained.
+    _run_kachisuji_daily(_completed_date())
+    return 0
 
 
 if __name__ == "__main__":

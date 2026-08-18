@@ -79,7 +79,7 @@ def kachisuji_server(strategy_db_path: Path):
             assert not _port_is_open(), "fixture teardown left port 8090 listening"
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def browser(kachisuji_server: str):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)

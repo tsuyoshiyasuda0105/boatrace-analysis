@@ -51,7 +51,9 @@ def test_pc_nightly_prepare_syncs_selected_tables(monkeypatch):
     )
 
     assert nightly.main() == 0
-    sync_args, allow_prod = calls[-1]
+    sync_args, allow_prod = next(
+        call for call in calls if call[0][:1] == ["scripts/sync_to_supabase.py"]
+    )
 
     assert allow_prod is True
     assert sync_args[:2] == ["scripts/sync_to_supabase.py", "--start"]

@@ -14,6 +14,8 @@ EXCLUDED_LOCAL_SQLITE_FILES = {
     # Offline as-of builder output: this module writes through sqlite3.connect()
     # directly and never passes SQL through src.db.connection's Postgres shim.
     "src/features/odds_sync.py",
+    "scripts/refresh_kachisuji_daily.py",
+    "scripts/apply_kachisuji_deltas.py",
 }
 
 

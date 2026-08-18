@@ -78,7 +78,7 @@ def round3_server(round3_strategy_db: Path):
             assert not _port_is_open(), f"fixture teardown left port {PORT} listening"
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def browser(round3_server: str):
     with sync_playwright() as playwright:
         instance = playwright.chromium.launch(headless=True)
