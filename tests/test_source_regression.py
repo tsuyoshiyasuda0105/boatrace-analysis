@@ -5,6 +5,7 @@ backlog event (2026-05-17) で発生した個別バグについて、ソース�
 削除されると CI で気付ける。
 """
 
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,68 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _read(rel_path: str) -> str:
     return (ROOT / rel_path).read_text(encoding="utf-8")
+
+
+_AUDITED_FSTRING_SQL_EXPRESSIONS = {
+    "' AND '.join(where)",
+    "', '.join(_COLUMNS)",
+    "B", "EXCLUDE_B", "FAVORITE_BAND", "PH", "YEAR_FILTER",
+    "_avg_st_expr", "_db_placeholders(chunk)", "_derived_join",
+    "_dst1_expr", "_dstn1_expr", "_placeholders(chunk)",
+    "_placeholders(closed_ids)", "_placeholders(target_races)",
+    "a", "accident_period_end_sql", "accident_period_start_sql",
+    "accident_updated_sql", "alias", "b", "bet_type", "boat", "c",
+    "cache_placeholders", "cmd", "col", "col_list", "combo", "combo_str",
+    "config.SQLITE_BUSY_TIMEOUT_MS", "course", "cycle_clause",
+    "cycle_filter_sql", "cycle_select", "cycle_sql", "ddl", "derived_cols",
+    "derived_columns", "derived_join", "fixed_first", "hi", "hit_condition",
+    "kim", "kind", "limit", "lo", "m", "motor_placeholders", "name",
+    "placeholders", "q1", "q2", "quoted", "quoted_table", "race_date_sql",
+    "race_placeholders", "racer_placeholders", "schema_placeholders",
+    "statement_timeout", "table", "table_name", "tilt_where", "where",
+    "where_filter", "where_match", "where_sql", "x", "y",
+}
+
+
+def test_fstring_sql_uses_only_fully_audited_internal_fragments():
+    """Reject new/changed SQL f-string interpolation pending explicit audit.
+
+    The 2026-08-19 audit inspected every current ``execute(f...)`` call under
+    src/ and scripts/.  Values must stay within the audited internal fragment
+    set, and the occurrence count prevents an added query from silently reusing
+    an approved generic fragment name.
+    """
+    calls: list[tuple[str, int, tuple[str, ...]]] = []
+    for source_root in (ROOT / "src", ROOT / "scripts"):
+        for path in source_root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and node.args
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "execute"
+                    and isinstance(node.args[0], ast.JoinedStr)
+                ):
+                    continue
+                expressions = tuple(
+                    ast.unparse(value.value)
+                    for value in node.args[0].values
+                    if isinstance(value, ast.FormattedValue)
+                )
+                calls.append((str(path.relative_to(ROOT)), node.lineno, expressions))
+
+    unexpected = [
+        (path, line, expression)
+        for path, line, expressions in calls
+        for expression in expressions
+        if expression not in _AUDITED_FSTRING_SQL_EXPRESSIONS
+    ]
+    assert not unexpected, f"未監査の f-string SQL 補間があります: {unexpected}"
+    assert len(calls) == 155, (
+        "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
+        "安全な内部断片だけであることを確認してからガードを更新してください。"
+    )
 
 
 # ===== バグ 1: Layer3 補完 SQL が F1 (grade=5) を除外していた =====

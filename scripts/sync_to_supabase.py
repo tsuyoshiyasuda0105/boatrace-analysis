@@ -9,6 +9,7 @@ Examples:
 
 import argparse
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -64,26 +65,36 @@ DEFAULT_TABLES = ",".join([
     "racer_accident_rank_snapshots",
 ])
 
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _quote_identifier(value: str) -> str:
+    """Validate and quote a SQLite/Postgres identifier from CLI selection."""
+    if not _SQL_IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(f"invalid SQL identifier: {value!r}")
+    return f'"{value}"'
+
 
 def sync_table(src: sqlite3.Connection, dst, table: str, where: str = "1=1",
                params: tuple = (), batch_size: int = 500, verbose: bool = False) -> int:
     """Copy rows from one SQLite table into the destination database."""
-    cur = src.execute(f"PRAGMA table_info({table})")
+    quoted_table = _quote_identifier(table)
+    cur = src.execute(f"PRAGMA table_info({quoted_table})")
     cols = [row[1] for row in cur.fetchall()]
     if not cols:
         print(f"  [{table}] table not found")
         return 0
 
-    col_list = ", ".join(cols)
+    col_list = ", ".join(_quote_identifier(col) for col in cols)
     placeholders = ", ".join(["?"] * len(cols))
-    cur = src.execute(f"SELECT {col_list} FROM {table} WHERE {where}", params)
+    cur = src.execute(f"SELECT {col_list} FROM {quoted_table} WHERE {where}", params)
 
     total = 0
     batch = []
     for row in cur:
         batch.append(tuple(row))
         if len(batch) >= batch_size:
-            sql = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES ({placeholders})"
+            sql = f"INSERT OR REPLACE INTO {quoted_table} ({col_list}) VALUES ({placeholders})"
             dst.executemany(sql, batch)
             total += len(batch)
             batch.clear()
@@ -91,7 +102,7 @@ def sync_table(src: sqlite3.Connection, dst, table: str, where: str = "1=1",
                 print(f"  [{table}] {total:,} rows synced")
 
     if batch:
-        sql = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES ({placeholders})"
+        sql = f"INSERT OR REPLACE INTO {quoted_table} ({col_list}) VALUES ({placeholders})"
         dst.executemany(sql, batch)
         total += len(batch)
 

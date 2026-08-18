@@ -415,6 +415,8 @@ def test_degraded_top_snapshot_preserves_same_day_last_good_signals(monkeypatch)
 
 def test_races_page_does_not_self_heal_from_web_request_by_default(monkeypatch):
     monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setattr(web_app.config, "WEB_SESSION_SECRET", "today-races-test-secret")
+    monkeypatch.setattr(web_app.config, "WEB_MEMBER_PASSWORD", "today-races-test-password")
     monkeypatch.delenv("BOATRACE_WEB_SELF_HEAL", raising=False)
     monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-07-30")
     monkeypatch.setattr(web_app, "db_connect", _fake_connection)

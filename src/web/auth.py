@@ -56,20 +56,7 @@ _LOCKOUT_DURATION_SEC = 1800  # ロック後30分はログイン不可
 
 
 def _client_ip() -> str:
-    """クライアント IP を取得。
-
-    セキュリティ: X-Forwarded-For はクライアントが自由に付与できるヘッダのため、
-    信頼できる逆プロキシの背後でのみ採用する。具体的には RENDER 環境変数が
-    立っている本番環境のみで XFF を読み、それ以外は request.remote_addr を使用。
-    これにより、ローカル/直アクセス時のなりすましでブルートフォース制限を
-    回避される事を防ぐ。
-    """
-    import os as _os
-    if _os.environ.get("RENDER"):
-        # Render の前段プロキシは XFF を必ず最後に追記する。先頭が真のクライアント。
-        fwd = request.headers.get("X-Forwarded-For", "")
-        if fwd:
-            return fwd.split(",")[0].strip()
+    """ProxyFix で補正済みのクライアント IP を取得。"""
     return request.remote_addr or "unknown"
 
 

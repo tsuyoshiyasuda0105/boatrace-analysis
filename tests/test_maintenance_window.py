@@ -11,6 +11,8 @@ def test_maintenance_window_boundaries():
 
 def test_production_maintenance_page_is_static_and_health_remains_available(monkeypatch):
     monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setattr(app_module.config, "WEB_SESSION_SECRET", "maintenance-test-secret")
+    monkeypatch.setattr(app_module.config, "WEB_MEMBER_PASSWORD", "maintenance-test-password")
     monkeypatch.setattr(app_module, "_ensure_db_initialized", lambda: None)
     monkeypatch.setattr(app_module, "_maintenance_window_active", lambda: True)
     app = app_module.create_app()
@@ -28,6 +30,8 @@ def test_production_maintenance_page_is_static_and_health_remains_available(monk
 
 def test_maintenance_window_keeps_login_routes_available(monkeypatch):
     monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setattr(app_module.config, "WEB_SESSION_SECRET", "maintenance-test-secret")
+    monkeypatch.setattr(app_module.config, "WEB_MEMBER_PASSWORD", "maintenance-test-password")
     monkeypatch.setattr(app_module, "_ensure_db_initialized", lambda: None)
     monkeypatch.setattr(app_module, "_maintenance_window_active", lambda: True)
     app = app_module.create_app()
@@ -43,6 +47,8 @@ def test_maintenance_window_keeps_login_routes_available(monkeypatch):
 
 def test_maintenance_window_serves_top_from_snapshot(monkeypatch):
     monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setattr(app_module.config, "WEB_SESSION_SECRET", "maintenance-test-secret")
+    monkeypatch.setattr(app_module.config, "WEB_MEMBER_PASSWORD", "maintenance-test-password")
     monkeypatch.setattr(app_module, "_ensure_db_initialized", lambda: None)
     monkeypatch.setattr(app_module, "_maintenance_window_active", lambda: True)
     app = app_module.create_app()

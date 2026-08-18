@@ -17,6 +17,7 @@ import os
 import re
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime
@@ -63,6 +64,7 @@ def _maintenance_window_active(now: datetime | None = None) -> bool:
     return 4 * 60 <= minute_of_day < 7 * 60
 
 from flask import Flask, abort, g, has_request_context, jsonify, make_response, redirect, render_template, request, session, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import config
 from src.collectors import openapi
@@ -6555,26 +6557,69 @@ def create_app(
     # ===== セキュリティ設定: Cookie 保護 =====
     # 本番 (RENDER) では HTTPS 強制、開発時は HTTP 許可
     is_production = bool(os.environ.get("RENDER"))
+    if is_production:
+        # Render の直前プロキシ1段だけを信頼し、補正後の remote_addr を使う。
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
     app.config["SESSION_COOKIE_SECURE"] = is_production       # HTTPS のみ送信
     app.config["SESSION_COOKIE_HTTPONLY"] = True              # JS からアクセス不可
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"             # CSRF 緩和
     app.config["SESSION_COOKIE_NAME"] = "boatrace_session"    # デフォルト名を変更
     app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024         # POST body 1MB 上限
 
-    # WEB_SESSION_SECRET が本番でデフォルトのままだと警告
+    # 本番で既知の開発用秘密を使う構成は、署名偽造につながるため起動拒否する。
     # noqa: S105 は「デフォルト値リテラルとの比較」であり実パスワードではない
     _DEFAULT_SECRET = "dev-only-do-not-use-in-prod"  # noqa: S105
     _DEFAULT_MEMBER = "dev-member"  # noqa: S105
     if is_production and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:
-        logger.critical(
+        message = (
             "SECURITY: WEB_SESSION_SECRET is using DEFAULT value in production. "
             "Set BOATRACE_WEB_SECRET environment variable to a long random string."
         )
+        logger.critical(message)
+        raise RuntimeError(message)
     if is_production and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:
-        logger.critical(
+        message = (
             "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
             "Set this env var to a strong password (16+ chars)."
         )
+        logger.critical(message)
+        raise RuntimeError(message)
+
+    guest_request_times: dict[str, deque[float]] = {}
+    guest_rate_limit_lock = threading.Lock()
+
+    @app.before_request
+    def throttle_guest_requests():
+        if request.path == "/healthz" or request.path.startswith("/static/"):
+            return None
+        if is_member():
+            return None
+        try:
+            limit = int(os.environ.get("BOATRACE_GUEST_RATE_LIMIT", "120"))
+        except (TypeError, ValueError):
+            limit = 120
+        if limit <= 0:
+            return None
+
+        now = time.monotonic()
+        window_seconds = 60.0
+        client_ip = request.remote_addr or "unknown"
+        with guest_rate_limit_lock:
+            timestamps = guest_request_times.setdefault(client_ip, deque())
+            while timestamps and now - timestamps[0] >= window_seconds:
+                timestamps.popleft()
+            if len(timestamps) >= limit:
+                retry_after = max(1, int(window_seconds - (now - timestamps[0]) + 0.999))
+                response = jsonify({
+                    "error": "rate_limit_exceeded",
+                    "message": "リクエストが多すぎます。しばらく待ってから再試行してください。",
+                })
+                response.status_code = 429
+                response.headers["Retry-After"] = str(retry_after)
+                response.headers["Cache-Control"] = "no-store"
+                return response
+            timestamps.append(now)
+        return None
     # メンテ時間帯 (04:00-07:00) でも通すパス。
     # 認証系は DB 負荷が軽く (会員確認は direct 接続)、締め出すとユーザーが
     # 「いつもログインできない」状態になるため常時許可する。
@@ -22137,9 +22182,9 @@ def create_app(
     # =====================================================
 
     @app.route("/admin/cache-clear", methods=["GET", "POST"])
-    @login_required
+    @admin_required
     def admin_cache_clear():
-        """全インメモリキャッシュをクリア (会員限定)。
+        """全インメモリキャッシュをクリア (管理者限定)。
         データ投入直後など即時反映したい時に使う。
 
         セキュリティ:
