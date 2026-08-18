@@ -56,7 +56,10 @@ def test_strategy_prewarm_constructs_cached_predictions_only_app(monkeypatch):
     )
 
     assert prewarm_module._create_prewarm_app() is sentinel
-    assert calls == [{"cached_predictions_only": True}]
+    assert calls == [{
+        "cached_predictions_only": True,
+        "allow_market_signals_recompute": True,
+    }]
 
 
 def test_realtime_mode_rebuilds_today_before_reading_strategy_page():
@@ -119,6 +122,7 @@ def test_render_blueprint_separates_web_and_cron_services():
     assert "name: boatrace-roi-history-cron" not in blueprint
     assert "name: boatrace-roi-finalize-cron" not in blueprint
     assert "startCommand: gunicorn" in blueprint
+    assert "'src.web.app:create_app(cached_predictions_only=True)'" in blueprint
     assert "startCommand: python scripts/render_regular_scheduler.py" in blueprint
     assert "startCommand: python scripts/odds_scheduler_render.py --no-jitter" in blueprint
     assert 'schedule: "* 23,0-13 * * *"' not in blueprint

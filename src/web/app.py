@@ -6540,6 +6540,7 @@ def create_app(
     version: str = config.DEFAULT_MODEL_VERSION,
     *,
     cached_predictions_only: bool = False,
+    allow_market_signals_recompute: bool = False,
 ) -> Flask:
     app = Flask(
         __name__,
@@ -8602,7 +8603,14 @@ def create_app(
         target_date = request.args.get("date") or _today_jst_iso()
         today_iso = _today_jst_iso()
         cache_ttl = 15 if target_date >= today_iso else 3600
-        force_recompute = _effective_market_signals_recompute()
+        # Only the dedicated strategy prewarmer may enter the full-day market
+        # reconstruction below.  Environment trigger checks alone are not a
+        # sufficient process boundary: a Web worker must remain cache-only even
+        # if it inherits or is started with a cron-like trigger by mistake.
+        force_recompute = (
+            allow_market_signals_recompute
+            and _effective_market_signals_recompute()
+        )
         # v6: avoid serving stale empty signals after race data catches up.
         cache_key = _market_signals_cache_key(target_date)
         def _market_json_response(payload: Any, cache_state: str):

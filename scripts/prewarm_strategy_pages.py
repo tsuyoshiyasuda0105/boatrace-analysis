@@ -272,7 +272,10 @@ def parse_args() -> argparse.Namespace:
 
 def _create_prewarm_app():
     """Use persisted predictions; strategy prewarm must never load ML models."""
-    return create_app(cached_predictions_only=True)
+    return create_app(
+        cached_predictions_only=True,
+        allow_market_signals_recompute=True,
+    )
 
 
 def main() -> int:

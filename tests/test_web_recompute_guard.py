@@ -175,12 +175,44 @@ def test_human_market_signals_returns_last_good_with_numeric_payload_unchanged(m
     }
 
 
-def test_authorized_market_signals_recompute_enters_existing_heavy_path(monkeypatch):
+def test_web_app_never_enters_market_signals_heavy_path_even_with_cron_trigger(monkeypatch):
+    target_date = "2026-08-16"
+    app = web_app.create_app()
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-prewarm")
+    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: target_date)
+    monkeypatch.setattr(web_app, "_today_jst_date", lambda: date.fromisoformat(target_date))
+    monkeypatch.setattr(
+        web_app,
+        "_read_best_market_signals_snapshot",
+        lambda *_args, **_kwargs: (None, "missing"),
+    )
+    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda _key: None)
+    monkeypatch.setattr(web_app, "_market_signals_compat_cache_keys", lambda _date: [])
+    monkeypatch.setattr(
+        web_app,
+        "db_connect",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Web factory must not enter full-day market reconstruction")
+        ),
+    )
+
+    with app.test_request_context(f"/api/market-signals?date={target_date}&recompute=1"):
+        response = _market_signals_view(app)()
+
+    assert response.status_code == 200
+    assert response.headers["X-Boatrace-Cache"] == "pending"
+    assert response.get_json()["data_status"] == {
+        "cache_miss": True,
+        "cache_only": True,
+    }
+
+
+def test_cron_market_signals_recompute_enters_existing_heavy_path(monkeypatch):
     class RecomputeReached(BaseException):
         pass
 
     target_date = "2026-08-16"
-    app = web_app.create_app()
+    app = web_app.create_app(allow_market_signals_recompute=True)
     monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-prewarm")
     monkeypatch.setattr(
         web_app,
