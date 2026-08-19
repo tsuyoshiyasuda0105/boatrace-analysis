@@ -26,9 +26,9 @@ def test_roi_history_range_backfill_runs_recompute_then_import(monkeypatch):
 
     assert backfill_range.main() == 0
     assert calls == [
-        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", "2026-07-30"],
+        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", "2026-07-30", "--full"],
         ["scripts/backfill_roi_race_history.py", "--from", "2026-07-30", "--to", "2026-07-30"],
-        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", "2026-07-31"],
+        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", "2026-07-31", "--full"],
         ["scripts/backfill_roi_race_history.py", "--from", "2026-07-31", "--to", "2026-07-31"],
     ]
 

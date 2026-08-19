@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import argparse
@@ -18,9 +19,16 @@ from src.web.app import (  # noqa: E402
     create_app,
     invalidate_cache,
     _market_signals_cache_key,
+    _market_signals_last_good_cache_key,
+    _market_signal_exhibition_fingerprints,
+    _mark_page_html_cache_table_ready,
     _read_json_cache_stale,
 )
-from src.db.connection import connect as db_connect  # noqa: E402
+from src.db.connection import (  # noqa: E402
+    connect as db_connect,
+    get_sql_count,
+    reset_sql_count,
+)
 from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature  # noqa: E402
 from scripts.ensure_performance_indexes import ensure_performance_indexes  # noqa: E402
 
@@ -134,7 +142,11 @@ def _validate_member_strategy_cache(path: str) -> tuple[bool, str]:
 
 
 def _hit(client, path: str) -> tuple[int, int, bool, str]:
-    resp = client.get(path)
+    try:
+        resp = client.get(path, headers={"X-Render-Trigger": "render-prewarm"})
+    except TypeError:
+        # Tiny test doubles and older callers may only accept the URL.
+        resp = client.get(path)
     body = resp.get_data() or b""
     if resp.status_code != 200:
         return resp.status_code, len(body), False, f"http={resp.status_code}"
@@ -267,6 +279,11 @@ def parse_args() -> argparse.Namespace:
         "--date",
         help="Target race date in YYYY-MM-DD. Defaults to the current date in Asia/Tokyo.",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Force a full-day signal reconstruction instead of exhibition-aware incremental refresh.",
+    )
     return parser.parse_args()
 
 
@@ -278,8 +295,26 @@ def _create_prewarm_app():
     )
 
 
+def _read_incremental_market_snapshot(target_date: str) -> dict | None:
+    """Read the known production cache table without a DDL probe."""
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT html FROM page_html_cache WHERE cache_key = ?",
+                (_market_signals_last_good_cache_key(target_date),),
+            ).fetchone()
+        _mark_page_html_cache_table_ready()
+        payload = json.loads(row[0]) if row and row[0] else None
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
 def main() -> int:
     args = parse_args()
+    os.environ["BOATRACE_MEASURE_SQL"] = "1"
+    reset_sql_count()
+    started = time.monotonic()
     today = date.fromisoformat(args.date) if args.date else datetime.now(JST).date()
     default_from = _days_ago(today, 30)
     yearly_from = _days_ago(today, 365)
@@ -287,6 +322,33 @@ def main() -> int:
     default_to = today.isoformat()
     monthly_from = "2024-06-01"
     monthly_to = today.isoformat()
+
+    incremental_race_ids: list[str] = []
+    if args.mode == "signals" and not args.full:
+        target_date = today.isoformat()
+        previous_payload = _read_incremental_market_snapshot(target_date)
+        previous_fingerprints = (
+            previous_payload.get("_exhibition_fingerprints")
+            if isinstance(previous_payload, dict)
+            else None
+        )
+        current_fingerprints = _market_signal_exhibition_fingerprints(target_date)
+        if isinstance(previous_fingerprints, dict) and current_fingerprints:
+            incremental_race_ids = sorted({
+                race_id
+                for race_id in set(previous_fingerprints) | set(current_fingerprints)
+                if previous_fingerprints.get(race_id) != current_fingerprints.get(race_id)
+            })
+            if not incremental_race_ids:
+                metrics = {
+                    "duration_seconds": round(time.monotonic() - started, 3),
+                    "sql_count": get_sql_count(),
+                    "scope": "skipped",
+                    "changed_races": 0,
+                    "reason": "exhibition-unchanged",
+                }
+                print("SIGNAL_REFRESH_METRICS=" + json.dumps(metrics, sort_keys=True), flush=True)
+                return 0
 
     app = _create_prewarm_app()
     client = app.test_client()
@@ -296,6 +358,11 @@ def main() -> int:
         ensure_performance_indexes()
 
     targets = build_targets(args.mode, today)
+    if args.mode == "signals" and incremental_race_ids:
+        targets = [
+            target + "&" + urlencode({"race_ids": ",".join(incremental_race_ids)})
+            for target in targets
+        ]
 
     ok = True
     for path in targets:
@@ -313,6 +380,14 @@ def main() -> int:
         f"monthly_range={monthly_from}..{monthly_to}",
         flush=True,
     )
+    if args.mode == "signals":
+        metrics = {
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "sql_count": get_sql_count(),
+            "scope": "incremental" if incremental_race_ids else "full",
+            "changed_races": len(incremental_race_ids),
+        }
+        print("SIGNAL_REFRESH_METRICS=" + json.dumps(metrics, sort_keys=True), flush=True)
     return 0 if ok else 1
 
 

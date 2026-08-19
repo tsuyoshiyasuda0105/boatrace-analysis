@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+import hashlib
 import os
 from typing import Iterator
 from zoneinfo import ZoneInfo
@@ -12,6 +13,39 @@ from src.db.connection import connect as db_connect
 
 JST = ZoneInfo("Asia/Tokyo")
 TASK_STATUSES = {"running", "skipped", "success", "failure"}
+SIGNAL_REFRESH_LOCK_NAME = "boatrace-exhibition-signal-refresh-v1"
+
+
+@contextmanager
+def try_cron_advisory_lock(
+    lock_name: str = SIGNAL_REFRESH_LOCK_NAME,
+    *,
+    connect=db_connect,
+) -> Iterator[bool]:
+    """Hold a cross-service PostgreSQL advisory lock for a cron phase."""
+    conn = connect()
+    is_postgres = getattr(conn, "_kind", "sqlite") == "postgres"
+    lock_key = int.from_bytes(
+        hashlib.sha256(lock_name.encode("utf-8")).digest()[:8],
+        byteorder="big",
+        signed=True,
+    )
+    locked = True
+    try:
+        if is_postgres:
+            row = conn.execute(
+                "SELECT pg_try_advisory_lock(?)",
+                (lock_key,),
+            ).fetchone()
+            locked = bool(row and row[0])
+        yield locked
+    finally:
+        if is_postgres and locked:
+            try:
+                conn.execute("SELECT pg_advisory_unlock(?)", (lock_key,))
+            except Exception:
+                pass
+        conn.close()
 
 
 def _now_iso() -> str:

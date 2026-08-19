@@ -35,12 +35,28 @@ _TRANSIENT_DB_RETRY_STATE = threading.local()
 _PG_POOL_EXHAUSTED_SINCE = None
 _PG_POOL_EXHAUSTION_FAILURES = 0
 _PG_POOL_LAST_REBUILD_AT = None
+_SQL_MEASUREMENT = threading.local()
 
 _DEFAULT_CONNECT_RETRY_DELAYS = (0.2, 0.5)
 _MAX_CONNECT_RETRIES = 2
 _MAX_CONNECT_RETRY_DELAY_SEC = 0.5
 _DEFAULT_POOL_EXHAUSTION_SEC = 90.0
 _DEFAULT_POOL_REBUILD_COOLDOWN_SEC = 60.0
+
+
+def reset_sql_count() -> None:
+    _SQL_MEASUREMENT.count = 0
+
+
+def get_sql_count() -> int:
+    return int(getattr(_SQL_MEASUREMENT, "count", 0) or 0)
+
+
+def _count_sql() -> None:
+    if os.getenv("BOATRACE_MEASURE_SQL", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        _SQL_MEASUREMENT.count = get_sql_count() + 1
 
 
 def _sqlstate_from_exception(exc: BaseException) -> str:
@@ -609,6 +625,7 @@ class _PgConnection:
         self._kind = "postgres"
 
     def execute(self, sql: str, params: Optional[tuple] = None):
+        _count_sql()
         sql2 = _placeholder_pg(
             _rewrite_sqlite_specific(sql),
             escape_percent=params is not None,
@@ -621,12 +638,14 @@ class _PgConnection:
         return cur
 
     def executemany(self, sql: str, seq):
+        _count_sql()
         sql2 = _placeholder_pg(_rewrite_sqlite_specific(sql), escape_percent=True)
         cur = self._conn.cursor()
         cur.executemany(sql2, list(seq))
         return cur
 
     def executescript(self, script: str):
+        _count_sql()
         # psycopg3 は単一 execute() で複文を受け付けないため、文ごとに分割して実行
         # まず行コメント (--) を除去してから ; で分割し、各文に書き換えを適用
         cleaned = "\n".join(
@@ -657,6 +676,48 @@ class _PgConnection:
             else:
                 self._pool.putconn(self._conn)
             self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+
+class _MeasuredConnection:
+    """Count SQLite API statements using the same round-trip semantics as PG."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+        self._kind = "sqlite"
+
+    def execute(self, sql: str, params=None):
+        _count_sql()
+        return self._conn.execute(sql) if params is None else self._conn.execute(sql, params)
+
+    def executemany(self, sql: str, seq):
+        _count_sql()
+        return self._conn.executemany(sql, seq)
+
+    def executescript(self, script: str):
+        _count_sql()
+        return self._conn.executescript(script)
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        return self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
 
     def __enter__(self):
         return self
@@ -698,7 +759,7 @@ def connect(
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute(f"PRAGMA busy_timeout={config.SQLITE_BUSY_TIMEOUT_MS};")
         conn.execute("PRAGMA foreign_keys=ON;")
-        return conn
+        return _MeasuredConnection(conn) if os.getenv("BOATRACE_MEASURE_SQL") else conn
 
     db_url = os.getenv("DATABASE_URL", "").strip()
     if db_url and _is_postgres_url(db_url):
@@ -719,4 +780,4 @@ def connect(
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute(f"PRAGMA busy_timeout={config.SQLITE_BUSY_TIMEOUT_MS};")
     conn.execute("PRAGMA foreign_keys=ON;")
-    return conn
+    return _MeasuredConnection(conn) if os.getenv("BOATRACE_MEASURE_SQL") else conn

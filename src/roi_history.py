@@ -100,6 +100,7 @@ def replace_roi_history_snapshot(
     ).hexdigest()[:20]
     rows: list[tuple[Any, ...]] = []
 
+    candidate_rows: list[tuple[str, str, dict[str, Any], list[tuple[str, str]], int]] = []
     for rid, signal in signals.items():
         if not isinstance(signal, dict):
             continue
@@ -132,26 +133,49 @@ def replace_roi_history_snapshot(
         if not race_id or not bets:
             continue
 
-        payout = 0
-        for bet_type, combination in bets:
-            payout_row = conn.execute(
-                "SELECT payout FROM race_payouts "
-                "WHERE race_id = ? AND bet_type = ? AND combination = ? "
-                "ORDER BY payout DESC LIMIT 1",
-                (race_id, bet_type, combination),
-            ).fetchone()
-            payout += int(payout_row[0] or 0) if payout_row else 0
-        settled_row = conn.execute(
-            "SELECT 1 FROM race_results WHERE race_id = ? AND finishing_position = 1 LIMIT 1",
-            (race_id,),
-        ).fetchone()
-        if not settled_row:
-            settled_row = conn.execute(
-                "SELECT 1 FROM race_payouts WHERE race_id = ? LIMIT 1", (race_id,)
-            ).fetchone()
-        is_settled = 1 if settled_row else 0
         default_stake = 100 * max(1, len(bets))
         stake = max(default_stake, int(bet_unit_map.get(strategy_key, default_stake)))
+        candidate_rows.append((race_id, strategy_key, l4, bets, stake))
+
+    race_ids = sorted({row[0] for row in candidate_rows})
+    payout_by_bet: dict[tuple[str, str, str], int] = {}
+    settled_races: set[str] = set()
+    if race_ids:
+        placeholders = ",".join("?" for _ in race_ids)
+        payout_rows = conn.execute(
+            f"""
+            SELECT race_id, bet_type, combination, MAX(payout)
+              FROM race_payouts
+             WHERE race_id IN ({placeholders})
+             GROUP BY race_id, bet_type, combination
+            """,
+            tuple(race_ids),
+        ).fetchall()
+        payout_by_bet = {
+            (str(race_id), str(bet_type), str(combination)): int(payout or 0)
+            for race_id, bet_type, combination, payout in payout_rows
+        }
+        settled_rows = conn.execute(
+            f"""
+            SELECT race_id
+              FROM race_results
+             WHERE race_id IN ({placeholders})
+               AND finishing_position = 1
+            UNION
+            SELECT race_id
+              FROM race_payouts
+             WHERE race_id IN ({placeholders})
+            """,
+            (*race_ids, *race_ids),
+        ).fetchall()
+        settled_races = {str(row[0]) for row in settled_rows}
+
+    for race_id, strategy_key, l4, bets, stake in candidate_rows:
+        payout = sum(
+            payout_by_bet.get((race_id, bet_type, combination), 0)
+            for bet_type, combination in bets
+        )
+        is_settled = 1 if race_id in settled_races else 0
         rows.append(
             (
                 race_date,

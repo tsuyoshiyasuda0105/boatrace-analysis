@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import date
 from pathlib import Path
@@ -317,7 +318,11 @@ def test_signal_refresh_failure_records_exit_code_and_stderr_tail(monkeypatch):
     assert recorded[-1][0][:3] == ("render_signal_refresh_06_4", "2026-08-18", "failure")
     assert "exit_code=137" in detail
     assert "oom_suspected=true" in detail
-    assert detail.endswith("allocation warning\nKilled")
+    parsed = json.loads(detail)
+    assert parsed["duration_seconds"] >= 0
+    assert parsed["sql_count"] is None
+    assert parsed["refresh_scope"] == "unknown"
+    assert parsed["failure"].endswith("allocation warning\nKilled")
 
 
 def test_run_py_detailed_captures_real_child_stderr_tail():
@@ -1047,10 +1052,8 @@ def test_market_signals_keep_a_stable_last_good_snapshot():
     assert "def _market_signals_last_good_cache_key" in source
     assert '"last-good"' in route_source
     assert "_market_signals_last_good_cache_key(target_date)" in route_source
-    assert (
-        "_write_json_cache(_market_signals_last_good_cache_key(target_date), payload)"
-        in route_source
-    )
+    assert "_write_json_caches" in route_source
+    assert "_market_signals_last_good_cache_key(target_date): payload" in route_source
 
 
 def test_market_signals_snapshot_merges_adopted_rows_from_compatible_cache(monkeypatch):

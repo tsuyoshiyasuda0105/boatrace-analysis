@@ -23,6 +23,7 @@ from src.db.cron_runtime import (
     parse_race_close_jst as _parse_race_close_jst,
     reap_stale_running_tasks,
     record_task_run,
+    try_cron_advisory_lock,
 )
 from src.roi_contract import ROI_DAILY_CACHE_VERSION, strategy_definition_signature
 from src.deploy_info import log_deploy_revision
@@ -198,6 +199,7 @@ class PyRunResult:
     returncode: int | None
     stderr_tail: str = ""
     timed_out: bool = False
+    stdout_tail: str = ""
 
     @property
     def ok(self) -> bool:
@@ -223,19 +225,35 @@ def run_py_detailed(args: list[str], timeout: int = 1800) -> PyRunResult:
             cwd=REPO,
             timeout=timeout,
             check=False,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             errors="replace",
         )
         stderr = _stderr_text(proc.stderr)
+        stdout = _stderr_text(proc.stdout)
+        if stdout:
+            print(stdout, end="" if stdout.endswith("\n") else "\n", flush=True)
         if stderr:
             print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n", flush=True)
-        result = PyRunResult(proc.returncode, stderr[-800:])
+        result = PyRunResult(
+            proc.returncode,
+            stderr[-800:],
+            stdout_tail=stdout[-4000:],
+        )
     except subprocess.TimeoutExpired as exc:
         stderr = _stderr_text(exc.stderr)
+        stdout = _stderr_text(exc.stdout)
+        if stdout:
+            print(stdout, end="" if stdout.endswith("\n") else "\n", flush=True)
         if stderr:
             print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n", flush=True)
-        result = PyRunResult(None, stderr[-800:], timed_out=True)
+        result = PyRunResult(
+            None,
+            stderr[-800:],
+            timed_out=True,
+            stdout_tail=stdout[-4000:],
+        )
     elapsed = time.monotonic() - started
     exit_label = "timeout" if result.timed_out else str(result.returncode)
     print(f"exit={exit_label} elapsed={elapsed:.1f}s", flush=True)
@@ -254,6 +272,35 @@ def _subprocess_failure_detail(result: PyRunResult) -> str:
         f"exit_code={exit_code} oom_suspected={str(oom_suspected).lower()} "
         f"stderr_tail={stderr_tail}"
     )[-1200:]
+
+
+def _signal_refresh_detail(
+    result: PyRunResult,
+    *,
+    duration_seconds: float,
+) -> str:
+    metrics: dict[str, Any] = {}
+    for line in reversed(result.stdout_tail.splitlines()):
+        if not line.startswith("SIGNAL_REFRESH_METRICS="):
+            continue
+        try:
+            parsed = json.loads(line.split("=", 1)[1])
+            if isinstance(parsed, dict):
+                metrics = parsed
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        break
+    detail: dict[str, Any] = {
+        "duration_seconds": round(duration_seconds, 3),
+        "sql_count": metrics.get("sql_count"),
+        "refresh_scope": metrics.get("scope", "unknown"),
+        "changed_races": int(metrics.get("changed_races") or 0),
+    }
+    if metrics.get("reason"):
+        detail["reason"] = metrics["reason"]
+    if not result.ok:
+        detail["failure"] = _subprocess_failure_detail(result)
+    return json.dumps(detail, ensure_ascii=False, sort_keys=True)
 
 
 def run_program_source_gate(run_date: str, *, allow_official_fallback: bool = False) -> bool:
@@ -1347,23 +1394,66 @@ def run_signal_refresh_slot(
         print(f"[signal-refresh] skip overlapping slot={now.hour:02d}:{slot}", flush=True)
         return True
 
-    record_task(task, today, "running")
-    if not source_gate_verified and not run_program_source_gate(today):
-        record_task(task, today, "failure", detail="program_source_gate_not_ready")
-        return False
-    ok = run_derived_start_stats(today, today)
-    if not ok:
-        record_task(task, today, "failure", detail="derived_start_stats_failed")
-        return False
-    result = run_py_detailed(
-        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today],
-        timeout=1800,
-    )
+    with try_cron_advisory_lock(connect=db_connect) as locked:
+        if not locked:
+            print(f"[signal-refresh] skip advisory-lock slot={now.hour:02d}:{slot}", flush=True)
+            record_task(
+                task,
+                today,
+                "skipped",
+                detail=json.dumps({
+                    "duration_seconds": 0.0,
+                    "sql_count": 0,
+                    "refresh_scope": "skipped",
+                    "reason": "exhibition-signal-lock-busy",
+                }, sort_keys=True),
+            )
+            return True
+
+        record_task(task, today, "running")
+        refresh_started = time.monotonic()
+        if not source_gate_verified and not run_program_source_gate(today):
+            record_task(
+                task,
+                today,
+                "failure",
+                detail=json.dumps({
+                    "duration_seconds": round(time.monotonic() - refresh_started, 3),
+                    "sql_count": None,
+                    "refresh_scope": "not-started",
+                    "reason": "program_source_gate_not_ready",
+                }, sort_keys=True),
+            )
+            return False
+        ok = run_derived_start_stats(today, today)
+        if not ok:
+            record_task(
+                task,
+                today,
+                "failure",
+                detail=json.dumps({
+                    "duration_seconds": round(time.monotonic() - refresh_started, 3),
+                    "sql_count": None,
+                    "refresh_scope": "not-started",
+                    "reason": "derived_start_stats_failed",
+                }, sort_keys=True),
+            )
+            return False
+        signal_args = [
+            "scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", today,
+        ]
+        if now.hour < 8:
+            signal_args.append("--full")
+        result = run_py_detailed(signal_args, timeout=1800)
+        duration_seconds = time.monotonic() - refresh_started
     record_task(
         task,
         today,
         "success" if result.ok else "failure",
-        detail=None if result.ok else _subprocess_failure_detail(result),
+        detail=_signal_refresh_detail(
+            result,
+            duration_seconds=duration_seconds,
+        ),
     )
     return result.ok
 

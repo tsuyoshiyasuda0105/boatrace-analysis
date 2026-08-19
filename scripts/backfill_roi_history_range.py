@@ -60,7 +60,7 @@ def main() -> int:
         target_s = target.isoformat()
         if not args.skip_recompute:
             _run_py(
-                ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_s],
+                ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_s, "--full"],
                 env=env,
             )
         _run_py(

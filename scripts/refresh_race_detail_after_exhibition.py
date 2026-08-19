@@ -30,6 +30,7 @@ from src.db.cron_runtime import (  # noqa: E402
     ensure_task_runs_table as ensure_task_runs_table_on_connection,
     find_missing_original_exhibition_races,
     record_task_run,
+    try_cron_advisory_lock,
 )
 from src.deploy_info import log_deploy_revision  # noqa: E402
 from src.notifications.cron_alerts import notify_cron_failure  # noqa: E402
@@ -72,6 +73,37 @@ def _run_py(args: list[str], timeout: int = 900) -> bool:
     elapsed = time.monotonic() - started
     print(f"exit={proc.returncode} elapsed={elapsed:.1f}s", flush=True)
     return proc.returncode == 0
+
+
+def _run_signal_prewarm(args: list[str], timeout: int = 1800) -> tuple[bool, dict]:
+    cmd = [sys.executable, *args]
+    print("$ " + " ".join(args), flush=True)
+    started = time.monotonic()
+    proc = subprocess.run(
+        cmd,
+        cwd=REPO,
+        timeout=timeout,
+        check=False,
+        stdout=subprocess.PIPE,
+        text=True,
+        errors="replace",
+    )
+    stdout = proc.stdout or ""
+    if stdout:
+        print(stdout, end="" if stdout.endswith("\n") else "\n", flush=True)
+    metrics: dict = {}
+    for line in reversed(stdout.splitlines()):
+        if line.startswith("SIGNAL_REFRESH_METRICS="):
+            try:
+                parsed = json.loads(line.split("=", 1)[1])
+                if isinstance(parsed, dict):
+                    metrics = parsed
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+            break
+    elapsed = time.monotonic() - started
+    print(f"exit={proc.returncode} elapsed={elapsed:.1f}s", flush=True)
+    return proc.returncode == 0, metrics
 
 
 def _ensure_task_runs_table() -> None:
@@ -192,7 +224,7 @@ def _should_refresh_market_signals(target_date: str, collect_summary: dict, refr
     return True, f"beforeinfo_rows={beforeinfo_rows} original_rows={original_rows} refreshed={refreshed}"
 
 
-def refresh_market_signals_if_needed(target_date: str, collect_summary: dict, refresh_summary: dict) -> dict:
+def _refresh_market_signals_if_needed_locked(target_date: str, collect_summary: dict, refresh_summary: dict) -> dict:
     if _render_daytime_lite_mode():
         summary = {"target_date": target_date, "triggered": False, "reason": "daytime-lite"}
         print(f"[signal-refresh] {summary}", flush=True)
@@ -214,12 +246,27 @@ def refresh_market_signals_if_needed(target_date: str, collect_summary: dict, re
 
     task_name = f"render_signal_refresh_{now.hour:02d}_{now.minute // 5}_exhibition"
     _record_task(task_name, target_date, "running", detail=reason)
+    refresh_started = time.monotonic()
     derived_ok = _run_py(
         ["scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date],
         timeout=1800,
     )
     if not derived_ok:
-        _record_task(task_name, target_date, "failure", detail=f"{reason}; derived_start_stats_failed")
+        _record_task(
+            task_name,
+            target_date,
+            "failure",
+            detail=json.dumps(
+                {
+                    "reason": f"{reason}; derived_start_stats_failed",
+                    "duration_seconds": round(time.monotonic() - refresh_started, 3),
+                    "sql_count": None,
+                    "refresh_scope": "not-started",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
         summary = {
             "target_date": target_date,
             "triggered": True,
@@ -229,20 +276,60 @@ def refresh_market_signals_if_needed(target_date: str, collect_summary: dict, re
         }
         print(f"[signal-refresh] {summary}", flush=True)
         return summary
-    ok = _run_py(
+    ok, metrics = _run_signal_prewarm(
         ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date],
         timeout=1800,
     )
-    _record_task(task_name, target_date, "success" if ok else "failure", detail=reason)
+    duration_seconds = round(time.monotonic() - refresh_started, 3)
+    detail = json.dumps(
+        {
+            "reason": reason,
+            "duration_seconds": duration_seconds,
+            "sql_count": metrics.get("sql_count"),
+            "refresh_scope": metrics.get("scope", "unknown"),
+            "changed_races": int(metrics.get("changed_races") or 0),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    _record_task(task_name, target_date, "success" if ok else "failure", detail=detail)
     summary = {
         "target_date": target_date,
         "triggered": True,
         "ok": ok,
         "task_name": task_name,
         "reason": reason,
+        "duration_seconds": duration_seconds,
+        "sql_count": metrics.get("sql_count"),
+        "refresh_scope": metrics.get("scope", "unknown"),
     }
     print(f"[signal-refresh] {summary}", flush=True)
     return summary
+
+
+def refresh_market_signals_if_needed(
+    target_date: str,
+    collect_summary: dict,
+    refresh_summary: dict,
+) -> dict:
+    with try_cron_advisory_lock(connect=db_connect) as locked:
+        if not locked:
+            summary = {
+                "target_date": target_date,
+                "triggered": False,
+                "ok": True,
+                "reason": "exhibition-signal-lock-busy",
+                "refresh_scope": "skipped",
+                "duration_seconds": 0.0,
+                "sql_count": 0,
+            }
+            print(f"[signal-refresh] {summary}", flush=True)
+            return summary
+        return _refresh_market_signals_if_needed_locked(
+            target_date,
+            collect_summary,
+            refresh_summary,
+        )
 
 
 def _find_missing_original_exhibition_races(
@@ -524,6 +611,37 @@ def refresh(target_date: str, *, delay_seconds: int = 60, limit: int = 12) -> di
 CRON_JOB_NAME = "boatrace-exhibition-detail-cron"
 
 
+def _run_exhibition_detail_phase(args) -> tuple[dict, dict, dict]:
+    collect_summary: dict = {"skipped": True}
+    validation_summary: dict = {
+        "status": "ok",
+        "skipped": True,
+        "reason": "no-refreshed-races",
+    }
+    if not args.skip_collect:
+        collect_summary = collect_live_exhibition(args.date)
+        print(f"[exhibition-collect] {collect_summary}", flush=True)
+    summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
+    if summary.get("race_ids"):
+        from scripts.check_post_run_integrity import (
+            run_checks as run_post_run_checks,
+            scopes_for_stage,
+        )
+
+        validation_summary = run_post_run_checks(
+            args.date,
+            scopes_for_stage("exhibition"),
+            list(summary["race_ids"]),
+            persist=True,
+        )
+        print(
+            "[exhibition-detail-refresh] validation="
+            + json.dumps(validation_summary, ensure_ascii=False),
+            flush=True,
+        )
+    return collect_summary, summary, validation_summary
+
+
 def _main_impl() -> int:
     log_deploy_revision(CRON_JOB_NAME)
     parser = argparse.ArgumentParser()
@@ -549,32 +667,21 @@ def _main_impl() -> int:
         _record_cron_skip(task_name, args.date, detail=detail)
         return 0
 
-    _record_task(task_name, args.date, "running")
     collect_summary: dict = {"skipped": True}
     signal_summary: dict = {"triggered": False, "ok": True, "reason": "not-run"}
     validation_summary: dict = {"status": "ok", "skipped": True, "reason": "no-refreshed-races"}
     try:
-        if not args.skip_collect:
-            collect_summary = collect_live_exhibition(args.date)
-            print(f"[exhibition-collect] {collect_summary}", flush=True)
-        summary = refresh(args.date, delay_seconds=args.delay_seconds, limit=args.limit)
-        if summary.get("race_ids"):
-            from scripts.check_post_run_integrity import (
-                run_checks as run_post_run_checks,
-                scopes_for_stage,
-            )
-
-            validation_summary = run_post_run_checks(
-                args.date,
-                scopes_for_stage("exhibition"),
-                list(summary["race_ids"]),
-                persist=True,
-            )
-            print(
-                "[exhibition-detail-refresh] validation="
-                + json.dumps(validation_summary, ensure_ascii=False),
-                flush=True,
-            )
+        with try_cron_advisory_lock(connect=db_connect) as locked:
+            if not locked:
+                detail = json.dumps(
+                    {"skipped": True, "reason": "exhibition-signal-lock-busy"},
+                    ensure_ascii=False,
+                )
+                print("[exhibition-detail-refresh] skip advisory lock busy", flush=True)
+                _record_cron_skip(task_name, args.date, detail=detail)
+                return 0
+            _record_task(task_name, args.date, "running")
+            collect_summary, summary, validation_summary = _run_exhibition_detail_phase(args)
         signal_summary = refresh_market_signals_if_needed(args.date, collect_summary, summary)
     except Exception as exc:
         _record_task(task_name, args.date, "failure", detail=f"{type(exc).__name__}: {exc}"[:1000])

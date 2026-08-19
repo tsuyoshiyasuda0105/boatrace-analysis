@@ -398,7 +398,11 @@ def test_signal_refresh_stops_before_roi_generation_when_gate_is_not_ready(monke
     now = scheduler.datetime(2026, 8, 12, 10, 5, tzinfo=scheduler.JST)
 
     assert scheduler.run_signal_refresh_slot(now) is False
-    assert records[-1][2:] == ("failure", "program_source_gate_not_ready")
+    assert records[-1][2] == "failure"
+    detail = json.loads(records[-1][3])
+    assert detail["reason"] == "program_source_gate_not_ready"
+    assert detail["refresh_scope"] == "not-started"
+    assert detail["duration_seconds"] >= 0
 
 
 def test_signal_refresh_reuses_gate_verified_by_daytime_bootstrap(monkeypatch):

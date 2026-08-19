@@ -17,6 +17,7 @@ def _read(rel_path: str) -> str:
 
 _AUDITED_FSTRING_SQL_EXPRESSIONS = {
     "' AND '.join(where)",
+    "' OR '.join(clauses)", "' OR '.join(cycle_clauses)",
     "', '.join(_COLUMNS)",
     "B", "EXCLUDE_B", "FAVORITE_BAND", "PH", "YEAR_FILTER",
     "_avg_st_expr", "_db_placeholders(chunk)", "_derived_join",
@@ -71,10 +72,9 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
         if expression not in _AUDITED_FSTRING_SQL_EXPRESSIONS
     ]
     assert not unexpected, f"未監査の f-string SQL 補間があります: {unexpected}"
-    # 156th call: render_maintenance_scheduler._count_cache_keys. The only
-    # interpolation is a locally generated comma-separated sequence of "?"
-    # bind placeholders; all cache keys remain bound parameters.
-    assert len(calls) == 156, (
+    # Market-signal additions interpolate only locally generated placeholder
+    # lists or fixed OR clauses; all values remain bound parameters.
+    assert len(calls) == 162, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )
@@ -577,9 +577,9 @@ def test_render_jobs_build_derived_start_stats_before_roi_signals():
     refresh = _read("scripts/refresh_race_detail_after_exhibition.py")
     assert '"scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date' in refresh
     assert refresh.index('"scripts/build_derived_start_stats.py"') < refresh.index('"scripts/generate_start_predictions.py"')
-    exhibition_signal_start = refresh.index("def refresh_market_signals_if_needed(")
+    exhibition_signal_start = refresh.index("def _refresh_market_signals_if_needed_locked(")
     exhibition_signal_end = refresh.index(
-        "def _find_missing_original_exhibition_races", exhibition_signal_start
+        "def refresh_market_signals_if_needed(", exhibition_signal_start
     )
     exhibition_signal_block = refresh[exhibition_signal_start:exhibition_signal_end]
     assert exhibition_signal_block.index('"scripts/build_derived_start_stats.py"') < exhibition_signal_block.index(

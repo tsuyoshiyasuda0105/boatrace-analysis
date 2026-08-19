@@ -116,7 +116,7 @@ def main() -> int:
         ["scripts/cache_racer_accident_rank_snapshot.py", "--date", target_date, "--db-path", str(ROOT / "data" / "boatrace.db")],
         ["scripts/prewarm_race_detail_tags.py", "--date", target_date],
         ["scripts/cache_predictions.py", "--date", target_date],
-        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date],
+        ["scripts/prewarm_strategy_pages.py", "--mode", "signals", "--date", target_date, "--full"],
         ["scripts/prewarm_strategy_pages.py", "--mode", "history", "--date", target_date],
         ["scripts/build_top_page_snapshot.py", "--date", target_date],
     ]

@@ -686,7 +686,15 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
             )
 
     race_badges: dict[str, dict[str, Any]] = {}
-    ace_threshold_cache: dict[int, Optional[float]] = {}
+    ace_threshold_cache = _ace_motor_thresholds(
+        {
+            stadium_no
+            for info in by_race.values()
+            for stadium_no in (_safe_int(info.get("stadium")),)
+            if stadium_no is not None
+        },
+        payload_date,
+    )
     for rid, info in by_race.items():
         badge_info: dict[str, Any] = {}
         direct_escape = escape_by_race.get(rid)
@@ -1201,6 +1209,30 @@ def _write_top_page_snapshot(target_date: str, payload: Optional[dict[str, Any]]
     return snapshot
 
 
+def _update_top_page_snapshot_market_payload(
+    target_date: str,
+    market_payload: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """Patch only signal/badge data in an existing TOP snapshot.
+
+    Rebuilding the complete TOP snapshot here rereads every race-detail cache
+    key. Detail and maintenance crons already own that material; a signal
+    refresh only needs to replace the embedded market payload.
+    """
+    snapshot = _read_top_page_snapshot(target_date)
+    if not isinstance(snapshot, dict):
+        return None
+    next_snapshot = dict(snapshot)
+    next_snapshot["initial_market_signals"] = {
+        "date": target_date,
+        "signals": dict(market_payload.get("signals") or {}),
+        "race_badges": dict(market_payload.get("race_badges") or {}),
+        "accident_watch": dict(market_payload.get("accident_watch") or {}),
+    }
+    next_snapshot["generated_at"] = datetime.now(tz=JST).isoformat(timespec="seconds")
+    return next_snapshot
+
+
 def _read_top_page_snapshot(target_date: str) -> Optional[dict[str, Any]]:
     payload = _read_json_cache_stale(_top_page_snapshot_cache_key(target_date))
     if not isinstance(payload, dict):
@@ -1444,6 +1476,12 @@ def _ensure_page_html_cache_table() -> None:
         logger.exception("failed to ensure page_html_cache table")
 
 
+def _mark_page_html_cache_table_ready() -> None:
+    """Record a successful direct cache-table read by an internal worker."""
+    global _PAGE_HTML_CACHE_TABLE_READY
+    _PAGE_HTML_CACHE_TABLE_READY = True
+
+
 def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
     try:
         now_ts = time.time()
@@ -1569,6 +1607,34 @@ def _write_json_cache(cache_key: str, payload: Any) -> None:
         logger.exception("failed to encode json cache: %s", cache_key)
 
 
+def _write_json_caches(payloads: dict[str, Any]) -> None:
+    """Persist several JSON snapshots in one database round trip."""
+    if not payloads:
+        return
+    try:
+        _ensure_page_html_cache_table()
+        now_ts = time.time()
+        rows = []
+        for cache_key, payload in payloads.items():
+            raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            _PAGE_HTML_MEM_CACHE[cache_key] = (now_ts, raw)
+            rows.append((cache_key, raw, now_ts))
+        with db_connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO page_html_cache (cache_key, html, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    html = excluded.html,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("failed to bulk write JSON caches: count=%s", len(payloads))
+
+
 def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
     """Read a JSON cache entry without TTL checks.
 
@@ -1596,6 +1662,112 @@ def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
             _note_transient_db_error("json_cache_stale", exc)
         logger.exception("failed to read stale json cache: %s", cache_key)
         return None
+
+
+def _read_json_caches_stale(
+    cache_keys: list[str],
+    *,
+    conn: Any = None,
+) -> dict[str, Any]:
+    """Read many JSON cache entries in one DB round trip.
+
+    Market-signal reconstruction needs the already-built race-detail tag
+    snapshots for every race. Reading those keys one by one dominated the
+    Render/Supabase latency even though the values are small.
+    """
+    keys = list(dict.fromkeys(str(key) for key in cache_keys if key))
+    if not keys:
+        return {}
+    found: dict[str, Any] = {}
+    missing: list[str] = []
+    for key in keys:
+        mem_entry = _PAGE_HTML_MEM_CACHE.get(key)
+        if mem_entry:
+            try:
+                found[key] = json.loads(mem_entry[1])
+                continue
+            except Exception:
+                pass
+        missing.append(key)
+    if not missing:
+        return found
+    try:
+        _ensure_page_html_cache_table()
+        placeholders = _db_placeholders(missing)
+        def _fetch_rows(active_conn: Any):
+            return active_conn.execute(
+                f"SELECT cache_key, html, updated_at FROM page_html_cache "
+                f"WHERE cache_key IN ({placeholders})",
+                tuple(missing),
+            ).fetchall()
+        if conn is None:
+            with db_connect() as cache_conn:
+                rows = _fetch_rows(cache_conn)
+        else:
+            rows = _fetch_rows(conn)
+        for cache_key, raw, updated_at in rows:
+            if not raw:
+                continue
+            try:
+                found[str(cache_key)] = json.loads(raw)
+                _PAGE_HTML_MEM_CACHE[str(cache_key)] = (float(updated_at or 0), raw)
+            except Exception:
+                logger.warning("failed to decode bulk json cache: %s", cache_key)
+        for key in missing:
+            if key not in found:
+                # Avoid an immediate per-race miss query later in the same
+                # reconstruction. This process-local negative entry is cleared
+                # by normal cache invalidation.
+                found[key] = {}
+                _PAGE_HTML_MEM_CACHE[key] = (0.0, "{}")
+    except Exception as exc:
+        if is_transient_db_error(exc):
+            _note_transient_db_error("json_cache_bulk_stale", exc)
+        logger.exception("failed to bulk read stale json caches: count=%s", len(missing))
+    return found
+
+
+def _market_signal_exhibition_fingerprints(target_date: str) -> dict[str, str]:
+    """Return stable per-race hashes of inputs that can change after exhibition."""
+    with db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT 'preview' AS source_kind,
+                   pv.race_id, pv.boat_number,
+                   pv.course_number, pv.exhibition_time,
+                   pv.start_timing_exhibition, pv.tilt_adjustment,
+                   pv.weather_number, pv.wind_speed, pv.wave_height,
+                   ds.derived_avg_start_timing_180d,
+                   ds.derived_start_count_180d,
+                   NULL, NULL, NULL
+              FROM race_previews pv
+              JOIN races r ON r.race_id = pv.race_id
+              LEFT JOIN derived_start_stats ds
+                ON ds.race_id = pv.race_id
+               AND ds.boat_number = pv.boat_number
+             WHERE r.race_date = ?
+            UNION ALL
+            SELECT 'original' AS source_kind,
+                   x.race_id, x.boat_number,
+                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                   x.lap_time, x.turn_time, x.straight_time
+              FROM race_original_exhibitions x
+              JOIN races r ON r.race_id = x.race_id
+             WHERE r.race_date = ?
+            ORDER BY 2, 1, 3
+            """,
+            (target_date, target_date),
+        ).fetchall()
+    by_race: dict[str, list[list[Any]]] = {}
+    for row in rows:
+        race_id = str(row[1])
+        by_race.setdefault(race_id, []).append(list(row[:1]) + list(row[2:]))
+    return {
+        race_id: hashlib.sha256(
+            json.dumps(values, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+        for race_id, values in by_race.items()
+    }
 
 
 def _db_placeholders(values: list[object]) -> str:
@@ -3460,6 +3632,55 @@ def _ace_motor_threshold(stadium_number: int, race_date: str) -> Optional[float]
         return None
     idx = max(0, min(len(rates) - 1, int(len(rates) * 0.95)))
     return rates[idx]
+
+
+def _ace_motor_thresholds(
+    stadium_numbers: set[int] | list[int],
+    race_date: str,
+) -> dict[int, Optional[float]]:
+    """Return per-venue ace thresholds with one history query."""
+    stadiums = sorted({int(stadium) for stadium in stadium_numbers})
+    if not stadiums:
+        return {}
+    clauses: list[str] = []
+    params: list[Any] = [race_date]
+    for stadium in stadiums:
+        cycle_start = _motor_cycle_start(race_date, stadium)
+        if cycle_start:
+            clauses.append("(r.stadium_number = ? AND r.race_date >= ?)")
+            params.extend((stadium, cycle_start))
+        else:
+            clauses.append("(r.stadium_number = ?)")
+            params.append(stadium)
+    with db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT r.stadium_number,
+                   e.assigned_motor_number,
+                   MAX(e.assigned_motor_top_2_percent) AS motor_rate
+              FROM races r
+              JOIN race_entries e ON e.race_id = r.race_id
+             WHERE r.race_date <= ?
+               AND ({' OR '.join(clauses)})
+               AND e.assigned_motor_number IS NOT NULL
+               AND e.assigned_motor_top_2_percent IS NOT NULL
+             GROUP BY r.stadium_number, e.assigned_motor_number
+            """,
+            tuple(params),
+        ).fetchall()
+    rates_by_stadium: dict[int, list[float]] = {}
+    for stadium, _motor, rate in rows:
+        if rate is not None:
+            rates_by_stadium.setdefault(int(stadium), []).append(float(rate))
+    thresholds: dict[int, Optional[float]] = {}
+    for stadium in stadiums:
+        rates = sorted(rates_by_stadium.get(stadium, []))
+        if not rates:
+            thresholds[stadium] = None
+            continue
+        idx = max(0, min(len(rates) - 1, int(len(rates) * 0.95)))
+        thresholds[stadium] = rates[idx]
+    return thresholds
 
 
 def _racer_course_detail_payload(race_id: str, boat_number: int, info: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
@@ -6733,6 +6954,15 @@ def create_app(
         path = request.path
         if path == "/healthz" or path.startswith("/static/"):
             return response
+        if (os.getenv("BOATRACE_TASK_TRIGGER") or "").strip().lower() in {
+            "render-prewarm",
+            "render-cron",
+            "render-maintenance",
+        }:
+            # Cron duration/SQL metrics are persisted on task_runs. Recording
+            # the same internal request as a user-facing slow request adds two
+            # DB writes precisely while the database is under refresh load.
+            return response
         try:
             entry = {
                 "at": _now_jst().isoformat(timespec="seconds"),
@@ -8732,6 +8962,24 @@ def create_app(
         各レースのトリフェクタ1番人気の払戻を見て +EV/-EV ゾーンを判定
         """
         target_date = request.args.get("date") or _today_jst_iso()
+        requested_race_ids = {
+            race_id.strip()
+            for race_id in str(request.args.get("race_ids") or "").split(",")
+            if race_id.strip()
+        }
+        incremental_base_payload = None
+        if requested_race_ids:
+            candidate_base = _read_json_cache_stale(
+                _market_signals_last_good_cache_key(target_date)
+            )
+            if (
+                isinstance(candidate_base, dict)
+                and candidate_base.get("date") == target_date
+                and isinstance(candidate_base.get("signals"), dict)
+            ):
+                incremental_base_payload = candidate_base
+            else:
+                requested_race_ids.clear()
         today_iso = _today_jst_iso()
         cache_ttl = 15 if target_date >= today_iso else 3600
         # Only the dedicated strategy prewarmer may enter the full-day market
@@ -9198,8 +9446,41 @@ def create_app(
             "T-1min": 5, "T-15min": 6,
         }
 
+        class _OddsRowsCursor:
+            def __init__(self, rows: list[tuple[str, str, int]]) -> None:
+                self._rows = rows
+
+            def fetchall(self) -> list[tuple[str, str, int]]:
+                return self._rows
+
         try:
             with db_connect() as conn:
+                live_odds_rows: list[tuple[str, str, str, int]] = []
+                try:
+                    odds_cur = conn.execute(
+                        """
+                        SELECT r.race_id, o.combination, o.snapshot_label,
+                               o.odds * 100 AS payout
+                          FROM races r
+                          JOIN odds_trifecta o ON r.race_id = o.race_id
+                         WHERE r.race_date = ?
+                           AND o.combination IN ('1-2-3','1-3-2','1-4-3','1-2-4')
+                           AND o.snapshot_label IN
+                               ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min')
+                        """,
+                        (target_date,),
+                    )
+                    live_odds_rows = [
+                        (str(rid), str(combination), str(label), int(payout))
+                        for rid, combination, label, payout in odds_cur.fetchall()
+                        if payout
+                    ]
+                except Exception as exc:
+                    logger.warning("live odds bulk load failed: %s", exc)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                 # === 1. T-X 1-2-3 オッズ (IN 句 1 クエリ統合) ===
                 # backlog item: 「いずれかの T-X snapshot が L4 帯 (500-1000円) なら
                 # 候補」とする OR ロジックに変更 (2026-05-18 ユーザ指摘:
@@ -9209,14 +9490,11 @@ def create_app(
                 # 新実装: 6 snapshot 中いずれかが L4 帯なら採用、その L4 帯 odds
                 #         を min_payout に。表示用は T-5min を優先。
                 try:
-                    cur = conn.execute("""
-                        SELECT r.race_id, o.snapshot_label, o.odds * 100 AS min_payout
-                          FROM races r
-                          JOIN odds_trifecta o ON r.race_id = o.race_id
-                         WHERE r.race_date = ?
-                           AND o.combination = '1-2-3'
-                           AND o.snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min')
-                    """, (target_date,))
+                    cur = _OddsRowsCursor([
+                        (rid, label, payout)
+                        for rid, combination, label, payout in live_odds_rows
+                        if combination == "1-2-3"
+                    ])
                     # まず全 snapshot を race_id 別に収集
                     rid_snaps: dict[str, list[tuple[str, int]]] = {}
                     for rid, label, mp in cur.fetchall():
@@ -9253,14 +9531,11 @@ def create_app(
                 # Tier A/B is a 1-3-2 strategy, so keep its odds separate from
                 # the 1-2-3 favorite odds used by the core L4 strategy.
                 try:
-                    cur = conn.execute("""
-                        SELECT r.race_id, o.snapshot_label, o.odds * 100 AS payout_132
-                          FROM races r
-                          JOIN odds_trifecta o ON r.race_id = o.race_id
-                         WHERE r.race_date = ?
-                           AND o.combination = '1-3-2'
-                           AND o.snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min')
-                    """, (target_date,))
+                    cur = _OddsRowsCursor([
+                        (rid, label, payout)
+                        for rid, combination, label, payout in live_odds_rows
+                        if combination == "1-3-2"
+                    ])
                     rid_snaps_132: dict[str, list[tuple[str, int]]] = {}
                     for rid, label, mp in cur.fetchall():
                         if not mp:
@@ -9281,17 +9556,9 @@ def create_app(
                 # === 2. final 払戻 (T-X 無い過去日フォールバック) ===
                 def _load_live_band_map(combination: str, min_odds: int, max_odds: int, prefer_label: str) -> dict[str, int]:
                     try:
-                        cur = conn.execute("""
-                            SELECT r.race_id, o.snapshot_label, o.odds * 100 AS payout
-                              FROM races r
-                              JOIN odds_trifecta o ON r.race_id = o.race_id
-                             WHERE r.race_date = ?
-                               AND o.combination = ?
-                               AND o.snapshot_label IN ('T-1min','T-2min','T-3min','T-4min','T-5min','T-15min')
-                        """, (target_date, combination))
                         rid_snaps: dict[str, list[tuple[str, int]]] = {}
-                        for rid, label, payout in cur.fetchall():
-                            if not payout:
+                        for rid, row_combination, label, payout in live_odds_rows:
+                            if row_combination != combination:
                                 continue
                             rid_snaps.setdefault(rid, []).append((label, int(payout)))
                         out: dict[str, int] = {}
@@ -9321,20 +9588,13 @@ def create_app(
                 ) -> dict[str, int]:
                     """Load one exact pre-race snapshot without later-odds fallback."""
                     try:
-                        cur = conn.execute(
-                            """
-                            SELECT r.race_id, o.odds * 100 AS payout
-                              FROM races r
-                              JOIN odds_trifecta o ON r.race_id = o.race_id
-                             WHERE r.race_date = ?
-                               AND o.combination = ?
-                               AND o.snapshot_label = ?
-                            """,
-                            (target_date, combination, snapshot_label),
-                        )
                         out: dict[str, int] = {}
-                        for rid, payout in cur.fetchall():
-                            if payout and min_odds <= int(payout) < max_odds:
+                        for rid, row_combination, label, payout in live_odds_rows:
+                            if (
+                                row_combination == combination
+                                and label == snapshot_label
+                                and min_odds <= int(payout) < max_odds
+                            ):
                                 out[rid] = int(payout)
                         return out
                     except Exception as e:
@@ -9387,14 +9647,17 @@ def create_app(
                 # === 3. all_race_info (races + race_entries + race_previews) ===
                 # 2号艇の national_top_2_percent も取得 (一般戦 F1 判定用)
                 try:
-                    conn.execute("""
-                        CREATE TABLE IF NOT EXISTS race_program_tags (
-                          race_id TEXT PRIMARY KEY,
-                          program_type TEXT,
-                          program_name TEXT,
-                          is_fixed_entry INTEGER DEFAULT 0
-                        )
-                    """)
+                    if request.headers.get("X-Render-Trigger", "").strip().lower() not in {
+                        "render-prewarm", "render-cron", "render-maintenance"
+                    }:
+                        conn.execute("""
+                            CREATE TABLE IF NOT EXISTS race_program_tags (
+                              race_id TEXT PRIMARY KEY,
+                              program_type TEXT,
+                              program_name TEXT,
+                              is_fixed_entry INTEGER DEFAULT 0
+                            )
+                        """)
                     cur = conn.execute("""
                         SELECT r.race_id, r.stadium_number, r.race_grade_number,
                                r.race_number, r.race_closed_at,
@@ -9732,6 +9995,21 @@ def create_app(
                         conn.rollback()
                     except Exception:
                         pass
+
+                if requested_race_ids:
+                    all_race_info = {
+                        race_id: info
+                        for race_id, info in all_race_info.items()
+                        if str(race_id) in requested_race_ids
+                    }
+
+                # Several strategy filters consult immutable race-detail tag
+                # snapshots. Prefetch them in one statement so those helpers
+                # hit the process cache instead of issuing one SELECT per race.
+                _read_json_caches_stale(
+                    [_race_detail_tag_cache_key(race_id) for race_id in all_race_info],
+                    conn=conn,
+                )
 
                 # === 4. predictions (1号艇 prob_first) ===
                 try:
@@ -12985,8 +13263,75 @@ def create_app(
                 return f"{rid[:4]}-{rid[4:6]}-{rid[6:8]}"
             return None
 
+        ace_history_pairs = {
+            (int(racer_number), int(strategy["boat"]))
+            for info in all_race_info.values()
+            for strategy in ACE_KIMARITE_WIN_STRATEGIES
+            if _ace_int(info.get("stadium")) == int(strategy["stadium"])
+            for racer_number in (
+                _ace_int(
+                    info.get(f"boat{int(strategy['boat'])}_racer")
+                    or info.get(f"boat{int(strategy['boat'])}_racer_number")
+                ),
+            )
+            if racer_number is not None
+        }
+        ace_history_bulk: dict[tuple[int, int], tuple[int, int, int]] = {
+            pair: (0, 0, 0) for pair in ace_history_pairs
+        }
+        ace_history_bulk_ready = False
+        if ace_history_pairs:
+            try:
+                ace_racers = sorted({pair[0] for pair in ace_history_pairs})
+                placeholders = ",".join("?" for _ in ace_racers)
+                with db_connect() as conn_h:
+                    rows_h = conn_h.execute(
+                        f"""
+                        SELECT re.racer_number,
+                               COALESCE(rr.course_number, re.boat_number) AS course_number,
+                               COUNT(*) AS starts,
+                               SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins,
+                               SUM(CASE
+                                       WHEN rr.finishing_position = 1
+                                        AND COALESCE(rr.kimarite, '') IN ('まくり', 'まくり差し')
+                                       THEN 1 ELSE 0
+                                   END) AS attack_wins
+                          FROM race_results rr
+                          JOIN races r ON r.race_id = rr.race_id
+                          JOIN race_entries re
+                            ON re.race_id = rr.race_id
+                           AND re.boat_number = rr.boat_number
+                         WHERE re.racer_number IN ({placeholders})
+                           AND r.race_date < ?
+                         GROUP BY re.racer_number,
+                                  COALESCE(rr.course_number, re.boat_number)
+                        """,
+                        (*ace_racers, target_date),
+                    ).fetchall()
+                for racer, course, starts, wins, attack_wins in rows_h:
+                    key = (int(racer), int(course))
+                    if key in ace_history_bulk:
+                        ace_history_bulk[key] = (
+                            int(starts or 0),
+                            int(wins or 0),
+                            int(attack_wins or 0),
+                        )
+                ace_history_bulk_ready = True
+            except Exception as e:
+                logger.warning("ace kimarite history bulk lookup failed: %s", e)
+
         @lru_cache(maxsize=20000)
         def _historical_attack_kimarite_stats(racer_number: int, course_number: int, before_date: str):
+            bulk_key = (int(racer_number), int(course_number))
+            if ace_history_bulk_ready and before_date == target_date and bulk_key in ace_history_bulk:
+                starts, wins, attack_wins = ace_history_bulk[bulk_key]
+                attack_rate = (attack_wins / starts * 100.0) if starts else 0.0
+                return {
+                    "starts": starts,
+                    "wins": wins,
+                    "attack_wins": attack_wins,
+                    "attack_rate": attack_rate,
+                }
             try:
                 with db_connect() as conn_h:
                     row_h = conn_h.execute(
@@ -14833,8 +15178,19 @@ def create_app(
         # これにより N+1 クエリ (race 数 × 戦略数 = 最大数百回 DB 接続) を
         # bulk クエリに削減. 旧実装で 1race ≈ 100ms 程度かかっていた
         # 部分が dict lookup (O(1)) になる.
-        ex_bulk = _bulk_load_exhibition_times(target_date)
-        original_ex_bulk = _bulk_load_original_exhibition_ranks(target_date)
+        ex_bulk = {
+            rid: {
+                boat_no: float(value)
+                for boat_no in range(1, 7)
+                if (value := info.get(f"boat{boat_no}_exhibition_time")) is not None
+            }
+            for rid, info in race_iterable.items()
+        }
+        original_ex_bulk = (
+            _bulk_load_original_exhibition_ranks(target_date)
+            if any(int(info.get("stadium") or 0) == 24 for info in race_iterable.values())
+            else {}
+        )
 
         for rid, info in race_iterable.items():
             stadium = info.get("stadium")
@@ -15706,7 +16062,11 @@ def create_app(
         except Exception as exc:  # noqa: BLE001
             logger.warning("course-fit live signals failed: %s", exc)
 
-        data_status = _load_market_data_status()
+        data_status = (
+            dict(incremental_base_payload.get("data_status") or {})
+            if incremental_base_payload is not None and requested_race_ids
+            else _load_market_data_status()
+        )
         try:
             promoted_start_prediction_candidates = _apply_l4_reference_start_prediction_candidates(signals)
             if promoted_start_prediction_candidates:
@@ -15807,8 +16167,66 @@ def create_app(
         # high-ROI strategy payload so the top page does not need to render
         # dozens of strategy chips per race.
         race_badges: dict[str, dict[str, Any]] = {}
+        # The canonical hydrator below rebuilds this complete badge map from
+        # three set-based reads. Do not perform the older partial pass first;
+        # it was discarded whenever escape/entry-change data was absent.
+        inline_badge_info: dict[str, dict[str, Any]] = {}
         ace_threshold_cache: dict[int, Optional[float]] = {}
-        for rid, info in all_race_info.items():
+        stadium_numbers = sorted({
+            int(stadium_no)
+            for info in inline_badge_info.values()
+            for stadium_no in (_safe_int(info.get("stadium")),)
+            if stadium_no is not None
+        })
+        if stadium_numbers:
+            try:
+                cycle_clauses: list[str] = []
+                cycle_params: list[Any] = []
+                for stadium_no in stadium_numbers:
+                    cycle_start = _motor_cycle_start(target_date, stadium_no)
+                    if cycle_start:
+                        cycle_clauses.append(
+                            "(r.stadium_number = ? AND r.race_date >= ?)"
+                        )
+                        cycle_params.extend((stadium_no, cycle_start))
+                    else:
+                        cycle_clauses.append("(r.stadium_number = ?)")
+                        cycle_params.append(stadium_no)
+                with db_connect() as ace_conn:
+                    ace_rows = ace_conn.execute(
+                        f"""
+                        SELECT r.stadium_number,
+                               e.assigned_motor_number,
+                               MAX(e.assigned_motor_top_2_percent) AS motor_rate
+                          FROM races r
+                          JOIN race_entries e ON e.race_id = r.race_id
+                         WHERE r.race_date <= ?
+                           AND ({' OR '.join(cycle_clauses)})
+                           AND e.assigned_motor_number IS NOT NULL
+                           AND e.assigned_motor_top_2_percent IS NOT NULL
+                         GROUP BY r.stadium_number, e.assigned_motor_number
+                        """,
+                        (target_date, *cycle_params),
+                    ).fetchall()
+                rates_by_stadium: dict[int, list[float]] = {}
+                for stadium_no, _motor_no, rate in ace_rows:
+                    if rate is not None:
+                        rates_by_stadium.setdefault(int(stadium_no), []).append(float(rate))
+                for stadium_no in stadium_numbers:
+                    rates = sorted(rates_by_stadium.get(stadium_no, []))
+                    if rates:
+                        idx = max(0, min(len(rates) - 1, int(len(rates) * 0.95)))
+                        ace_threshold_cache[stadium_no] = rates[idx]
+                    else:
+                        ace_threshold_cache[stadium_no] = None
+            except Exception as exc:
+                logger.warning("ace motor thresholds bulk load failed: %s", exc)
+
+        detail_tag_keys = {
+            rid: _race_detail_tag_cache_key(rid) for rid in inline_badge_info
+        }
+        detail_tag_payloads = _read_json_caches_stale(list(detail_tag_keys.values()))
+        for rid, info in inline_badge_info.items():
             badge_info: dict[str, Any] = {}
             accident_items = info.get("accident_watch") or []
             if accident_items:
@@ -15845,7 +16263,7 @@ def create_app(
                             "label": " / ".join(f"{x['boat']}号M{x['rate']:.1f}" for x in ace_items[:3]),
                         }
 
-            detail_tags = _race_detail_tag_snapshot(rid, recompute=False)
+            detail_tags = detail_tag_payloads.get(detail_tag_keys[rid]) or {}
             boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else None
             if isinstance(boats, dict):
                 accident_tag_items = []
@@ -15936,29 +16354,76 @@ def create_app(
             "race_badges": race_badges,
             "signals": {s["race_id"]: s for s in signals},
         }
-        payload = _hydrate_market_race_badges(payload, target_date)
+        if incremental_base_payload is not None and requested_race_ids:
+            merged_payload = dict(incremental_base_payload)
+            merged_payload.update(payload)
+            for field in ("signals",):
+                merged_values = dict(incremental_base_payload.get(field) or {})
+                for race_id in requested_race_ids:
+                    merged_values.pop(race_id, None)
+                merged_values.update(payload.get(field) or {})
+                merged_payload[field] = merged_values
+            merged_payload["race_badges"] = dict(
+                incremental_base_payload.get("race_badges") or {}
+            )
+            merged_payload["accident_watch"] = dict(
+                incremental_base_payload.get("accident_watch") or {}
+            )
+            merged_signals = merged_payload["signals"]
+            merged_payload["n_races"] = len(merged_signals)
+            merged_payload["n_positive_ev"] = sum(
+                1 for signal in merged_signals.values()
+                if isinstance(signal, dict) and signal.get("is_positive_ev")
+            )
+            merged_payload["n_l4"] = sum(
+                1 for signal in merged_signals.values()
+                if isinstance(signal, dict) and signal.get("l4")
+            )
+            merged_payload["n_morning_l4"] = sum(
+                1 for signal in merged_signals.values()
+                if isinstance(signal, dict)
+                and isinstance(signal.get("l4"), dict)
+                and signal["l4"].get("is_morning")
+            )
+            merged_payload["incremental_race_ids"] = sorted(requested_race_ids)
+            payload = merged_payload
+        payload["_exhibition_fingerprints"] = _market_signal_exhibition_fingerprints(
+            target_date
+        )
+        payload["refresh_scope"] = "incremental" if requested_race_ids else "full"
+        if incremental_base_payload is None:
+            payload = _hydrate_market_race_badges(payload, target_date)
         # Zero candidates is also a valid computed result. Persist it so
         # browsers never trigger the expensive strategy scan themselves.
-        _write_json_cache(cache_key, payload)
-        _write_json_cache(_market_signals_last_good_cache_key(target_date), payload)
+        cache_payloads = {
+            cache_key: payload,
+            _market_signals_last_good_cache_key(target_date): payload,
+        }
         try:
-            _write_top_page_snapshot(target_date)
+            top_snapshot = _update_top_page_snapshot_market_payload(target_date, payload)
+            if top_snapshot is not None:
+                cache_payloads[_top_page_snapshot_cache_key(target_date)] = top_snapshot
         except Exception as exc:  # noqa: BLE001
             logger.warning("top snapshot refresh after market signals failed date=%s: %s", target_date, exc)
-        try:
-            with db_connect() as history_conn:
-                replace_roi_history_snapshot(
-                    history_conn,
-                    payload,
-                    source_cache_key=_market_signals_last_good_cache_key(target_date),
-                    capture_quality="live_last_good",
-                    adopted_keys=ROI_STRATEGY_KEYS,
-                    bet_unit_map=BET_UNIT_MAP,
-                    parse_bets=_parse_market_signal_bets_for_roi,
-                    strategy_signature=_strategy_definition_signature(),
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("ROI race history persist failed date=%s: %s", target_date, exc)
+        _write_json_caches(cache_payloads)
+        # Same-day exhibition refreshes only replace prospective signals.
+        # The morning/full pass remains the canonical ROI history snapshot and
+        # avoids five unrelated history round trips on every changed race.
+        if not requested_race_ids:
+            try:
+                with db_connect() as history_conn:
+                    replace_roi_history_snapshot(
+                        history_conn,
+                        payload,
+                        source_cache_key=_market_signals_last_good_cache_key(target_date),
+                        capture_quality="live_last_good",
+                        adopted_keys=ROI_STRATEGY_KEYS,
+                        bet_unit_map=BET_UNIT_MAP,
+                        parse_bets=_parse_market_signal_bets_for_roi,
+                        strategy_signature=_strategy_definition_signature(),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ROI race history persist failed date=%s: %s", target_date, exc)
         return _market_json_response(payload, "recomputed")
 
     EXCLUDE_B_VENUES = {2, 7, 10, 21, 4, 8, 19, 24}
