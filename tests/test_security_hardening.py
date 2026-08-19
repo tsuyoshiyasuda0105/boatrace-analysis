@@ -53,6 +53,9 @@ def test_create_app_rejects_each_default_secret_in_production(
     message_name,
 ):
     monkeypatch.setenv("RENDER", "1")
+    # Web サービスとしての起動を表す (cron の BOATRACE_TASK_TRIGGER が他テストから
+    # 漏れて cron 除外に入らないよう明示的に外す)
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(config, default_attr, default_value)
     monkeypatch.setattr(config, other_attr, other_value)
 
@@ -159,3 +162,20 @@ def test_sync_to_supabase_rejects_untrusted_table_identifier():
     assert sync_to_supabase._quote_identifier("race_results") == '"race_results"'
     with pytest.raises(ValueError, match="invalid SQL identifier"):
         sync_to_supabase._quote_identifier("races; DROP TABLE races")
+
+
+def test_cron_prewarm_with_task_trigger_may_start_despite_default_secret(monkeypatch):
+    """cron (BOATRACE_TASK_TRIGGER) はセッションを配らないため既定秘密でも起動できる。
+
+    2026-08-20 実障害: cron サービスに BOATRACE_WEB_SECRET が無く、H1 ガードで
+    signal_refresh が起動即死した回帰の防止。
+    """
+    import config as config_module
+    from src.web import app as web_app
+
+    monkeypatch.setenv("RENDER", "1")
+    monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-prewarm")
+    monkeypatch.setattr(config_module, "WEB_SESSION_SECRET", "dev-only-do-not-use-in-prod")
+    monkeypatch.setattr(web_app, "_ensure_db_initialized", lambda: None)
+    app = web_app.create_app(cached_predictions_only=True)
+    assert app is not None

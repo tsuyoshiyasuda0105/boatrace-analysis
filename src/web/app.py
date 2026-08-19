@@ -6839,17 +6839,21 @@ def create_app(
     app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024         # POST body 1MB 上限
 
     # 本番で既知の開発用秘密を使う構成は、署名偽造につながるため起動拒否する。
+    # ただし cron のプリウォーム (BOATRACE_TASK_TRIGGER 付きのアプリ内実行) は
+    # セッションを外部に配らないため対象外 — cron サービスには BOATRACE_WEB_SECRET
+    # が配られておらず、ここで拒否すると全 cron が起動即死する (2026-08-20 実障害)。
     # noqa: S105 は「デフォルト値リテラルとの比較」であり実パスワードではない
     _DEFAULT_SECRET = "dev-only-do-not-use-in-prod"  # noqa: S105
     _DEFAULT_MEMBER = "dev-member"  # noqa: S105
-    if is_production and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:
+    _is_cron_process = bool(os.environ.get("BOATRACE_TASK_TRIGGER"))
+    if is_production and not _is_cron_process and config.WEB_SESSION_SECRET == _DEFAULT_SECRET:
         message = (
             "SECURITY: WEB_SESSION_SECRET is using DEFAULT value in production. "
             "Set BOATRACE_WEB_SECRET environment variable to a long random string."
         )
         logger.critical(message)
         raise RuntimeError(message)
-    if is_production and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:
+    if is_production and not _is_cron_process and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:
         message = (
             "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
             "Set this env var to a strong password (16+ chars)."
