@@ -54,6 +54,7 @@ WATCHDOG_FAILURE_LOOKBACK_HOURS = 6
 WATCHDOG_POOL_EVENT_THRESHOLD = 3
 WATCHDOG_POOL_LOOKBACK_MINUTES = 30
 WATCHDOG_STALE_RUNNING_HOURS = 6
+WATCHDOG_ENTRY_CHANGE_STALE_DAYS = 3
 WATCHDOG_ALERT_COOLDOWN_HOURS = 24.0
 WATCHDOG_STATUS_PREFIX = "cron_watchdog_"
 REGULAR_CRON_JOB_NAME = "boatrace-regular-cron"
@@ -430,6 +431,29 @@ def run_entry_change_snapshot(target_date: str) -> bool:
         detail=f"races={race_count} rows={row_count} build_ok={ok}",
     )
     return verified
+
+
+def run_entry_change_snapshots_nonfatal(now: datetime) -> dict[str, bool]:
+    """Build today/tomorrow snapshots without owning maintenance control flow."""
+    today = now.date().isoformat()
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+    results: dict[str, bool] = {}
+    for label, target_date in (("today", today), ("tomorrow", tomorrow)):
+        try:
+            ok = bool(run_entry_change_snapshot(target_date))
+        except Exception as exc:  # noqa: BLE001 - each date must remain isolated
+            ok = False
+            detail = f"exception={type(exc).__name__}: {exc}"[:1000]
+            print(f"[entry-change] nonfatal failure date={target_date} {detail}", flush=True)
+            record_task("render_entry_change_snapshot", target_date, "failure", detail=detail)
+        results[label] = ok
+        if not ok:
+            _notify_failure_best_effort(
+                f"boatrace-entry-change-snapshot-{label}",
+                f"entry-change snapshot failed for {target_date}",
+                detail={"date": target_date, "label": label},
+            )
+    return results
 
 
 def task_success_exists(task_name: str, run_date: str) -> bool:
@@ -845,6 +869,22 @@ def _watchdog_stale_running(now: datetime) -> list[dict[str, str]]:
         return _watchdog_stale_running_on_connection(conn, now)
 
 
+def latest_entry_change_snapshot_date() -> str | None:
+    """Return the latest snapshot date; lookup failures become stale warnings."""
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(snapshot_date) FROM racer_entry_change_snapshots"
+            ).fetchone()
+        return str(row[0]) if row and row[0] else None
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[cron-watchdog] entry-change freshness lookup failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return None
+
+
 def _watchdog_snapshot(now: datetime) -> dict[str, Any]:
     """Read the watchdog signals in a bounded, query-light snapshot."""
     today = now.date().isoformat()
@@ -910,6 +950,7 @@ def _watchdog_snapshot(now: datetime) -> dict[str, Any]:
         "pool_events": len(recent_pool_events),
         "pool_recent": recent_pool_events[-10:],
         "stale_running": stale_running,
+        "entry_change_snapshot_date": latest_entry_change_snapshot_date(),
     }
 
 
@@ -974,6 +1015,41 @@ def run_cron_watchdog(now: datetime, *, initial_reaped: int = 0) -> bool:
     except Exception as exc:  # noqa: BLE001
         print(f"[cron-watchdog] snapshot failed: {type(exc).__name__}: {exc}", flush=True)
         return False
+
+    latest_entry_change = snapshot.get("entry_change_snapshot_date")
+    entry_change_age_days: int | None = None
+    if latest_entry_change:
+        try:
+            entry_change_age_days = (now.date() - datetime.fromisoformat(
+                str(latest_entry_change)
+            ).date()).days
+        except ValueError:
+            entry_change_age_days = None
+    entry_change_stale = (
+        entry_change_age_days is None
+        or entry_change_age_days >= WATCHDOG_ENTRY_CHANGE_STALE_DAYS
+    )
+    entry_change_detail = {
+        "latest_snapshot_date": latest_entry_change,
+        "age_days": entry_change_age_days,
+        "stale_after_days": WATCHDOG_ENTRY_CHANGE_STALE_DAYS,
+    }
+    if entry_change_stale:
+        _write_watchdog_status(
+            "entry_change_snapshot",
+            now,
+            "error",
+            (
+                f"entry-change snapshot latest={latest_entry_change or '-'} "
+                f"age_days={entry_change_age_days}"
+            ),
+            entry_change_detail,
+        )
+        _watchdog_alert(
+            "entry-change-snapshot",
+            "entry-change snapshot is at least three days stale or unavailable",
+            entry_change_detail,
+        )
 
     coverage = snapshot["detail_cache"]
     races = int(coverage.get("races", 0))

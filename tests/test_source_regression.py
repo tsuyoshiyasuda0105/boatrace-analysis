@@ -587,6 +587,34 @@ def test_render_jobs_build_derived_start_stats_before_roi_signals():
     )
 
 
+def test_entry_change_snapshot_has_a_scheduled_today_tomorrow_call_site():
+    """A retained function definition is insufficient; maintenance must reach it."""
+    scheduler_source = _read("scripts/render_regular_scheduler.py")
+    scheduler_tree = ast.parse(scheduler_source)
+    call_lines = [
+        node.lineno
+        for node in ast.walk(scheduler_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_entry_change_snapshot"
+    ]
+    assert call_lines, (
+        "run_entry_change_snapshot の定義は残っていますが、実呼び出しがありません"
+    )
+
+    start = scheduler_source.index("def run_entry_change_snapshots_nonfatal(")
+    end = scheduler_source.index("def task_success_exists(", start)
+    block = scheduler_source[start:end]
+    assert '(("today", today), ("tomorrow", tomorrow))' in block
+
+    maintenance = _read("scripts/render_maintenance_scheduler.py")
+    integrity_start = maintenance.index("def run_integrity_phase(")
+    integrity_end = maintenance.index("def _check(", integrity_start)
+    assert "regular.run_entry_change_snapshots_nonfatal(now)" in maintenance[
+        integrity_start:integrity_end
+    ]
+
+
 def test_race_detail_fl_counts_fallback_to_external_accident_codes():
     source = _read("src/web/app.py")
 

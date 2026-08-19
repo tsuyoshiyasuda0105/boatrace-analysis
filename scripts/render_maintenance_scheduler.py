@@ -318,6 +318,14 @@ def run_snapshot_phase(now: datetime) -> tuple[bool, dict]:
 def run_integrity_phase(now: datetime) -> tuple[bool, dict]:
     today = now.date().isoformat()
     run_date = today
+    try:
+        entry_change_results = regular.run_entry_change_snapshots_nonfatal(now)
+    except Exception as exc:  # noqa: BLE001 - optional data cannot block maintenance
+        entry_change_results = {"unexpected_error": False}
+        print(
+            f"[maintenance] entry-change snapshots skipped nonfatally: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
     roi_phase = "roi_reconcile"
     roi_ok = phase_success(roi_phase, run_date)
     if not roi_ok:
@@ -333,6 +341,7 @@ def run_integrity_phase(now: datetime) -> tuple[bool, dict]:
             "date": today,
             "stage": "morning",
             "roi_ok": False,
+            "entry_change_snapshots": entry_change_results,
             "failed_step": "roi_reconcile",
         }
     ok = regular.run_py(
@@ -344,7 +353,12 @@ def run_integrity_phase(now: datetime) -> tuple[bool, dict]:
         ],
         timeout=300,
     )
-    return ok, {"date": today, "stage": "morning", "roi_ok": True}
+    return ok, {
+        "date": today,
+        "stage": "morning",
+        "roi_ok": True,
+        "entry_change_snapshots": entry_change_results,
+    }
 
 
 def _check(

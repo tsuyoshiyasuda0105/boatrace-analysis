@@ -22,6 +22,7 @@ def _snapshot(**overrides):
         "pool_events": 0,
         "pool_recent": [],
         "stale_running": [],
+        "entry_change_snapshot_date": "2026-08-16",
     }
     value.update(overrides)
     return value
@@ -165,6 +166,69 @@ def test_watchdog_repairs_low_current_version_cache_and_skips_sufficient(monkeyp
     assert regular.run_cron_watchdog(_now()) is True
     assert heals == []
     assert statuses == []
+
+
+def test_entry_change_snapshots_are_isolated_and_attempt_both_dates(monkeypatch):
+    calls = []
+    notices = []
+    monkeypatch.setattr(
+        regular,
+        "run_entry_change_snapshot",
+        lambda target: calls.append(target) or target.endswith("17"),
+    )
+    monkeypatch.setattr(
+        regular,
+        "notify_cron_failure",
+        lambda job, message, **kwargs: notices.append((job, message, kwargs)),
+    )
+
+    result = regular.run_entry_change_snapshots_nonfatal(_now())
+
+    assert calls == ["2026-08-16", "2026-08-17"]
+    assert result == {"today": False, "tomorrow": True}
+    assert notices[0][0] == "boatrace-entry-change-snapshot-today"
+
+
+def test_entry_change_snapshot_exception_records_failure_and_continues(monkeypatch):
+    calls = []
+    records = []
+
+    def run(target):
+        calls.append(target)
+        if target.endswith("16"):
+            raise RuntimeError("builder down")
+        return True
+
+    monkeypatch.setattr(regular, "run_entry_change_snapshot", run)
+    monkeypatch.setattr(regular, "record_task", lambda *args, **kwargs: records.append((args, kwargs)))
+    monkeypatch.setattr(regular, "_notify_failure_best_effort", lambda *_a, **_k: None)
+
+    result = regular.run_entry_change_snapshots_nonfatal(_now())
+
+    assert calls == ["2026-08-16", "2026-08-17"]
+    assert result == {"today": False, "tomorrow": True}
+    assert records[0][0][:3] == (
+        "render_entry_change_snapshot",
+        "2026-08-16",
+        "failure",
+    )
+
+
+def test_watchdog_warns_when_entry_change_snapshot_is_three_days_old(monkeypatch):
+    statuses = []
+    alerts = []
+    monkeypatch.setattr(
+        regular,
+        "_watchdog_snapshot",
+        lambda _now: _snapshot(entry_change_snapshot_date="2026-08-13"),
+    )
+    monkeypatch.setattr(regular, "_write_watchdog_status", lambda *args: statuses.append(args))
+    monkeypatch.setattr(regular, "_watchdog_alert", lambda *args: alerts.append(args))
+
+    assert regular.run_cron_watchdog(_now()) is True
+    assert statuses[0][0:3] == ("entry_change_snapshot", _now(), "error")
+    assert statuses[0][4]["age_days"] == 3
+    assert alerts[0][0] == "entry-change-snapshot"
 
 
 def test_watchdog_alert_uses_daily_cooldown_when_repair_remains_incomplete(monkeypatch):

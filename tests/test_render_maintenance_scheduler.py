@@ -399,6 +399,11 @@ def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatc
     monkeypatch.setattr(scheduler, "phase_success", lambda *_args: False)
     monkeypatch.setattr(
         scheduler.regular,
+        "run_entry_change_snapshots_nonfatal",
+        lambda _now: calls.append("entry-change") or {"today": False, "tomorrow": True},
+    )
+    monkeypatch.setattr(
+        scheduler.regular,
         "run_roi_daily_self_heal",
         lambda _now: calls.append("roi") or True,
     )
@@ -413,6 +418,8 @@ def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatc
 
     assert ok is True
     assert detail["roi_ok"] is True
+    assert detail["entry_change_snapshots"] == {"today": False, "tomorrow": True}
+    assert calls[:2] == ["entry-change", "roi"]
     assert "--warnings-ok" in calls[-1]
 
 
