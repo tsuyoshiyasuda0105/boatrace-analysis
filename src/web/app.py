@@ -120,8 +120,11 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import config
 from src.collectors import openapi
 from src.db.connection import (
+    begin_web_request_db_budget,
     connect as _raw_db_connect,
+    consume_pg_pool_lifecycle_events,
     consume_transient_db_retry_event,
+    end_web_request_db_budget,
     is_transient_db_error,
 )
 from src.deploy_info import deploy_revision
@@ -280,6 +283,9 @@ def db_connect(*args, **kwargs):
     if prewarm_context is not None and not args and not kwargs:
         return _BorrowedConnection(prewarm_context["conn"])
     conn = _raw_db_connect(*args, **kwargs)
+    lifecycle_events = consume_pg_pool_lifecycle_events()
+    if lifecycle_events and "_note_pool_lifecycle_events" in globals():
+        _note_pool_lifecycle_events(lifecycle_events, conn=conn)
     retry_event = consume_transient_db_retry_event()
     if retry_event and "_note_transient_db_error" in globals():
         _note_transient_db_error(
@@ -1793,6 +1799,111 @@ _TRANSIENT_DB_ERROR_FLUSH_INTERVAL_SEC = 60.0
 _TRANSIENT_DB_ERRORS: list[dict[str, Any]] = []
 _transient_db_errors_lock = threading.Lock()
 _transient_db_errors_last_flush = 0.0
+
+POOL_LIFECYCLE_CHECK = "db_pool_lifecycle"
+_POOL_LIFECYCLE_BUFFER_MAX = 100
+_POOL_LIFECYCLE_FLUSH_INTERVAL_SEC = 60.0
+_POOL_LIFECYCLE_EVENTS: list[dict[str, Any]] = []
+_pool_lifecycle_lock = threading.Lock()
+_pool_lifecycle_last_flush = 0.0
+
+
+def _note_pool_lifecycle_events(
+    events: list[dict[str, object]], *, conn: Any
+) -> None:
+    """Persist bounded pool wait/hold/concurrency measurements best-effort."""
+    global _pool_lifecycle_last_flush
+    if not events:
+        return
+    now = time.monotonic()
+    with _pool_lifecycle_lock:
+        remaining = _POOL_LIFECYCLE_BUFFER_MAX - len(_POOL_LIFECYCLE_EVENTS)
+        if remaining > 0:
+            _POOL_LIFECYCLE_EVENTS.extend(events[-remaining:])
+        due = (
+            bool(_POOL_LIFECYCLE_EVENTS)
+            and now - _pool_lifecycle_last_flush
+            >= _POOL_LIFECYCLE_FLUSH_INTERVAL_SEC
+        )
+        if not due:
+            return
+        pending = list(_POOL_LIFECYCLE_EVENTS)
+        _POOL_LIFECYCLE_EVENTS.clear()
+        _pool_lifecycle_last_flush = now
+    if _flush_pool_lifecycle_events(pending, conn=conn):
+        return
+    with _pool_lifecycle_lock:
+        remaining = _POOL_LIFECYCLE_BUFFER_MAX - len(_POOL_LIFECYCLE_EVENTS)
+        if remaining > 0:
+            _POOL_LIFECYCLE_EVENTS[:0] = pending[-remaining:]
+
+
+def _flush_pool_lifecycle_events(
+    pending: list[dict[str, Any]], *, conn: Any
+) -> bool:
+    if not pending:
+        return True
+    day = _today_jst_iso()
+    now_iso = _now_jst().isoformat(timespec="seconds")
+    try:
+        row = conn.execute(
+            "SELECT detail_json FROM system_status WHERE check_name=? AND check_date=?",
+            (POOL_LIFECYCLE_CHECK, day),
+        ).fetchone()
+        previous = _safe_json_loads(row[0]) if row else {}
+        checkouts = [item for item in pending if item.get("event") == "checkout"]
+        releases = [item for item in pending if item.get("event") == "release"]
+        failures = [
+            item for item in pending if item.get("event") == "checkout_failed"
+        ]
+        waits = [float(item.get("wait_ms") or 0.0) for item in checkouts + failures]
+        holds = [float(item.get("hold_ms") or 0.0) for item in releases]
+        recent = previous.get("recent") if isinstance(previous.get("recent"), list) else []
+        recent = [item for item in recent if isinstance(item, dict)]
+        recent.extend(pending)
+        recent = recent[-10:]
+        detail = {
+            "checkout_count": int(previous.get("checkout_count") or 0) + len(checkouts),
+            "release_count": int(previous.get("release_count") or 0) + len(releases),
+            "checkout_failures": int(previous.get("checkout_failures") or 0) + len(failures),
+            "max_wait_ms": max(float(previous.get("max_wait_ms") or 0.0), max(waits, default=0.0)),
+            "max_hold_ms": max(float(previous.get("max_hold_ms") or 0.0), max(holds, default=0.0)),
+            "peak_concurrent": max(
+                int(previous.get("peak_concurrent") or 0),
+                max((int(item.get("peak_concurrent") or 0) for item in pending), default=0),
+            ),
+            "current_acquired": int(pending[-1].get("concurrent_acquired") or 0),
+            "recent": recent,
+        }
+        payload = json.dumps(detail, ensure_ascii=False, separators=(",", ":"))
+        status = "warning" if detail["checkout_failures"] else "ok"
+        message = (
+            f"DB pool checkouts={detail['checkout_count']} failures={detail['checkout_failures']} "
+            f"max_wait_ms={detail['max_wait_ms']:.1f} max_hold_ms={detail['max_hold_ms']:.1f}"
+        )
+        if row:
+            conn.execute(
+                """
+                UPDATE system_status
+                   SET status=?, message=?, detail_json=?, checked_at=?
+                 WHERE check_name=? AND check_date=?
+                """,
+                (status, message, payload, now_iso, POOL_LIFECYCLE_CHECK, day),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO system_status
+                    (check_name, check_date, status, message, detail_json, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (POOL_LIFECYCLE_CHECK, day, status, message, payload, now_iso),
+            )
+        conn.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001 - observability must not affect users
+        logger.warning("pool lifecycle status write failed: %s", exc)
+        return False
 
 
 def _note_transient_db_error(
@@ -6775,22 +6886,28 @@ def _ensure_db_initialized() -> None:
     if not schema_path.exists():
         return
 
+    # Local file I/O completes before a shared Web-pool connection is acquired.
+    schema_sql = schema_path.read_text(encoding="utf-8")
+    stadium_path = config.MASTER_DIR / "stadiums.json"
+    stadium_data = (
+        json.loads(stadium_path.read_text(encoding="utf-8"))
+        if stadium_path.exists()
+        else None
+    )
+
     with db_connect() as conn:
         # races テーブルがあるか試して、無ければ schema.sql を実行
         try:
             conn.execute("SELECT 1 FROM races LIMIT 1").fetchone()
         except Exception:
             logger.info("initializing DB at %s from schema.sql", db_path)
-            with open(schema_path, "r", encoding="utf-8") as f:
-                conn.executescript(f.read())
+            conn.executescript(schema_sql)
 
         # stadium マスタが空なら投入
         cnt = conn.execute("SELECT COUNT(*) FROM stadiums").fetchone()[0]
         if cnt == 0:
-            stadium_path = config.MASTER_DIR / "stadiums.json"
-            if stadium_path.exists():
-                with open(stadium_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+            if stadium_data is not None:
+                data = stadium_data
                 rows = []
                 for k, v in data.items():
                     if k.startswith("_"):
@@ -7144,6 +7261,15 @@ def create_app(
                 200, {"Content-Type": "text/plain"})
 
     app.jinja_env.auto_reload = True
+
+    @app.before_request
+    def _start_web_db_checkout_budget():
+        begin_web_request_db_budget()
+
+    @app.teardown_request
+    def _end_web_db_checkout_budget(_exc):
+        end_web_request_db_budget()
+
     register_auth_routes(app)
     register_billing_routes(app)
     app.register_blueprint(__import__("src.web.legal_bp", fromlist=["bp"]).bp)
@@ -7282,6 +7408,18 @@ def create_app(
                 stale_response,
                 lambda: _race_preparing_page_response(canonical),
                 context="race_detail",
+            )
+
+        return guarded
+
+    def _guard_member_page_transient_db(fn):
+        @wraps(fn)
+        def guarded(*args, **kwargs):
+            return _with_transient_db_fallback(
+                lambda: fn(*args, **kwargs),
+                lambda: None,
+                lambda: _temporary_page_response(200),
+                context="member_page",
             )
 
         return guarded
@@ -7982,6 +8120,7 @@ def create_app(
     @app.route("/member/today-races")
     @login_required
     @cached(ttl=30, past_ttl=3600)
+    @_guard_member_page_transient_db
     def member_today_races():
         target_date = request.args.get("date") or _today_jst_iso()
         roi_picks_visible = (

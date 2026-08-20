@@ -203,7 +203,7 @@ def test_races_renders_normally_after_one_pool_timeout_retry(monkeypatch):
             self.calls = 0
             self.raw = RawConnection()
 
-        def getconn(self):
+        def getconn(self, timeout=None):
             self.calls += 1
             if self.calls == 1:
                 raise TimeoutError("couldn't get a connection after 5.00 sec")

@@ -36,12 +36,147 @@ _PG_POOL_EXHAUSTED_SINCE = None
 _PG_POOL_EXHAUSTION_FAILURES = 0
 _PG_POOL_LAST_REBUILD_AT = None
 _SQL_MEASUREMENT = threading.local()
+_WEB_REQUEST_DB_BUDGET = threading.local()
+_PG_POOL_LIFECYCLE_LOCK = threading.Lock()
+_PG_POOL_LIFECYCLE_EVENTS: list[dict[str, object]] = []
+_PG_POOL_ACTIVE_CHECKOUTS = 0
+_PG_POOL_PEAK_CHECKOUTS = 0
 
 _DEFAULT_CONNECT_RETRY_DELAYS = (0.2, 0.5)
 _MAX_CONNECT_RETRIES = 2
 _MAX_CONNECT_RETRY_DELAY_SEC = 0.5
+_DEFAULT_WEB_CHECKOUT_BUDGET_SEC = 10.0
+_MAX_WEB_CHECKOUT_BUDGET_SEC = 10.0
+_POOL_LIFECYCLE_BUFFER_MAX = 100
 _DEFAULT_POOL_EXHAUSTION_SEC = 90.0
 _DEFAULT_POOL_REBUILD_COOLDOWN_SEC = 60.0
+
+
+class ConnectionCheckoutBudgetExceeded(TimeoutError):
+    """A Web request exhausted its aggregate shared-pool checkout budget."""
+
+
+def begin_web_request_db_budget(total_sec: Optional[float] = None) -> None:
+    """Start one aggregate checkout budget for the current Web request."""
+    if total_sec is None:
+        try:
+            total_sec = float(
+                os.getenv(
+                    "BOATRACE_WEB_DB_CHECKOUT_BUDGET_SEC",
+                    str(_DEFAULT_WEB_CHECKOUT_BUDGET_SEC),
+                )
+            )
+        except (TypeError, ValueError):
+            total_sec = _DEFAULT_WEB_CHECKOUT_BUDGET_SEC
+    bounded = max(1.0, min(_MAX_WEB_CHECKOUT_BUDGET_SEC, float(total_sec)))
+    _WEB_REQUEST_DB_BUDGET.deadline = time.monotonic() + bounded
+
+
+def end_web_request_db_budget() -> None:
+    _WEB_REQUEST_DB_BUDGET.deadline = None
+
+
+def _web_request_db_budget_remaining() -> Optional[float]:
+    deadline = getattr(_WEB_REQUEST_DB_BUDGET, "deadline", None)
+    if deadline is None:
+        return None
+    return max(0.0, float(deadline) - time.monotonic())
+
+
+def _pool_timeout_seconds() -> float:
+    try:
+        value = float(os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5"))
+    except (TypeError, ValueError):
+        value = 5.0
+    return max(1.0, value)
+
+
+def _safe_pool_stats(pool) -> dict[str, object]:
+    try:
+        raw = pool.get_stats()
+    except Exception:
+        return {}
+    allowed = {
+        "pool_size",
+        "pool_available",
+        "requests_waiting",
+        "requests_num",
+        "requests_queued",
+        "requests_errors",
+    }
+    return {key: raw[key] for key in allowed if key in raw}
+
+
+def _append_pool_lifecycle_event(event: dict[str, object]) -> None:
+    with _PG_POOL_LIFECYCLE_LOCK:
+        if len(_PG_POOL_LIFECYCLE_EVENTS) >= _POOL_LIFECYCLE_BUFFER_MAX:
+            del _PG_POOL_LIFECYCLE_EVENTS[0]
+        _PG_POOL_LIFECYCLE_EVENTS.append(event)
+
+
+def _note_pool_acquired(pool, wait_ms: float) -> int:
+    global _PG_POOL_ACTIVE_CHECKOUTS, _PG_POOL_PEAK_CHECKOUTS
+    with _PG_POOL_LIFECYCLE_LOCK:
+        _PG_POOL_ACTIVE_CHECKOUTS += 1
+        _PG_POOL_PEAK_CHECKOUTS = max(
+            _PG_POOL_PEAK_CHECKOUTS, _PG_POOL_ACTIVE_CHECKOUTS
+        )
+        active = _PG_POOL_ACTIVE_CHECKOUTS
+        peak = _PG_POOL_PEAK_CHECKOUTS
+    _append_pool_lifecycle_event(
+        {
+            "event": "checkout",
+            "at_epoch": round(time.time(), 3),
+            "wait_ms": round(max(0.0, wait_ms), 1),
+            "concurrent_acquired": active,
+            "peak_concurrent": peak,
+            **_safe_pool_stats(pool),
+        }
+    )
+    return active
+
+
+def _note_pool_released(pool, hold_ms: float) -> None:
+    global _PG_POOL_ACTIVE_CHECKOUTS
+    with _PG_POOL_LIFECYCLE_LOCK:
+        _PG_POOL_ACTIVE_CHECKOUTS = max(0, _PG_POOL_ACTIVE_CHECKOUTS - 1)
+        active = _PG_POOL_ACTIVE_CHECKOUTS
+        peak = _PG_POOL_PEAK_CHECKOUTS
+    _append_pool_lifecycle_event(
+        {
+            "event": "release",
+            "at_epoch": round(time.time(), 3),
+            "hold_ms": round(max(0.0, hold_ms), 1),
+            "concurrent_acquired": active,
+            "peak_concurrent": peak,
+            **_safe_pool_stats(pool),
+        }
+    )
+
+
+def _note_pool_checkout_failed(pool, wait_ms: float, exc: BaseException) -> None:
+    with _PG_POOL_LIFECYCLE_LOCK:
+        active = _PG_POOL_ACTIVE_CHECKOUTS
+        peak = _PG_POOL_PEAK_CHECKOUTS
+    _append_pool_lifecycle_event(
+        {
+            "event": "checkout_failed",
+            "at_epoch": round(time.time(), 3),
+            "wait_ms": round(max(0.0, wait_ms), 1),
+            "error_type": type(exc).__name__,
+            "concurrent_acquired": active,
+            "peak_concurrent": peak,
+            **_safe_pool_stats(pool),
+        }
+    )
+
+
+def consume_pg_pool_lifecycle_events() -> list[dict[str, object]]:
+    """Return and clear bounded non-secret shared-pool lifecycle measurements."""
+    with _PG_POOL_LIFECYCLE_LOCK:
+        events = list(_PG_POOL_LIFECYCLE_EVENTS)
+        _PG_POOL_LIFECYCLE_EVENTS.clear()
+    return events
 
 
 def reset_sql_count() -> None:
@@ -155,8 +290,18 @@ def _acquire_pg_connection(dsn: str, *, direct: bool, pool=None):
     delays = _connect_retry_delays()
     _TRANSIENT_DB_RETRY_STATE.event = None
     for attempt in range(len(delays) + 1):
+        remaining = None if direct else _web_request_db_budget_remaining()
+        if remaining is not None and remaining <= 0:
+            raise ConnectionCheckoutBudgetExceeded(
+                "shared database pool is busy; request checkout budget exhausted"
+            )
         try:
-            conn = _open_direct_pg_connection(dsn) if direct else pool.getconn()
+            if direct:
+                conn = _open_direct_pg_connection(dsn)
+            elif remaining is None:
+                conn = pool.getconn()
+            else:
+                conn = pool.getconn(timeout=min(_pool_timeout_seconds(), remaining))
             if not direct:
                 _note_pg_pool_checkout_success(pool)
             return conn
@@ -184,6 +329,13 @@ def _acquire_pg_connection(dsn: str, *, direct: bool, pool=None):
                 delay,
                 type(exc).__name__,
             )
+            remaining = None if direct else _web_request_db_budget_remaining()
+            if remaining is not None:
+                if remaining <= 0:
+                    raise ConnectionCheckoutBudgetExceeded(
+                        "shared database pool is busy; request checkout budget exhausted"
+                    ) from exc
+                delay = min(delay, remaining)
             time.sleep(delay)
 
 
@@ -615,23 +767,37 @@ class _PgConnection:
     def __init__(self, dsn: str, direct: bool = False):
         trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
         self._pool = None
+        self._pool_acquired_at = None
         if trigger or direct:
             self._conn = _acquire_pg_connection(dsn, direct=True)
         else:
             self._pool = _get_pg_pool(dsn)
+            checkout_started = time.monotonic()
             try:
                 self._conn = _acquire_pg_connection(
                     dsn,
                     direct=False,
                     pool=self._pool,
                 )
-            except Exception:
-                stats = {}
-                try:
-                    stats = self._pool.get_stats()
-                except Exception:
-                    pass
-                logger.error("postgres pool checkout failed stats=%s", stats)
+                acquired_at = time.monotonic()
+                self._pool_acquired_at = acquired_at
+                _note_pool_acquired(
+                    self._pool, (acquired_at - checkout_started) * 1000.0
+                )
+            except Exception as exc:
+                _note_pool_checkout_failed(
+                    self._pool,
+                    (time.monotonic() - checkout_started) * 1000.0,
+                    exc,
+                )
+                stats = _safe_pool_stats(self._pool)
+                # ERROR handlers persist to incident_log through this same DB.
+                # During pool exhaustion that would recursively attempt another
+                # checkout and multiply one bounded wait into a long outage.
+                # The Web layer buffers the transient error and lifecycle stats
+                # for the next successful checkout, so keep this local log below
+                # the synchronous error-notifier threshold.
+                logger.warning("postgres pool checkout failed stats=%s", stats)
                 _maybe_rebuild_exhausted_pg_pool(self._pool, stats)
                 raise
         self._conn.autocommit = True
@@ -688,6 +854,12 @@ class _PgConnection:
                 self._conn.close()
             else:
                 self._pool.putconn(self._conn)
+                if self._pool_acquired_at is not None:
+                    _note_pool_released(
+                        self._pool,
+                        (time.monotonic() - self._pool_acquired_at) * 1000.0,
+                    )
+                    self._pool_acquired_at = None
             self._conn = None
 
     def __enter__(self):

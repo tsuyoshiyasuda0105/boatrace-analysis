@@ -294,7 +294,7 @@ def test_watchdog_is_disabled_for_cron_processes(monkeypatch):
     assert pool.closed == 0
 
 
-def test_pg_pool_checkout_failure_logs_non_secret_stats(monkeypatch, caplog):
+def test_pg_pool_checkout_failure_logs_non_secret_stats_without_error_handler(monkeypatch, caplog):
     class _FailingPool(_FakePool):
         def getconn(self):
             raise TimeoutError("busy")
@@ -302,7 +302,7 @@ def test_pg_pool_checkout_failure_logs_non_secret_stats(monkeypatch, caplog):
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", _FailingPool())
 
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("WARNING"):
         try:
             connection._PgConnection("postgresql://unused")
         except TimeoutError:
@@ -310,6 +310,7 @@ def test_pg_pool_checkout_failure_logs_non_secret_stats(monkeypatch, caplog):
 
     assert "pool_size" in caplog.text
     assert "postgresql://unused" not in caplog.text
+    assert all(record.levelno < 40 for record in caplog.records)
 
 
 def test_pg_pool_timeout_retries_twice_with_bounded_backoff(monkeypatch):
