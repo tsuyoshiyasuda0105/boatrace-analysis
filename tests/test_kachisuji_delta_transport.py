@@ -194,3 +194,48 @@ def test_pc_nightly_uses_pg_uploader():
     """夜間パイプラインが Postgres 輸送スクリプトを使うことの静的チェック。"""
     source = Path("scripts/pc_nightly_prepare.py").read_text(encoding="utf-8")
     assert "upload_kachisuji_delta_pg.py" in source
+
+
+def test_cleanup_removes_stale_bak_and_reports_reclaimed(tmp_path):
+    """旧実装が残した .bak を回収し、適用の戻り値で報告する。
+
+    2026-08-20 実障害: 旧実装の全量コピーが Errno 28 で失敗し、書きかけの
+    .bak が 1GB ディスクを食い潰して free_bytes=0 になった。新実装は .bak を
+    作らないので、残骸は安全に削除できる。
+    """
+    slim = tmp_path / "kachisuji_slim.db"
+    _make_slim(slim)
+    stale = Path(str(slim) + ".bak")
+    stale.write_bytes(b"x" * 4096)
+
+    removed = dt.cleanup_stale_artifacts(slim)
+    assert [entry["name"] for entry in removed] == [stale.name]
+    assert removed[0]["size_bytes"] == 4096
+    assert not stale.exists()
+    # slim 本体は絶対に消さない
+    assert slim.is_file()
+
+
+def test_apply_reclaims_stale_bak_before_space_check(tmp_path):
+    slim = tmp_path / "kachisuji_slim.db"
+    _make_slim(slim)
+    Path(str(slim) + ".bak").write_bytes(b"x" * 2048)
+    delta = tmp_path / "kachisuji_delta_20260819.db"
+    _make_delta(delta, "2026-08-19", ["20260819-01-01"])
+    conn = sqlite3.connect(tmp_path / "transport.db")
+    dt.upload_delta_file(delta, conn=conn)
+
+    summary = dt.apply_pending_to_slim(slim, conn=conn)
+    conn.close()
+    assert summary["applied_files"] == 1
+    assert [entry["name"] for entry in summary["reclaimed"]] == [slim.name + ".bak"]
+    assert not Path(str(slim) + ".bak").exists()
+
+
+def test_disk_report_lists_directory_contents(tmp_path):
+    slim = tmp_path / "kachisuji_slim.db"
+    _make_slim(slim)
+    report = dt.disk_report(slim)
+    assert report["total_bytes"] > 0
+    assert report["free_bytes"] >= 0
+    assert slim.name in [entry["name"] for entry in report["entries"]]

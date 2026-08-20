@@ -358,6 +358,21 @@ def api_all_matches():
 # 適用は web プロセス内で行う。認証は共有 DATABASE_URL 由来トークン
 # (src.kachisuji.delta_transport.internal_token) — 新しい秘密は増やさない。
 
+@bp.get("/internal/disk-report")
+def internal_disk_report():
+    """slim DB を置くディスクの容量と中身を返す (トークン保護・読み取りのみ)。"""
+    from src.kachisuji.delta_transport import disk_report, internal_token
+
+    provided = request.headers.get("X-Internal-Token", "")
+    try:
+        expected = internal_token()
+    except RuntimeError:
+        return jsonify(error="internal token unavailable"), 503
+    if not provided or provided != expected:
+        return jsonify(error="forbidden"), 403
+    return jsonify(disk_report(_search_db_path()))
+
+
 @bp.post("/internal/apply-deltas")
 def internal_apply_deltas():
     from src.kachisuji.delta_transport import (
@@ -379,11 +394,15 @@ def internal_apply_deltas():
     try:
         summary = apply_pending_to_slim(db_path)
     except InsufficientDiskSpaceError as exc:
+        # 容量不足の時こそ「何がディスクを食っているか」が要る。
+        from src.kachisuji.delta_transport import disk_report
+
         current_app.logger.warning("kachisuji delta apply skipped: %s", exc)
         return jsonify(
             error=str(exc),
             free_bytes=exc.free_bytes,
             required_bytes=exc.required_bytes,
+            disk=disk_report(db_path),
         ), 507
     except Exception as exc:  # noqa: BLE001 - report, never crash the worker
         current_app.logger.exception("kachisuji delta apply failed")

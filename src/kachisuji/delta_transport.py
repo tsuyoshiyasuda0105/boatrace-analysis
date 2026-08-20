@@ -48,6 +48,56 @@ def disk_free_bytes(path: Path) -> int:
     return int(shutil.disk_usage(Path(path).resolve().parent).free)
 
 
+# 旧実装 (2026-08-20 以前) は適用前に slim の全量コピーを .bak として作っていた。
+# 573MB の DB に対し 1GB のディスクでは必ず溢れ、途中まで書かれた .bak が
+# 空き容量を食い尽くしたまま残る。新実装は .bak を一切作らないので、
+# 残っている .bak は復旧不要のゴミであり、安全に削除してよい。
+STALE_SUFFIXES = (".bak", ".bak.tmp", ".tmp")
+
+
+def disk_report(path: Path) -> dict[str, Any]:
+    """slim DB を置くディレクトリの容量と中身を返す (障害調査用)。"""
+    target = Path(path).resolve()
+    directory = target.parent
+    usage = shutil.disk_usage(directory)
+    entries = []
+    try:
+        for child in sorted(directory.iterdir()):
+            try:
+                entries.append({"name": child.name, "size_bytes": child.stat().st_size})
+            except OSError:
+                entries.append({"name": child.name, "size_bytes": None})
+    except OSError as exc:
+        entries.append({"name": f"<unreadable: {exc}>", "size_bytes": None})
+    return {
+        "directory": str(directory),
+        "total_bytes": int(usage.total),
+        "used_bytes": int(usage.used),
+        "free_bytes": int(usage.free),
+        "entries": entries,
+    }
+
+
+def cleanup_stale_artifacts(slim_db: Path) -> list[dict[str, Any]]:
+    """旧実装が残した .bak 等のゴミを削除し、削除した内容を返す。
+
+    slim DB 本体・WAL/SHM には触れない (使用中の可能性があるため)。
+    """
+    slim_db = Path(slim_db).resolve()
+    removed: list[dict[str, Any]] = []
+    for suffix in STALE_SUFFIXES:
+        candidate = Path(str(slim_db) + suffix)
+        if not candidate.is_file():
+            continue
+        try:
+            size = candidate.stat().st_size
+            candidate.unlink()
+            removed.append({"name": candidate.name, "size_bytes": size})
+        except OSError as exc:
+            removed.append({"name": candidate.name, "error": str(exc)[:200]})
+    return removed
+
+
 # ---------------------------------------------------------------- transport --
 
 def _default_conn():
@@ -254,12 +304,16 @@ def apply_pending_to_slim(slim_db: Path, conn=None) -> dict[str, Any]:
     slim_db = Path(slim_db).resolve()
     if not slim_db.is_file():
         raise FileNotFoundError(f"slim DB not found: {slim_db}")
+    # 旧実装が残した .bak (最大 573MB) を先に回収する。これがディスクを
+    # 食い潰していると、正しい実装でも空き容量チェックで止まってしまう。
+    reclaimed = cleanup_stale_artifacts(slim_db)
     applied = read_applied_names(slim_db)
     pending = fetch_pending_payloads(applied, conn=conn)
     free_bytes = disk_free_bytes(slim_db)
     if not pending:
         return {"applied_files": 0, "asof_added": 0, "racers_added": 0,
-                "free_bytes": free_bytes, **_slim_summary(slim_db)}
+                "free_bytes": free_bytes, "reclaimed": reclaimed,
+                **_slim_summary(slim_db)}
     if free_bytes < MIN_FREE_BYTES:
         raise InsufficientDiskSpaceError(free_bytes)
 
@@ -296,4 +350,5 @@ def apply_pending_to_slim(slim_db: Path, conn=None) -> dict[str, Any]:
                 connection.close()
     return {"applied_files": len(names), "applied_names": names,
             "asof_added": asof_total, "racers_added": racers_total,
-            "free_bytes": disk_free_bytes(slim_db), **_slim_summary(slim_db)}
+            "free_bytes": disk_free_bytes(slim_db), "reclaimed": reclaimed,
+            **_slim_summary(slim_db)}
