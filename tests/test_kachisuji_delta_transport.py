@@ -77,6 +77,7 @@ def test_apply_pending_to_slim_applies_and_records(tmp_path):
     assert summary["applied_files"] == 1
     assert summary["asof_added"] == 2
     assert summary["latest_race_date"] == "2026-08-19"
+    assert summary["free_bytes"] > 0
 
     # 2回目は未適用なし (applied_deltas 記帳済み)
     summary2 = dt.apply_pending_to_slim(slim, conn=conn)
@@ -85,22 +86,34 @@ def test_apply_pending_to_slim_applies_and_records(tmp_path):
     assert not Path(str(slim) + ".bak").exists()
 
 
-def test_apply_restores_backup_on_schema_mismatch(tmp_path):
+def test_apply_rolls_back_all_deltas_on_schema_mismatch(tmp_path):
     slim = tmp_path / "kachisuji_slim.db"
     _make_slim(slim)
-    bad = tmp_path / "kachisuji_delta_20260819.db"
+    good = tmp_path / "kachisuji_delta_20260819.db"
+    _make_delta(good, "2026-08-19", ["20260819-01-01"])
+    bad = tmp_path / "kachisuji_delta_20260820.db"
     conn_bad = sqlite3.connect(bad)
     conn_bad.execute("CREATE TABLE asof_race_features (race_id TEXT)")  # 列不足
     conn_bad.execute("CREATE TABLE racers (racer_number INTEGER)")
     conn_bad.commit()
     conn_bad.close()
     conn = sqlite3.connect(tmp_path / "transport.db")
+    dt.upload_delta_file(good, conn=conn)
     dt.upload_delta_file(bad, conn=conn)
     before = slim.read_bytes()
     with pytest.raises(ValueError, match="schema mismatch"):
         dt.apply_pending_to_slim(slim, conn=conn)
     conn.close()
-    assert slim.read_bytes() == before  # バックアップ復元済み
+    assert slim.read_bytes() == before
+    check = sqlite3.connect(slim)
+    try:
+        assert check.execute("SELECT COUNT(*) FROM asof_race_features").fetchone()[0] == 1
+        assert check.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='applied_deltas'"
+        ).fetchone() is None
+    finally:
+        check.close()
+    assert not Path(str(slim) + ".bak").exists()
 
 
 def test_internal_token_derives_from_database_url(monkeypatch):
@@ -146,6 +159,35 @@ def test_internal_endpoint_applies_with_valid_token(monkeypatch, tmp_path):
     )
     assert resp.status_code == 200
     assert resp.get_json()["applied_files"] == 0
+    assert resp.get_json()["free_bytes"] > 0
+
+
+def test_internal_endpoint_returns_507_before_low_space_apply(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", "postgres://example/db")
+    slim = tmp_path / "slim.db"
+    _make_slim(slim)
+    delta = tmp_path / "kachisuji_delta_20260819.db"
+    _make_delta(delta, "2026-08-19", ["20260819-01-01"])
+    monkeypatch.setenv("KACHISUJI_DB", str(slim))
+    monkeypatch.setattr(
+        dt,
+        "fetch_pending_payloads",
+        lambda applied, conn=None: [("20260819.db", delta.read_bytes())],
+    )
+    monkeypatch.setattr(dt, "disk_free_bytes", lambda _path: 1024)
+    from src.web import app as web_app
+
+    monkeypatch.setattr(web_app, "_ensure_db_initialized", lambda: None)
+    app = web_app.create_app(cached_predictions_only=True)
+    response = app.test_client().post(
+        "/kachisuji/internal/apply-deltas",
+        headers={"X-Internal-Token": dt.internal_token()},
+    )
+
+    assert response.status_code == 507
+    assert response.get_json()["free_bytes"] == 1024
+    assert response.get_json()["required_bytes"] == dt.MIN_FREE_BYTES
+    assert not Path(str(slim) + ".bak").exists()
 
 
 def test_pc_nightly_uses_pg_uploader():

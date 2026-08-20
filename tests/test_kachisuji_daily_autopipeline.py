@@ -191,7 +191,7 @@ def test_apply_main_connection_uses_uri_true(monkeypatch, tmp_path: Path):
     assert main_calls[0]["uri"] is True
 
 
-def test_corrupt_delta_restores_backup_without_changing_slim(tmp_path: Path):
+def test_corrupt_delta_rolls_back_without_changing_slim(tmp_path: Path):
     slim = tmp_path / "kachisuji_slim.db"
     corrupt = tmp_path / "20260818.db"
     _create_db(slim, race_id="old", racer_id=1, race_date="2026-08-17")
@@ -202,7 +202,7 @@ def test_corrupt_delta_restores_backup_without_changing_slim(tmp_path: Path):
         apply_script.apply_delta_files(slim, [(corrupt.name, corrupt)])
 
     assert slim.read_bytes() == before
-    assert Path(str(slim) + ".bak").read_bytes() == before
+    assert not Path(str(slim) + ".bak").exists()
     assert _counts(slim) == (1, 1)
     connection = sqlite3.connect(slim)
     try:

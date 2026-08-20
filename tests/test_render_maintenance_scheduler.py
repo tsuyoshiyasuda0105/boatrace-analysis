@@ -449,6 +449,8 @@ def _healthy_preflight_measurements() -> dict[str, object]:
         "healthz_http_status": 200,
         "healthz_body_status": "ok",
         "db_connections": 4,
+        "kachisuji_disk_free_bytes": 200 * 1024 * 1024,
+        "kachisuji_disk_path": "/data",
     }
 
 
@@ -468,6 +470,7 @@ def _healthy_preflight_measurements() -> dict[str, object]:
         ("open_incidents", 1, 11),
         ("healthz_http_status", 503, 12),
         ("db_connections", 45, 13),
+        ("kachisuji_disk_free_bytes", 99 * 1024 * 1024, 14),
     ],
 )
 def test_each_preflight_check_has_an_independent_fail_decision(key, value, failed_id):
@@ -480,18 +483,18 @@ def test_each_preflight_check_has_an_independent_fail_decision(key, value, faile
         yesterday="2026-08-12",
     )
 
-    assert len(checks) == 13
+    assert len(checks) == 14
     assert next(item for item in checks if item["id"] == failed_id)["status"] == "fail"
 
 
-def test_all_thirteen_preflight_checks_pass_with_complete_measurements():
+def test_all_fourteen_preflight_checks_pass_with_complete_measurements():
     checks = scheduler.evaluate_preflight_checks(
         _healthy_preflight_measurements(),
         target_date="2026-08-13",
         yesterday="2026-08-12",
     )
 
-    assert [item["id"] for item in checks] == list(range(1, 14))
+    assert [item["id"] for item in checks] == list(range(1, 15))
     assert all(item["ok"] for item in checks)
     assert {item["id"] for item in checks if item["critical"]} == {1, 2, 5}
 
@@ -550,6 +553,14 @@ def test_preflight_measurements_use_mocked_database(monkeypatch):
         scheduler,
         "_kachisuji_latest_date",
         lambda: {"backtest_latest_date": "2026-08-12"},
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_kachisuji_disk_space",
+        lambda: {
+            "kachisuji_disk_free_bytes": 200 * 1024 * 1024,
+            "kachisuji_disk_path": "/data",
+        },
     )
     monkeypatch.setattr(
         scheduler,

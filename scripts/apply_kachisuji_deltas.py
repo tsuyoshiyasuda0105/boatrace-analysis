@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import sqlite3
 import sys
 import tempfile
@@ -126,10 +125,12 @@ def _read_applied_names(slim_db: Path) -> set[str]:
         connection.close()
 
 
-def _validate_schema(connection: sqlite3.Connection, alias: str) -> None:
+def _validate_schema(
+    connection: sqlite3.Connection, delta_connection: sqlite3.Connection
+) -> None:
     for table in TABLES:
         main_columns = connection.execute(f"PRAGMA main.table_info({table})").fetchall()
-        delta_columns = connection.execute(f"PRAGMA {alias}.table_info({table})").fetchall()
+        delta_columns = delta_connection.execute(f"PRAGMA table_info({table})").fetchall()
         if not main_columns or not delta_columns:
             raise ValueError(f"missing required table: {table}")
         if [row[1] for row in main_columns] != [row[1] for row in delta_columns]:
@@ -141,24 +142,26 @@ def _apply_one(
     delta_path: Path,
     name: str,
 ) -> tuple[int, int]:
-    alias = "delta_src"
-    connection.execute(f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(delta_path),))
+    delta_connection = sqlite3.connect(_readonly_uri(delta_path), uri=True)
     try:
-        _validate_schema(connection, alias)
+        _validate_schema(connection, delta_connection)
         before = {
             table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
             for table in TABLES
         }
-        connection.execute("BEGIN IMMEDIATE")
         for table in TABLES:
-            connection.execute(
-                f"INSERT OR IGNORE INTO {table} SELECT * FROM {alias}.{table}"
+            column_count = len(
+                delta_connection.execute(f"PRAGMA table_info({table})").fetchall()
+            )
+            placeholders = ",".join("?" for _ in range(column_count))
+            connection.executemany(
+                f"INSERT OR IGNORE INTO {table} VALUES ({placeholders})",
+                delta_connection.execute(f"SELECT * FROM {table}"),
             )
         connection.execute(
             "INSERT OR IGNORE INTO applied_deltas(name, applied_at) VALUES (?, ?)",
             (name, datetime.now(timezone.utc).isoformat()),
         )
-        connection.commit()
         after = {
             table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
             for table in TABLES
@@ -167,18 +170,15 @@ def _apply_one(
             after["asof_race_features"] - before["asof_race_features"],
             after["racers"] - before["racers"],
         )
-    except Exception:
-        connection.rollback()
-        raise
     finally:
-        connection.execute(f"DETACH DATABASE {alias}")
+        delta_connection.close()
 
 
 def apply_delta_files(
     slim_db: Path,
     deltas: list[tuple[str, Path]],
 ) -> dict[str, int | str | None]:
-    """Apply local delta files, restoring the pre-apply copy on any failure."""
+    """Apply every pending delta in one rollback-protected transaction."""
     slim_db = slim_db.resolve()
     if not slim_db.is_file():
         raise FileNotFoundError(f"slim DB not found: {slim_db}")
@@ -187,25 +187,28 @@ def apply_delta_files(
     if not pending:
         return _summary(slim_db, applied_files=0, asof_added=0, racers_added=0)
 
-    backup = Path(str(slim_db) + ".bak")
-    shutil.copy2(slim_db, backup)
     connection: sqlite3.Connection | None = None
     try:
-        # uri=True is mandatory: attached delta databases use mode=ro URIs.
+        # Keep the same connection contract as the web apply path.
         connection = sqlite3.connect(str(slim_db), uri=True, timeout=30.0)
+        connection.execute("BEGIN IMMEDIATE")
         connection.execute(
             "CREATE TABLE IF NOT EXISTS applied_deltas ("
             "name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
-        connection.commit()
         asof_added = 0
         racers_added = 0
         applied_files = 0
         for name, delta_path in pending:
+            if connection.execute(
+                "SELECT 1 FROM applied_deltas WHERE name = ?", (name,)
+            ).fetchone():
+                continue
             added_asof, added_racers = _apply_one(connection, delta_path, name)
             asof_added += added_asof
             racers_added += added_racers
             applied_files += 1
+        connection.commit()
         connection.close()
         connection = None
         return _summary(
@@ -216,8 +219,9 @@ def apply_delta_files(
         )
     except Exception:
         if connection is not None:
+            if connection.in_transaction:
+                connection.rollback()
             connection.close()
-        shutil.copy2(backup, slim_db)
         raise
 
 

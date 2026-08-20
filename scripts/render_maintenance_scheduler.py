@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import sys
 from typing import Any, Callable, Iterator
@@ -45,6 +46,8 @@ DETAIL_PREWARM_TIMEOUT_SEC = 900
 PREFLIGHT_TIME = time(6, 40)
 PREFLIGHT_GATE_CAP = time(7, 30)
 PREFLIGHT_DB_CONNECTION_LIMIT = 45
+PREFLIGHT_DISK_FREE_MIN_BYTES = 100 * 1024 * 1024
+PREFLIGHT_CHECK_COUNT = 14
 PHASES: tuple[tuple[str, time], ...] = (
     ("accident", time(4, 0)),
     ("program", time(4, 30)),
@@ -395,7 +398,7 @@ def evaluate_preflight_checks(
     target_date: str,
     yesterday: str,
 ) -> list[dict[str, object]]:
-    """Apply the 13 documented preflight decisions to measured values."""
+    """Apply the documented preflight decisions to measured values."""
     races = int(measurements.get("races") or 0)
     entries = int(measurements.get("entries") or 0)
     pages = int(measurements.get("page_cache_count") or 0)
@@ -418,6 +421,7 @@ def evaluate_preflight_checks(
     healthz_status = measurements.get("healthz_http_status")
     healthz_body_status = measurements.get("healthz_body_status")
     db_connections = measurements.get("db_connections")
+    disk_free_bytes = measurements.get("kachisuji_disk_free_bytes")
 
     return [
         _check(
@@ -534,6 +538,17 @@ def evaluate_preflight_checks(
             and db_connections < PREFLIGHT_DB_CONNECTION_LIMIT,
             {"connections": db_connections},
             f"pg_stat_activity connections < {PREFLIGHT_DB_CONNECTION_LIMIT}",
+        ),
+        _check(
+            14,
+            "kachisuji_disk_headroom",
+            isinstance(disk_free_bytes, int)
+            and disk_free_bytes >= PREFLIGHT_DISK_FREE_MIN_BYTES,
+            {
+                "free_bytes": disk_free_bytes,
+                "path": measurements.get("kachisuji_disk_path"),
+            },
+            f"kachisuji slim disk free bytes >= {PREFLIGHT_DISK_FREE_MIN_BYTES}",
         ),
     ]
 
@@ -689,6 +704,23 @@ def _kachisuji_latest_date() -> dict[str, object]:
         }
 
 
+def _kachisuji_disk_space() -> dict[str, object]:
+    configured = os.environ.get("KACHISUJI_DB")
+    db_path = Path(configured) if configured else REPO / "data" / "kachisuji_slim.db"
+    disk_path = db_path.resolve().parent
+    try:
+        return {
+            "kachisuji_disk_free_bytes": int(shutil.disk_usage(disk_path).free),
+            "kachisuji_disk_path": str(disk_path),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "kachisuji_disk_free_bytes": None,
+            "kachisuji_disk_path": str(disk_path),
+            "kachisuji_disk_error": f"{type(exc).__name__}: {exc}"[:500],
+        }
+
+
 def collect_preflight_measurements(now: datetime) -> dict[str, object]:
     target_date = now.date().isoformat()
     yesterday = (now.date() - timedelta(days=1)).isoformat()
@@ -800,7 +832,12 @@ def collect_preflight_measurements(now: datetime) -> dict[str, object]:
     except Exception as exc:  # noqa: BLE001
         errors["primary_db"] = f"{type(exc).__name__}: {exc}"[:500]
 
-    for values in (_kachisuji_latest_date(), _probe_today_races_page(target_date), _probe_healthz()):
+    for values in (
+        _kachisuji_latest_date(),
+        _kachisuji_disk_space(),
+        _probe_today_races_page(target_date),
+        _probe_healthz(),
+    ):
         measurements.update(values)
     return measurements
 
@@ -910,7 +947,7 @@ def run_preflight_phase(now: datetime) -> tuple[bool, dict]:
         "measurements": final_measurements,
     }
     message = (
-        f"preflight {status}: ok={detail['summary']['ok']}/13 "
+        f"preflight {status}: ok={detail['summary']['ok']}/{PREFLIGHT_CHECK_COUNT} "
         f"failed={detail['summary']['failed']} gate_extended={extend}"
     )
     _write_preflight_status(target_date, status, message, detail)
@@ -1062,7 +1099,7 @@ def _write_window_status(run_date: str, status: str, message: str, detail: dict)
 
 
 def _write_preflight_status(run_date: str, status: str, message: str, detail: dict) -> None:
-    """Persist the 13-check release-gate result for Web and /healthz."""
+    """Persist the release-gate result for Web and /healthz."""
     _write_status(PREFLIGHT_STATUS_NAME, run_date, status, message, detail)
 
 

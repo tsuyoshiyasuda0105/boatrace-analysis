@@ -15,6 +15,16 @@ def _read(rel_path: str) -> str:
     return (ROOT / rel_path).read_text(encoding="utf-8")
 
 
+def test_kachisuji_apply_paths_never_full_copy_the_slim_database():
+    for rel_path in (
+        "src/kachisuji/delta_transport.py",
+        "scripts/apply_kachisuji_deltas.py",
+    ):
+        source = _read(rel_path)
+        assert "shutil.copy2" not in source
+        assert 'connection.execute("BEGIN IMMEDIATE")' in source
+
+
 _AUDITED_FSTRING_SQL_EXPRESSIONS = {
     "' AND '.join(where)",
     "' OR '.join(clauses)", "' OR '.join(cycle_clauses)",
@@ -78,7 +88,9 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # 2026-08-20: +12 = src/kachisuji/delta_transport.py。補間は TRANSPORT_TABLE
     # (モジュール定数) / t (固定タプル TABLES のループ変数) / table・alias
     # (同モジュール内の固定値) のみで、外部入力は一切届かないと監査済み。
-    assert len(calls) == 174, (
+    # Disk-pressure repair removes one ATTACH DATABASE f-string call from
+    # each apply implementation; delta values remain bound parameters.
+    assert len(calls) == 172, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )

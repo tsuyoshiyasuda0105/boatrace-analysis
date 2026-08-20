@@ -31,6 +31,21 @@ from typing import Any
 TABLES = ("asof_race_features", "racers")
 TRANSPORT_TABLE = "kachisuji_delta_files"
 _DELTA_NAME_OK = __import__("re").compile(r"^\d{8}\.db$")
+MIN_FREE_BYTES = 100 * 1024 * 1024
+
+
+class InsufficientDiskSpaceError(RuntimeError):
+    def __init__(self, free_bytes: int, required_bytes: int = MIN_FREE_BYTES):
+        self.free_bytes = int(free_bytes)
+        self.required_bytes = int(required_bytes)
+        super().__init__(
+            f"insufficient free space: {self.free_bytes} bytes available; "
+            f"at least {self.required_bytes} bytes required"
+        )
+
+
+def disk_free_bytes(path: Path) -> int:
+    return int(shutil.disk_usage(Path(path).resolve().parent).free)
 
 
 # ---------------------------------------------------------------- transport --
@@ -177,10 +192,12 @@ def read_applied_names(slim_db: Path) -> set[str]:
         connection.close()
 
 
-def _validate_schema(connection: sqlite3.Connection, alias: str) -> None:
+def _validate_schema(
+    connection: sqlite3.Connection, delta_connection: sqlite3.Connection
+) -> None:
     for table in TABLES:
         main_cols = connection.execute(f"PRAGMA main.table_info({table})").fetchall()
-        delta_cols = connection.execute(f"PRAGMA {alias}.table_info({table})").fetchall()
+        delta_cols = delta_connection.execute(f"PRAGMA table_info({table})").fetchall()
         if not main_cols or not delta_cols:
             raise ValueError(f"missing required table: {table}")
         if [r[1] for r in main_cols] != [r[1] for r in delta_cols]:
@@ -188,22 +205,24 @@ def _validate_schema(connection: sqlite3.Connection, alias: str) -> None:
 
 
 def _apply_one(connection: sqlite3.Connection, delta_path: Path, name: str) -> tuple[int, int]:
-    alias = "delta_src"
-    connection.execute(f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(delta_path),))
+    delta_connection = sqlite3.connect(_readonly_uri(delta_path), uri=True)
     try:
-        _validate_schema(connection, alias)
+        _validate_schema(connection, delta_connection)
         before = {
             t: int(connection.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
             for t in TABLES
         }
-        connection.execute("BEGIN IMMEDIATE")
         for t in TABLES:
-            connection.execute(f"INSERT OR IGNORE INTO {t} SELECT * FROM {alias}.{t}")
+            column_count = len(delta_connection.execute(f"PRAGMA table_info({t})").fetchall())
+            placeholders = ",".join("?" for _ in range(column_count))
+            connection.executemany(
+                f"INSERT OR IGNORE INTO {t} VALUES ({placeholders})",
+                delta_connection.execute(f"SELECT * FROM {t}"),
+            )
         connection.execute(
             "INSERT OR IGNORE INTO applied_deltas(name, applied_at) VALUES (?, ?)",
             (name, datetime.now(timezone.utc).isoformat()),
         )
-        connection.commit()
         after = {
             t: int(connection.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
             for t in TABLES
@@ -212,11 +231,8 @@ def _apply_one(connection: sqlite3.Connection, delta_path: Path, name: str) -> t
             after["asof_race_features"] - before["asof_race_features"],
             after["racers"] - before["racers"],
         )
-    except Exception:
-        connection.rollback()
-        raise
     finally:
-        connection.execute(f"DETACH DATABASE {alias}")
+        delta_connection.close()
 
 
 def _slim_summary(slim_db: Path) -> dict[str, Any]:
@@ -240,41 +256,44 @@ def apply_pending_to_slim(slim_db: Path, conn=None) -> dict[str, Any]:
         raise FileNotFoundError(f"slim DB not found: {slim_db}")
     applied = read_applied_names(slim_db)
     pending = fetch_pending_payloads(applied, conn=conn)
+    free_bytes = disk_free_bytes(slim_db)
     if not pending:
         return {"applied_files": 0, "asof_added": 0, "racers_added": 0,
-                **_slim_summary(slim_db)}
+                "free_bytes": free_bytes, **_slim_summary(slim_db)}
+    if free_bytes < MIN_FREE_BYTES:
+        raise InsufficientDiskSpaceError(free_bytes)
 
-    backup = Path(str(slim_db) + ".bak")
-    shutil.copy2(slim_db, backup)
     connection: sqlite3.Connection | None = None
-    tmp_dir = Path(tempfile.mkdtemp(prefix="kachisuji_delta_"))
-    try:
-        connection = sqlite3.connect(str(slim_db), uri=True, timeout=30.0)
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS applied_deltas ("
-            "name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
-        )
-        connection.commit()
-        asof_total = racers_total = 0
-        names: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="kachisuji_delta_") as tmp_dir_name:
+        tmp_dir = Path(tmp_dir_name)
         for name, payload in pending:
-            tmp = tmp_dir / name
-            tmp.write_bytes(payload)
-            asof_added, racers_added = _apply_one(connection, tmp, name)
-            asof_total += asof_added
-            racers_total += racers_added
-            names.append(name)
-        connection.close()
-        connection = None
-        backup.unlink(missing_ok=True)
-        return {"applied_files": len(names), "applied_names": names,
-                "asof_added": asof_total, "racers_added": racers_total,
-                **_slim_summary(slim_db)}
-    except Exception:
-        if connection is not None:
-            connection.close()
-        if backup.is_file():
-            shutil.copy2(backup, slim_db)
-        raise
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+            (tmp_dir / name).write_bytes(payload)
+        try:
+            connection = sqlite3.connect(str(slim_db), uri=True, timeout=30.0)
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS applied_deltas ("
+                "name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+            )
+            asof_total = racers_total = 0
+            names: list[str] = []
+            for name, _payload in pending:
+                if connection.execute(
+                    "SELECT 1 FROM applied_deltas WHERE name = ?", (name,)
+                ).fetchone():
+                    continue
+                asof_added, racers_added = _apply_one(connection, tmp_dir / name, name)
+                asof_total += asof_added
+                racers_total += racers_added
+                names.append(name)
+            connection.commit()
+        except Exception:
+            if connection is not None and connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            if connection is not None:
+                connection.close()
+    return {"applied_files": len(names), "applied_names": names,
+            "asof_added": asof_total, "racers_added": racers_total,
+            "free_bytes": disk_free_bytes(slim_db), **_slim_summary(slim_db)}

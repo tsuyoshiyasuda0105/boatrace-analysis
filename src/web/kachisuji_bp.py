@@ -360,7 +360,11 @@ def api_all_matches():
 
 @bp.post("/internal/apply-deltas")
 def internal_apply_deltas():
-    from src.kachisuji.delta_transport import apply_pending_to_slim, internal_token
+    from src.kachisuji.delta_transport import (
+        InsufficientDiskSpaceError,
+        apply_pending_to_slim,
+        internal_token,
+    )
 
     provided = request.headers.get("X-Internal-Token", "")
     try:
@@ -374,6 +378,13 @@ def internal_apply_deltas():
         return jsonify(error="slim db missing", path=str(db_path)), 503
     try:
         summary = apply_pending_to_slim(db_path)
+    except InsufficientDiskSpaceError as exc:
+        current_app.logger.warning("kachisuji delta apply skipped: %s", exc)
+        return jsonify(
+            error=str(exc),
+            free_bytes=exc.free_bytes,
+            required_bytes=exc.required_bytes,
+        ), 507
     except Exception as exc:  # noqa: BLE001 - report, never crash the worker
         current_app.logger.exception("kachisuji delta apply failed")
         return jsonify(error=f"{type(exc).__name__}: {exc}"[:500]), 500
