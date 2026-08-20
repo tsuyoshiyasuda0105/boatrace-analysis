@@ -66,3 +66,28 @@ def test_placeholder_preserves_existing_markers_and_escaped_percent():
     assert _placeholder_pg(sql, escape_percent=True) == (
         "SELECT %s, 'already %% escaped', 'it''s 50%%'"
     )
+
+
+def test_rewrite_handles_double_quoted_identifiers():
+    """sync_to_supabase の識別子クォート化 (b49ca49) で翻訳が壊れた回帰の防止。
+
+    2026-08-20 実障害: INSERT OR REPLACE INTO "stadiums" (...) が翻訳されず
+    生のまま Postgres に届き syntax error → 夜間デルタ取込 (step27) が全滅した。
+    """
+    from src.db.connection import _rewrite_sqlite_specific
+
+    quoted = (
+        'INSERT OR REPLACE INTO "stadiums" '
+        '("stadium_number", "name", "water") VALUES (?, ?, ?)'
+    )
+    rewritten = _rewrite_sqlite_specific(quoted)
+    assert "INSERT OR REPLACE" not in rewritten
+    assert "ON CONFLICT (stadium_number) DO UPDATE SET" in rewritten
+    assert "name=EXCLUDED.name" in rewritten
+    assert "water=EXCLUDED.water" in rewritten
+
+    ignore = (
+        'INSERT OR IGNORE INTO "applied_deltas" '
+        '("name", "applied_at") VALUES (?, ?)'
+    )
+    assert "ON CONFLICT DO NOTHING" in _rewrite_sqlite_specific(ignore)

@@ -427,6 +427,11 @@ _TABLE_PRIMARY_KEYS = {
 }
 
 
+def _unquote_identifier(value: str) -> str:
+    """`"stadiums"` → `stadiums`。sync_to_supabase 等がクォートで囲んだ識別子に対応。"""
+    return value.strip().strip('"')
+
+
 def _build_upsert(table: str, columns: list[str], kind: str) -> str:
     """ON CONFLICT (pk) DO UPDATE SET col=EXCLUDED.col の SQL 末尾を生成。"""
     kind = kind.upper()
@@ -434,11 +439,15 @@ def _build_upsert(table: str, columns: list[str], kind: str) -> str:
         return " ON CONFLICT DO NOTHING"
     if kind != "REPLACE":
         raise ValueError(f"Unsupported SQLite INSERT OR kind: {kind}")
-    pk = _TABLE_PRIMARY_KEYS.get(table.lower())
+    # 識別子がダブルクォートで囲まれていても主キー照合できるよう正規化する
+    # (2026-08-20: sync_to_supabase の識別子クォート化で翻訳が壊れた回帰の修理)
+    table_key = _unquote_identifier(table).lower()
+    columns = [_unquote_identifier(c) for c in columns]
+    pk = _TABLE_PRIMARY_KEYS.get(table_key)
     if not pk:
         # REPLACE must never silently degrade to DO NOTHING.
         raise ValueError(
-            f"INSERT OR REPLACE target table '{table}' is missing from "
+            f"INSERT OR REPLACE target table '{table_key}' is missing from "
             "_TABLE_PRIMARY_KEYS"
         )
     non_pk = [c for c in columns if c not in pk]
@@ -480,7 +489,8 @@ def _strip_trailing_line_comment(sql: str) -> str:
 
 
 _INSERT_PATTERN = re.compile(
-    r"\bINSERT\s+OR\s+(REPLACE|IGNORE)\s+INTO\s+(\w+)\s*\(([^)]+)\)",
+    # テーブル名は素の識別子 (stadiums) でもクォート付き ("stadiums") でも受ける
+    r'\bINSERT\s+OR\s+(REPLACE|IGNORE)\s+INTO\s+("?\w+"?)\s*\(([^)]+)\)',
     re.IGNORECASE | re.DOTALL,
 )
 
