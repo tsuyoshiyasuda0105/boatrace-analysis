@@ -387,6 +387,9 @@ def _placeholder_pg(sql: str, *, escape_percent: bool = False) -> str:
 
 # schema.sql で定義された各テーブルの主キー (UPSERT 変換用)
 _TABLE_PRIMARY_KEYS = {
+    # kachisuji デルタ適用の記帳 (delta_transport は素の sqlite3 で書くが
+    # 静的パリティ検査のため登録する)
+    "applied_deltas": ["name"],
     "stadiums": ["stadium_number"],
     "racers": ["racer_number"],
     "racer_period_stats": ["racer_number", "period_year", "period_half"],

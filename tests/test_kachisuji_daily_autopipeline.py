@@ -218,7 +218,7 @@ def test_nightly_delta_failure_does_not_change_existing_success(monkeypatch, tmp
 
     def fake_run(args, allow_prod_sync=False):
         calls.append((args, allow_prod_sync))
-        return args[:1] != ["scripts/upload_kachisuji_delta.py"]
+        return args[:1] != ["scripts/upload_kachisuji_delta_pg.py"]
 
     monkeypatch.setattr(nightly, "_run_local", fake_run)
     monkeypatch.setattr(nightly, "ROOT", tmp_path)
@@ -244,7 +244,7 @@ def test_nightly_delta_failure_does_not_change_existing_success(monkeypatch, tmp
         "--date",
         "2026-08-18",
     ]
-    assert calls[-1][0][0] == "scripts/upload_kachisuji_delta.py"
+    assert calls[-1][0][0] == "scripts/upload_kachisuji_delta_pg.py"
     assert calls[-1][1] is True
 
 
@@ -261,7 +261,7 @@ def test_nightly_rerun_reuses_retained_delta(monkeypatch, tmp_path: Path):
     )
 
     assert nightly._run_kachisuji_daily("2026-08-18") is True
-    assert [call[0][0] for call in calls] == ["scripts/upload_kachisuji_delta.py"]
+    assert [call[0][0] for call in calls] == ["scripts/upload_kachisuji_delta_pg.py"]
 
 
 def test_completed_date_is_previous_day_in_jst():

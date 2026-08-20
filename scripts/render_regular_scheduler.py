@@ -456,6 +456,55 @@ def run_entry_change_snapshots_nonfatal(now: datetime) -> dict[str, bool]:
     return results
 
 
+def run_kachisuji_delta_apply_nonfatal(now: datetime) -> bool:
+    """web の内部エンドポイントを叩き、未適用の kachisuji デルタを適用させる。
+
+    slim DB (/data) は web サービスにしか無いため、cron からは HTTPS トリガーが
+    唯一の適用経路。失敗しても夜間メンテ全体は落とさない (データが1日古いだけで
+    バックテスト自体は動き続けるため)。
+    """
+    run_date = now.date().isoformat()
+    base = os.getenv(
+        "BOATRACE_WEB_BASE_URL", "https://boatrace-web.onrender.com"
+    ).rstrip("/")
+    try:
+        from src.kachisuji.delta_transport import internal_token
+
+        import requests
+
+        resp = requests.post(
+            f"{base}/kachisuji/internal/apply-deltas",
+            headers={"X-Internal-Token": internal_token()},
+            timeout=180,
+        )
+        payload: dict = {}
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = {"raw": resp.text[:200]}
+        ok = resp.status_code == 200
+        detail = json.dumps(
+            {"status_code": resp.status_code, **payload}, ensure_ascii=False
+        )[:1000]
+    except Exception as exc:  # noqa: BLE001 - nonfatal by design
+        ok = False
+        detail = f"exception={type(exc).__name__}: {exc}"[:1000]
+    record_task(
+        "render_kachisuji_delta_apply",
+        run_date,
+        "success" if ok else "failure",
+        detail=detail,
+    )
+    if not ok:
+        print(f"[kachisuji-delta] apply trigger failed: {detail}", flush=True)
+        _notify_failure_best_effort(
+            "boatrace-kachisuji-delta-apply",
+            "kachisuji delta apply trigger failed",
+            detail={"date": run_date, "detail": detail[:300]},
+        )
+    return ok
+
+
 def task_success_exists(task_name: str, run_date: str) -> bool:
     try:
         with db_connect() as conn:

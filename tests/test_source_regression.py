@@ -30,9 +30,10 @@ _AUDITED_FSTRING_SQL_EXPRESSIONS = {
     "cycle_filter_sql", "cycle_select", "cycle_sql", "ddl", "derived_cols",
     "derived_columns", "derived_join", "fixed_first", "hi", "hit_condition",
     "kim", "kind", "limit", "lo", "m", "motor_placeholders", "name",
+    "TRANSPORT_TABLE",
     "placeholders", "q1", "q2", "quoted", "quoted_table", "race_date_sql",
     "race_placeholders", "racer_placeholders", "schema_placeholders",
-    "statement_timeout", "table", "table_name", "tilt_where", "where",
+    "statement_timeout", "t", "table", "table_name", "tilt_where", "where",
     "where_filter", "where_match", "where_sql", "x", "y",
 }
 
@@ -74,7 +75,10 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     assert not unexpected, f"未監査の f-string SQL 補間があります: {unexpected}"
     # Market-signal additions interpolate only locally generated placeholder
     # lists or fixed OR clauses; all values remain bound parameters.
-    assert len(calls) == 162, (
+    # 2026-08-20: +12 = src/kachisuji/delta_transport.py。補間は TRANSPORT_TABLE
+    # (モジュール定数) / t (固定タプル TABLES のループ変数) / table・alias
+    # (同モジュール内の固定値) のみで、外部入力は一切届かないと監査済み。
+    assert len(calls) == 174, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )

@@ -353,4 +353,60 @@ def api_all_matches():
         return jsonify(error=str(exc)), 500
 
 
+# ------------------------------------------------------------ delta apply --
+# 夜間 cron が HTTPS で叩く内部トリガー。web だけが /data の slim DB を持つため
+# 適用は web プロセス内で行う。認証は共有 DATABASE_URL 由来トークン
+# (src.kachisuji.delta_transport.internal_token) — 新しい秘密は増やさない。
+
+@bp.post("/internal/apply-deltas")
+def internal_apply_deltas():
+    from src.kachisuji.delta_transport import apply_pending_to_slim, internal_token
+
+    provided = request.headers.get("X-Internal-Token", "")
+    try:
+        expected = internal_token()
+    except RuntimeError:
+        return jsonify(error="internal token unavailable"), 503
+    if not provided or provided != expected:
+        return jsonify(error="forbidden"), 403
+    db_path = _search_db_path()
+    if not db_path.is_file():
+        return jsonify(error="slim db missing", path=str(db_path)), 503
+    try:
+        summary = apply_pending_to_slim(db_path)
+    except Exception as exc:  # noqa: BLE001 - report, never crash the worker
+        current_app.logger.exception("kachisuji delta apply failed")
+        return jsonify(error=f"{type(exc).__name__}: {exc}"[:500]), 500
+    current_app.logger.info("kachisuji delta apply: %s", summary)
+    return jsonify(summary)
+
+
+@bp.record_once
+def _schedule_startup_delta_apply(setup_state) -> None:
+    """デプロイ/再起動のたびに未適用デルタを追いつかせる保険 (cron 不発対策)。"""
+    if not os.environ.get("RENDER"):
+        return
+
+    import threading
+
+    def _run() -> None:
+        try:
+            db_path = _search_db_path()
+            if not db_path.is_file():
+                return
+            from src.kachisuji.delta_transport import apply_pending_to_slim
+
+            summary = apply_pending_to_slim(db_path)
+            if summary.get("applied_files"):
+                setup_state.app.logger.info(
+                    "kachisuji startup delta apply: %s", summary
+                )
+        except Exception:  # noqa: BLE001 - startup must never crash the app
+            setup_state.app.logger.exception("kachisuji startup delta apply failed")
+
+    timer = threading.Timer(30.0, _run)
+    timer.daemon = True
+    timer.start()
+
+
 __all__ = ["bp"]

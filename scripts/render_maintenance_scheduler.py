@@ -326,6 +326,14 @@ def run_integrity_phase(now: datetime) -> tuple[bool, dict]:
             f"[maintenance] entry-change snapshots skipped nonfatally: {type(exc).__name__}: {exc}",
             flush=True,
         )
+    try:
+        # 前夜 PC がアップロードした kachisuji デルタを web の slim DB に適用させる
+        regular.run_kachisuji_delta_apply_nonfatal(now)
+    except Exception as exc:  # noqa: BLE001 - optional data cannot block maintenance
+        print(
+            f"[maintenance] kachisuji delta apply skipped nonfatally: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
     roi_phase = "roi_reconcile"
     roi_ok = phase_success(roi_phase, run_date)
     if not roi_ok:

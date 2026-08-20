@@ -64,8 +64,10 @@ def _run_kachisuji_daily(completed_date: str) -> bool:
         if not refresh_ok:
             print("[kachisuji] refresh failed; upload skipped", flush=True)
             return False
+    # Storage 版 (upload_kachisuji_delta.py) は SERVICE キー未配布で不稼働だった。
+    # DATABASE_URL だけで動く Postgres 輸送に切替 (2026-08-20)。
     upload_ok = _run_local(
-        ["scripts/upload_kachisuji_delta.py", "--delta", str(delta_path)],
+        ["scripts/upload_kachisuji_delta_pg.py", "--delta", str(delta_path)],
         allow_prod_sync=True,
     )
     print(f"[kachisuji] {'ok' if upload_ok else 'upload failed'}", flush=True)
