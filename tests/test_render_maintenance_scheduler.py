@@ -262,6 +262,7 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
         "timed_out": False,
         "oom_suspected": False,
         "stderr_tail": "tag warning",
+        "stdout_tail": "",
         "peak_rss_mb": 123.4,
     }
     assert [call[0] for call in calls] == [
@@ -704,3 +705,47 @@ def test_0640_tick_prioritizes_preflight_over_late_phase_retry(monkeypatch):
 
     assert result["phase"] == "preflight"
     assert calls == ["preflight"]
+
+
+def test_detail_subprocess_retains_stdout_diagnostics(monkeypatch):
+    """prewarm/integrity の診断は stdout に出るので必ず記録する。
+
+    2026-08-16 以降、詳細ページ生成が毎朝 rc=1 で失敗していたのに
+    stderr_tail が空で原因を追えなかった実障害の再発防止。
+    summary JSON と failures 配列は stdout 側にある。
+    """
+    summary = (
+        '[race-detail-page] summary={"requested_races": 144, "failed": 144, '
+        '"failures": [{"race_id": "20260821-01-01", "status": '
+        '"persistent_cache_missing"}]}'
+    )
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_py_detailed",
+        lambda *_args, **_kwargs: scheduler.regular.PyRunResult(
+            1, "", stdout_tail=summary
+        ),
+    )
+    monkeypatch.setattr(scheduler, "_child_peak_rss_mb", lambda: None)
+
+    ok, diagnostic = scheduler._run_detail_subprocess(["child.py"], timeout=10)
+
+    assert ok is False
+    assert diagnostic["return_code"] == 1
+    assert "persistent_cache_missing" in diagnostic["stdout_tail"]
+    assert '"failed": 144' in diagnostic["stdout_tail"]
+
+
+def test_detail_subprocess_stdout_tail_is_bounded(monkeypatch):
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_py_detailed",
+        lambda *_args, **_kwargs: scheduler.regular.PyRunResult(
+            1, "", stdout_tail="x" * 9000
+        ),
+    )
+    monkeypatch.setattr(scheduler, "_child_peak_rss_mb", lambda: None)
+
+    _ok, diagnostic = scheduler._run_detail_subprocess(["child.py"], timeout=10)
+
+    assert len(diagnostic["stdout_tail"]) == 2500

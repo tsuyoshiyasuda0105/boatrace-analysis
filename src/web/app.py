@@ -1548,7 +1548,15 @@ def _write_page_html_cache(cache_key: str, html: str) -> None:
                 (cache_key, html, now_ts),
             )
             conn.commit()
-    except Exception:
+    except Exception as exc:
+        # prewarm はここが黙って失敗すると persistent_cache_missing としか
+        # 分からない。子プロセスの stdout に理由を必ず残す (2026-08-16 以降
+        # 毎朝の詳細ページ生成が原因不明で失敗し続けた実障害の再発防止)。
+        print(
+            f"[page-cache-write-failed] key={cache_key} "
+            f"error={type(exc).__name__}: {exc}"[:400],
+            flush=True,
+        )
         logger.exception("failed to write page_html_cache: %s", cache_key)
 
 

@@ -228,11 +228,15 @@ def _run_detail_subprocess(args: list[str], *, timeout: int) -> tuple[bool, dict
             None,
             f"spawn_error={type(exc).__name__}: {exc}",
         )
+    # prewarm/integrity は診断を stdout に出す (summary JSON と failures 配列)。
+    # stderr だけ残すと rc=1 の理由が本番で一切分からない — 2026-08-16 以降
+    # 毎朝失敗しているのに stderr が空で原因を追えなかった実障害の再発防止。
     return result.ok, {
         "return_code": result.returncode,
         "timed_out": bool(result.timed_out),
         "oom_suspected": result.returncode in {-9, 137},
         "stderr_tail": result.stderr_tail[-500:],
+        "stdout_tail": (getattr(result, "stdout_tail", "") or "")[-2500:],
         "peak_rss_mb": _child_peak_rss_mb(),
     }
 
