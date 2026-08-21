@@ -734,8 +734,10 @@ def run_top_page_snapshot(
     lightweight: bool,
     environment_only: bool = False,
     signals_degraded: bool = False,
+    target_date: str | None = None,
 ) -> bool:
-    today = now.date().isoformat()
+    # target_date を渡すと当日以外 (翌日の先回り生成) にも使える。
+    today = target_date or now.date().isoformat()
     args = ["scripts/build_top_page_snapshot.py", "--date", today]
     if lightweight:
         args.append("--lightweight")
@@ -746,7 +748,9 @@ def run_top_page_snapshot(
     ok = run_py(args, timeout=900)
     record_task(
         (
-            "render_top_snapshot_environment"
+            "render_top_snapshot_next_day"
+            if target_date
+            else "render_top_snapshot_environment"
             if environment_only
             else "render_top_snapshot_lightweight"
             if lightweight
@@ -756,6 +760,46 @@ def run_top_page_snapshot(
         "success" if ok else "failure",
     )
     return ok
+
+
+def run_next_day_top_snapshot(now: datetime) -> bool:
+    """翌日分の TOP スナップショットを前夜のうちに本番へ作っておく。
+
+    スナップショットは従来「その日の 04:00-07:00 メンテ窓」でしか作られず、
+    00:00 に日付が変わってから朝までの約6時間、本番に当日分が存在しなかった。
+    その間 / と /races は毎リクエストで全レースを描画し直し (156レースで20秒超)、
+    重なるとワーカーが詰まってサイトが落ちる。2026-08-22 未明の実障害。
+
+    PC 夜間バッチも build_top_page_snapshot を翌日分で呼んでいるが、
+    _run_local が DATABASE_URL を空にするためローカル SQLite にしか書かれず、
+    本番には届いていなかった。ここで本番側にも作る。
+
+    22時台に一度だけ実行 (既に作成済みならスキップ)。
+    """
+    if now.hour != 22:
+        return True
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+    if top_page_snapshot_exists(tomorrow):
+        return True
+    print(f"[top-snapshot] building next-day snapshot date={tomorrow}", flush=True)
+    return run_top_page_snapshot(now, lightweight=False, target_date=tomorrow)
+
+
+def top_page_snapshot_exists(target_date: str) -> bool:
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM page_html_cache WHERE cache_key LIKE ? LIMIT 1",
+                (f"top_page_snapshot%{target_date}",),
+            ).fetchone()
+        return row is not None
+    except Exception as exc:  # noqa: BLE001 - 判定不能なら作りに行く
+        print(
+            f"[top-snapshot] existence check failed date={target_date} "
+            f"error={type(exc).__name__}",
+            flush=True,
+        )
+        return False
 
 
 def run_lite_daytime_bootstrap(now: datetime) -> bool:
@@ -1819,6 +1863,17 @@ def main() -> int:
     # Refresh the top snapshot after result polling and any signal rebuild.
     if 8 <= now.hour <= 23:
         run_top_page_snapshot(now, lightweight=True, environment_only=True)
+
+    # 日付が変わる前に翌日分を用意しておく。これが無いと 00:00-06:00 の間、
+    # TOP と /races が毎回フル描画になりサイトが詰まる (2026-08-22 実障害)。
+    # 失敗しても当日の運用は続けられるので exit_code には影響させない。
+    try:
+        run_next_day_top_snapshot(now)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[top-snapshot] next-day build failed error={type(exc).__name__}: {exc}"[:300],
+            flush=True,
+        )
 
     print("[render-regular] done", flush=True)
     if exit_code:

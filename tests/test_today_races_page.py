@@ -247,11 +247,20 @@ def test_market_signals_api_uses_short_server_cache():
 
 
 def test_render_web_worker_restarts_are_not_too_frequent():
+    """ワーカーをリクエスト数で使い捨てないこと。
+
+    元は「200 では頻繁すぎるので 1000 に」という趣旨のテストだったが、
+    2026-08-21 の実測でこの再起動自体が障害源と判明した: メモリは 2GB 中
+    2-5% しか使っておらず回収するものが無いのに、約18分ごとに 1000 件へ
+    到達してワーカーが入れ替わり、単一ワーカーだったため health check に
+    答えられず Render がインスタンスごと落としていた (1-4分の全断)。
+    max-requests を外し、代わりに 2 ワーカーで冗長性を確保した (f2b9f68)。
+    """
     source = Path("render.yaml").read_text(encoding="utf-8")
 
     assert "--graceful-timeout 30" in source
-    assert "--max-requests 1000" in source
-    assert "--max-requests 200 " not in source
+    assert "--max-requests" not in source, "リクエスト数による使い捨ては行わない"
+    assert "gunicorn -w 2 " in source, "1ワーカーでは再起動が全断になる"
 
 
 def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):
