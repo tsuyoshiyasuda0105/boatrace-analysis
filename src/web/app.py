@@ -339,6 +339,12 @@ _CACHE_DEFAULT_TTL = 300  # 5分
 _PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
 _PAGE_HTML_MEM_CACHE_MAX = 2000
 _PAGE_HTML_CACHE_TABLE_READY = False
+_RACE_DETAIL_BACKGROUND_RECOMPUTE: ContextVar[bool] = ContextVar(
+    "race_detail_background_recompute",
+    default=False,
+)
+_RACE_DETAIL_REFRESH_IN_FLIGHT: set[str] = set()
+_RACE_DETAIL_REFRESH_IN_FLIGHT_LOCK = threading.Lock()
 EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-prewarm",
     "render-cron",
@@ -346,6 +352,50 @@ EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-detail-prewarm",
     "db-maintenance",
 }
+
+
+def _rebuild_race_detail_page_in_background(app: Flask, race_id: str) -> None:
+    """Rebuild one detail page through the canonical guarded route."""
+    token = _RACE_DETAIL_BACKGROUND_RECOMPUTE.set(True)
+    try:
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["is_member"] = True
+            response = client.get(f"/race/{race_id}?recompute=1")
+            if response.status_code != 200:
+                logger.warning(
+                    "race_detail background refresh failed race_id=%s status=%s",
+                    race_id,
+                    response.status_code,
+                )
+    except Exception:
+        logger.exception("race_detail background refresh failed race_id=%s", race_id)
+    finally:
+        _RACE_DETAIL_BACKGROUND_RECOMPUTE.reset(token)
+        with _RACE_DETAIL_REFRESH_IN_FLIGHT_LOCK:
+            _RACE_DETAIL_REFRESH_IN_FLIGHT.discard(race_id)
+
+
+def _start_race_detail_background_refresh(app: Flask, race_id: str) -> bool:
+    """Start at most one in-process stale-page rebuild for a race."""
+    with _RACE_DETAIL_REFRESH_IN_FLIGHT_LOCK:
+        if race_id in _RACE_DETAIL_REFRESH_IN_FLIGHT:
+            return False
+        _RACE_DETAIL_REFRESH_IN_FLIGHT.add(race_id)
+    try:
+        thread = threading.Thread(
+            target=_rebuild_race_detail_page_in_background,
+            args=(app, race_id),
+            name=f"race-detail-refresh-{race_id}",
+            daemon=True,
+        )
+        thread.start()
+    except Exception:
+        with _RACE_DETAIL_REFRESH_IN_FLIGHT_LOCK:
+            _RACE_DETAIL_REFRESH_IN_FLIGHT.discard(race_id)
+        logger.exception("race_detail background refresh could not start race_id=%s", race_id)
+        return False
+    return True
 
 
 def _strategy_definition_signature() -> str:
@@ -1323,6 +1373,8 @@ def _operational_roi_totals(
 
 def _is_expensive_recompute_allowed() -> bool:
     """Allow long SQL recomputation only from background maintenance contexts."""
+    if _RACE_DETAIL_BACKGROUND_RECOMPUTE.get():
+        return True
     if os.getenv("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE") == "1":
         return True
     trigger = (os.getenv("BOATRACE_TASK_TRIGGER") or "").strip().lower()
@@ -8272,32 +8324,32 @@ def create_app(
         race_date = _race_date_from_race_id(race_id)
         use_fresh_page_cache = race_date >= _today_jst_iso()
         if not force_recompute:
-            def _preparing_response():
-                response = _race_preparing_page_response(race_id)
-                logger.info(
-                    "race_detail preparing served race_id=%s elapsed=%.3fs",
-                    race_id,
-                    time.perf_counter() - started_at,
-                )
-                return response
-
-            def _cached_or_preparing_response():
-                cached_html = (
-                    _read_page_html_cache(page_cache_key, 180)
-                    if use_fresh_page_cache
-                    else _read_page_html_cache_stale(page_cache_key)
-                )
-                if not cached_html and use_fresh_page_cache:
-                    # 今日のページでも期限切れキャッシュを即返す。背景ジョブが
-                    # fresh に更新するまで request thread で再計算しない。
-                    cached_html = _read_page_html_cache_stale(page_cache_key)
+            def _cached_response():
+                if use_fresh_page_cache:
+                    cached_html = _read_page_html_cache(page_cache_key, 180)
                     if cached_html:
                         logger.info(
-                            "race_detail stale-cache served race_id=%s elapsed=%.3fs",
+                            "race_detail page-cache hit race_id=%s elapsed=%.3fs",
                             race_id,
                             time.perf_counter() - started_at,
                         )
                         return cached_html
+                    stale_html = _read_page_html_cache_stale(page_cache_key)
+                    if stale_html:
+                        started = _start_race_detail_background_refresh(
+                            app,
+                            race_id,
+                        )
+                        logger.info(
+                            "race_detail stale-cache served race_id=%s elapsed=%.3fs refresh_started=%s",
+                            race_id,
+                            time.perf_counter() - started_at,
+                            started,
+                        )
+                        return _stale_detail_response(stale_html)
+                    return None
+
+                cached_html = _read_page_html_cache_stale(page_cache_key)
                 if cached_html:
                     logger.info(
                         "race_detail page-cache hit race_id=%s elapsed=%.3fs",
@@ -8305,19 +8357,22 @@ def create_app(
                         time.perf_counter() - started_at,
                     )
                     return cached_html
-                # Only approved prewarm/cron requests continue to live build.
-                return _preparing_response()
+                return None
 
             def _stale_detail_fallback():
                 stale_html = _read_page_html_cache_stale(page_cache_key)
                 return _stale_detail_response(stale_html) if stale_html else None
 
-            return _with_transient_db_fallback(
-                _cached_or_preparing_response,
+            cached_response = _with_transient_db_fallback(
+                _cached_response,
                 _stale_detail_fallback,
-                _preparing_response,
+                lambda: None,
                 context="race_detail",
             )
+            if cached_response is not None:
+                return cached_response
+            if not is_member():
+                return _race_preparing_page_response(race_id)
         info = _race_basic_info(race_id)
         if not info:
             abort(404)

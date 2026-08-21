@@ -638,7 +638,7 @@ def test_race_detail_serves_stale_cache_for_today_instead_of_live_recompute():
     end = source.index("@app.route", start)
     route = source[start:end]
     # fresh miss + today のときに stale フォールバックする分岐
-    assert "if not cached_html and use_fresh_page_cache:" in route
+    assert "_start_race_detail_background_refresh(" in route
     assert "race_detail stale-cache served" in route
 
 
@@ -662,51 +662,108 @@ def _fail_if_called(name):
     return fail
 
 
-def test_human_cache_miss_returns_lightweight_preparing_page_without_recompute(
-    monkeypatch,
-):
+def test_human_cache_miss_keeps_synchronous_generation(monkeypatch):
     client = _member_client(monkeypatch)
     monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-15")
     monkeypatch.setattr(web_app, "_read_page_html_cache", lambda *_args: None)
     monkeypatch.setattr(web_app, "_read_page_html_cache_stale", lambda *_args: None)
-    for dependency in (
-        "_race_basic_info",
-        "_venue_environment_summaries_for_date",
-        "_race_predictions_from_cache",
-        "_race_entry_fallback_rows",
-        "_race_current_conditions_cached",
-        "db_connect",
-    ):
-        monkeypatch.setattr(web_app, dependency, _fail_if_called(dependency))
+    basic_info_calls: list[str] = []
 
-    response = client.get("/race/20260815-05-04?recompute=1")
+    def basic_info(race_id):
+        basic_info_calls.append(race_id)
+        return {
+            "race_date": "2026-08-15",
+            "stadium_number": 5,
+            "race_closed_at": None,
+        }
+
+    monkeypatch.setattr(web_app, "_race_basic_info", basic_info)
+    monkeypatch.setattr(web_app, "_venue_environment_summaries_for_date", lambda *_args: {})
+    monkeypatch.setattr(web_app, "_race_predictions_from_cache", lambda *_args: [])
+    monkeypatch.setattr(web_app, "_race_entry_fallback_rows", lambda *_args: [])
+    monkeypatch.setattr(web_app, "_attach_race_detail_display_facts", lambda *_args: None)
+    monkeypatch.setattr(web_app, "_attach_precomputed_race_detail_tags", lambda *_args: None)
+    monkeypatch.setattr(web_app, "_attach_motor_fact_grades", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(web_app, "_race_current_conditions_cached", lambda *_args: {})
+    monkeypatch.setattr(web_app, "_race_actual_result_cached", lambda *_args: None)
+    monkeypatch.setattr(web_app, "_write_page_html_cache", lambda *_args: None)
+
+    response = client.get("/race/20260815-05-04")
 
     assert response.status_code == 200
-    assert response.headers["Retry-After"] == "30"
-    assert "no-store" in response.headers["Cache-Control"]
-    body = response.get_data(as_text=True)
-    assert "レース詳細を準備しています" in body
-    assert "数十秒後に自動で更新されます" in body
-    assert '<meta http-equiv="refresh" content="30">' in body
+    assert basic_info_calls == ["20260815-05-04"]
+    assert "Retry-After" not in response.headers
 
 
-def test_preparing_response_is_not_held_by_view_ttl_cache(monkeypatch):
-    client = _member_client(monkeypatch)
-    monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-15")
-    page_reads = iter([None, "<main>prewarmed detail</main>"])
+def test_background_refresh_guard_prevents_duplicate_start(monkeypatch):
+    pending: list[tuple[object, tuple[object, ...]]] = []
+    rebuilt: list[str] = []
+
+    class DeferredThread:
+        def __init__(self, *, target, args, **_kwargs):
+            pending.append((target, args))
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(web_app.threading, "Thread", DeferredThread)
     monkeypatch.setattr(
         web_app,
-        "_read_page_html_cache",
-        lambda *_args: next(page_reads),
+        "_rebuild_race_detail_page_in_background",
+        lambda _app, race_id: rebuilt.append(race_id)
+        or web_app._RACE_DETAIL_REFRESH_IN_FLIGHT.discard(race_id),
     )
-    monkeypatch.setattr(web_app, "_read_page_html_cache_stale", lambda *_args: None)
-    monkeypatch.setattr(web_app, "_race_basic_info", _fail_if_called("_race_basic_info"))
+    web_app._RACE_DETAIL_REFRESH_IN_FLIGHT.clear()
+    app = object()
 
-    first = client.get("/race/20260815-05-04")
-    second = client.get("/race/20260815-05-04")
+    assert web_app._start_race_detail_background_refresh(app, "race-1") is True
+    assert web_app._start_race_detail_background_refresh(app, "race-1") is False
+    assert len(pending) == 1
+    target, args = pending.pop()
+    target(*args)
+    assert rebuilt == ["race-1"]
+    assert web_app._start_race_detail_background_refresh(app, "race-1") is True
+    target, args = pending.pop()
+    target(*args)
+    assert rebuilt == ["race-1", "race-1"]
 
-    assert "レース詳細を準備しています" in first.get_data(as_text=True)
-    assert second.get_data(as_text=True) == "<main>prewarmed detail</main>"
+
+def test_background_refresh_uses_canonical_recompute_route_and_clears_guard():
+    calls: list[str] = []
+    session_data: dict[str, object] = {}
+
+    class Response:
+        status_code = 200
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def session_transaction(self):
+            return self
+
+        def __setitem__(self, key, value):
+            session_data[key] = value
+
+        def get(self, path):
+            assert web_app._RACE_DETAIL_BACKGROUND_RECOMPUTE.get() is True
+            calls.append(path)
+            return Response()
+
+    class App:
+        def test_client(self):
+            return Client()
+
+    web_app._RACE_DETAIL_REFRESH_IN_FLIGHT.add("race-2")
+    web_app._rebuild_race_detail_page_in_background(App(), "race-2")
+
+    assert calls == ["/race/race-2?recompute=1"]
+    assert session_data == {"is_member": True}
+    assert web_app._RACE_DETAIL_BACKGROUND_RECOMPUTE.get() is False
+    assert "race-2" not in web_app._RACE_DETAIL_REFRESH_IN_FLIGHT
 
 
 @pytest.mark.parametrize("trigger", ["render-detail-prewarm", "render-cron"])
@@ -745,11 +802,11 @@ def test_approved_prewarm_trigger_keeps_live_generation_path(monkeypatch, trigge
 
 
 @pytest.mark.parametrize(
-    ("today", "fresh_html", "stale_html", "expected"),
+    ("today", "fresh_html", "stale_html", "expected", "refresh_expected"),
     [
-        ("2026-08-15", "<main>fresh</main>", None, "<main>fresh</main>"),
-        ("2026-08-15", None, "<main>stale today</main>", "<main>stale today</main>"),
-        ("2026-08-16", None, "<main>stale past</main>", "<main>stale past</main>"),
+        ("2026-08-15", "<main>fresh</main>", None, "<main>fresh</main>", False),
+        ("2026-08-15", None, "<main>stale today</main>", "stale today", True),
+        ("2026-08-16", None, "<main>stale past</main>", "<main>stale past</main>", False),
     ],
 )
 def test_race_detail_preserves_fresh_and_stale_cache_behavior(
@@ -758,17 +815,26 @@ def test_race_detail_preserves_fresh_and_stale_cache_behavior(
     fresh_html,
     stale_html,
     expected,
+    refresh_expected,
 ):
     client = _member_client(monkeypatch)
+    refreshes: list[str] = []
     monkeypatch.setattr(web_app, "_today_jst_iso", lambda: today)
     monkeypatch.setattr(web_app, "_read_page_html_cache", lambda *_args: fresh_html)
     monkeypatch.setattr(web_app, "_read_page_html_cache_stale", lambda *_args: stale_html)
+    monkeypatch.setattr(
+        web_app,
+        "_start_race_detail_background_refresh",
+        lambda _app, race_id: refreshes.append(race_id) or True,
+    )
     monkeypatch.setattr(web_app, "_race_basic_info", _fail_if_called("_race_basic_info"))
 
     response = client.get("/race/20260815-05-04")
 
     assert response.status_code == 200
-    assert response.get_data(as_text=True) == expected
+    assert expected in response.get_data(as_text=True)
+    assert bool(refreshes) is refresh_expected
+    assert (response.headers.get("X-Boatrace-Data-Stale") == "1") is refresh_expected
 
 
 def test_prewarm_disables_maintenance_gate_for_its_own_requests(monkeypatch):
