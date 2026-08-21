@@ -373,6 +373,66 @@ def internal_disk_report():
     return jsonify(disk_report(_search_db_path()))
 
 
+@bp.post("/internal/page-cache-probe")
+def internal_page_cache_probe():
+    """本番環境で「ページ保存が cron 方式だと失敗するか」を切り分ける調査用。
+
+    2026-08-16 以降、朝の詳細ページ生成が毎朝 rc=1 で失敗し、
+    ローカルでは同じ処理が完走するため再現できなかった。本番で
+    Web 経由の保存は成功している (8/20 のページは日中に書かれている) ので、
+    差分は接続の取り方 (Web=プール / cron=直接接続) に絞られている。
+    そこを本番の中で直接確かめる。読み書きは調査用キー1件のみ。
+    """
+    import os
+    import time
+    import traceback
+
+    from src.kachisuji.delta_transport import internal_token
+
+    provided = request.headers.get("X-Internal-Token", "")
+    try:
+        expected = internal_token()
+    except RuntimeError:
+        return jsonify(error="internal token unavailable"), 503
+    if not provided or provided != expected:
+        return jsonify(error="forbidden"), 403
+
+    from src.web import app as web_app
+
+    probe_key = "diagnostic_probe:page_cache"
+    results: dict[str, Any] = {}
+    for mode in ("pooled", "cron_direct"):
+        previous = os.environ.get("BOATRACE_TASK_TRIGGER")
+        if mode == "cron_direct":
+            os.environ["BOATRACE_TASK_TRIGGER"] = "diagnostic-probe"
+        else:
+            os.environ.pop("BOATRACE_TASK_TRIGGER", None)
+        entry: dict[str, Any] = {}
+        started = time.perf_counter()
+        try:
+            html = f"probe {mode} {time.time()}"
+            web_app._write_page_html_cache(probe_key, html)
+            with web_app._raw_db_connect() as conn:
+                row = conn.execute(
+                    "SELECT html FROM page_html_cache WHERE cache_key = ?",
+                    (probe_key,),
+                ).fetchone()
+            stored = str(row[0]) if row else None
+            entry["persisted"] = stored == html
+            entry["stored_present"] = row is not None
+        except Exception as exc:  # noqa: BLE001 - 調査が目的なので必ず返す
+            entry["error"] = f"{type(exc).__name__}: {exc}"[:400]
+            entry["traceback_tail"] = traceback.format_exc()[-600:]
+        finally:
+            if previous is None:
+                os.environ.pop("BOATRACE_TASK_TRIGGER", None)
+            else:
+                os.environ["BOATRACE_TASK_TRIGGER"] = previous
+        entry["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        results[mode] = entry
+    return jsonify(results)
+
+
 @bp.post("/internal/apply-deltas")
 def internal_apply_deltas():
     from src.kachisuji.delta_transport import (
