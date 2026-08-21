@@ -769,3 +769,37 @@ def test_race_detail_preserves_fresh_and_stale_cache_behavior(
 
     assert response.status_code == 200
     assert response.get_data(as_text=True) == expected
+
+
+def test_prewarm_disables_maintenance_gate_for_its_own_requests(monkeypatch):
+    """メンテ窓 (04:00-07:00 JST) の中でも prewarm 自身は 503 を受けない。
+
+    2026-08-16 以降の実障害: prewarm は 05:31 に窓の中で走るため、自分の
+    test_client リクエストが before_request でメンテ画面 (503) に差し替えられ、
+    ルートが一度も実行されずページが 1 枚も保存されないまま failed=N で
+    終わっていた。preflight の _probe_today_races_page と同じ自衛策が
+    prewarm 側に無かったのが原因。
+    """
+    import os
+
+    import scripts.prewarm_race_detail_pages as prewarm_module
+
+    monkeypatch.setenv("BOATRACE_MAINTENANCE_WINDOW", "1")
+    seen = {}
+    with prewarm_module._maintenance_gate_disabled():
+        seen["inside"] = os.environ.get("BOATRACE_MAINTENANCE_WINDOW")
+    seen["after"] = os.environ.get("BOATRACE_MAINTENANCE_WINDOW")
+
+    assert seen["inside"] == "0", "生成中は窓を無効にする"
+    assert seen["after"] == "1", "抜けたら元に戻す"
+
+
+def test_prewarm_wraps_page_generation_in_the_gate_bypass():
+    """自衛策の呼び出しが生成経路から消えたら気付けるようにする。"""
+    from pathlib import Path
+
+    source = Path("scripts/prewarm_race_detail_pages.py").read_text(encoding="utf-8")
+    assert "_maintenance_gate_disabled()" in source
+    gate_at = source.index("gate = _maintenance_gate_disabled()")
+    create_at = source.index("app = web_app.create_app(")
+    assert gate_at < create_at, "create_app より前に窓を無効化すること"

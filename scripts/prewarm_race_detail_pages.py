@@ -7,6 +7,7 @@ it can be measured manually before being attached to a dedicated Render cron.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import gc
 import json
 import os
@@ -41,6 +42,28 @@ def _peak_rss_mb() -> float | None:
     except (OSError, ValueError, IndexError):
         return None
     return None
+
+
+@contextmanager
+def _maintenance_gate_disabled():
+    """自分自身のリクエストがメンテ画面にすり替わるのを防ぐ。
+
+    本番のメンテ窓 (04:00-07:00 JST) は before_request で全ページを 503 の
+    maintenance.html に差し替える。prewarm は 05:31 にその窓の中で走るため、
+    自分の test_client リクエストまで 503 を受け取り、ルートが一度も実行されず
+    ページが 1 枚も保存されないまま failed=N で終わっていた
+    (2026-08-16 以降、毎朝の実障害)。preflight の _probe_today_races_page と
+    同じ自衛策をここにも入れる。
+    """
+    previous = os.environ.get("BOATRACE_MAINTENANCE_WINDOW")
+    os.environ["BOATRACE_MAINTENANCE_WINDOW"] = "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("BOATRACE_MAINTENANCE_WINDOW", None)
+        else:
+            os.environ["BOATRACE_MAINTENANCE_WINDOW"] = previous
 
 
 def _batches(values: list[str], batch_size: int):
@@ -134,6 +157,10 @@ def prewarm(
         )
     if limit:
         ids = ids[:limit]
+    # create_app からページ生成の最後まで、メンテ窓を無効にしたまま通す。
+    # 窓が有効だと before_request が全ページを 503 に差し替えてしまう。
+    gate = _maintenance_gate_disabled()
+    gate.__enter__()
     app = web_app.create_app(
         version=config.DEFAULT_MODEL_VERSION,
         cached_predictions_only=True,
@@ -299,6 +326,7 @@ def prewarm(
         "cache_read_samples": cache_read_samples,
         "failures": failures,
     }
+    gate.__exit__(None, None, None)
     print("[race-detail-page] summary=" + json.dumps(summary, ensure_ascii=False), flush=True)
     return summary
 
