@@ -484,8 +484,15 @@ def collect_live_exhibition(target_date: str, now: datetime | None = None) -> di
             print(f"[exhibition-tides] failed: {type(exc).__name__}: {exc}", flush=True)
 
         if not _render_daytime_lite_mode():
-            _run_py(["scripts/build_derived_start_stats.py", "--from", target_date, "--to", target_date], timeout=1800)
-            _run_py(["scripts/render_cache_predictions.py", "--date", target_date], timeout=1800)
+            # 日中のこの cron は「展示が入ったページを素早く作り直す」のが役目。
+            # かつて同居していた重い再計算は夜間へ移した (2026-08-22):
+            #   - build_derived_start_stats: レース前日までの履歴集計。当日に
+            #     何度も作り直す必要がない → maintenance の夜間フェーズへ
+            #   - render_cache_predictions: 夜間フェーズに同じ実行が既にあり、
+            #     日中の分は重複だった
+            # generate_start_predictions だけは残す。6艇の展示タイムと展示ST が
+            # 揃って初めて作れる「展示後にしか存在しない」予測で、夜間に回すと
+            # そのレースは終わっており意味を失うため。
             _run_py(["scripts/generate_start_predictions.py", "--date", target_date], timeout=900)
 
     return {
@@ -564,7 +571,13 @@ def refresh(target_date: str, *, delay_seconds: int = 60, limit: int = 12) -> di
     # should still have been written so the detail page can render facts from DB.
     from src.web import app as web_app
 
-    app = web_app.create_app(version=config.DEFAULT_MODEL_VERSION)
+    # 予測は別プロセス (generate_start_predictions) が担うので、この cron で
+    # 予測モデル (54MB) を読み込む必要はない。本番は CPU 1 コアで、この読み込みが
+    # 5 分ごとの実行時間を押し上げていた。prewarm や Web 本体と同じ軽装で起動する。
+    app = web_app.create_app(
+        version=config.DEFAULT_MODEL_VERSION,
+        cached_predictions_only=True,
+    )
     app.testing = True
     client = app.test_client()
     with client.session_transaction() as sess:

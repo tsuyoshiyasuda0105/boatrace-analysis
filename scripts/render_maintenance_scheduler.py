@@ -183,6 +183,14 @@ def run_program_phase(now: datetime) -> tuple[bool, dict]:
     )
     prediction_ok = False
     if gate_ok:
+        # 日中の展示 cron から移設 (2026-08-22)。レース前日までの履歴を集計する
+        # 性質上、当日に繰り返し作り直す必要がない。日中に置いたままだと 5 分毎の
+        # 展示反映を数分単位で押し下げ、閲覧者のリクエストまで詰まらせていた。
+        # 失敗しても予測本体は進める (戦略フィルタが一部劣化するだけ)。
+        regular.run_py(
+            ["scripts/build_derived_start_stats.py", "--from", today, "--to", today],
+            timeout=1800,
+        )
         prediction_ok = regular.run_py(
             ["scripts/render_cache_predictions.py", "--date", today], timeout=1800
         )

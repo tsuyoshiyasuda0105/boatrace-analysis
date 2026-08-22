@@ -37,7 +37,11 @@ def test_exhibition_refresh_waits_one_minute_and_is_targeted():
     assert "COUNT(DISTINCT CASE" in runtime
     assert "collector.has_complete_expected_fields" in runtime
     assert "original_exhibition_collector.collect_for_races" in source
-    assert '["scripts/render_cache_predictions.py", "--date", target_date]' in source
+    # render_cache_predictions は夜間フェーズに同じ実行があり、日中の分は
+    # 重複だったため 2026-08-22 に削除した。5分毎の展示反映が 300-530 秒
+    # かかって閲覧者を「混み合っています」に落としていた実障害の対策。
+    assert '["scripts/render_cache_predictions.py", "--date", target_date]' not in source
+    # 展示後にしか作れない ST 予測はここに残す (夜間では手遅れ)。
     assert '["scripts/generate_start_predictions.py", "--date", target_date]' in source
     assert "page_ts < source_ts" in source
     assert "CAST(MAX(c.updated_at) AS DOUBLE PRECISION)" in source
