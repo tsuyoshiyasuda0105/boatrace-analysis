@@ -338,6 +338,12 @@ def test_page_html_is_byte_identical_with_shared_prefetch_context(monkeypatch):
     monkeypatch.setattr(web_app, "_attach_motor_fact_grades", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(web_app, "_race_current_conditions_cached", lambda *_args: {})
     monkeypatch.setattr(web_app, "_write_page_html_cache", lambda *_args: None)
+    monkeypatch.setattr(web_app, "db_connect", lambda: _SharedConnection())
+    monkeypatch.setattr(
+        web_app,
+        "_prefetch_race_detail_page_inputs",
+        lambda *_args: {"race_info": {race_id: info}},
+    )
 
     def render_bytes(prefetched=None, *, cached_only=False):
         web_app._CACHE.clear()
@@ -696,6 +702,7 @@ def test_human_cache_miss_keeps_synchronous_generation(monkeypatch):
     assert response.status_code == 200
     assert basic_info_calls == ["20260815-05-04"]
     assert "Retry-After" not in response.headers
+    assert response.headers["X-Boatrace-Profile"] == "1"
 
 
 def test_background_refresh_guard_prevents_duplicate_start(monkeypatch):
@@ -796,12 +803,51 @@ def test_approved_prewarm_trigger_keeps_live_generation_path(monkeypatch, trigge
     monkeypatch.setattr(web_app, "_race_current_conditions_cached", lambda *_args: {})
     monkeypatch.setattr(web_app, "_race_actual_result_cached", lambda *_args: None)
     monkeypatch.setattr(web_app, "_write_page_html_cache", lambda *_args: None)
+    monkeypatch.setattr(web_app, "db_connect", lambda: _SharedConnection())
+    monkeypatch.setattr(
+        web_app,
+        "_prefetch_race_detail_page_inputs",
+        lambda *_args: {
+            "race_info": {
+                "20260815-05-04": {
+                    "race_date": "2026-08-15",
+                    "stadium_number": 5,
+                    "race_closed_at": None,
+                }
+            }
+        },
+    )
 
     response = client.get("/race/20260815-05-04?recompute=1")
 
     assert response.status_code == 200
     assert basic_info_calls == ["20260815-05-04"]
     assert "レース詳細を準備しています" not in response.get_data(as_text=True)
+
+
+def test_recompute_prefetches_once_and_reuses_its_connection(monkeypatch):
+    owner = _SharedConnection()
+    seen: list[tuple[list[str], str, object]] = []
+    app = web_app.Flask(__name__)
+    monkeypatch.setenv("BOATRACE_ALLOW_EXPENSIVE_WEB_RECOMPUTE", "1")
+    monkeypatch.setattr(web_app, "db_connect", lambda: owner)
+
+    def prefetch(race_ids, version, conn):
+        seen.append((race_ids, version, conn))
+        return {"race_info": {race_ids[0]: {"race_id": race_ids[0]}}}
+
+    monkeypatch.setattr(web_app, "_prefetch_race_detail_page_inputs", prefetch)
+
+    @web_app._with_prefetched_race_detail_inputs("model-v1")
+    def view(race_id):
+        with web_app.db_connect() as borrowed:
+            assert borrowed is owner
+        return race_id
+
+    with app.test_request_context("/race/20260815-05-04?recompute=1"):
+        assert view("20260815-05-04") == "20260815-05-04"
+
+    assert seen == [(["20260815-05-04"], "model-v1", owner)]
 
 
 @pytest.mark.parametrize(

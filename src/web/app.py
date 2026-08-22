@@ -195,12 +195,42 @@ class _CachedOnlyPredictor:
 
 
 def _is_response_profiling_enabled() -> bool:
-    return str(os.environ.get("BOATRACE_PROFILE_HTTP", "")).strip().lower() in {
+    configured = str(os.environ.get("BOATRACE_PROFILE_HTTP", "")).strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
+    if configured:
+        return True
+    # A race-detail rebuild is rare and already expensive. Profile this path
+    # automatically so production slow_request rows never lose their SQL
+    # breakdown merely because global HTTP profiling is disabled.
+    return has_request_context() and (
+        bool(getattr(g, "_boatrace_force_response_profile", False))
+        or _effective_force_recompute()
+    )
+
+
+def _enable_response_profiling() -> None:
+    """Turn profiling on only after a request commits to a live rebuild."""
+    if not has_request_context():
+        return
+    g._boatrace_force_response_profile = True
+    if not hasattr(g, "_boatrace_sql_query_count"):
+        g._boatrace_sql_query_count = 0
+        g._boatrace_sql_time_ms = 0.0
+        g._boatrace_phase_timings_ms = {}
+
+
+def _record_response_phase(name: str, duration_ms: float) -> None:
+    if not has_request_context() or not _is_response_profiling_enabled():
+        return
+    phases = getattr(g, "_boatrace_phase_timings_ms", None)
+    if phases is None:
+        phases = {}
+        g._boatrace_phase_timings_ms = phases
+    phases[str(name)] = round(float(duration_ms), 1)
 
 
 def _record_sql_profile(duration_ms: float) -> None:
@@ -356,12 +386,28 @@ EXPENSIVE_RECOMPUTE_TRIGGERS = {
 
 def _rebuild_race_detail_page_in_background(app: Flask, race_id: str) -> None:
     """Rebuild one detail page through the canonical guarded route."""
+    started_at = time.perf_counter()
     token = _RACE_DETAIL_BACKGROUND_RECOMPUTE.set(True)
     try:
         with app.test_client() as client:
             with client.session_transaction() as sess:
                 sess["is_member"] = True
             response = client.get(f"/race/{race_id}?recompute=1")
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            try:
+                request_ms = float(
+                    getattr(response, "headers", {}).get("X-Boatrace-Elapsed-Ms", 0) or 0
+                )
+            except (TypeError, ValueError):
+                request_ms = 0.0
+            logger.info(
+                "race_detail background refresh measured race_id=%s total_ms=%.1f "
+                "request_ms=%.1f test_client_overhead_ms=%.1f",
+                race_id,
+                elapsed_ms,
+                request_ms,
+                max(0.0, elapsed_ms - request_ms),
+            )
             if response.status_code != 200:
                 logger.warning(
                     "race_detail background refresh failed race_id=%s status=%s",
@@ -5823,6 +5869,36 @@ def _prefetch_race_detail_page_inputs(
     return prefetched
 
 
+def _with_prefetched_race_detail_inputs(model_version: str):
+    """Reuse the proven prewarm read path for an isolated detail rebuild."""
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(race_id: str, *args, **kwargs):
+            if (
+                not _effective_force_recompute()
+                or _RACE_DETAIL_PREWARM_CONTEXT.get() is not None
+                or _canonicalize_race_id(race_id) != race_id
+            ):
+                return fn(race_id, *args, **kwargs)
+
+            started_at = time.perf_counter()
+            with db_connect() as conn:
+                prefetched = _prefetch_race_detail_page_inputs(
+                    [race_id],
+                    model_version,
+                    conn,
+                )
+                _record_response_phase(
+                    "prefetch",
+                    (time.perf_counter() - started_at) * 1000.0,
+                )
+                with _use_race_detail_prewarm_context(conn, prefetched):
+                    return fn(race_id, *args, **kwargs)
+
+        return wrapper
+    return decorator
+
+
 def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
     """Build pre-race display tags using only information available by race day."""
     prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
@@ -7138,6 +7214,7 @@ def create_app(
             return
         g._boatrace_sql_query_count = 0
         g._boatrace_sql_time_ms = 0.0
+        g._boatrace_phase_timings_ms = {}
 
     @app.after_request
     def record_slow_request_hook(response):
@@ -7170,6 +7247,7 @@ def create_app(
                 "elapsed_ms": round(elapsed_ms, 1),
                 "db_queries": int(getattr(g, "_boatrace_sql_query_count", 0) or 0),
                 "db_time_ms": round(float(getattr(g, "_boatrace_sql_time_ms", 0.0) or 0.0), 1),
+                "phases_ms": dict(getattr(g, "_boatrace_phase_timings_ms", {}) or {}),
             }
             logger.warning(
                 "slow request: %s %s %.1fms (db %.1fms/%d queries)",
@@ -8326,6 +8404,7 @@ def create_app(
     @guest_access_or_login_required
     @cached(ttl=300, past_ttl=21600)
     @_guard_race_detail_transient_db
+    @_with_prefetched_race_detail_inputs(version)
     def race_detail(race_id: str):
         canonical_race_id = _canonicalize_race_id(race_id)
         if canonical_race_id != race_id:
@@ -8396,7 +8475,10 @@ def create_app(
                 return cached_response
             if not is_member():
                 return _race_preparing_page_response(race_id)
+        _enable_response_profiling()
+        phase_started = time.perf_counter()
         info = _race_basic_info(race_id)
+        _record_response_phase("race_info", (time.perf_counter() - phase_started) * 1000.0)
         if not info:
             abort(404)
         race_date = str(info.get("race_date") or race_date or "")
@@ -8404,9 +8486,11 @@ def create_app(
         # cached ?????? request.args["date"] ?????/race/<id> ??
         # ???????? race_id ?????????? past_ttl ??????
         # (cached ??? effective_ttl ????????????????????)
+        phase_started = time.perf_counter()
         venue_environment = _venue_environment_summaries_for_date(
             race_date
         ).get(int(info.get("stadium_number") or 0), {})
+        _record_response_phase("venue_environment", (time.perf_counter() - phase_started) * 1000.0)
 
         fallback_notice = None
         try:
@@ -8416,6 +8500,7 @@ def create_app(
             # full live predictor inside the request.
             preds = _race_predictions_from_cache(race_id, predictor.version) or []
             t_pred = time.perf_counter() - t0
+            _record_response_phase("predictions", t_pred * 1000.0)
             t1 = time.perf_counter()
             if not preds:
                 preds = _race_entry_fallback_rows(race_id)
@@ -8429,6 +8514,7 @@ def create_app(
                 race_id, preds, info=info, allow_ace_recompute=False
             )
             t_tags = time.perf_counter() - t1
+            _record_response_phase("display_enrichment", t_tags * 1000.0)
         except Exception as e:
             logger.exception("prediction failed: %s", race_id)
             # エラーをユーザー向けメッセージに変換
@@ -8485,14 +8571,17 @@ def create_app(
             )
             return html
 
+        phase_started = time.perf_counter()
         names = _racer_names_from_preds(preds)
         if len(names) < len(preds):
             names = _racer_names(race_id)
+        _record_response_phase("racer_names", (time.perf_counter() - phase_started) * 1000.0)
         target_date = info["race_date"]
         t2 = time.perf_counter()
         conditions = _race_current_conditions_cached(race_id)
         beforeinfo = _race_beforeinfo_display(info, conditions)
         t_conditions = time.perf_counter() - t2
+        _record_response_phase("conditions", t_conditions * 1000.0)
         t3 = time.perf_counter()
         actual_result = None
         closed_at_raw = info.get("race_closed_at")
@@ -8507,6 +8596,7 @@ def create_app(
         if should_check_result:
             actual_result = _race_actual_result_cached(race_id)
         t_result = time.perf_counter() - t3
+        _record_response_phase("result", t_result * 1000.0)
 
         # 戦略タグ判定
         sn = info["stadium_number"]
@@ -8577,11 +8667,15 @@ def create_app(
             error=None,
             notice=fallback_notice,
         )
+        t_template = time.perf_counter() - t6
+        _record_response_phase("template", t_template * 1000.0)
+        cache_write_started = time.perf_counter()
         _write_page_html_cache(page_cache_key, html)
-        t_render = time.perf_counter() - t6
+        t_cache_write = time.perf_counter() - cache_write_started
+        _record_response_phase("page_cache_write", t_cache_write * 1000.0)
         elapsed = time.perf_counter() - started_at
         logger.info(
-            "race_detail built race_id=%s elapsed=%.3fs pred=%.3fs tags=%.3fs conditions=%.3fs result=%.3fs niche=%.3fs market=%.3fs render=%.3fs preds=%s",
+            "race_detail built race_id=%s elapsed=%.3fs pred=%.3fs tags=%.3fs conditions=%.3fs result=%.3fs niche=%.3fs market=%.3fs template=%.3fs cache_write=%.3fs preds=%s",
             race_id,
             elapsed,
             t_pred,
@@ -8590,7 +8684,8 @@ def create_app(
             t_result,
             t_niche,
             t_market,
-            t_render,
+            t_template,
+            t_cache_write,
             len(preds),
         )
         return html
