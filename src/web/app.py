@@ -376,10 +376,22 @@ def _rebuild_race_detail_page_in_background(app: Flask, race_id: str) -> None:
             _RACE_DETAIL_REFRESH_IN_FLIGHT.discard(race_id)
 
 
+# 裏側再生成の同時本数。1 レースの再生成は本番で 12-16 秒かかり DB 接続を
+# 握り続けるため、レース単位の重複防止だけでは足りない。閲覧のたびに別レース
+# の再生成が積み上がると、後続リクエストが順番待ちで 10-23 秒待たされ、それが
+# また「準備中」を返して再生成を増やす連鎖になる (2026-08-22 実測)。
+# 全体の本数を絞って、閲覧者の応答枠を必ず空けておく。
+_RACE_DETAIL_REFRESH_MAX_CONCURRENT = 1
+
+
 def _start_race_detail_background_refresh(app: Flask, race_id: str) -> bool:
     """Start at most one in-process stale-page rebuild for a race."""
     with _RACE_DETAIL_REFRESH_IN_FLIGHT_LOCK:
         if race_id in _RACE_DETAIL_REFRESH_IN_FLIGHT:
+            return False
+        if len(_RACE_DETAIL_REFRESH_IN_FLIGHT) >= _RACE_DETAIL_REFRESH_MAX_CONCURRENT:
+            # 既に別レースを再生成中。展示 cron と朝の prewarm が本来の
+            # 作り手なので、ここで無理に増やさず次の機会に譲る。
             return False
         _RACE_DETAIL_REFRESH_IN_FLIGHT.add(race_id)
     try:

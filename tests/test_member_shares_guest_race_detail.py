@@ -48,3 +48,17 @@ def test_preparing_page_starts_a_background_build():
     assert "_start_race_detail_background_refresh(app, race_id)" in body, (
         "誰も作らないと次の展示cronまで準備中のままになる"
     )
+
+
+def test_background_rebuilds_are_globally_capped():
+    """裏側再生成の同時本数に全体上限があること。
+
+    2026-08-22 実測: レース単位の重複防止だけでは、閲覧のたびに別レースの
+    再生成が積み上がり、後続リクエストが 10-23 秒待たされて「準備中」になり、
+    それがまた再生成を増やす連鎖になった。
+    """
+    assert "_RACE_DETAIL_REFRESH_MAX_CONCURRENT" in SOURCE
+    assert (
+        "if len(_RACE_DETAIL_REFRESH_IN_FLIGHT) >= _RACE_DETAIL_REFRESH_MAX_CONCURRENT"
+        in SOURCE
+    ), "全体本数のチェックが要る (レース単位の重複防止だけでは不足)"
