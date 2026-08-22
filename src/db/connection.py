@@ -708,7 +708,12 @@ def _get_pg_pool(dsn: str):
 
             trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
             default_pool_size = "1" if trigger else "4"
-            default_min_size = 0 if trigger else 1
+            # Web は使う分を最初から温めておく。Render(シンガポール) から
+            # Supabase(東京) への新規接続は往復 + TLS で実測 2.5 秒かかり、
+            # min_size=1 では 2 本目以降を毎回張り直していた。接続の取得待ちが
+            # 積み上がってレース詳細が「準備中」に落ちた実障害の対策
+            # (2026-08-22: peak_concurrent=1 / failures=0 なのに max_wait 2571ms)。
+            default_min_size = 0 if trigger else 4
             max_size = max(
                 1,
                 int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),
@@ -736,7 +741,9 @@ def _get_pg_pool(dsn: str):
                 max_waiting=max_waiting,
                 timeout=max(1, int(os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5"))),
                 max_lifetime=900,
-                max_idle=120,
+                # 2 分の遊休で捨てると、レース間隔程度の空きでも再接続 2.5 秒を
+                # 払い直すことになる。温存側に倒す。
+                max_idle=1200,
                 configure=_configure_pg_connection,
                 check=ConnectionPool.check_connection,
                 open=True,

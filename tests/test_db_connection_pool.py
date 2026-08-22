@@ -103,7 +103,11 @@ def test_pg_pool_configures_connections_once_on_creation(monkeypatch):
 def test_pg_pool_default_has_headroom_for_nested_web_queries():
     source = open(connection.__file__, encoding="utf-8").read()
     assert 'default_pool_size = "1" if trigger else "4"' in source
-    assert "default_min_size = 0 if trigger else 1" in source
+    # min_size は 2026-08-22 に 1 → 4 (max_size と同数) にした。
+    # Render(シンガポール)→Supabase(東京) の新規接続は実測 2.5 秒で、
+    # min_size=1 だと 2 本目以降を毎回張り直し、その待ちがリクエスト予算を
+    # 食い潰してレース詳細が「準備中」に落ちていた。
+    assert "default_min_size = 0 if trigger else 4" in source
     assert 'os.getenv("BOATRACE_DB_POOL_MIN_SIZE", str(default_min_size))' in source
     assert 'os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)' in source
     assert 'os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5")' in source
