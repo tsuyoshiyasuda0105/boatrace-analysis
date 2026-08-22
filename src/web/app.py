@@ -376,22 +376,10 @@ def _rebuild_race_detail_page_in_background(app: Flask, race_id: str) -> None:
             _RACE_DETAIL_REFRESH_IN_FLIGHT.discard(race_id)
 
 
-# 裏側再生成の同時本数。1 レースの再生成は本番で 12-16 秒かかり DB 接続を
-# 握り続けるため、レース単位の重複防止だけでは足りない。閲覧のたびに別レース
-# の再生成が積み上がると、後続リクエストが順番待ちで 10-23 秒待たされ、それが
-# また「準備中」を返して再生成を増やす連鎖になる (2026-08-22 実測)。
-# 全体の本数を絞って、閲覧者の応答枠を必ず空けておく。
-_RACE_DETAIL_REFRESH_MAX_CONCURRENT = 1
-
-
 def _start_race_detail_background_refresh(app: Flask, race_id: str) -> bool:
     """Start at most one in-process stale-page rebuild for a race."""
     with _RACE_DETAIL_REFRESH_IN_FLIGHT_LOCK:
         if race_id in _RACE_DETAIL_REFRESH_IN_FLIGHT:
-            return False
-        if len(_RACE_DETAIL_REFRESH_IN_FLIGHT) >= _RACE_DETAIL_REFRESH_MAX_CONCURRENT:
-            # 既に別レースを再生成中。展示 cron と朝の prewarm が本来の
-            # 作り手なので、ここで無理に増やさず次の機会に譲る。
             return False
         _RACE_DETAIL_REFRESH_IN_FLIGHT.add(race_id)
     try:
@@ -7438,13 +7426,6 @@ def create_app(
         return response
 
     def _race_preparing_page_response(race_id: str):
-        # 「準備中」を返すだけでは誰もページを作らず、次の展示 cron まで
-        # 準備中のままになる。裏側で 1 本だけ生成を起こしておく
-        # (同一レースの多重生成は _start_race_detail_background_refresh が抑止)。
-        try:
-            _start_race_detail_background_refresh(app, race_id)
-        except Exception:  # noqa: BLE001 - 応答を壊さない
-            logger.exception("race_detail preparing refresh could not start race_id=%s", race_id)
         html = app.jinja_env.get_template("race_preparing.html").render(
             race_id=race_id,
             retry_after_seconds=30,
@@ -8403,16 +8384,8 @@ def create_app(
             )
             if cached_response is not None:
                 return cached_response
-            # 会員も非会員と同じ土台のページを見る。会員特典は「見られるページが
-            # 増える / 使えるサービスが増える」ことであって、同じレース詳細を
-            # 速く見られることではない (2026-08-22 発注者方針)。
-            #
-            # ここで会員だけ同期のフル生成に進ませていたため、本番では 12-16 秒
-            # かかり接続待ち予算 (10秒) を超えて「準備中」に落ちていた。実際
-            # race.html に会員限定の出し分けは無く、生成される HTML は会員・
-            # 非会員で同一なので、キャッシュを共有して問題ない。鮮度は展示 cron
-            # (5分毎) と stale-while-revalidate の裏側再生成が担う。
-            return _race_preparing_page_response(race_id)
+            if not is_member():
+                return _race_preparing_page_response(race_id)
         info = _race_basic_info(race_id)
         if not info:
             abort(404)
