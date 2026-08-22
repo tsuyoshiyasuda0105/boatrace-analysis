@@ -48,7 +48,10 @@ def test_race_detail_uses_fresh_page_cache_for_today_and_stale_for_past():
     route_source = source[start:end]
 
     info_read = route_source.index("_race_basic_info(race_id)")
-    fresh_cache_read = route_source.index("_read_page_html_cache(page_cache_key, 180)")
+    # TTL は RACE_DETAIL_PAGE_FRESH_SEC に定数化した (2026-08-22)。
+    # 直値 180 は展示cron(5分毎)より短く、常に stale 扱いになって
+    # 閲覧のたびに再生成が走り本番が詰まった。
+    fresh_cache_read = route_source.index("RACE_DETAIL_PAGE_FRESH_SEC")
     stale_cache_read = route_source.index("_read_page_html_cache_stale(page_cache_key)")
     assert fresh_cache_read < info_read
     assert stale_cache_read < info_read
@@ -869,3 +872,23 @@ def test_prewarm_wraps_page_generation_in_the_gate_bypass():
     gate_at = source.index("gate = _maintenance_gate_disabled()")
     create_at = source.index("app = web_app.create_app(")
     assert gate_at < create_at, "create_app より前に窓を無効化すること"
+
+
+def test_detail_page_ttl_is_longer_than_exhibition_cron_interval():
+    """詳細ページの鮮度TTLが展示cronの間隔より十分長いこと。
+
+    2026-08-22 実障害: TTL が 180 秒だったため、展示 cron
+    (refresh_race_detail_after_exhibition, 5分毎) が作り直した 3 分後には
+    全ページが stale 扱いになり、閲覧のたびに 15-25 秒の再生成が裏で走った。
+    連続アクセスでワーカーが詰まり本番が 502 になった。
+    鮮度は cron が実データの更新を見て担保しているので TTL を重ねる必要はない。
+    """
+    from src.web import app as web_app
+
+    assert web_app.RACE_DETAIL_PAGE_FRESH_SEC >= 900, (
+        "展示cronの5分間隔より十分長いこと"
+    )
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    assert "_read_page_html_cache(page_cache_key, 180)" not in source, (
+        "180秒の直値に戻さないこと"
+    )

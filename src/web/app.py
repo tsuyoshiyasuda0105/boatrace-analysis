@@ -5518,6 +5518,11 @@ def _race_detail_tag_cache_key(race_id: str) -> str:
     return f"race_detail_tags:{RACE_DETAIL_TAG_CACHE_VERSION}:{race_id}"
 
 
+# 詳細ページを「新鮮」とみなす秒数。展示 cron (5分毎) が実データの更新を
+# 検知して作り直すため、TTL はその間隔より十分長くしてよい。
+RACE_DETAIL_PAGE_FRESH_SEC = 1800
+
+
 def _race_detail_page_cache_key(race_id: str) -> str:
     return f"race_detail_page:{RACE_DETAIL_PAGE_CACHE_VERSION}:{race_id}"
 
@@ -8326,7 +8331,15 @@ def create_app(
         if not force_recompute:
             def _cached_response():
                 if use_fresh_page_cache:
-                    cached_html = _read_page_html_cache(page_cache_key, 180)
+                    # 鮮度は refresh_race_detail_after_exhibition (5分毎) が
+                    # 「新しい展示が入ったレースだけ」を選んで作り直すことで担保
+                    # している。ここで 180 秒の TTL を重ねると、cron が作り直した
+                    # 3分後には全ページが stale 扱いになり、閲覧のたびに 15-25 秒
+                    # かかる再生成が裏で走って本番が詰まる (2026-08-22 実障害)。
+                    # cron の間隔より十分長い値にして churn を止める。
+                    cached_html = _read_page_html_cache(
+                        page_cache_key, RACE_DETAIL_PAGE_FRESH_SEC
+                    )
                     if cached_html:
                         logger.info(
                             "race_detail page-cache hit race_id=%s elapsed=%.3fs",
