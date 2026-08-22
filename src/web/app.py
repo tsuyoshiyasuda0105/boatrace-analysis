@@ -376,10 +376,20 @@ def _rebuild_race_detail_page_in_background(app: Flask, race_id: str) -> None:
             _RACE_DETAIL_REFRESH_IN_FLIGHT.discard(race_id)
 
 
+# 裏側再生成の同時本数。1 レースの再生成は本番で 12-16 秒 DB とワーカーを
+# 握るため、レース単位の重複防止だけでは足りない。期限切れページを何枚か
+# 開くだけで別レースの再生成が積み上がり、後続が 502 になる (2026-08-22 実測)。
+# 朝の prewarm と展示 cron が本来の作り手なので、ここは絞ってよい。
+_RACE_DETAIL_REFRESH_MAX_CONCURRENT = 1
+
+
 def _start_race_detail_background_refresh(app: Flask, race_id: str) -> bool:
     """Start at most one in-process stale-page rebuild for a race."""
     with _RACE_DETAIL_REFRESH_IN_FLIGHT_LOCK:
         if race_id in _RACE_DETAIL_REFRESH_IN_FLIGHT:
+            return False
+        if len(_RACE_DETAIL_REFRESH_IN_FLIGHT) >= _RACE_DETAIL_REFRESH_MAX_CONCURRENT:
+            # 上限到達。stale ページは即返るので閲覧者は待たない。
             return False
         _RACE_DETAIL_REFRESH_IN_FLIGHT.add(race_id)
     try:
