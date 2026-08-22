@@ -665,7 +665,15 @@ def _fail_if_called(name):
     return fail
 
 
-def test_human_cache_miss_keeps_synchronous_generation(monkeypatch):
+def test_human_cache_miss_serves_preparing_page_not_a_blocking_render(monkeypatch):
+    """会員でもキャッシュ不在時に同期のフル生成へ進ませない。
+
+    2026-08-22 方針変更: 会員特典は「見られるページ・使えるサービスが増える」
+    ことであって、同じレース詳細を速く見られることではない。
+    旧挙動 (会員だけ同期生成) は本番で 12-16 秒かかり、接続待ち予算 (10秒) を
+    超えて結局「準備中」に落ちていた。今は即座に準備中を返し、裏で 1 本だけ
+    生成を起こす。
+    """
     client = _member_client(monkeypatch)
     monkeypatch.setattr(web_app, "_today_jst_iso", lambda: "2026-08-15")
     monkeypatch.setattr(web_app, "_read_page_html_cache", lambda *_args: None)
@@ -694,8 +702,11 @@ def test_human_cache_miss_keeps_synchronous_generation(monkeypatch):
     response = client.get("/race/20260815-05-04")
 
     assert response.status_code == 200
-    assert basic_info_calls == ["20260815-05-04"]
-    assert "Retry-After" not in response.headers
+    # 応答は準備中ページ。閲覧者を 12-16 秒待たせない。
+    assert response.headers.get("Retry-After") == "30", "準備中として再訪を促す"
+    assert "レース詳細を準備しています" in response.get_data(as_text=True)
+    # 生成自体は裏側 (?recompute=1 の再入) で走るので _race_basic_info は
+    # 呼ばれてよい。重要なのは「応答をブロックしていない」こと。
 
 
 def test_background_refresh_guard_prevents_duplicate_start(monkeypatch):

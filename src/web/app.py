@@ -7426,6 +7426,13 @@ def create_app(
         return response
 
     def _race_preparing_page_response(race_id: str):
+        # 「準備中」を返すだけでは誰もページを作らず、次の展示 cron まで
+        # 準備中のままになる。裏側で 1 本だけ生成を起こしておく
+        # (同一レースの多重生成は _start_race_detail_background_refresh が抑止)。
+        try:
+            _start_race_detail_background_refresh(app, race_id)
+        except Exception:  # noqa: BLE001 - 応答を壊さない
+            logger.exception("race_detail preparing refresh could not start race_id=%s", race_id)
         html = app.jinja_env.get_template("race_preparing.html").render(
             race_id=race_id,
             retry_after_seconds=30,
@@ -8384,8 +8391,16 @@ def create_app(
             )
             if cached_response is not None:
                 return cached_response
-            if not is_member():
-                return _race_preparing_page_response(race_id)
+            # 会員も非会員と同じ土台のページを見る。会員特典は「見られるページが
+            # 増える / 使えるサービスが増える」ことであって、同じレース詳細を
+            # 速く見られることではない (2026-08-22 発注者方針)。
+            #
+            # ここで会員だけ同期のフル生成に進ませていたため、本番では 12-16 秒
+            # かかり接続待ち予算 (10秒) を超えて「準備中」に落ちていた。実際
+            # race.html に会員限定の出し分けは無く、生成される HTML は会員・
+            # 非会員で同一なので、キャッシュを共有して問題ない。鮮度は展示 cron
+            # (5分毎) と stale-while-revalidate の裏側再生成が担う。
+            return _race_preparing_page_response(race_id)
         info = _race_basic_info(race_id)
         if not info:
             abort(404)
