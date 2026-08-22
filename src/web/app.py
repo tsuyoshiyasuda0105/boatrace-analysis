@@ -7129,36 +7129,65 @@ def create_app(
         logger.critical(message)
         raise RuntimeError(message)
 
-    guest_request_times: dict[str, deque[float]] = {}
+    guest_request_times: dict[tuple[str, str], deque[float]] = {}
     guest_rate_limit_lock = threading.Lock()
 
     @app.before_request
     def throttle_guest_requests():
-        if request.path == "/healthz" or request.path.startswith("/static/"):
+        if (
+            request.path in {"/healthz", "/robots.txt"}
+            or request.path.startswith("/static/")
+        ):
             return None
         if is_member():
             return None
+        is_api_request = request.path.startswith("/api/")
+        limit_env_name = (
+            "BOATRACE_GUEST_API_RATE_LIMIT"
+            if is_api_request
+            else "BOATRACE_GUEST_RATE_LIMIT"
+        )
+        default_limit = 15 if is_api_request else 40
         try:
-            limit = int(os.environ.get("BOATRACE_GUEST_RATE_LIMIT", "120"))
+            limit = int(os.environ.get(limit_env_name, str(default_limit)))
         except (TypeError, ValueError):
-            limit = 120
+            limit = default_limit
         if limit <= 0:
             return None
 
         now = time.monotonic()
         window_seconds = 60.0
         client_ip = request.remote_addr or "unknown"
+        rate_limit_bucket = "api" if is_api_request else "page"
         with guest_rate_limit_lock:
-            timestamps = guest_request_times.setdefault(client_ip, deque())
+            timestamps = guest_request_times.setdefault(
+                (rate_limit_bucket, client_ip),
+                deque(),
+            )
             while timestamps and now - timestamps[0] >= window_seconds:
                 timestamps.popleft()
             if len(timestamps) >= limit:
                 retry_after = max(1, int(window_seconds - (now - timestamps[0]) + 0.999))
-                response = jsonify({
-                    "error": "rate_limit_exceeded",
-                    "message": "リクエストが多すぎます。しばらく待ってから再試行してください。",
-                })
-                response.status_code = 429
+                accept_header = request.headers.get("Accept", "").lower()
+                wants_html = (
+                    not is_api_request
+                    and "text/html" in accept_header
+                    and request.accept_mimetypes.best_match(
+                        ["text/html", "application/json"]
+                    ) == "text/html"
+                )
+                if wants_html:
+                    html = app.jinja_env.get_template("rate_limited.html").render(
+                        retry_after_seconds=retry_after,
+                        retry_url=request.full_path.rstrip("?") or "/races",
+                    )
+                    response = make_response(html, 429)
+                else:
+                    response = jsonify({
+                        "error": "rate_limit_exceeded",
+                        "message": "リクエストが多すぎます。しばらく待ってから再試行してください。",
+                    })
+                    response.status_code = 429
                 response.headers["Retry-After"] = str(retry_after)
                 response.headers["Cache-Control"] = "no-store"
                 return response
@@ -7356,7 +7385,9 @@ def create_app(
         )
         # ログインや会員ページは絶対キャッシュさせない (機密情報漏洩防止)
         path = request.path if request else ""
-        if path in ("/login", "/logout") or "/api/" in path:
+        if response.status_code == 429:
+            response.headers["Cache-Control"] = "no-store"
+        elif path in ("/login", "/logout") or "/api/" in path:
             # API は短時間 private キャッシュ (ブラウザのみ、CDN 経由しない)
             if "/api/" in path and not path.startswith("/login"):
                 # 過去日 API は長く、今日のは短く
@@ -7406,12 +7437,17 @@ def create_app(
                 response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         return response
 
-    # robots.txt と sitemap.xml は最低限のレスポンスを返す
-    # (ZAP の robots.txt パッシブスキャンで CSP/HSTS が無いと言われないように)
+    # 販売開始までは検索流入を止め、明示的な環境変数だけで解除する。
+    # レート制限より前の before_request で除外しているためクローラの取得で枠を消費しない。
     @app.route("/robots.txt")
     def robots_txt():
-        return ("User-agent: *\nDisallow: /login\nDisallow: /api/\n",
-                200, {"Content-Type": "text/plain"})
+        allow_indexing = os.environ.get("BOATRACE_ALLOW_INDEXING", "").strip() == "1"
+        directive = "Allow: /" if allow_indexing else "Disallow: /"
+        return (
+            f"User-agent: *\n{directive}\n",
+            200,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
 
     app.jinja_env.auto_reload = True
 

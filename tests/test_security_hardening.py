@@ -99,22 +99,33 @@ def test_render_trusts_only_the_nearest_forwarded_for_hop(monkeypatch):
     assert response.get_data(as_text=True) == "198.51.100.7"
 
 
-def test_guest_rate_limit_allows_120_then_returns_429(monkeypatch):
+def test_guest_rate_limit_uses_page_and_api_defaults(monkeypatch):
     monkeypatch.delenv("BOATRACE_GUEST_RATE_LIMIT", raising=False)
+    monkeypatch.delenv("BOATRACE_GUEST_API_RATE_LIMIT", raising=False)
     app = _create_lightweight_app(monkeypatch)
-    app.add_url_rule("/_rate-probe", view_func=lambda: "ok")
+    app.add_url_rule(
+        "/_rate-probe", endpoint="page_rate_probe", view_func=lambda: "ok"
+    )
+    app.add_url_rule(
+        "/api/_rate-probe", endpoint="api_rate_probe", view_func=lambda: "ok"
+    )
     client = app.test_client()
 
-    assert all(client.get("/_rate-probe").status_code == 200 for _ in range(120))
-    limited = client.get("/_rate-probe")
+    assert all(client.get("/_rate-probe").status_code == 200 for _ in range(40))
+    page_limited = client.get("/_rate-probe")
+    assert page_limited.status_code == 429
+    assert page_limited.get_json()["error"] == "rate_limit_exceeded"
+    assert int(page_limited.headers["Retry-After"]) >= 1
+    assert page_limited.headers["Cache-Control"] == "no-store"
 
-    assert limited.status_code == 429
-    assert limited.get_json()["error"] == "rate_limit_exceeded"
-    assert int(limited.headers["Retry-After"]) >= 1
-    assert limited.headers["Cache-Control"] == "no-store"
+    assert all(client.get("/api/_rate-probe").status_code == 200 for _ in range(15))
+    api_limited = client.get("/api/_rate-probe")
+    assert api_limited.status_code == 429
+    assert api_limited.get_json()["error"] == "rate_limit_exceeded"
+    assert api_limited.headers["Cache-Control"] == "no-store"
 
 
-def test_guest_rate_limit_can_be_disabled_and_excludes_healthz(monkeypatch):
+def test_guest_rate_limit_can_be_disabled_and_excludes_operational_paths(monkeypatch):
     monkeypatch.setenv("BOATRACE_GUEST_RATE_LIMIT", "1")
     app = _create_lightweight_app(monkeypatch)
     app.view_functions["healthz"] = lambda: "healthy"
@@ -122,6 +133,8 @@ def test_guest_rate_limit_can_be_disabled_and_excludes_healthz(monkeypatch):
     client = app.test_client()
 
     assert all(client.get("/healthz").status_code == 200 for _ in range(3))
+    assert all(client.get("/static/missing.css").status_code == 404 for _ in range(3))
+    assert all(client.get("/robots.txt").status_code == 200 for _ in range(3))
     assert client.get("/_rate-probe-disabled").status_code == 200
     assert client.get("/_rate-probe-disabled").status_code == 429
 
@@ -131,14 +144,66 @@ def test_guest_rate_limit_can_be_disabled_and_excludes_healthz(monkeypatch):
 
 def test_guest_rate_limit_does_not_throttle_authenticated_members(monkeypatch):
     monkeypatch.setenv("BOATRACE_GUEST_RATE_LIMIT", "1")
+    monkeypatch.setenv("BOATRACE_GUEST_API_RATE_LIMIT", "1")
     app = _create_lightweight_app(monkeypatch)
-    app.add_url_rule("/_member-rate-probe", view_func=lambda: "ok")
+    app.add_url_rule(
+        "/_member-rate-probe", endpoint="member_page_rate_probe", view_func=lambda: "ok"
+    )
+    app.add_url_rule(
+        "/api/_member-rate-probe",
+        endpoint="member_api_rate_probe",
+        view_func=lambda: "ok",
+    )
     client = app.test_client()
     with client.session_transaction() as sess:
         sess["is_member"] = True
         sess["role"] = "paid_member"
 
     assert all(client.get("/_member-rate-probe").status_code == 200 for _ in range(3))
+    assert all(client.get("/api/_member-rate-probe").status_code == 200 for _ in range(3))
+
+
+def test_guest_rate_limit_returns_html_for_browser_and_json_for_api(monkeypatch):
+    monkeypatch.setenv("BOATRACE_GUEST_RATE_LIMIT", "1")
+    monkeypatch.setenv("BOATRACE_GUEST_API_RATE_LIMIT", "1")
+    app = _create_lightweight_app(monkeypatch)
+    app.add_url_rule(
+        "/_html-rate-probe", endpoint="html_rate_probe", view_func=lambda: "ok"
+    )
+    app.add_url_rule(
+        "/api/_json-rate-probe", endpoint="json_rate_probe", view_func=lambda: "ok"
+    )
+    client = app.test_client()
+    html_headers = {"Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"}
+
+    assert client.get("/_html-rate-probe", headers=html_headers).status_code == 200
+    page_limited = client.get("/_html-rate-probe", headers=html_headers)
+    assert page_limited.status_code == 429
+    assert page_limited.mimetype == "text/html"
+    assert "アクセスが集中しています。しばらくお待ちください" in page_limited.get_data(
+        as_text=True
+    )
+
+    assert client.get("/api/_json-rate-probe", headers=html_headers).status_code == 200
+    api_limited = client.get("/api/_json-rate-probe", headers=html_headers)
+    assert api_limited.status_code == 429
+    assert api_limited.is_json
+    assert api_limited.get_json()["error"] == "rate_limit_exceeded"
+
+
+def test_robots_txt_disallows_by_default_and_can_allow_indexing(monkeypatch):
+    monkeypatch.delenv("BOATRACE_ALLOW_INDEXING", raising=False)
+    app = _create_lightweight_app(monkeypatch)
+    client = app.test_client()
+
+    blocked = client.get("/robots.txt")
+    assert blocked.status_code == 200
+    assert blocked.mimetype == "text/plain"
+    assert blocked.get_data(as_text=True) == "User-agent: *\nDisallow: /\n"
+
+    monkeypatch.setenv("BOATRACE_ALLOW_INDEXING", "1")
+    allowed = client.get("/robots.txt")
+    assert allowed.get_data(as_text=True) == "User-agent: *\nAllow: /\n"
 
 
 def test_500_response_hides_internal_exception_but_logs_it(monkeypatch, caplog):
