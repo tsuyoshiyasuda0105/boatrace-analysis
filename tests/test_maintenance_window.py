@@ -133,3 +133,26 @@ def test_preflight_extension_blocks_top_even_when_snapshot_exists(monkeypatch):
     app.config.update(TESTING=True)
 
     assert app.test_client().get("/?date=2026-08-13").status_code == 503
+
+
+def test_internal_apis_are_exempt_from_the_maintenance_gate():
+    """トークン保護の内部 API はメンテ窓 (04:00-07:00) に遮断されないこと。
+
+    この窓が自分自身の内部呼び出しまで 503 の maintenance.html に差し替える
+    ことで、同じ型の障害が場所を変えて 3 回起きた:
+    - 詳細ページ生成の全滅 (2026-08-16〜21)
+    - シグナル生成の全滅 (2026-08-23 朝)
+    - デルタ適用の失敗 (2026-08-24 06:30, status_code=503 で maintenance.html
+      を受信した記録が task_runs に残っている)
+    認証は各エンドポイントの X-Internal-Token で行われるため、窓で塞ぐ
+    必要はない。
+    """
+    from pathlib import Path
+
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    start = source.index("def serve_scheduled_maintenance")
+    body = source[start : start + 2200]
+    assert '/kachisuji/internal/' in body, "内部APIの除外が必要"
+    exempt_at = body.index('/kachisuji/internal/')
+    respond_at = body.index("maintenance.html")
+    assert exempt_at < respond_at, "503を返す前に除外すること"

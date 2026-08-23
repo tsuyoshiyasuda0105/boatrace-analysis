@@ -7328,6 +7328,13 @@ def create_app(
             return None
         if request.path == "/healthz" or request.path.startswith("/static/"):
             return None
+        # 内部 API (X-Internal-Token で保護) はメンテ遮断の対象外。
+        # この窓は cron 自身の内部呼び出しまで 503 に差し替えてしまい、
+        # 詳細ページ生成 (8/16-21)・シグナル生成 (8/23)・デルタ適用 (8/24) と
+        # 同じ型の障害を場所を変えて繰り返してきた。トークン認証は各エンド
+        # ポイント側で行われるので、ここで塞ぐ必要はない。
+        if request.path.startswith("/kachisuji/internal/"):
+            return None
         if request.path in _MAINTENANCE_EXEMPT_PATHS:
             return None
         if request.path in {"/", "/races"}:
