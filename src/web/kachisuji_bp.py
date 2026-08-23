@@ -370,7 +370,30 @@ def internal_disk_report():
         return jsonify(error="internal token unavailable"), 503
     if not provided or provided != expected:
         return jsonify(error="forbidden"), 403
-    return jsonify(disk_report(_search_db_path()))
+    db_path = _search_db_path()
+    payload = disk_report(db_path)
+    # 取込の鮮度も返す。ディスクは web にしか繋がっておらず cron からは
+    # このファイルを開けないため (2026-08-23: 朝の点検が毎回
+    # "unable to open database file" で失敗していた)、cron はここに聞く。
+    payload["latest_race_date"] = _slim_latest_race_date(db_path)
+    return jsonify(payload)
+
+
+def _slim_latest_race_date(db_path: Path) -> str | None:
+    """slim DB が持つ最新レース日。読めなければ None。"""
+    if not db_path.is_file():
+        return None
+    try:
+        connection = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            row = connection.execute(
+                "SELECT MAX(race_date) FROM asof_race_features"
+            ).fetchone()
+        finally:
+            connection.close()
+        return str(row[0]) if row and row[0] else None
+    except sqlite3.Error:
+        return None
 
 
 @bp.post("/internal/page-cache-probe")

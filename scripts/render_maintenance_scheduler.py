@@ -709,11 +709,44 @@ def _kachisuji_latest_date() -> dict[str, object]:
             "backtest_db_path": str(resolved),
         }
     except Exception as exc:  # noqa: BLE001
+        # 永続ディスクは web サービスにしか繋がらない (Render の仕様)。cron から
+        # このファイルは原理的に開けないので、web の内部 API に聞きに行く。
+        # 2026-08-23: この経路が無く、朝の点検が毎回
+        # "unable to open database file" で失敗していた。
+        remote = _kachisuji_latest_date_via_web()
+        if remote.get("backtest_latest_date"):
+            return remote
         return {
             "backtest_latest_date": None,
             "backtest_db_path": str(db_path),
             "backtest_error": f"{type(exc).__name__}: {exc}"[:500],
+            **{k: v for k, v in remote.items() if k == "backtest_remote_error"},
         }
+
+
+def _kachisuji_latest_date_via_web() -> dict[str, object]:
+    """web が持つ slim DB の最新レース日を内部 API 経由で取得する。"""
+    try:
+        import json as _json
+        import urllib.request
+
+        from src.kachisuji.delta_transport import internal_token
+
+        base = os.environ.get("BOATRACE_SITE_URL", "https://boatrace-web.onrender.com")
+        request = urllib.request.Request(
+            f"{base.rstrip('/')}/kachisuji/internal/disk-report",
+            headers={"X-Internal-Token": internal_token()},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = _json.loads(response.read())
+        latest = payload.get("latest_race_date")
+        return {
+            "backtest_latest_date": str(latest) if latest else None,
+            "backtest_db_path": str(payload.get("directory") or "web"),
+            "backtest_source": "web-internal-api",
+        }
+    except Exception as exc:  # noqa: BLE001 - 点検を落とさない
+        return {"backtest_remote_error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
 def _kachisuji_disk_space() -> dict[str, object]:
