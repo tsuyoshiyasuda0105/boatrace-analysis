@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 import sys
 import json
 import time
@@ -287,6 +288,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+@contextmanager
+def _maintenance_gate_disabled():
+    """自分自身のリクエストがメンテ画面(503)にすり替わるのを防ぐ。
+
+    本番のメンテ窓 (04:00-07:00 JST) は before_request で全ページを 503 の
+    maintenance.html に差し替える。/api/ は除外リストに無いため、この prewarm が
+    窓の中で走ると自分の test_client 経由の /api/market-signals などが 503 を
+    受け取り、シグナル生成が毎回失敗していた (2026-08-23 実障害)。玉突きで
+    トップ作り置きが劣化モードのフル生成(180秒)になり、レース詳細は「準備中」の
+    まま、ログイン画面も断続的に 502 になっていた。
+    prewarm_race_detail_pages と同じ自衛策をここにも入れる。
+    """
+    previous = os.environ.get("BOATRACE_MAINTENANCE_WINDOW")
+    os.environ["BOATRACE_MAINTENANCE_WINDOW"] = "0"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("BOATRACE_MAINTENANCE_WINDOW", None)
+        else:
+            os.environ["BOATRACE_MAINTENANCE_WINDOW"] = previous
+
+
 def _create_prewarm_app():
     """Use persisted predictions; strategy prewarm must never load ML models."""
     return create_app(
@@ -365,14 +389,17 @@ def main() -> int:
         ]
 
     ok = True
-    for path in targets:
-        status, size, valid, detail = _hit(client, path)
-        print(
-            f"{path} status={status} bytes={size} valid={valid} detail={detail}",
-            flush=True,
-        )
-        if status != 200 or not valid:
-            ok = False
+    # メンテ窓 (04:00-07:00 JST) の中でも prewarm 自身は 503 を受けない。
+    # /api/ は除外リストに無いため、これが無いとシグナル生成が窓内で全滅する。
+    with _maintenance_gate_disabled():
+        for path in targets:
+            status, size, valid, detail = _hit(client, path)
+            print(
+                f"{path} status={status} bytes={size} valid={valid} detail={detail}",
+                flush=True,
+            )
+            if status != 200 or not valid:
+                ok = False
 
     print(
         f"[prewarm] mode={args.mode} default_range={default_from}..{default_to} "

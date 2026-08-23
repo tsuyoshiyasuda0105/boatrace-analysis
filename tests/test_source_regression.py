@@ -641,3 +641,24 @@ def test_race_detail_fl_counts_fallback_to_external_accident_codes():
     assert 'codes.count("L")' in source
     assert 'p["flying_count"] = max(int(p.get("flying_count") or 0), int(acc.get("flying_count") or 0))' in source
     assert 'p["late_count"] = max(int(p.get("late_count") or 0), int(acc.get("late_count") or 0))' in source
+
+
+def test_strategy_prewarm_disables_maintenance_gate():
+    """prewarm_strategy_pages がメンテ窓を自衛していること。
+
+    2026-08-23 実障害: メンテ窓 (04:00-07:00 JST) は /api/ を除外していないため、
+    prewarm 自身の /api/market-signals が窓内で 503 を受け、シグナル生成が
+    全て失敗。玉突きでトップ作り置きが劣化フル生成(180秒)になりログイン等が
+    502、レース詳細は「準備中」のままだった。prewarm_race_detail_pages と
+    同じ _maintenance_gate_disabled をここにも入れて解消した。
+    """
+    from pathlib import Path
+
+    source = Path("scripts/prewarm_strategy_pages.py").read_text(encoding="utf-8")
+    assert "_maintenance_gate_disabled" in source, (
+        "メンテ窓の自衛策が必要 (/api/ は除外リストに無い)"
+    )
+    # リクエストループが自衛策の中にあること
+    gate_at = source.index("with _maintenance_gate_disabled():")
+    loop_at = source.index("for path in targets:")
+    assert gate_at < loop_at, "リクエストを送る前に窓を無効化すること"
