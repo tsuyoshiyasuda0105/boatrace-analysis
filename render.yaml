@@ -22,6 +22,12 @@ services:
         sync: false
       - key: BOATRACE_SUPABASE_ONLY
         value: "1"
+      # 2026-08-23: レース詳細が 16.3 秒前後で揃って遅いが、既存の計測は
+      # 「再生成に入った時だけ」有効なため、その手前で力尽きるリクエストの
+      # 内訳が slow_request に残らない (db_queries=0 / phases_ms 空)。
+      # 原因特定のあいだ全リクエストを計測する。判明したら外してよい。
+      - key: BOATRACE_PROFILE_HTTP
+        value: "1"
       - key: BOATRACE_WEB_SECRET
         generateValue: true
       - key: BOATRACE_MEMBER_PASSWORD
