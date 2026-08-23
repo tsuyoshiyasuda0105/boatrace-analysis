@@ -5574,9 +5574,19 @@ def _race_detail_tag_cache_key(race_id: str) -> str:
     return f"race_detail_tags:{RACE_DETAIL_TAG_CACHE_VERSION}:{race_id}"
 
 
-# 詳細ページを「新鮮」とみなす秒数。展示 cron (5分毎) が実データの更新を
-# 検知して作り直すため、TTL はその間隔より十分長くしてよい。
-RACE_DETAIL_PAGE_FRESH_SEC = 1800
+# 詳細ページを「新鮮」とみなす秒数。
+#
+# 鮮度は時計ではなく展示 cron (5分毎) が担う。cron は race_previews /
+# race_original_exhibitions が更新されたレースだけを選んで作り直し、その際
+# updated_at も新しくなる。つまり「実データが変わったら作り直される」ので、
+# TTL を短くしても鮮度は上がらず、期限切れ判定が増えるだけになる。
+#
+# 2026-08-23: 1800秒だと朝の prewarm (05:43) で作った 168 ページが 06:13 に
+# 全部期限切れになり、日中の閲覧がすべて再生成経路に入っていた。その経路は
+# 本番で 16 秒かかる (SQL 0回・DB 0秒・段階別計測も空、つまり DB ではなく
+# プロセス内の何かで待たされている。原因は未特定)。
+# 当日いっぱいを新鮮とみなし、そもそも遅い経路に入らないようにする。
+RACE_DETAIL_PAGE_FRESH_SEC = 86400
 
 
 def _race_detail_page_cache_key(race_id: str) -> str:
