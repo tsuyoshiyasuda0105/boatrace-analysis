@@ -662,3 +662,24 @@ def test_strategy_prewarm_disables_maintenance_gate():
     gate_at = source.index("with _maintenance_gate_disabled():")
     loop_at = source.index("for path in targets:")
     assert gate_at < loop_at, "リクエストを送る前に窓を無効化すること"
+
+
+def test_page_cache_timestamp_is_double_precision():
+    """page_html_cache.updated_at を単精度に戻さないこと。
+
+    2026-08-23 実測: REAL(単精度) は現在の Unix 時刻を約31秒刻みにしか
+    表現できず、書き込み時点で最大30秒ずれる。展示 cron はこの値を
+    page_ts < source_ts で比較して「作り直すべきレース」を選ぶため、
+    誤差のぶん作り直しを飛ばしたり不要に走らせたりしていた。
+    不要な作り直しは1件12-16秒かかりワーカーを塞ぐ。
+    """
+    from pathlib import Path
+
+    for path in ("src/web/app.py", "src/collectors/result_scraper.py"):
+        source = Path(path).read_text(encoding="utf-8")
+        if "CREATE TABLE IF NOT EXISTS page_html_cache" not in source:
+            continue
+        start = source.index("CREATE TABLE IF NOT EXISTS page_html_cache")
+        ddl = source[start : start + 600]
+        assert "updated_at DOUBLE PRECISION" in ddl, f"{path}: 倍精度で定義すること"
+        assert "updated_at REAL" not in ddl, f"{path}: REAL に戻さないこと"

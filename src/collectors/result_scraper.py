@@ -63,7 +63,9 @@ def _ensure_attempt_table(conn) -> None:
         CREATE TABLE IF NOT EXISTS page_html_cache (
             cache_key TEXT PRIMARY KEY,
             html TEXT NOT NULL,
-            updated_at REAL NOT NULL
+            -- Unix 時刻なので倍精度。REAL だと約31秒刻みに丸められる
+            -- (2026-08-23 実障害: 展示 cron の更新判定が誤る)。
+            updated_at DOUBLE PRECISION NOT NULL
         )
         """
     )

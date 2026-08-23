@@ -1594,7 +1594,11 @@ def _ensure_page_html_cache_table() -> None:
                 CREATE TABLE IF NOT EXISTS page_html_cache (
                     cache_key TEXT PRIMARY KEY,
                     html TEXT NOT NULL,
-                    updated_at REAL NOT NULL
+                    -- Unix 時刻を入れるので倍精度が要る。REAL(単精度) だと
+                    -- 有効桁が足りず現在の epoch では約31秒刻みに丸められ、
+                    -- 展示 cron の page_ts < source_ts 判定が誤る
+                    -- (2026-08-23: 作り直すべきページを飛ばす / 不要に作り直す)。
+                    updated_at DOUBLE PRECISION NOT NULL
                 )
                 """
             )
