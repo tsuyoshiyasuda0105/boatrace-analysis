@@ -691,15 +691,17 @@ def test_motor_history_complete_cache_returns_without_race_lookup(monkeypatch):
 def test_race_grid_badges_payload_hydrates_cache_only_payload(monkeypatch):
     monkeypatch.setattr(
         web_app,
-        "_read_json_cache_stale",
-        lambda cache_key: {
-            "date": "2026-07-30",
-            "signals": {},
-            "race_badges": {},
-            "data_status": {"cache_only": True},
-        }
-        if "2026-07-30" in cache_key
-        else None,
+        "_read_json_caches_stale",
+        lambda cache_keys: {
+            cache_key: {
+                "date": "2026-07-30",
+                "signals": {},
+                "race_badges": {},
+                "data_status": {"cache_only": True},
+            }
+            for cache_key in cache_keys
+            if "2026-07-30" in cache_key
+        },
     )
 
     def fake_hydrate(payload, target_date):
@@ -729,7 +731,7 @@ def test_race_grid_badges_payload_hydrates_cache_only_payload(monkeypatch):
     assert payload["race_badges"]["202607300101"]["accident"]["label"].startswith("事故率0.50+")
 
 def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch):
-    monkeypatch.setattr(web_app, "_read_json_cache_stale", lambda *_args: None)
+    monkeypatch.setattr(web_app, "_read_json_caches_stale", lambda *_args: {})
 
     def fake_hydrate(payload, target_date):
         assert target_date == "2026-07-30"
@@ -769,17 +771,18 @@ def test_race_grid_badges_fallback_builds_tags_without_market_cache(monkeypatch)
 
 
 def test_race_grid_badges_payload_includes_cached_signals(monkeypatch):
+    cached_payload = {
+        "date": "2026-07-30",
+        "signals": {
+            "202607300101": {"race_id": "202607300101", "l4": {"level": "general"}},
+            "202607300102": {"race_id": "202607300102", "l4": {"level": "general"}},
+        },
+        "race_badges": {},
+    }
     monkeypatch.setattr(
         web_app,
-        "_read_json_cache_stale",
-        lambda *_args: {
-            "date": "2026-07-30",
-            "signals": {
-                "202607300101": {"race_id": "202607300101", "l4": {"level": "general"}},
-                "202607300102": {"race_id": "202607300102", "l4": {"level": "general"}},
-            },
-            "race_badges": {},
-        },
+        "_read_json_caches_stale",
+        lambda cache_keys: {cache_keys[0]: cached_payload},
     )
     monkeypatch.setattr(web_app, "_hydrate_market_race_badges", lambda payload, _date: payload)
 

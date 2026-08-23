@@ -807,6 +807,10 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
         },
         payload_date,
     )
+    detail_tag_keys = {
+        race_id: _race_detail_tag_cache_key(race_id) for race_id in by_race
+    }
+    detail_tag_payloads = _read_json_caches_stale(list(detail_tag_keys.values()))
     for rid, info in by_race.items():
         badge_info: dict[str, Any] = {}
         direct_escape = escape_by_race.get(rid)
@@ -887,7 +891,7 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                 ),
             }
 
-        detail_tags = _race_detail_tag_snapshot(rid, recompute=False)
+        detail_tags = detail_tag_payloads.get(detail_tag_keys[rid]) or {}
         boats = detail_tags.get("boats") if isinstance(detail_tags, dict) else None
         if isinstance(boats, dict):
             escape_items = []
@@ -1096,11 +1100,13 @@ def _race_grid_badges_payload(
     allow_expensive_fallback: bool = True,
 ) -> dict[str, Any]:
     wanted = {str(rid) for rid in race_ids if rid}
-    for cache_key in (
+    market_cache_keys = (
         _market_signals_last_good_cache_key(target_date),
         _market_signals_cache_key(target_date),
-    ):
-        payload = _read_json_cache_stale(cache_key)
+    )
+    cached_payloads = _read_json_caches_stale(list(market_cache_keys))
+    for cache_key in market_cache_keys:
+        payload = cached_payloads.get(cache_key)
         if not isinstance(payload, dict) or payload.get("date") != target_date:
             continue
         signals = payload.get("signals")
@@ -1234,6 +1240,14 @@ def _build_top_page_snapshot_payload(
         stadium_groups[sn]["races"].append(race)
 
     race_ids = [str(r.get("race_id")) for r in races_list]
+    if include_market_signals:
+        _read_json_caches_stale(
+            [
+                _market_signals_last_good_cache_key(target_date),
+                _market_signals_cache_key(target_date),
+                *(_race_detail_tag_cache_key(race_id) for race_id in race_ids),
+            ]
+        )
     return {
         "version": TOP_PAGE_SNAPSHOT_VERSION,
         "date": target_date,
@@ -1596,6 +1610,106 @@ def _mark_page_html_cache_table_ready() -> None:
     _PAGE_HTML_CACHE_TABLE_READY = True
 
 
+_PAGE_HTML_CACHE_READ_CHUNK_SIZE = 900
+
+
+def _read_page_html_cache_rows(
+    cache_keys: list[str],
+    *,
+    conn: Any = None,
+) -> dict[str, tuple[str, float]]:
+    """Read persistent page-cache rows in bounded set-based queries."""
+    keys = list(dict.fromkeys(str(key) for key in cache_keys if key))
+    if not keys:
+        return {}
+    _ensure_page_html_cache_table()
+    rows_by_key: dict[str, tuple[str, float]] = {}
+    owns_connection = conn is None
+    if owns_connection:
+        conn = db_connect()
+    try:
+        for start in range(0, len(keys), _PAGE_HTML_CACHE_READ_CHUNK_SIZE):
+            chunk = keys[start : start + _PAGE_HTML_CACHE_READ_CHUNK_SIZE]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT cache_key, html, updated_at FROM page_html_cache "
+                f"WHERE cache_key IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            for cache_key, html, updated_at in rows:
+                rows_by_key[str(cache_key)] = (html, float(updated_at or 0))
+    finally:
+        if owns_connection:
+            conn.close()
+    return rows_by_key
+
+
+def _read_page_html_caches(
+    cache_keys: list[str],
+    max_age_sec: Optional[int] = None,
+    *,
+    conn: Any = None,
+) -> dict[str, str]:
+    """Return fresh or stale HTML for many keys with single-read semantics."""
+    keys = list(dict.fromkeys(str(key) for key in cache_keys if key))
+    if not keys:
+        return {}
+    now_ts = time.time()
+    found: dict[str, str] = {}
+    persistent_keys: list[str] = []
+    prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
+    prefetched_rows = prewarm_context.get("page_cache_rows")
+
+    for key in keys:
+        mem_entry = _PAGE_HTML_MEM_CACHE.get(key)
+        if mem_entry:
+            updated_at, html = float(mem_entry[0] or 0), mem_entry[1]
+            if max_age_sec is None or now_ts - updated_at <= max_age_sec:
+                found[key] = html
+                continue
+        if prefetched_rows is not None:
+            prefetched_row = prefetched_rows.get(key)
+            if prefetched_row is None:
+                continue
+            html, updated_at = prefetched_row
+            updated_at = float(updated_at or 0)
+            if max_age_sec is None:
+                if not html:
+                    continue
+            elif now_ts - updated_at > max_age_sec:
+                continue
+            _PAGE_HTML_MEM_CACHE[key] = (updated_at, html)
+            found[key] = html
+            continue
+        persistent_keys.append(key)
+
+    if not persistent_keys:
+        return found
+    try:
+        rows_by_key = _read_page_html_cache_rows(persistent_keys, conn=conn)
+        for key in persistent_keys:
+            row = rows_by_key.get(key)
+            if row is None:
+                continue
+            html, updated_at = row
+            if max_age_sec is None:
+                if not html:
+                    continue
+            elif now_ts - updated_at > max_age_sec:
+                continue
+            _PAGE_HTML_MEM_CACHE[key] = (updated_at, html)
+            if max_age_sec is not None and len(_PAGE_HTML_MEM_CACHE) > _PAGE_HTML_MEM_CACHE_MAX:
+                items = sorted(_PAGE_HTML_MEM_CACHE.items(), key=lambda item: item[1][0])
+                for old_key, _ in items[:1000]:
+                    _PAGE_HTML_MEM_CACHE.pop(old_key, None)
+            found[key] = html
+    except Exception as exc:
+        if is_transient_db_error(exc):
+            _note_transient_db_error("page_cache_bulk", exc)
+        logger.exception("failed to bulk read page_html_cache: count=%s", len(persistent_keys))
+    return found
+
+
 def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
     try:
         now_ts = time.time()
@@ -1814,20 +1928,8 @@ def _read_json_caches_stale(
     if not missing:
         return found
     try:
-        _ensure_page_html_cache_table()
-        placeholders = _db_placeholders(missing)
-        def _fetch_rows(active_conn: Any):
-            return active_conn.execute(
-                f"SELECT cache_key, html, updated_at FROM page_html_cache "
-                f"WHERE cache_key IN ({placeholders})",
-                tuple(missing),
-            ).fetchall()
-        if conn is None:
-            with db_connect() as cache_conn:
-                rows = _fetch_rows(cache_conn)
-        else:
-            rows = _fetch_rows(conn)
-        for cache_key, raw, updated_at in rows:
+        rows_by_key = _read_page_html_cache_rows(missing, conn=conn)
+        for cache_key, (raw, updated_at) in rows_by_key.items():
             if not raw:
                 continue
             try:
