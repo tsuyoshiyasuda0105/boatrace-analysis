@@ -772,7 +772,12 @@ def _start_pool_health_checker(pool) -> None:
     global _PG_POOL_CHECKER_STARTED
     if _PG_POOL_CHECKER_STARTED:
         return
-    if os.getenv("BOATRACE_DB_POOL_CHECK", "1") == "0":
+    # 既定は無効。2026-08-24 に導入したが、tcp_user_timeout が無い状態では
+    # pool.check() が死んだソケット上で戻らなくなり、プールの全接続を掴んだまま
+    # 固まってレース詳細が全滅した。tcp_user_timeout を入れた今は理屈の上では
+    # 安全だが、同じ失敗を無検証で繰り返さないため、既定は切っておく。
+    # 有効にするなら BOATRACE_DB_POOL_CHECK=1 を明示すること。
+    if os.getenv("BOATRACE_DB_POOL_CHECK", "0") != "1":
         return
     if not hasattr(pool, "check"):
         return
@@ -890,6 +895,13 @@ def _pg_socket_keepalive_kwargs() -> dict[str, int]:
         "keepalives_idle": 30,
         "keepalives_interval": 10,
         "keepalives_count": 3,
+        # keepalive は「無通信の接続」の死を見つける。これとは別に、送信済みの
+        # 問い合わせに応答が返らない場合を縛るのが tcp_user_timeout (ミリ秒)。
+        # これが無いと、死んだソケット上の SELECT は OS が諦めるまで戻らず、
+        # その接続を掴んだ処理ごと固まる。2026-08-24 の実障害では、遊休接続の
+        # 生死を確かめる pool.check() がまさにこれで固まり、プールの全接続を
+        # 掴んだまま空き 0 / 待ち 6 から復帰しなくなった。
+        "tcp_user_timeout": 5000,
     }
 
 

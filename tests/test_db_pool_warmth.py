@@ -114,24 +114,42 @@ def test_idle_connections_are_validated_in_the_background(monkeypatch):
             checked.set()
 
     monkeypatch.setattr(connection, "_PG_POOL_CHECKER_STARTED", False)
+    monkeypatch.setenv("BOATRACE_DB_POOL_CHECK", "1")
     monkeypatch.setenv("BOATRACE_DB_POOL_CHECK_INTERVAL_SEC", "5")
 
     connection._start_pool_health_checker(_Pool())
 
-    assert checked.wait(timeout=20), "背景で pool.check() が回っていない"
+    assert checked.wait(timeout=20), "有効化した時は背景で pool.check() が回る"
 
 
-def test_background_check_can_be_disabled(monkeypatch):
+def test_background_check_is_off_unless_explicitly_enabled(monkeypatch):
+    """既定では回さない。
+
+    2026-08-24: 遊休接続の生死を裏で確かめる仕組みを入れたが、tcp_user_timeout が
+    無い状態では pool.check() が死んだソケット上で戻らず、プールの全接続を掴んだ
+    まま空き 0 / 待ち 6 から復帰しなくなり、レース詳細が全滅した。
+    """
     import src.db.connection as connection
 
     class _Pool:
         def check(self):  # pragma: no cover - 呼ばれないことが期待値
-            raise AssertionError("無効化したのに検査が走った")
+            raise AssertionError("既定で検査が走ってはいけない")
 
     monkeypatch.setattr(connection, "_PG_POOL_CHECKER_STARTED", False)
-    monkeypatch.setenv("BOATRACE_DB_POOL_CHECK", "0")
+    monkeypatch.delenv("BOATRACE_DB_POOL_CHECK", raising=False)
 
     connection._start_pool_health_checker(_Pool())
+
+
+def test_connections_bound_how_long_a_hung_query_may_block(monkeypatch):
+    """応答が返らない問い合わせを OS 任せで待ち続けない。"""
+    import src.db.connection as connection
+
+    kwargs = connection._pg_socket_keepalive_kwargs()
+
+    assert 1000 <= kwargs["tcp_user_timeout"] <= 15000, (
+        "これが無いと死んだソケット上の SELECT は戻らず、掴んだ接続ごと固まる"
+    )
 
 
 def test_connection_demand_stays_within_one_pool():
