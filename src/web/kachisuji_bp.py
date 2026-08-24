@@ -422,6 +422,78 @@ def internal_db_pool_report():
     return jsonify(pg_pool_report())
 
 
+@bp.get("/internal/page-cache-lookup")
+def internal_page_cache_lookup():
+    """指定レースの詳細ページを、本番プロセスがどう見ているかを層ごとに返す。
+
+    2026-08-24: 本番だけレース詳細が「準備しています」に落ちる一方、同じコードを
+    同じ DB に向けて手元で走らせると 0.1 秒で正しく表示された。差はプロセスの
+    状態にあるが、外からは仮ページしか見えず切り分けられなかった。どの層で
+    None になっているのか (メモリ / prewarm コンテキスト / DB) を読み取り専用で
+    覗けるようにする。書き込みも設定変更もしない。
+    """
+    import time as _time
+
+    from src.db.connection import pg_pool_report
+    from src.kachisuji.delta_transport import internal_token
+    from src.web import app as web_app
+
+    provided = request.headers.get("X-Internal-Token", "")
+    try:
+        expected = internal_token()
+    except RuntimeError:
+        return jsonify(error="internal token unavailable"), 503
+    if not provided or provided != expected:
+        return jsonify(error="forbidden"), 403
+
+    race_id = (request.args.get("race_id") or "").strip()
+    if not race_id:
+        return jsonify(error="race_id required"), 400
+
+    key = web_app._race_detail_page_cache_key(race_id)
+    now = _time.time()
+    out = {
+        "pid": os.getpid(),
+        "race_id": race_id,
+        "cache_key": key,
+        "cache_version": web_app.RACE_DETAIL_PAGE_CACHE_VERSION,
+        "fresh_ttl_sec": web_app.RACE_DETAIL_PAGE_FRESH_SEC,
+        "today_jst": web_app._today_jst_iso(),
+        "pool": pg_pool_report().get("stats", {}),
+    }
+
+    mem = web_app._PAGE_HTML_MEM_CACHE.get(key)
+    out["mem_cache"] = (
+        {"present": True, "age_sec": round(now - float(mem[0] or 0), 1), "len": len(mem[1] or "")}
+        if mem
+        else {"present": False}
+    )
+    ctx = web_app._RACE_DETAIL_PREWARM_CONTEXT.get()
+    out["prewarm_context_active"] = ctx is not None
+    if ctx is not None:
+        rows = ctx.get("page_cache_rows")
+        out["prewarm_page_cache_rows"] = None if rows is None else len(rows)
+        out["prewarm_has_this_key"] = None if rows is None else (key in rows)
+
+    for label, fn in (
+        ("fresh", lambda: web_app._read_page_html_cache(key, web_app.RACE_DETAIL_PAGE_FRESH_SEC)),
+        ("stale", lambda: web_app._read_page_html_cache_stale(key)),
+    ):
+        started = _time.perf_counter()
+        try:
+            html = fn()
+            out[f"read_{label}"] = {
+                "len": None if html is None else len(html),
+                "ms": round((_time.perf_counter() - started) * 1000, 1),
+            }
+        except Exception as exc:  # noqa: BLE001 - 調査目的なので必ず返す
+            out[f"read_{label}"] = {
+                "error": f"{type(exc).__name__}: {exc}"[:300],
+                "ms": round((_time.perf_counter() - started) * 1000, 1),
+            }
+    return jsonify(out)
+
+
 @bp.post("/internal/apply-deltas")
 def internal_apply_deltas():
     from src.kachisuji.delta_transport import (
