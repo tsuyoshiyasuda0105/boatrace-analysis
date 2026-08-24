@@ -802,9 +802,14 @@ def _get_pg_pool(dsn: str):
                 max_waiting=max_waiting,
                 timeout=max(1, int(os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5"))),
                 max_lifetime=900,
-                # 2 分の遊休で捨てると、レース間隔程度の空きでも再接続 2.5 秒を
-                # 払い直すことになる。温存側に倒す。
-                max_idle=1200,
+                # 遊休接続を長く抱えすぎると、Supabase 側 (Supavisor) が先に
+                # 黙って切る。こちらは「空き 3 本」と思ったまま死んだ接続を並べ、
+                # 取り出すたびに check が失敗して捨て直すので、1 回の取得に
+                # 10 秒以上かかりレース詳細が「準備しています」に落ちる
+                # (2026-08-24: pool_available=3 なのに読み出しが 16.7 秒)。
+                # こちらから先に retire すれば、張り直しは min_size を満たす
+                # ための背景処理として行われ、リクエストの待ち時間にならない。
+                max_idle=180,
                 configure=_configure_pg_connection,
                 check=ConnectionPool.check_connection,
                 open=True,

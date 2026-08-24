@@ -27,10 +27,22 @@ def test_web_pool_preheats_its_connections():
     )
 
 
-def test_idle_connections_are_not_discarded_between_races():
-    """レース間隔程度の空きで接続を捨てない。"""
-    assert "max_idle=1200," in SOURCE, "120秒では空き時間のたびに張り直す"
-    assert "max_idle=120," not in SOURCE
+def test_idle_connections_are_retired_before_the_pooler_kills_them():
+    """遊休接続はこちらから先に retire する。
+
+    2026-08-24: max_idle=1200 (20分) で抱えていたところ、Supabase 側が先に
+    黙って接続を切っていた。プールは「空き 3 本」と表示したまま死んだ接続を
+    並べ、取り出すたびに check が失敗して捨て直すので 1 回の取得に 16.7 秒
+    かかり、レース詳細が「準備しています」に落ちた。こちらから先に retire
+    すれば、張り直しは min_size を満たす背景処理になりリクエストを待たせない。
+    """
+    import re
+
+    m = re.search(r"max_idle=(\d+),", SOURCE)
+    assert m, "max_idle を読めない"
+    assert 60 <= int(m.group(1)) <= 300, (
+        "長すぎると Supavisor に先に切られ、短すぎると張り直しが増える"
+    )
 
 
 def test_cron_processes_stay_lean():
