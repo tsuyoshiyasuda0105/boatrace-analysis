@@ -168,3 +168,31 @@ def test_connection_demand_stays_within_one_pool():
     assert int(m.group(1)) == 1, (
         "worker を増やすなら worker数 x min_size が Supabase の枠に収まるか要確認"
     )
+
+
+def test_every_thread_can_hold_two_connections_at_once():
+    """スレッド数 x 2 が上限を超えないこと。
+
+    2026-08-24 実障害の最終形。1 リクエストの中で入れ子に db_connect() する経路が
+    あるため、1 スレッドが同時に 2 本使いうる。--threads 4 に対して上限 6 本だと、
+    4 スレッドが「1 本持って 2 本目を待つ」状態に入って誰も進めなくなり、
+    pool_available=0 / requests_waiting=6 のまま復帰しなくなった。
+    人が 10 秒おきに 2 ページ見ただけで、以降ずっと仮ページに落ちた。
+    """
+    import re
+
+    render_yaml = Path("render.yaml").read_text(encoding="utf-8")
+
+    # コメント中にも "--threads N" と書くことがあるので、起動行だけを見る
+    m = re.search(r"startCommand: gunicorn .*?--threads (\d+)", render_yaml)
+    assert m, "gunicorn の --threads を読めない"
+    threads = int(m.group(1))
+
+    m = re.search(r'key: BOATRACE_DB_POOL_SIZE\s+value: "(\d+)"', render_yaml)
+    assert m, "render.yaml に BOATRACE_DB_POOL_SIZE が無い"
+    pool_size = int(m.group(1))
+
+    assert threads * 2 <= pool_size, (
+        f"スレッド {threads} x 入れ子 2 本 = {threads * 2} が上限 {pool_size} 本を超える。"
+        "全スレッドが互いの 2 本目を待って止まる"
+    )

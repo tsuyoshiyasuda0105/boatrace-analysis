@@ -19,7 +19,13 @@ services:
     # 復帰せず、同じレースがアクセスのたびに開けたり開けなかったりした。
     # 1 プロセスにすれば接続要求が半減し、その半々の壊れ方も構造的に消える。
     # ページのメモリキャッシュも 1 つに集約されるので当たりやすくなる。
-    startCommand: gunicorn -w 1 --worker-class gthread --threads 4 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
+    # --threads 4 -> 3 (2026-08-24)。1 リクエストの中で入れ子に接続を取る経路が
+    # あるため、1 スレッドが同時に 2 本使いうる。4 スレッド x 2 = 8 本が上限 6 本
+    # を超え、全スレッドが「1 本持って 2 本目を待つ」膠着に入った (pool_available=0 /
+    # requests_waiting=6 のまま復帰しない)。3 x 2 = 6 なら必ず誰かが進める。
+    # スレッドを増やすなら BOATRACE_DB_POOL_SIZE も 2 倍に、かつ接続予算 15 本に
+    # 収まるかを tests/test_db_pool_warmth.py で検算すること。
+    startCommand: gunicorn -w 1 --worker-class gthread --threads 3 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
