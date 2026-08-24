@@ -104,6 +104,16 @@ def _safe_pool_stats(pool) -> dict[str, object]:
         "requests_num",
         "requests_queued",
         "requests_errors",
+        # 2026-08-24: 「返した接続をプールが壊れていると見なして捨て、
+        # 張り直しに失敗し続けている」かどうかを見分けるために追加。
+        # returns_bad が増えていれば返却時に壊れている、connections_errors が
+        # 増えていれば張り直せていない、という切り分けができる。
+        "connections_num",
+        "connections_ms",
+        "connections_errors",
+        "returns_bad",
+        "pool_min",
+        "pool_max",
     }
     return {key: raw[key] for key in allowed if key in raw}
 
