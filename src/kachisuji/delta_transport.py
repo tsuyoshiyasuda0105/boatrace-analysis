@@ -103,7 +103,13 @@ def cleanup_stale_artifacts(slim_db: Path) -> list[dict[str, Any]]:
 def _default_conn():
     from src.db.connection import connect
 
-    return connect()
+    # direct=True: web の共有プールを使わない。デルタ適用は 06:30 の朝バッチ
+    # 集中時間帯に走り、ペイロード読み込みで数秒接続を握る。プール (枠 6) を
+    # 経由すると、混雑時に自分が枠を取れず ConnectionCheckoutBudgetExceeded で
+    # 失敗する (2026-08-25 06:31 実障害: 昨日分の取込が 500 になり、preflight が
+    # backtest_yesterday_import fail を出した)。逆に自分が握れば閲覧者を
+    # 待たせる。短命の直結接続なら双方に影響しない (cron が無傷なのと同じ理屈)。
+    return connect(direct=True)
 
 
 def ensure_transport_table(conn) -> None:

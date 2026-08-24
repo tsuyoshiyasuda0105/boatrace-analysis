@@ -683,3 +683,17 @@ def test_page_cache_timestamp_is_double_precision():
         ddl = source[start : start + 600]
         assert "updated_at DOUBLE PRECISION" in ddl, f"{path}: 倍精度で定義すること"
         assert "updated_at REAL" not in ddl, f"{path}: REAL に戻さないこと"
+
+
+def test_kachisuji_delta_transport_uses_direct_connections():
+    """デルタ適用は web の共有プールを経由しない。
+
+    2026-08-25 06:31 実障害: 朝バッチ集中時間帯にプール (枠 6) の取り合いに
+    巻き込まれ、昨日分の取込が ConnectionCheckoutBudgetExceeded の 500 で失敗
+    した。数秒接続を握る処理なので、プール経由だと混雑時に自分が失敗するか
+    閲覧者を待たせるかの二択になる。cron と同じ短命の直結接続を使う。
+    """
+    from pathlib import Path
+
+    source = Path("src/kachisuji/delta_transport.py").read_text(encoding="utf-8")
+    assert "return connect(direct=True)" in source
