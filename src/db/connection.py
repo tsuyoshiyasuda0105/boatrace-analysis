@@ -739,6 +739,17 @@ def _get_pg_pool(dsn: str):
 
             _PG_POOL = ConnectionPool(
                 conninfo=dsn,
+                # 接続の「確立」に制限時間を掛ける。これが無いと、Render から
+                # Supabase への TCP/TLS が応答を返さないときに接続作成が無期限に
+                # 刺さり、プールは永久に空のまま復帰しない。2026-08-24 の実障害は
+                # まさにこれで、Web だけが数時間 DB を掴めず (cron は直接接続なので
+                # connect_timeout があり無事だった)、レース詳細が「準備しています」の
+                # ままになった。プールの timeout は「空きを待つ時間」であって
+                # 「接続を張る時間」ではないので、別に指定する必要がある。
+                kwargs={
+                    "connect_timeout": _pg_connect_timeout_seconds(),
+                    **_pg_socket_keepalive_kwargs(),
+                },
                 min_size=max(
                     0,
                     int(os.getenv("BOATRACE_DB_POOL_MIN_SIZE", str(default_min_size))),
@@ -760,17 +771,43 @@ def _get_pg_pool(dsn: str):
     return _PG_POOL
 
 
+def _pg_socket_keepalive_kwargs() -> dict[str, int]:
+    """死んだ接続を OS に検知させる設定。
+
+    Supavisor や途中の NAT が黙って接続を落とすと、こちら側の socket は
+    「生きているつもり」のまま応答を待ち続け、そのスレッドは永久に戻らない。
+    statement_timeout はサーバに届いて初めて効くので、この状況では役に立たない。
+    keepalive を入れておくと概ね 60 秒で切断として例外になり、プールが張り直せる。
+    """
+    return {
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+    }
+
+
+def _pg_connect_timeout_seconds() -> int:
+    """TCP/TLS 確立そのものに掛ける制限時間 (秒)。
+
+    これが無いと接続の確立は無期限に待つ。プール側の timeout は「空き接続を
+    待つ時間」であって「接続を張る時間」ではないので、両方必要になる。
+    """
+    try:
+        return max(1, int(os.getenv("BOATRACE_DB_CONNECT_TIMEOUT_SEC", "5")))
+    except (TypeError, ValueError):
+        return 5
+
+
 def _open_direct_pg_connection(dsn: str):
     import psycopg
 
-    connect_timeout = max(
-        1,
-        int(os.getenv("BOATRACE_DB_CONNECT_TIMEOUT_SEC", "5")),
-    )
+    connect_timeout = _pg_connect_timeout_seconds()
     conn = psycopg.connect(
         dsn,
         autocommit=True,
         connect_timeout=connect_timeout,
+        **_pg_socket_keepalive_kwargs(),
     )
     _configure_pg_connection(conn)
     return conn

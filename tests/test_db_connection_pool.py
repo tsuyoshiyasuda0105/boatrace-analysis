@@ -387,3 +387,67 @@ def test_permanent_authentication_error_is_not_retried(monkeypatch):
     assert pool.calls == 1
     assert sleeps == []
     assert connection.consume_transient_db_retry_event() is None
+
+
+def test_pool_bounds_how_long_establishing_a_connection_may_take(monkeypatch):
+    """プールの接続作成にも制限時間を掛ける。
+
+    2026-08-24 実障害: プールの `timeout` は「空き接続を待つ時間」であって
+    「接続を張る時間」ではない。conninfo に connect_timeout が無かったため、
+    Render(シンガポール) から Supabase(東京) への TCP/TLS が応答を返さない間、
+    接続作成が無期限に刺さってプールが永久に空のままになり、Web だけが数時間
+    DB を掴めずレース詳細が「準備しています」に落ち続けた。cron は直接接続で
+    connect_timeout があったため無事で、それが切り分けを難しくした。
+    """
+    import psycopg_pool
+
+    captured = {}
+
+    class _CapturingPool:
+        check_connection = object()
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setenv("BOATRACE_DB_CONNECT_TIMEOUT_SEC", "7")
+    monkeypatch.setattr(connection, "_PG_POOL", None)
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _CapturingPool)
+
+    connection._get_pg_pool("postgresql://unused")
+
+    assert captured["kwargs"]["connect_timeout"] == 7, (
+        "接続の確立に制限時間が無いとプールは永久に空のまま復帰しない"
+    )
+
+
+def test_connect_timeout_falls_back_to_a_sane_default(monkeypatch):
+    monkeypatch.setenv("BOATRACE_DB_CONNECT_TIMEOUT_SEC", "not-a-number")
+    assert connection._pg_connect_timeout_seconds() == 5
+    monkeypatch.setenv("BOATRACE_DB_CONNECT_TIMEOUT_SEC", "0")
+    assert connection._pg_connect_timeout_seconds() >= 1
+
+
+def test_pool_enables_socket_keepalives(monkeypatch):
+    """黙って切られた接続を OS に検知させる (永久に待たせない)。"""
+    import psycopg_pool
+
+    captured = {}
+
+    class _CapturingPool:
+        check_connection = object()
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL", None)
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _CapturingPool)
+
+    connection._get_pg_pool("postgresql://unused")
+
+    kwargs = captured["kwargs"]
+    assert kwargs["keepalives"] == 1
+    assert kwargs["keepalives_idle"] > 0
+    assert kwargs["keepalives_interval"] > 0
+    assert kwargs["keepalives_count"] > 0
