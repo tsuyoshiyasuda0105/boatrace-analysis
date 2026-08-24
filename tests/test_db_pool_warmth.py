@@ -78,3 +78,42 @@ def test_pool_has_room_for_nested_connections_per_thread():
     m3 = re.search(r"default_min_size = 0 if trigger else (\d+)", SOURCE)
     assert m3, "default_min_size を読めない"
     assert int(m3.group(1)) <= pool_size, "常時確保が上限を超えることはない"
+
+
+def test_idle_connections_are_validated_in_the_background(monkeypatch):
+    """遊休接続の生死は、閲覧者を待たせずに裏で確かめる。
+
+    2026-08-24 実障害: psycopg は貸し出す瞬間まで生死を確かめないため、
+    Supabase 側に切られた接続が「空き」として並び続けた。閲覧者がその 1 本を
+    引くと検査失敗と再接続を取得待ちの中で払い、pool_available=1 と表示されて
+    いるのに読み出しが 18.0 秒かかって空振りした。
+    """
+    import threading
+
+    import src.db.connection as connection
+
+    checked = threading.Event()
+
+    class _Pool:
+        def check(self):
+            checked.set()
+
+    monkeypatch.setattr(connection, "_PG_POOL_CHECKER_STARTED", False)
+    monkeypatch.setenv("BOATRACE_DB_POOL_CHECK_INTERVAL_SEC", "5")
+
+    connection._start_pool_health_checker(_Pool())
+
+    assert checked.wait(timeout=20), "背景で pool.check() が回っていない"
+
+
+def test_background_check_can_be_disabled(monkeypatch):
+    import src.db.connection as connection
+
+    class _Pool:
+        def check(self):  # pragma: no cover - 呼ばれないことが期待値
+            raise AssertionError("無効化したのに検査が走った")
+
+    monkeypatch.setattr(connection, "_PG_POOL_CHECKER_STARTED", False)
+    monkeypatch.setenv("BOATRACE_DB_POOL_CHECK", "0")
+
+    connection._start_pool_health_checker(_Pool())

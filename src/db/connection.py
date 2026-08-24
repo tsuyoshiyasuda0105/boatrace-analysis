@@ -738,6 +738,62 @@ def _configure_pg_connection(conn) -> None:
         pass
 
 
+_PG_POOL_CHECKER_STARTED = False
+_DEFAULT_POOL_CHECK_INTERVAL_SEC = 45.0
+
+
+def _pool_check_interval_seconds() -> float:
+    try:
+        return max(
+            5.0,
+            float(
+                os.getenv(
+                    "BOATRACE_DB_POOL_CHECK_INTERVAL_SEC",
+                    str(_DEFAULT_POOL_CHECK_INTERVAL_SEC),
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        return _DEFAULT_POOL_CHECK_INTERVAL_SEC
+
+
+def _start_pool_health_checker(pool) -> None:
+    """遊休接続の生死を裏で確かめ、死んでいれば張り替える。
+
+    2026-08-24 実障害の決め手。psycopg は貸し出す瞬間まで接続の生死を確かめ
+    ないので、Supabase 側に切られた接続が「空き」として並び続ける。閲覧者の
+    リクエストがその 1 本を引くと、検査の失敗と再接続を取得待ちの中で払う
+    ことになり、5 秒の上限を何度も踏んで 16-18 秒かかった末に空振りする
+    (pool_available=1 と表示されているのに読み出しが 18.0 秒)。
+
+    pool.check() は死んだ接続を捨てて張り直す。これを背景で回しておけば、
+    その代金をリクエストではなくアイドル時間が払う。
+    """
+    global _PG_POOL_CHECKER_STARTED
+    if _PG_POOL_CHECKER_STARTED:
+        return
+    if os.getenv("BOATRACE_DB_POOL_CHECK", "1") == "0":
+        return
+    if not hasattr(pool, "check"):
+        return
+
+    interval = _pool_check_interval_seconds()
+
+    def _loop() -> None:
+        while True:
+            time.sleep(interval)
+            try:
+                pool.check()
+            except Exception:
+                logger.warning("pool health check failed", exc_info=True)
+
+    thread = threading.Thread(
+        target=_loop, name="pg-pool-health-check", daemon=True
+    )
+    thread.start()
+    _PG_POOL_CHECKER_STARTED = True
+
+
 def _get_pg_pool(dsn: str):
     global _PG_POOL
     if _PG_POOL is not None:
@@ -814,6 +870,8 @@ def _get_pg_pool(dsn: str):
                 check=ConnectionPool.check_connection,
                 open=True,
             )
+            if not trigger:
+                _start_pool_health_checker(_PG_POOL)
     return _PG_POOL
 
 
