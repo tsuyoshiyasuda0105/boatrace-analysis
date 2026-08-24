@@ -217,18 +217,25 @@ async def discover_race_ids(
 
 
 def build_endpoints(authenticated: bool, today_iso: str, race_ids: Sequence[str]) -> list[Endpoint]:
-    # Repetition is intentional weighting: health remains at least half the mix.
-    endpoints = [Endpoint("healthz", "/healthz") for _ in range(6)]
-    if not authenticated:
-        return endpoints
-    endpoints.extend(
-        [
-            Endpoint("races", f"/races?date={today_iso}"),
-            Endpoint("races", f"/races?date={today_iso}"),
-            Endpoint("market_signals", f"/api/market-signals?date={today_iso}"),
-        ]
-    )
+    """実際の閲覧者がたどる経路を測る。
+
+    2026-08-25 改訂: 以前は認証なしだと /healthz しか測らなかった。/healthz は
+    DB を一切触らないので、そこだけ緑でもサーバが落ちない証拠にはならない
+    (2026-08-24 の障害中、/healthz は終日 200 を返し続けた)。レース一覧と
+    レース詳細は 2026-08-24 の公開範囲変更で誰でも見られるようになったので、
+    未ログインでも本物の負荷を測れる。会員限定 API は認証時のみ加える。
+    """
+    endpoints = [
+        Endpoint("healthz", "/healthz"),
+        Endpoint("top", "/"),
+        Endpoint("races", f"/races?date={today_iso}"),
+        Endpoint("races", f"/races?date={today_iso}"),
+    ]
     endpoints.extend(Endpoint("race_detail", f"/race/{race_id}") for race_id in race_ids)
+    if authenticated:
+        endpoints.append(
+            Endpoint("market_signals", f"/api/market-signals?date={today_iso}")
+        )
     return endpoints
 
 
@@ -445,8 +452,9 @@ async def async_main(args: argparse.Namespace) -> tuple[dict[str, object], Path]
     authenticated = args.auth == "on" and bool(password)
     if args.auth == "on" and not password:
         print(
-            "BOATRACE_MEMBER_PASSWORD is unset; falling back to auth off and measuring "
-            "public /healthz only.",
+            "BOATRACE_MEMBER_PASSWORD is unset (the shared password login was retired "
+            "on 2026-08-24). Measuring the public pages, which is the realistic "
+            "visitor mix; member-only APIs are skipped.",
             file=sys.stderr,
         )
     timeout = httpx.Timeout(args.p95_stop_sec, connect=min(10.0, args.p95_stop_sec))
@@ -454,13 +462,14 @@ async def async_main(args: argparse.Namespace) -> tuple[dict[str, object], Path]
     async with httpx.AsyncClient(
         base_url=args.base_url, timeout=timeout, headers=headers
     ) as client:
-        race_ids: list[str] = []
         if authenticated:
             await authenticate_once(client, password)
             # Do not retain an extra password reference after the one allowed login.
             password = ""
-            race_ids = await discover_race_ids(client, today_iso)
-            print(f"Authenticated once; reusing session cookie. Real race IDs: {race_ids}")
+        # レース一覧は公開なので、ログインの有無にかかわらず本物の race_id を
+        # 拾える。偽の ID を使わない方針はそのまま (存在しないレースは 404)。
+        race_ids = await discover_race_ids(client, today_iso)
+        print(f"Real race IDs: {race_ids} (authenticated={authenticated})")
         endpoints = build_endpoints(authenticated, today_iso, race_ids)
         stage_results: list[dict[str, object]] = []
         for concurrency in args.parsed_stages:
