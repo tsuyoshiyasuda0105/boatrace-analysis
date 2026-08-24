@@ -475,3 +475,52 @@ def test_dangerous_env_mutating_probe_is_gone():
 
     source = Path("src/web/kachisuji_bp.py").read_text(encoding="utf-8")
     assert 'os.environ["BOATRACE_TASK_TRIGGER"] = "diagnostic-probe"' not in source
+
+
+class _DyingCheckedOutConn:
+    """autocommit を立てようとすると壊れる接続 (取得直後に死ぬ接続の再現)。"""
+
+    def __init__(self):
+        self.closed = False
+
+    def __setattr__(self, name, value):
+        if name == "autocommit":
+            raise RuntimeError("connection died right after checkout")
+        object.__setattr__(self, name, value)
+
+
+class _ReturnTrackingPool:
+    def __init__(self):
+        self.returned = []
+        self._conn = _DyingCheckedOutConn()
+
+    def getconn(self, timeout=None):
+        return self._conn
+
+    def putconn(self, conn):
+        self.returned.append(conn)
+
+    def get_stats(self):
+        return {}
+
+
+def test_connection_is_returned_when_setup_fails_after_checkout(monkeypatch):
+    """取得直後の初期化で落ちても、接続は必ずプールへ返す。
+
+    2026-08-24 実障害: 貸し出された接続が呼び出し元に渡らないまま参照を失うと、
+    psycopg_pool は GC で回収しないのでその 1 本は永久に失われる。1 本ずつ
+    積み上がった結果 pid 82 が pool_size=9 / available=0 で固まり、リクエストの
+    約半分が 10 秒待って「準備しています」に落ちた。
+    """
+    fake = _ReturnTrackingPool()
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(connection, "_get_pg_pool", lambda dsn: fake)
+
+    try:
+        connection._PgConnection("postgresql://unused")
+    except RuntimeError:
+        pass
+    else:  # pragma: no cover - 失敗が起きない実装なら設計が変わっている
+        raise AssertionError("初期化の失敗が伝わっていない")
+
+    assert fake.returned == [fake._conn], "接続を返さずに例外を投げると 1 本失われる"

@@ -313,23 +313,30 @@ def db_connect(*args, **kwargs):
     if prewarm_context is not None and not args and not kwargs:
         return _BorrowedConnection(prewarm_context["conn"])
     conn = _raw_db_connect(*args, **kwargs)
-    # ここまで来たら接続は取れている。失敗の連続記録を解除する
-    # (/healthz が「ずっと駄目」と誤認したままにならないように)。
-    if "_note_db_recovered" in globals():
-        _note_db_recovered()
-    lifecycle_events = consume_pg_pool_lifecycle_events()
-    if lifecycle_events and "_note_pool_lifecycle_events" in globals():
-        _note_pool_lifecycle_events(lifecycle_events, conn=conn)
-    retry_event = consume_transient_db_retry_event()
-    if retry_event and "_note_transient_db_error" in globals():
-        _note_transient_db_error(
-            "connection_retry_recovered",
-            RuntimeError(str(retry_event.get("last_error") or "transient connection failure")),
-            detail=retry_event,
-            conn=conn,
-        )
-    elif "_flush_pending_transient_db_errors" in globals():
-        _flush_pending_transient_db_errors(conn)
+    # 以下は「ついでの記録」であって、接続を渡す義務より優先されない。
+    # ここで例外を投げると、貸し出された接続は呼び出し元に渡らないまま
+    # 参照を失い、プールに戻らない。記録処理はどれも DB へ書きに行くので、
+    # DB が不調なときほど失敗しやすく、まさにその時に接続を 1 本ずつ削って
+    # worker を枯らしていく。記録の失敗で接続を失わせない。
+    # (2026-08-24: pid 82 が pool_available=0 のまま復帰しなくなった経路)
+    try:
+        if "_note_db_recovered" in globals():
+            _note_db_recovered()
+        lifecycle_events = consume_pg_pool_lifecycle_events()
+        if lifecycle_events and "_note_pool_lifecycle_events" in globals():
+            _note_pool_lifecycle_events(lifecycle_events, conn=conn)
+        retry_event = consume_transient_db_retry_event()
+        if retry_event and "_note_transient_db_error" in globals():
+            _note_transient_db_error(
+                "connection_retry_recovered",
+                RuntimeError(str(retry_event.get("last_error") or "transient connection failure")),
+                detail=retry_event,
+                conn=conn,
+            )
+        elif "_flush_pending_transient_db_errors" in globals():
+            _flush_pending_transient_db_errors(conn)
+    except Exception:
+        logger.exception("connection bookkeeping failed; connection kept usable")
     if has_request_context() and _is_response_profiling_enabled():
         return _ProfiledConnection(conn)
     return conn

@@ -887,8 +887,18 @@ class _PgConnection:
                 logger.warning("postgres pool checkout failed stats=%s", stats)
                 _maybe_rebuild_exhausted_pg_pool(self._pool, stats)
                 raise
-        self._conn.autocommit = True
-        self._kind = "postgres"
+        # ここから先で例外が出ると、貸し出された接続は誰にも渡らないまま
+        # 参照を失い、プールには二度と戻らない (psycopg_pool は GC では回収
+        # しない)。返却されない接続が 1 本ずつ積み上がると、その worker は
+        # やがて pool_available=0 のまま復帰しなくなる。2026-08-24 の実障害では
+        # pid 82 が pool_size=9 / available=0 で固まり、リクエストの約半分が
+        # 10 秒待って仮ページに落ちた。必ず返してから送出する。
+        try:
+            self._conn.autocommit = True
+            self._kind = "postgres"
+        except Exception:
+            self.close()
+            raise
 
     def execute(self, sql: str, params: Optional[tuple] = None):
         _count_sql()
