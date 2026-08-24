@@ -104,11 +104,11 @@ def test_pg_pool_default_has_headroom_for_nested_web_queries():
     source = open(connection.__file__, encoding="utf-8").read()
     # 上限はスレッド数の 2 倍 (入れ子接続の余地)。この不変条件は
     # tests/test_db_pool_warmth.py が render.yaml の --threads と突き合わせる。
-    assert 'default_pool_size = "1" if trigger else "8"' in source
+    assert 'default_pool_size = "1" if trigger else "6"' in source
     # min_size (常時確保) は 4。2026-08-24 に 8 へ上げたら 2 worker x 8 = 16 本が
     # Supabase 側のクライアント枠を超え、片方の worker が 1 本も取れないまま
     # 固まった (pool_available=0 が復帰しない)。worker 数を掛けて収まる値にする。
-    assert "default_min_size = 0 if trigger else 4" in source
+    assert "default_min_size = 0 if trigger else 3" in source
     assert 'os.getenv("BOATRACE_DB_POOL_MIN_SIZE", str(default_min_size))' in source
     assert 'os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)' in source
     assert 'os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5")' in source

@@ -28,6 +28,17 @@ services:
         sync: false
       - key: BOATRACE_SUPABASE_ONLY
         value: "1"
+      # Supabase の pooler は session mode で **クライアント 15 本**が上限
+      # (2026-08-24 の実エラー: "max clients reached in session mode -
+      #  max clients are limited to pool_size: 15")。この 15 本を web と
+      # cron 6 本で分け合う。web が 12 本まで開けると cron の取り分が消え、
+      # 実際に 21:45 の odds cron が接続を拒否された。
+      # 予算: web 1 プロセス x 6 + cron 6 = 12 (ローカル作業ぶんに 3 残す)。
+      # この算数は tests/test_db_pool_warmth.py が render.yaml を読んで検算する。
+      - key: BOATRACE_DB_POOL_SIZE
+        value: "6"
+      - key: BOATRACE_DB_POOL_MIN_SIZE
+        value: "3"
       # BOATRACE_PROFILE_HTTP は 2026-08-24 に外した。「詳細が 16 秒かかる」の
       # 正体は接続の取得待ち (5 秒 x 回数) だと判明したため、全リクエストを
       # 計測し続ける理由がなくなった。必要になったら env で戻せる。

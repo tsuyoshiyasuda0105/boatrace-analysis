@@ -803,9 +803,11 @@ def _get_pg_pool(dsn: str):
             from psycopg_pool import ConnectionPool
 
             trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
-            # 上限は「その worker が瞬間的に使ってよい本数」。本番は環境変数
-            # BOATRACE_DB_POOL_SIZE で 12 に設定されている。
-            default_pool_size = "1" if trigger else "8"
+            # 上限は「その worker が瞬間的に使ってよい本数」。Supabase の
+            # pooler は session mode でクライアント 15 本が上限なので、web と
+            # cron でその 15 本を分け合う。本番の値は render.yaml が持つ
+            # (BOATRACE_DB_POOL_SIZE)。ここはその予算と揃えた既定値。
+            default_pool_size = "1" if trigger else "6"
             # Web は使う分を最初から温めておく。Render(シンガポール) から
             # Supabase(東京) への新規接続は往復 + TLS で実測 2.5 秒かかり、
             # min_size=1 では 2 本目以降を毎回張り直していた。接続の取得待ちが
@@ -819,7 +821,7 @@ def _get_pg_pool(dsn: str):
             # pool_available=0 のまま復帰せず、リクエストの約半分が 10 秒待って
             # 「準備しています」に落ちた。worker 数 x min_size が枠に収まる値に
             # 戻す (2 worker x 4 = 8 + cron 各 1)。
-            default_min_size = 0 if trigger else 4
+            default_min_size = 0 if trigger else 3
             max_size = max(
                 1,
                 int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),

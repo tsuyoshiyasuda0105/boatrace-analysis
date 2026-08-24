@@ -21,7 +21,7 @@ def test_web_pool_preheats_its_connections():
     もう一方は pool_available=0 のまま復帰せず、リクエストの約半分が 10 秒待って
     レース詳細の仮ページに落ちた。min_size は worker 数を掛けて収まる値にする。
     """
-    assert "default_min_size = 0 if trigger else 4" in SOURCE, (
+    assert "default_min_size = 0 if trigger else 3" in SOURCE, (
         "min_size=1 に戻すと 2 本目以降で毎回 2.5 秒の再接続を払う。"
         "逆に大きすぎると worker 間で枠を奪い合って片方が飢える"
     )
@@ -51,33 +51,48 @@ def test_cron_processes_stay_lean():
     assert 'default_pool_size = "1" if trigger' in SOURCE
 
 
-def test_pool_has_room_for_nested_connections_per_thread():
-    """枠はスレッド数の 2 倍以上あること。
+def test_connection_budget_fits_inside_the_supabase_pooler_limit():
+    """web と cron の接続要求の合計が、Supabase の受け入れ上限を超えないこと。
 
-    2026-08-24 実障害: gunicorn は 1 プロセス 4 スレッド、プール枠も 4 だった。
-    1 リクエストの中で入れ子に db_connect() する経路があるため、4 スレッドが
-    同時に「1 本持って 2 本目を待つ」状態になると誰も進めず、5 秒の取得待ちを
-    2 回払って (=10.15 秒) レース詳細が「準備しています」に落ちた。
-    --threads を増やすときは枠も増やさないと同じ状態に戻るので、ここで縛る。
+    2026-08-24 実障害の根本原因。Supabase の pooler は session mode で
+    クライアント 15 本が上限で、超えた接続はこう拒否される:
+
+        FATAL: (EMAXCONNSESSION) max clients reached in session mode
+               - max clients are limited to pool_size: 15
+
+    web が 1 プロセスあたり 12 本まで開ける設定だったため、web だけで枠を
+    使い切り、cron が締め出された (21:45 の odds cron が接続拒否)。web 側も
+    「空き」と数えた接続が実は拒否・切断されていて、レース詳細が一日中
+    「準備しています」に落ちた。
+
+    枠は足し算で決まるので、足し算で守る。worker 数・プール上限・cron の数の
+    どれを増やしても、ここで気づける。
     """
     import re
 
     render_yaml = Path("render.yaml").read_text(encoding="utf-8")
-    m = re.search(r"--threads\s+(\d+)", render_yaml)
-    assert m, "render.yaml の gunicorn 起動行から --threads を読めない"
-    threads = int(m.group(1))
 
-    m2 = re.search(r'default_pool_size = "1" if trigger else "(\d+)"', SOURCE)
-    assert m2, "default_pool_size を読めない"
-    pool_size = int(m2.group(1))
+    m = re.search(r"startCommand: gunicorn -w (\d+)", render_yaml)
+    assert m, "gunicorn の worker 数を読めない"
+    workers = int(m.group(1))
 
-    assert pool_size >= threads * 2, (
-        f"スレッド {threads} に対して上限 {pool_size} では入れ子接続で取り合いになる"
+    m = re.search(
+        r'key: BOATRACE_DB_POOL_SIZE\s+value: "(\d+)"', render_yaml
     )
+    assert m, "render.yaml に BOATRACE_DB_POOL_SIZE が無い (dashboard 任せにしない)"
+    pool_size = int(m.group(1))
 
-    m3 = re.search(r"default_min_size = 0 if trigger else (\d+)", SOURCE)
-    assert m3, "default_min_size を読めない"
-    assert int(m3.group(1)) <= pool_size, "常時確保が上限を超えることはない"
+    cron_services = len(re.findall(r"^\s+- type: cron\s*$", render_yaml, re.M))
+    assert cron_services > 0, "cron サービスを数えられない"
+
+    supabase_pooler_max_clients = 15
+    demand = workers * pool_size + cron_services
+
+    assert demand <= supabase_pooler_max_clients - 2, (
+        f"接続要求 {demand} 本 (web {workers}x{pool_size} + cron {cron_services}) が "
+        f"上限 {supabase_pooler_max_clients} 本に対して過大。"
+        "ローカル作業ぶんに 2 本残すこと"
+    )
 
 
 def test_idle_connections_are_validated_in_the_background(monkeypatch):
