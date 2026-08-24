@@ -740,22 +740,23 @@ def _get_pg_pool(dsn: str):
             from psycopg_pool import ConnectionPool
 
             trigger = os.getenv("BOATRACE_TASK_TRIGGER", "").strip().lower()
-            # gunicorn は 1 プロセスあたり 4 スレッドで動く。1 リクエストの中で
-            # 入れ子に db_connect() する経路 (集計を挟んでページを読み書きする
-            # 詳細ページなど) があるため、枠がスレッド数と同じ 4 だと 4 本とも
-            # 「1 本持って 2 本目を待つ」状態になり、誰も進めないまま 5 秒の
-            # 取得待ちを繰り返してレース詳細が「準備しています」に落ちる
-            # (2026-08-24 実障害: 10.15 秒 = 5 秒 x 2 回の取得待ち)。
-            # スレッド数の 2 倍を既定にして、入れ子でも取り合いにならなくする。
-            # 接続予算: web 2 プロセス x 8 = 16 + cron 各 1 で、Supabase の
-            # max_connections=60 (常用 23) に対して十分収まる。
+            # 上限は「その worker が瞬間的に使ってよい本数」。本番は環境変数
+            # BOATRACE_DB_POOL_SIZE で 12 に設定されている。
             default_pool_size = "1" if trigger else "8"
             # Web は使う分を最初から温めておく。Render(シンガポール) から
             # Supabase(東京) への新規接続は往復 + TLS で実測 2.5 秒かかり、
             # min_size=1 では 2 本目以降を毎回張り直していた。接続の取得待ちが
             # 積み上がってレース詳細が「準備中」に落ちた実障害の対策
             # (2026-08-22: peak_concurrent=1 / failures=0 なのに max_wait 2571ms)。
-            default_min_size = 0 if trigger else 8
+            # min_size は「常に張りっぱなしにする本数」。ここを大きくすると
+            # 全 worker の合計が Supabase 側 (Supavisor) のクライアント枠を
+            # 食い潰し、先に温まった worker が枠を占有して、もう一方が 1 本も
+            # 取れないまま固まる。2026-08-24 に 4 -> 8 へ上げたところ、まさに
+            # これが起きた: pid 83 は pool_available=3 で正常、pid 82 は
+            # pool_available=0 のまま復帰せず、リクエストの約半分が 10 秒待って
+            # 「準備しています」に落ちた。worker 数 x min_size が枠に収まる値に
+            # 戻す (2 worker x 4 = 8 + cron 各 1)。
+            default_min_size = 0 if trigger else 4
             max_size = max(
                 1,
                 int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),

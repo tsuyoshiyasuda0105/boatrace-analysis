@@ -14,12 +14,16 @@ SOURCE = Path("src/db/connection.py").read_text(encoding="utf-8")
 
 
 def test_web_pool_preheats_its_connections():
-    """Web は使う本数を最初から温めておく (min_size == max_size)。"""
-    assert "default_min_size = 0 if trigger else 8" in SOURCE, (
-        "min_size=1 に戻すと 2 本目以降で毎回 2.5 秒の再接続を払う"
-    )
-    assert 'default_pool_size = "1" if trigger else "8"' in SOURCE, (
-        "min_size と max_size を揃えておく"
+    """Web は常用分を温めておく。ただし全 worker の合計が枠に収まる範囲で。
+
+    2026-08-24: min_size を 4 -> 8 に上げたら、2 worker x 8 = 16 本が Supabase
+    (Supavisor) のクライアント枠を超え、先に温まった worker が枠を占有した。
+    もう一方は pool_available=0 のまま復帰せず、リクエストの約半分が 10 秒待って
+    レース詳細の仮ページに落ちた。min_size は worker 数を掛けて収まる値にする。
+    """
+    assert "default_min_size = 0 if trigger else 4" in SOURCE, (
+        "min_size=1 に戻すと 2 本目以降で毎回 2.5 秒の再接続を払う。"
+        "逆に大きすぎると worker 間で枠を奪い合って片方が飢える"
     )
 
 
@@ -56,5 +60,9 @@ def test_pool_has_room_for_nested_connections_per_thread():
     pool_size = int(m2.group(1))
 
     assert pool_size >= threads * 2, (
-        f"スレッド {threads} に対して枠 {pool_size} では入れ子接続で取り合いになる"
+        f"スレッド {threads} に対して上限 {pool_size} では入れ子接続で取り合いになる"
     )
+
+    m3 = re.search(r"default_min_size = 0 if trigger else (\d+)", SOURCE)
+    assert m3, "default_min_size を読めない"
+    assert int(m3.group(1)) <= pool_size, "常時確保が上限を超えることはない"
