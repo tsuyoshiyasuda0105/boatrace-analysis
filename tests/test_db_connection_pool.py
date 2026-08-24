@@ -114,6 +114,13 @@ def test_pg_pool_default_has_headroom_for_nested_web_queries():
     assert 'os.getenv("BOATRACE_DB_POOL_TIMEOUT_SEC", "5")' in source
 
 
+def test_wait_queue_limit_is_still_configurable(monkeypatch):
+    """既定は無制限だが、env で明示すれば上限を掛けられること。
+
+    2026-08-24 に既定を「max_size と同数」から 0 (無制限) に変えた。
+    psycopg_pool の待ち件数カウンタが減らずに張り付き、上限に達した時点で
+    永久に取得できなくなったため。上限が要るときのために口は残す。
+    """
 def test_web_pool_has_finite_wait_queue_matching_configured_max(monkeypatch):
     import psycopg_pool
 
@@ -127,7 +134,7 @@ def test_web_pool_has_finite_wait_queue_matching_configured_max(monkeypatch):
 
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setenv("BOATRACE_DB_POOL_SIZE", "8")
-    monkeypatch.delenv("BOATRACE_DB_POOL_MAX_WAITING", raising=False)
+    monkeypatch.setenv("BOATRACE_DB_POOL_MAX_WAITING", "8")
     monkeypatch.setattr(connection, "_PG_POOL", None)
     monkeypatch.setattr(psycopg_pool, "ConnectionPool", _CapturingPool)
 
@@ -137,7 +144,16 @@ def test_web_pool_has_finite_wait_queue_matching_configured_max(monkeypatch):
     assert captured["max_waiting"] == 8
 
 
-def test_web_pool_zero_max_waiting_cannot_restore_unbounded_queue(monkeypatch):
+def test_web_pool_keeps_its_wait_queue_unbounded(monkeypatch):
+    """待ち行列に上限を置かない。
+
+    2026-08-24 実障害: psycopg_pool の requests_waiting は一度増えると減らない
+    ことがあり、スレッド 3 本の worker で 6 (=上限) に張り付いた。上限に達した
+    瞬間から取得はすべて TooManyRequests で即座に弾かれ、待っても直らない。
+    再起動直後から 10 ページ連続で仮ページに落ちた。上限を外しても待ち手は
+    各自 5 秒でタイムアウトするので行列は伸び続けない。
+    """
+
     import psycopg_pool
 
     captured = {}
@@ -149,13 +165,13 @@ def test_web_pool_zero_max_waiting_cannot_restore_unbounded_queue(monkeypatch):
             captured.update(kwargs)
 
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
-    monkeypatch.setenv("BOATRACE_DB_POOL_MAX_WAITING", "0")
+    monkeypatch.delenv("BOATRACE_DB_POOL_MAX_WAITING", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", None)
     monkeypatch.setattr(psycopg_pool, "ConnectionPool", _CapturingPool)
 
     connection._get_pg_pool("postgresql://unused")
 
-    assert captured["max_waiting"] == 1
+    assert captured["max_waiting"] == 0
 
 
 def test_cron_pool_configuration_keeps_wait_queue_unbounded(monkeypatch):

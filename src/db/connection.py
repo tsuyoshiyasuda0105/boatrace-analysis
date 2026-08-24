@@ -831,9 +831,18 @@ def _get_pg_pool(dsn: str):
                 1,
                 int(os.getenv("BOATRACE_DB_POOL_SIZE", default_pool_size)),
             )
-            default_max_waiting = "0" if trigger else str(max_size)
+            # 待ち行列に上限を置かない (0 = 無制限)。
+            # 2026-08-24 実障害の最終原因。psycopg_pool の「待っている件数」は
+            # 一度増えると減らないことがあり、スレッド 3 本しかない worker で
+            # requests_waiting=6 (=上限) のまま張り付いた。上限に達した瞬間から
+            # 以後すべての取得が TooManyRequests で即座に弾かれ、待てば直る類の
+            # 詰まりではないので永久に復帰しない。実際、再起動直後から 10 ページ
+            # 連続で仮ページに落ちた。
+            # 上限を外しても待ち手は各自 5 秒でタイムアウトするので、行列が
+            # 無限に伸びることはない。壊れたカウンタで自らを閉め出す方が害が大きい。
+            default_max_waiting = "0"
             max_waiting = max(
-                0 if trigger else 1,
+                0,
                 int(
                     os.getenv(
                         "BOATRACE_DB_POOL_MAX_WAITING", default_max_waiting
