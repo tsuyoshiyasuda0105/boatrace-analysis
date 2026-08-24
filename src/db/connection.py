@@ -171,6 +171,39 @@ def _note_pool_checkout_failed(pool, wait_ms: float, exc: BaseException) -> None
     )
 
 
+def pg_pool_report() -> dict[str, object]:
+    """接続プールの今の姿を読み取り専用で返す (調査用)。
+
+    プロセスの環境変数や接続の状態を一切書き換えないこと。以前あった調査用
+    エンドポイントは os.environ["BOATRACE_TASK_TRIGGER"] を一時的に書き換えて
+    いたが、これは worker 内の全スレッドに効いてしまい、無関係なリクエストの
+    接続の取り方まで変えてしまう危険があった (2026-08-24 に撤去)。
+
+    gunicorn は複数 worker で動くので、どの worker が答えたか分かるように pid を
+    含める。片方の worker だけ不調、という状態を外から見分けるのに要る。
+    """
+    report: dict[str, object] = {
+        "pid": os.getpid(),
+        "pool_exists": _PG_POOL is not None,
+        "configured": {
+            "timeout_sec": _pool_timeout_seconds(),
+            "connect_timeout_sec": _pg_connect_timeout_seconds(),
+        },
+    }
+    pool = _PG_POOL
+    if pool is not None:
+        report["stats"] = _safe_pool_stats(pool)
+        for name in ("min_size", "max_size", "max_waiting", "max_idle", "max_lifetime"):
+            value = getattr(pool, name, None)
+            if value is not None:
+                report["configured"][name] = value
+    with _PG_POOL_LIFECYCLE_LOCK:
+        report["active_checkouts"] = _PG_POOL_ACTIVE_CHECKOUTS
+        report["peak_checkouts"] = _PG_POOL_PEAK_CHECKOUTS
+        report["recent_events"] = list(_PG_POOL_LIFECYCLE_EVENTS)[-10:]
+    return report
+
+
 def consume_pg_pool_lifecycle_events() -> list[dict[str, object]]:
     """Return and clear bounded non-secret shared-pool lifecycle measurements."""
     with _PG_POOL_LIFECYCLE_LOCK:

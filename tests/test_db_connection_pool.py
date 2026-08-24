@@ -451,3 +451,31 @@ def test_pool_enables_socket_keepalives(monkeypatch):
     assert kwargs["keepalives_idle"] > 0
     assert kwargs["keepalives_interval"] > 0
     assert kwargs["keepalives_count"] > 0
+
+
+def test_pool_report_is_read_only(monkeypatch):
+    """調査用の報告は環境変数もプールも書き換えない。
+
+    2026-08-24: 以前の調査用エンドポイントは os.environ["BOATRACE_TASK_TRIGGER"]
+    を一時的に書き換えて pooled と direct を比べていた。環境変数は worker 内の
+    全スレッドに効くので、調査中の無関係なリクエストまで接続の取り方が変わる。
+    調査の道具が本番を壊しうる状態だったため撤去した。二度と入れないよう縛る。
+    """
+    import os
+
+    before = dict(os.environ)
+    monkeypatch.setattr(connection, "_PG_POOL", None)
+
+    report = connection.pg_pool_report()
+
+    assert dict(os.environ) == before, "報告のために環境変数を触ってはいけない"
+    assert connection._PG_POOL is None, "報告のためにプールを作ってはいけない"
+    assert report["pool_exists"] is False
+    assert "pid" in report, "どの worker が答えたか分からないと片肺状態を掴めない"
+
+
+def test_dangerous_env_mutating_probe_is_gone():
+    from pathlib import Path
+
+    source = Path("src/web/kachisuji_bp.py").read_text(encoding="utf-8")
+    assert 'os.environ["BOATRACE_TASK_TRIGGER"] = "diagnostic-probe"' not in source
