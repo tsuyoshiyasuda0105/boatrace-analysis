@@ -8562,7 +8562,11 @@ def create_app(
             "member_today_races.html",
             target_date=target_date,
             today_iso=_today_jst_iso(),
-            date_form_action=url_for("member_today_races"),
+            # 日付フォームの飛び先はレース一覧 (既定) に任せる。以前はこの画面
+            # 自身に戻していたが、「日付を入れて表示を押したのに会場とレースが
+            # 出てこない」となり、候補 2 件だけの同じ画面が再表示されるのを
+            # 故障と受け取らせていた (2026-08-25 リッキーさん報告)。過去の候補を
+            # 見る用途は「過去履歴」ボタンが担う。
             pick_rows=pick_rows,
             confirmed_rows=[
                 row for row in pick_rows if row.get("status") == "confirmed"
