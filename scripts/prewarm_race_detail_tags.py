@@ -96,7 +96,12 @@ def _missing_cached_race_ids(
     return [keyed_ids[key] for key in cache_keys if key not in fresh_enough]
 
 
-def prewarm(target_date: str, *, budget_sec: float | None = None) -> dict[str, object]:
+def prewarm(
+    target_date: str,
+    *,
+    budget_sec: float | None = None,
+    force: bool = False,
+) -> dict[str, object]:
     if budget_sec is not None and budget_sec <= 0:
         raise ValueError("budget_sec must be positive")
     conn = db_connect()
@@ -111,8 +116,12 @@ def prewarm(target_date: str, *, budget_sec: float | None = None) -> dict[str, o
             (target_date,),
         ).fetchall()
         race_ids = [str(row[0]) for row in race_rows]
-        missing_ids = _missing_cached_race_ids(
-            race_ids, conn=conn, target_date=target_date
+        missing_ids = (
+            list(race_ids)
+            if force
+            else _missing_cached_race_ids(
+                race_ids, conn=conn, target_date=target_date
+            )
         )
         summary: dict[str, object] = {
             "races": len(race_ids),
@@ -194,8 +203,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=date.today().isoformat())
     parser.add_argument("--budget-sec", type=float)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="既存のタグも作り直す (壊れた内容が焼き付いた日の修復用)",
+    )
     args = parser.parse_args()
-    summary = prewarm(args.date, budget_sec=args.budget_sec)
+    summary = prewarm(args.date, budget_sec=args.budget_sec, force=args.force)
     return 0 if int(summary["races"]) > 0 and int(summary["failed"]) == 0 else 1
 
 

@@ -518,7 +518,18 @@ ENTRY_CHANGE_INNER_MIN_RATE = 0.10
 def _load_entry_change_snapshot_stats(
     target_date: str,
     racer_numbers: list[int],
+    *,
+    strict: bool = False,
 ) -> dict[int, dict[str, Any]]:
+    """進入変更スナップショットを選手ごとに読む。
+
+    strict=True は読み込み失敗を例外として伝える。既定の「失敗したら {} を
+    返す」は画面表示の途中では正しい妥協だが、朝のタグ一括生成でこれをやると
+    一時的な DB 不調の瞬間に「進入注意なし」のタグが焼かれ、鮮度チェックは
+    それを完成品と見なして二度と作り直さない (2026-08-25: 出るべき 17 レースが
+    終日 0 件になった)。永続化する側は失敗を失敗として受け取り、リトライに
+    任せること。
+    """
     if not racer_numbers:
         return {}
     wanted = sorted({int(r) for r in racer_numbers if r is not None})
@@ -545,6 +556,8 @@ def _load_entry_change_snapshot_stats(
                 (target_date, *wanted),
             ).fetchall()
     except Exception:
+        if strict:
+            raise
         logger.warning("entry change snapshot load failed: %s", target_date, exc_info=True)
         return {}
     out: dict[int, dict[str, Any]] = {}
@@ -5841,9 +5854,12 @@ def _prefetch_race_detail_tag_inputs(
             ace_thresholds[key] = None
             logger.warning("batch ace-motor prefetch failed: %s", key, exc_info=True)
 
+    # strict: ここで読めなかったら run ごと失敗させ、スケジューラの再試行に
+    # 任せる。黙って {} で進むと全レースに「進入注意なし」が焼かれてしまう。
     entry_change_by_racer = _load_entry_change_snapshot_stats(
         race_date,
         list(all_racers),
+        strict=True,
     )
     unique_ids = list(info_by_race)
     placeholders = ",".join("?" for _ in unique_ids)

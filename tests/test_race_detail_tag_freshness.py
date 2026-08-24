@@ -77,3 +77,34 @@ def test_uncached_races_are_always_rebuilt():
     )
 
     assert missing == ["20260824-06-01"]
+
+
+def test_tag_prefetch_does_not_bake_empty_tags_on_load_failure(monkeypatch):
+    """進入変更の読み込み失敗は、run の失敗として伝わること。
+
+    2026-08-25: 朝 5:40 の一括生成が一時的な DB 不調に当たり、読み込み失敗が
+    黙って {} になって全 156 レースに「進入注意なし」が焼かれた。鮮度チェックは
+    それを完成品と見なすので、出るべき 17 レースが終日 0 件のままになった。
+    """
+    import pytest
+
+    from src.web import app as app_module
+
+    def _boom(*_a, **k):
+        if k.get("strict"):
+            raise RuntimeError("transient connection failure")
+        return {}
+
+    monkeypatch.setattr(app_module, "_load_entry_change_snapshot_stats", _boom)
+    monkeypatch.setattr(
+        app_module, "_prefetch_race_detail_common",
+        lambda ids, conn: {
+            "race_info": {i: {"race_date": "2026-08-25", "stadium_number": 1} for i in ids},
+            "tag_entries": {i: [] for i in ids},
+        },
+    )
+    monkeypatch.setattr(app_module, "_accident_watch_map", lambda *a: {})
+    monkeypatch.setattr(app_module, "_ace_motor_threshold", lambda *a: None)
+
+    with pytest.raises(RuntimeError):
+        app_module._prefetch_race_detail_tag_inputs(["20260825-01-12"], conn=None)
