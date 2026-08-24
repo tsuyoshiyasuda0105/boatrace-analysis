@@ -524,3 +524,38 @@ def test_connection_is_returned_when_setup_fails_after_checkout(monkeypatch):
         raise AssertionError("初期化の失敗が伝わっていない")
 
     assert fake.returned == [fake._conn], "接続を返さずに例外を投げると 1 本失われる"
+
+
+def test_forgotten_connection_is_returned_when_garbage_collected(monkeypatch):
+    """close() を通らない経路が残っていても、参照が消えたら必ず返す。
+
+    2026-08-24 実障害: psycopg_pool は貸し出した接続を GC で回収しない。
+    どこか 1 箇所でも返し忘れがあると 1 本ずつ永久に失われ、worker が
+    pool_available=0 のまま復帰しなくなる。経路を塞ぐのとは別に、最後の砦を置く。
+    """
+    import gc
+
+    class _Conn:
+        autocommit = False
+
+    class _Pool:
+        def __init__(self):
+            self.returned = []
+
+        def getconn(self, timeout=None):
+            return _Conn()
+
+        def putconn(self, conn):
+            self.returned.append(conn)
+
+        def get_stats(self):
+            return {}
+
+    pool = _Pool()
+    monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
+    monkeypatch.setattr(connection, "_get_pg_pool", lambda dsn: pool)
+
+    connection._PgConnection("postgresql://unused")  # 参照を持たずに捨てる
+    gc.collect()
+
+    assert len(pool.returned) == 1, "参照が消えた接続がプールに戻っていない"

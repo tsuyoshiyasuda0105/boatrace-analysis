@@ -40,6 +40,7 @@ _WEB_REQUEST_DB_BUDGET = threading.local()
 _PG_POOL_LIFECYCLE_LOCK = threading.Lock()
 _PG_POOL_LIFECYCLE_EVENTS: list[dict[str, object]] = []
 _PG_POOL_ACTIVE_CHECKOUTS = 0
+_PG_POOL_RECLAIMED_BY_GC = 0
 _PG_POOL_PEAK_CHECKOUTS = 0
 
 _DEFAULT_CONNECT_RETRY_DELAYS = (0.2, 0.5)
@@ -200,6 +201,7 @@ def pg_pool_report() -> dict[str, object]:
     with _PG_POOL_LIFECYCLE_LOCK:
         report["active_checkouts"] = _PG_POOL_ACTIVE_CHECKOUTS
         report["peak_checkouts"] = _PG_POOL_PEAK_CHECKOUTS
+        report["reclaimed_by_gc"] = _PG_POOL_RECLAIMED_BY_GC
         report["recent_events"] = list(_PG_POOL_LIFECYCLE_EVENTS)[-10:]
     return report
 
@@ -336,7 +338,12 @@ def _acquire_pg_connection(dsn: str, *, direct: bool, pool=None):
             else:
                 conn = pool.getconn(timeout=min(_pool_timeout_seconds(), remaining))
             if not direct:
-                _note_pg_pool_checkout_success(pool)
+                # 記録の失敗で except に落ちると、取得済みの接続を握ったまま
+                # 再試行して 1 本捨てることになる。記録は握り潰す。
+                try:
+                    _note_pg_pool_checkout_success(pool)
+                except Exception:
+                    logger.warning("pool checkout bookkeeping failed", exc_info=True)
             return conn
         except Exception as exc:
             # max_waiting is the fail-fast boundary. Do not turn an immediate
@@ -866,11 +873,6 @@ class _PgConnection:
                     direct=False,
                     pool=self._pool,
                 )
-                acquired_at = time.monotonic()
-                self._pool_acquired_at = acquired_at
-                _note_pool_acquired(
-                    self._pool, (acquired_at - checkout_started) * 1000.0
-                )
             except Exception as exc:
                 _note_pool_checkout_failed(
                     self._pool,
@@ -887,6 +889,14 @@ class _PgConnection:
                 logger.warning("postgres pool checkout failed stats=%s", stats)
                 _maybe_rebuild_exhausted_pg_pool(self._pool, stats)
                 raise
+            acquired_at = time.monotonic()
+            self._pool_acquired_at = acquired_at
+            try:
+                _note_pool_acquired(
+                    self._pool, (acquired_at - checkout_started) * 1000.0
+                )
+            except Exception:
+                logger.warning("pool acquire bookkeeping failed", exc_info=True)
         # ここから先で例外が出ると、貸し出された接続は誰にも渡らないまま
         # 参照を失い、プールには二度と戻らない (psycopg_pool は GC では回収
         # しない)。返却されない接続が 1 本ずつ積み上がると、その worker は
@@ -965,6 +975,27 @@ class _PgConnection:
     def __exit__(self, exc_type, exc, tb):
         self.close()
         return False
+
+    def __del__(self):
+        """返し忘れの最後の砦。
+
+        psycopg_pool は貸し出した接続を GC では回収しない。どこか 1 箇所でも
+        close() を通らない経路があると、その 1 本は永久に失われ、積み上がると
+        worker が pool_available=0 のまま復帰しなくなる (2026-08-24 実障害)。
+        経路を数え上げて塞ぐのは大事だが、見落としが必ず 1 つ残る前提で、
+        参照が消えた時点で必ずプールへ返す。発動回数は pg_pool_report() に
+        出るので、「まだ塞げていない経路がある」ことに気づける。
+        """
+        global _PG_POOL_RECLAIMED_BY_GC
+        try:
+            if getattr(self, "_conn", None) is None:
+                return
+            if getattr(self, "_pool", None) is None:
+                return
+            _PG_POOL_RECLAIMED_BY_GC += 1
+            self.close()
+        except Exception:
+            pass
 
 
 class _MeasuredConnection:
