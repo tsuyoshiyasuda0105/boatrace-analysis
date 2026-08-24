@@ -313,6 +313,10 @@ def db_connect(*args, **kwargs):
     if prewarm_context is not None and not args and not kwargs:
         return _BorrowedConnection(prewarm_context["conn"])
     conn = _raw_db_connect(*args, **kwargs)
+    # ここまで来たら接続は取れている。失敗の連続記録を解除する
+    # (/healthz が「ずっと駄目」と誤認したままにならないように)。
+    if "_note_db_recovered" in globals():
+        _note_db_recovered()
     lifecycle_events = consume_pg_pool_lifecycle_events()
     if lifecycle_events and "_note_pool_lifecycle_events" in globals():
         _note_pool_lifecycle_events(lifecycle_events, conn=conn)
@@ -2022,6 +2026,49 @@ _TRANSIENT_DB_ERRORS: list[dict[str, Any]] = []
 _transient_db_errors_lock = threading.Lock()
 _transient_db_errors_last_flush = 0.0
 
+# --- ヘルスチェックが DB の死を見落とさないための最小限の記録 ---------------
+# 2026-08-24 実障害: Web プロセスが DB を一切掴めなくなり、レース詳細が数時間
+# 「準備しています」に落ち続けた。それでも /healthz は db を見ないため 200 を
+# 返し続け、Render は「健康」と判断して再起動しなかった。人間が気づいて手で
+# 再デプロイするまで復旧しなかったのが、この日の長時間障害の正体。
+# 通常の probe は DB を触らない (毎分の負荷を増やさない) まま、「一定時間ずっと
+# 失敗し続けている」ときだけ実際に 1 回 ping して裏を取り、駄目なら 503 を返して
+# Render に再起動させる。
+_DB_FAILING_SINCE: Optional[float] = None
+_db_failing_lock = threading.Lock()
+_DEFAULT_DB_UNHEALTHY_AFTER_SEC = 180.0
+
+
+def _note_db_failure_started() -> None:
+    """最初の失敗時刻だけ覚える (成功すると _note_db_recovered が消す)。"""
+    global _DB_FAILING_SINCE
+    with _db_failing_lock:
+        if _DB_FAILING_SINCE is None:
+            _DB_FAILING_SINCE = time.monotonic()
+
+
+def _note_db_recovered() -> None:
+    global _DB_FAILING_SINCE
+    with _db_failing_lock:
+        _DB_FAILING_SINCE = None
+
+
+def _db_failing_for_seconds() -> float:
+    with _db_failing_lock:
+        started = _DB_FAILING_SINCE
+    return 0.0 if started is None else max(0.0, time.monotonic() - started)
+
+
+def _db_unhealthy_after_seconds() -> float:
+    try:
+        return max(
+            30.0,
+            float(os.getenv("BOATRACE_HEALTHZ_DB_UNHEALTHY_SEC",
+                            str(_DEFAULT_DB_UNHEALTHY_AFTER_SEC))),
+        )
+    except (TypeError, ValueError):
+        return _DEFAULT_DB_UNHEALTHY_AFTER_SEC
+
 POOL_LIFECYCLE_CHECK = "db_pool_lifecycle"
 _POOL_LIFECYCLE_BUFFER_MAX = 100
 _POOL_LIFECYCLE_FLUSH_INTERVAL_SEC = 60.0
@@ -2145,6 +2192,7 @@ def _note_transient_db_error(
     with _transient_db_errors_lock:
         if len(_TRANSIENT_DB_ERRORS) < _TRANSIENT_DB_ERROR_BUFFER_MAX:
             _TRANSIENT_DB_ERRORS.append(event)
+    _note_db_failure_started()
     # A failed acquisition has no safe connection to write with.  Keep the
     # event in memory; the next successful checkout flushes it using that same
     # connection, so observability never adds another blocking checkout.
@@ -7928,7 +7976,28 @@ def create_app(
         http_status = 200
         if request.args.get("full") != "1":
             status_info["checks"]["app"] = "ok"
-            status_info["checks"]["db"] = "skipped"
+            # 通常の probe は DB を触らない (毎分の負荷を増やさない)。ただし
+            # 「一定時間ずっと DB 失敗が続いている」ときだけ実際に 1 回 ping して
+            # 裏を取る。駄目なら 503 を返し、Render に再起動させる。
+            # 2026-08-24: これが無かったため、DB を掴めなくなった Web が
+            # 「健康」と報告し続け、レース詳細が数時間「準備しています」のまま
+            # 放置された (手で再デプロイするまで復旧しなかった)。
+            failing_sec = _db_failing_for_seconds()
+            if (
+                os.getenv("BOATRACE_HEALTHZ_DB_GUARD", "1") != "0"
+                and failing_sec >= _db_unhealthy_after_seconds()
+            ):
+                try:
+                    with db_connect() as conn:
+                        conn.execute("SELECT 1").fetchone()
+                    status_info["checks"]["db"] = "ok"
+                except Exception as e:  # noqa: BLE001
+                    status_info["checks"]["db"] = f"error: {e}"
+                    status_info["checks"]["db_failing_sec"] = round(failing_sec, 1)
+                    status_info["status"] = "error"
+                    return status_info, 503
+            else:
+                status_info["checks"]["db"] = "skipped"
             return status_info, http_status
         # DB ping (サービス完全停止と区別)
 
