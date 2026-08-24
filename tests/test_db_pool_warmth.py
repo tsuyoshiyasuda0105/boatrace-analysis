@@ -117,3 +117,21 @@ def test_background_check_can_be_disabled(monkeypatch):
     monkeypatch.setenv("BOATRACE_DB_POOL_CHECK", "0")
 
     connection._start_pool_health_checker(_Pool())
+
+
+def test_connection_demand_stays_within_one_pool():
+    """web は 1 プロセスに保ち、接続要求を 1 プールぶんに収める。
+
+    2026-08-24 実障害: worker ごとに独立したプールを持つため、2 worker が
+    Supabase 側の枠を食い合い片方だけが枯れた。pid 83 は pool_available=3 で
+    正常なのに pid 82 は 0 のまま復帰せず、同じレースが開けたり開けなかったり
+    した。worker を増やすときは、worker 数 x min_size が枠に収まるか必ず確認する。
+    """
+    import re
+
+    render_yaml = Path("render.yaml").read_text(encoding="utf-8")
+    m = re.search(r"startCommand: gunicorn -w (\d+)", render_yaml)
+    assert m, "gunicorn の worker 数を読めない"
+    assert int(m.group(1)) == 1, (
+        "worker を増やすなら worker数 x min_size が Supabase の枠に収まるか要確認"
+    )

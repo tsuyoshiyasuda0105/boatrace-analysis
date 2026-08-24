@@ -62,16 +62,18 @@ def test_playwright_password_creates_read_only_test_viewer(monkeypatch):
     assert client.get("/admin/memberships").status_code == 403
 
 
-def test_existing_member_password_keeps_paid_member_access(monkeypatch):
+def test_shared_member_password_no_longer_logs_anyone_in(monkeypatch):
+    """2026-08-24 第3段階: 共有パスワードによる会員ログインを廃止した。
+
+    合鍵を 1 本配って回す方式は、渡した相手を絞れず失効もできない。会員認証は
+    Supabase (メール + パスワード) のみ。読み取り専用の Playwright 検査
+    ログインだけを別枠として残す。
+    """
     client = _app(monkeypatch).test_client()
 
-    response = _login(client, "member-secret")
-
-    assert response.status_code == 302
+    assert _login(client, "member-secret").status_code == 401
     with client.session_transaction() as session:
-        assert session["role"] == "paid_member"
-        assert session["auth_provider"] == "legacy_password"
-    assert client.post("/_test/write").status_code == 200
+        assert not session.get("is_member")
 
 
 def test_playwright_password_is_disabled_when_empty(monkeypatch):
@@ -87,18 +89,18 @@ def test_playwright_password_is_disabled_when_too_short(monkeypatch):
 
 
 def test_playwright_password_must_differ_from_member_password(monkeypatch):
+    """検査用パスワードが会員パスワードと同じなら、検査ログインは無効。
+
+    第3段階以降は会員パスワード自体が何の権限も与えないので、この場合は
+    どちらの経路も通らず 401 になる。
+    """
     client = _app(
         monkeypatch,
         member_password="same-secret-value-123",
         playwright_password="same-secret-value-123",
     ).test_client()
 
-    response = _login(client, "same-secret-value-123")
-
-    assert response.status_code == 302
-    with client.session_transaction() as session:
-        assert session["role"] == "paid_member"
-        assert session["auth_provider"] == "legacy_password"
+    assert _login(client, "same-secret-value-123").status_code == 401
 
 
 def test_rotating_playwright_password_expires_existing_session(monkeypatch):

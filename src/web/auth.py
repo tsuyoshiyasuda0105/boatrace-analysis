@@ -337,6 +337,25 @@ def guest_access_or_login_required(view):
     return wrapper
 
 
+def guest_access_or_member_api(view):
+    """公開レース詳細の描画に使う API。
+
+    レース詳細ページ自体は公開なのに、ページ内から呼ぶモーター履歴・選手詳細・
+    タグの API が会員限定のままだと、未ログインの閲覧者にはページの一部が
+    開かないまま残る (2026-08-24 に発見)。ページを公開にするなら、その描画に
+    必要な API も同じ扱いに揃える。ゲスト閲覧の停止スイッチ
+    (BOATRACE_GUEST_ACCESS=0) を切った時だけ会員限定に戻る。
+
+    EV / Value Bet は会員価値の中核なので、この扱いには含めない。
+    """
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if not is_member() and not guest_access_enabled():
+            return jsonify({"error": "unauthorized", "message": "会員ログインが必要です"}), 401
+        return view(*args, **kwargs)
+    return wrapper
+
+
 def member_only_api(view):
     """会員限定の API (JSON) → 未ログインなら 401 を返す"""
     @wraps(view)
@@ -698,21 +717,21 @@ def register_auth_routes(app):
                     error=f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
                 ), 429
             pw = request.form.get("password", "")
-            member_match = _safe_password_check(pw, config.WEB_MEMBER_PASSWORD)
+            # 2026-08-24 第3段階: 共有パスワードによる会員ログインを廃止した。
+            # 会員認証は Supabase (メール + パスワード) のみ。合鍵を 1 本配って
+            # 回す方式は、渡した相手を絞れず、失効もできない。読み取り専用の
+            # Playwright 検査ログインだけは別枠として残す (画面収録の自動化に要る)。
             playwright_match = (
                 _playwright_password_is_safe()
                 and _safe_password_check(pw, config.WEB_PLAYWRIGHT_PASSWORD)
             )
-            if member_match or playwright_match:
+            if playwright_match:
                 _record_attempt(ip, True)
                 session.clear()  # セッション固定攻撃対策
                 session["is_member"] = True
-                session["role"] = "paid_member" if member_match else "test_viewer"
-                session["auth_provider"] = (
-                    "legacy_password" if member_match else "playwright_password"
-                )
-                if playwright_match:
-                    session["playwright_password_version"] = _playwright_password_version()
+                session["role"] = "test_viewer"
+                session["auth_provider"] = "playwright_password"
+                session["playwright_password_version"] = _playwright_password_version()
                 session.permanent = True
                 # オープンリダイレクト対策: next が外部 URL なら index へ
                 next_url = _safe_redirect_url(request.form.get("next", ""), url_for("index"))
@@ -721,6 +740,10 @@ def register_auth_routes(app):
             # 短時間の遅延 (timing attack の更なる緩和)
             time.sleep(0.3)
             return render_template_string(LOGIN_TEMPLATE, error="パスワードが違います"), 401
+        # 会員は Supabase 側で受け付ける。共有パスワードの入力欄を出し続けると
+        # 「まだ使える」と誤解させるので、設定されているなら素直に送る。
+        if supabase_auth_client.is_configured():
+            return redirect(url_for("login_supabase", next=request.args.get("next", "")))
         return render_template_string(LOGIN_TEMPLATE, error=None)
 
     @app.route("/login-supabase", methods=["GET", "POST"])

@@ -260,7 +260,12 @@ def test_render_web_worker_restarts_are_not_too_frequent():
 
     assert "--graceful-timeout 30" in source
     assert "--max-requests" not in source, "リクエスト数による使い捨ては行わない"
-    assert "gunicorn -w 2 " in source, "1ワーカーでは再起動が全断になる"
+    # 2026-08-24: ワーカー数は 2 -> 1 に戻した。冗長性より、ワーカーごとに
+    # 独立した接続プールが Supabase の枠を食い合う害の方が大きかった
+    # (片方が枯れ、同じレースが開けたり開けなかったりした)。--max-requests を
+    # 外した今は使い捨て再起動が起きないので、冗長性の必要性も下がっている。
+    # ワーカー数の固定は tests/test_db_pool_warmth.py 側で理由付きで行う。
+    assert "--max-requests" not in source
 
 
 def test_races_page_writes_lightweight_top_snapshot_on_cache_miss(monkeypatch):

@@ -13,7 +13,13 @@ services:
       pip install --upgrade pip
       pip install -r requirements.txt
       pip install gunicorn
-    startCommand: gunicorn -w 2 --worker-class gthread --threads 4 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
+    # 2026-08-24: worker 2 -> 1。worker ごとに独立した接続プールを持つため、
+    # 2 つあると Supabase 側の接続枠を食い合い、片方だけが枯れる。実際に
+    # pid 83 は正常 (pool_available=3) なのに pid 82 は pool_available=0 のまま
+    # 復帰せず、同じレースがアクセスのたびに開けたり開けなかったりした。
+    # 1 プロセスにすれば接続要求が半減し、その半々の壊れ方も構造的に消える。
+    # ページのメモリキャッシュも 1 つに集約されるので当たりやすくなる。
+    startCommand: gunicorn -w 1 --worker-class gthread --threads 4 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
@@ -22,12 +28,9 @@ services:
         sync: false
       - key: BOATRACE_SUPABASE_ONLY
         value: "1"
-      # 2026-08-23: レース詳細が 16.3 秒前後で揃って遅いが、既存の計測は
-      # 「再生成に入った時だけ」有効なため、その手前で力尽きるリクエストの
-      # 内訳が slow_request に残らない (db_queries=0 / phases_ms 空)。
-      # 原因特定のあいだ全リクエストを計測する。判明したら外してよい。
-      - key: BOATRACE_PROFILE_HTTP
-        value: "1"
+      # BOATRACE_PROFILE_HTTP は 2026-08-24 に外した。「詳細が 16 秒かかる」の
+      # 正体は接続の取得待ち (5 秒 x 回数) だと判明したため、全リクエストを
+      # 計測し続ける理由がなくなった。必要になったら env で戻せる。
       - key: BOATRACE_WEB_SECRET
         generateValue: true
       - key: BOATRACE_MEMBER_PASSWORD

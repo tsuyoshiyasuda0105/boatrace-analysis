@@ -35,13 +35,10 @@ def _create_lightweight_app(monkeypatch, *, production: bool = False):
             "production-member-password",
             "WEB_SESSION_SECRET",
         ),
-        (
-            "WEB_MEMBER_PASSWORD",
-            "dev-member",
-            "WEB_SESSION_SECRET",
-            "production-session-secret",
-            "BOATRACE_MEMBER_PASSWORD",
-        ),
+        # WEB_MEMBER_PASSWORD は 2026-08-24 の第3段階で会員権を与えなくなった
+        # (認証は Supabase のみ)。既定値のままでも誰も入れないので、起動を
+        # 止める対象から外した。代わりに警告だけ出す
+        # (test_default_shared_password_no_longer_blocks_production_start)。
     ],
 )
 def test_create_app_rejects_each_default_secret_in_production(

@@ -165,7 +165,8 @@ from src.strategies.signals import (
 )
 from src.web.auth import (
     admin_required, current_auth_provider, current_role, is_admin, is_member,
-    guest_access_or_login_required, is_supabase_auth_enabled, login_required,
+    guest_access_or_login_required, guest_access_or_member_api,
+    is_supabase_auth_enabled, login_required,
     member_only_api, register_auth_routes,
 )
 from src.web.billing import register_billing_routes
@@ -7293,12 +7294,15 @@ def create_app(
         logger.critical(message)
         raise RuntimeError(message)
     if is_production and not _is_cron_process and config.WEB_MEMBER_PASSWORD == _DEFAULT_MEMBER:
-        message = (
-            "SECURITY: BOATRACE_MEMBER_PASSWORD is using DEFAULT value in production. "
-            "Set this env var to a strong password (16+ chars)."
+        # 2026-08-24 第3段階以降、この共有パスワードでは会員になれない
+        # (認証は Supabase のみ)。既定値のままでも誰も入れないので、起動を
+        # 止める理由はもう無い。ただし Playwright 検査用パスワードは「会員
+        # パスワードと違うこと」を条件に有効化される仕組みなので、値が残って
+        # いる環境もある。気づけるように警告だけ残す。
+        logger.warning(
+            "BOATRACE_MEMBER_PASSWORD is at its default value. It no longer grants "
+            "membership (Supabase only); the variable can be removed."
         )
-        logger.critical(message)
-        raise RuntimeError(message)
 
     guest_request_times: dict[tuple[str, str], deque[float]] = {}
     guest_rate_limit_lock = threading.Lock()
@@ -8709,6 +8713,18 @@ def create_app(
             if cached_response is not None:
                 return cached_response
             if not is_member():
+                # 仮ページは「まだ作っている途中」の意味に限る。存在しない
+                # レース (開催のない場外番号など) まで同じ画面を返すと、
+                # 「作っている最中」と「そんなレースは無い」が見分けられない。
+                # 2026-08-24 の障害調査では、実在しない race_id で再現を試みて
+                # 誤った結論を出しかけた。DB を引けない時は判定できないので、
+                # 従来どおり仮ページに倒す (存在するのに 404 を出すより安全)。
+                try:
+                    exists = bool(_race_basic_info(race_id))
+                except Exception:
+                    exists = True
+                if not exists:
+                    abort(404)
                 return _race_preparing_page_response(race_id)
         _enable_response_profiling()
         phase_started = time.perf_counter()
@@ -8993,7 +9009,7 @@ def create_app(
         })
 
     @app.route("/api/race/<race_id>/signals")
-    @member_only_api
+    @guest_access_or_member_api
     @cached(ttl=300, past_ttl=21600)
     def race_signals_api(race_id: str):
         race_id = _canonicalize_race_id(race_id)
@@ -9032,7 +9048,7 @@ def create_app(
         })
 
     @app.route("/api/race/<race_id>/motor-history/<int:boat_number>")
-    @member_only_api
+    @guest_access_or_member_api
     @cached(ttl=60, past_ttl=86400)
     def race_motor_history(race_id: str, boat_number: int):
         race_id = _canonicalize_race_id(race_id)
@@ -9072,7 +9088,7 @@ def create_app(
         return response, 202
 
     @app.route("/api/race/<race_id>/racer-detail/<int:boat_number>")
-    @member_only_api
+    @guest_access_or_member_api
     @cached(ttl=86400, past_ttl=86400)
     def race_racer_detail(race_id: str, boat_number: int):
         race_id = _canonicalize_race_id(race_id)

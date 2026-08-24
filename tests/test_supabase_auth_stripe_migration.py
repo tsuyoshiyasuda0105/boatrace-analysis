@@ -41,9 +41,15 @@ def test_security_policy_allows_supabase_auth_fetch():
     assert """f"connect-src 'self'{supabase_connect_src}; """ in app_source
 
 
-def test_legacy_password_login_is_not_admin():
+def test_legacy_password_login_is_gone_entirely():
+    """第3段階 (2026-08-24): 共有パスワードの会員ログイン経路そのものを削除。
+
+    以前は「その経路では admin にならないこと」を確かめていた。経路自体が
+    無くなったので、より強い条件で固定する。
+    """
     source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
-    assert '"legacy_password" if member_match else "playwright_password"' in source
+    assert '"legacy_password"' not in source, "共有パスワード会員ログインが復活している"
+    assert "member_match" not in source
 
 
 def test_supabase_membership_db_failure_is_retryable_not_auth_failure():
@@ -54,7 +60,6 @@ def test_supabase_membership_db_failure_is_retryable_not_auth_failure():
     assert "membership lookup unavailable" in route
     assert '"free_member"' in route
     assert "role_validated=False" in route
-    assert '"paid_member" if member_match else "test_viewer"' in source
     assert 'session["role"] = "admin"' not in source
 
 
