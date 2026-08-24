@@ -203,7 +203,51 @@ def pg_pool_report() -> dict[str, object]:
         report["peak_checkouts"] = _PG_POOL_PEAK_CHECKOUTS
         report["reclaimed_by_gc"] = _PG_POOL_RECLAIMED_BY_GC
         report["recent_events"] = list(_PG_POOL_LIFECYCLE_EVENTS)[-10:]
+    report["holders"] = _describe_connection_holders()
+    report["threads"] = sorted(t.name for t in threading.enumerate())[:20]
     return report
+
+
+def _describe_connection_holders() -> dict[str, object]:
+    """まだ接続を握っている _PgConnection と、それを参照している側を数える。
+
+    2026-08-24 実障害の最後の未解明点。Postgres 側では接続が idle で生きている
+    のに、プールは pool_available=0 のまま。つまりアプリが借りたまま返していない
+    のだが、こちらの貸出カウンタは 0 を指し (下限で丸められる)、GC の回収も
+    0 件だった。オブジェクトが生きたまま誰かに参照され続けている、という仮説を
+    確かめるには実物を数えるしかない。読み取り専用で、調査用エンドポイント
+    からのみ呼ぶ。
+    """
+    import gc
+
+    out: dict[str, object] = {}
+    try:
+        live = [
+            obj
+            for obj in gc.get_objects()
+            if type(obj).__name__ == "_PgConnection"
+        ]
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"[:200]}
+
+    holding = [o for o in live if getattr(o, "_conn", None) is not None]
+    out["live_objects"] = len(live)
+    out["still_holding"] = len(holding)
+
+    referrer_types: dict[str, int] = {}
+    for obj in holding[:10]:
+        try:
+            for ref in gc.get_referrers(obj):
+                name = type(ref).__name__
+                if name == "list" and len(ref) < 40:
+                    name = f"list[{','.join(sorted({type(x).__name__ for x in ref}))[:60]}]"
+                referrer_types[name] = referrer_types.get(name, 0) + 1
+        except Exception:  # noqa: BLE001
+            continue
+    out["referrers"] = dict(
+        sorted(referrer_types.items(), key=lambda kv: -kv[1])[:12]
+    )
+    return out
 
 
 def consume_pg_pool_lifecycle_events() -> list[dict[str, object]]:
