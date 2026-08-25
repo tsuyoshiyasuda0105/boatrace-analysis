@@ -120,6 +120,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import config
 from src.collectors import openapi
 from src.db.connection import (
+    start_process_heartbeat,
     begin_web_request_db_budget,
     connect as _raw_db_connect,
     consume_pg_pool_lifecycle_events,
@@ -7679,14 +7680,14 @@ def create_app(
 
     app.jinja_env.auto_reload = True
 
-    # プロセス凍結の検出器 (2026-08-25: 日中に 6 回、30 秒以上の完全凍結で
-    # Render に処刑された。凍結中のスタックを内側から採取する)。
-    from src.db.connection import start_process_heartbeat
-
-    start_process_heartbeat()
-
     @app.before_request
     def _start_web_db_checkout_budget():
+        # gunicorn は親でアプリを読み込み、worker は fork で受け継ぐ。つまり
+        # create_app は worker では再実行されず、そこで起動した鼓動は親のもの
+        # だけになる (2026-08-25: ディスクに残ったブラックボックスが全部
+        # 親の姿だったのはこれが理由)。リクエストを処理する側で確実に起動する。
+        # 自分が所有者ならロックも取らずに即座に帰るので実質無料。
+        start_process_heartbeat()
         begin_web_request_db_budget()
 
     @app.teardown_request

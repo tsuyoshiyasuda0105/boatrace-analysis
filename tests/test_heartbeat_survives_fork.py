@@ -47,3 +47,30 @@ def test_start_guard_is_not_a_plain_boolean():
     source = Path("src/db/connection.py").read_text(encoding="utf-8")
     assert "_HEARTBEAT_STARTED" not in source
     assert "_HEARTBEAT_OWNER_PID == os.getpid()" in source
+
+
+def test_heartbeat_is_started_from_the_request_path():
+    """worker で確実に動くよう、リクエスト処理側から起動すること。
+
+    2026-08-25: gunicorn は親でアプリを読み込み worker は fork で受け継ぐため、
+    create_app 内でしか起動していないと worker は一度も鼓動を打たない。
+    ディスクに残ったブラックボックスが 3 個とも親の姿だった原因。
+    """
+    from pathlib import Path
+
+    source = Path("src/web/app.py").read_text(encoding="utf-8")
+    hook = source[source.index("def _start_web_db_checkout_budget"):]
+    hook = hook[: hook.index("@app.teardown_request")]
+    assert "start_process_heartbeat()" in hook, (
+        "リクエスト側で起動しないと worker の凍結を観測できない"
+    )
+
+
+def test_owner_fast_path_avoids_the_lock():
+    """毎リクエスト呼ばれるので、所有者ならロックを取らずに帰ること。"""
+    from pathlib import Path
+
+    source = Path("src/db/connection.py").read_text(encoding="utf-8")
+    body = source[source.index("def start_process_heartbeat"):]
+    body = body[: body.index("with _HEARTBEAT_LOCK:")]
+    assert "_HEARTBEAT_OWNER_PID == os.getpid()" in body

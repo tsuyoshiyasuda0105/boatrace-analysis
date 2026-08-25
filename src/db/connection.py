@@ -306,6 +306,9 @@ def start_process_heartbeat() -> None:
     pg_pool_report() で「どこで凍っていたか」を読み出せる。
     """
     global _HEARTBEAT_OWNER_PID
+    # 高速路: 自分が所有者ならロックも取らずに帰る (毎リクエスト呼ばれるため)
+    if _HEARTBEAT_OWNER_PID == os.getpid():
+        return
     with _HEARTBEAT_LOCK:
         # fork の子はモジュール変数を丸ごと受け継ぐが、スレッドは受け継がない。
         # 真偽値で「起動済み」を覚えていると、gunicorn の worker は
