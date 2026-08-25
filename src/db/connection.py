@@ -182,6 +182,64 @@ def _note_pool_checkout_failed(pool, wait_ms: float, exc: BaseException) -> None
     )
 
 
+_HEARTBEAT_LOCK = threading.Lock()
+_HEARTBEAT_STARTED = False
+_HEARTBEAT_LAST: list[float] = [0.0]
+_HEARTBEAT_MAX_GAP: list[float] = [0.0]
+_HEARTBEAT_GAP_AT: list[float] = [0.0]
+_HEARTBEAT_STACKS: list[object] = [None]
+_HEARTBEAT_INTERVAL_SEC = 2.0
+
+
+def _heartbeat_loop() -> None:
+    import sys
+    import traceback
+
+    while True:
+        time.sleep(_HEARTBEAT_INTERVAL_SEC)
+        now = time.monotonic()
+        prev = _HEARTBEAT_LAST[0]
+        _HEARTBEAT_LAST[0] = now
+        if prev <= 0:
+            continue
+        gap = now - prev
+        if gap > max(_HEARTBEAT_MAX_GAP[0], _HEARTBEAT_INTERVAL_SEC * 3):
+            # 鼓動が飛んだ = プロセス全体がその間、何も実行できていなかった。
+            # 飛んだ直後の全スレッドの現在地を残す (凍結の犯人は大抵まだそこにいる)。
+            _HEARTBEAT_MAX_GAP[0] = gap
+            _HEARTBEAT_GAP_AT[0] = time.time()
+            try:
+                frames = sys._current_frames()
+                names = {t.ident: t.name for t in threading.enumerate()}
+                stacks = {}
+                for ident, frame in frames.items():
+                    stack = traceback.format_stack(frame)[-4:]
+                    stacks[names.get(ident, str(ident))] = "".join(stack)[-600:]
+                _HEARTBEAT_STACKS[0] = stacks
+            except Exception:
+                pass
+
+
+def start_process_heartbeat() -> None:
+    """プロセス凍結の検出器。
+
+    2026-08-25、web が日中に 6 回、30 秒以上完全に凍って Render のヘルス
+    チェックに落ち、インスタンスごと処刑された。外からは「無応答」しか
+    見えないため、内側に 2 秒ごとの鼓動を置く。鼓動が飛んだ幅 = 凍っていた
+    時間そのもの。飛んだ直後に全スレッドのスタックを保存するので、復帰後に
+    pg_pool_report() で「どこで凍っていたか」を読み出せる。
+    """
+    global _HEARTBEAT_STARTED
+    with _HEARTBEAT_LOCK:
+        if _HEARTBEAT_STARTED:
+            return
+        thread = threading.Thread(
+            target=_heartbeat_loop, name="process-heartbeat", daemon=True
+        )
+        thread.start()
+        _HEARTBEAT_STARTED = True
+
+
 def _process_rss_mb() -> object:
     """このプロセスの実メモリ使用量 (MB)。
 
@@ -214,6 +272,11 @@ def pg_pool_report() -> dict[str, object]:
     report: dict[str, object] = {
         "pid": os.getpid(),
         "rss_mb": _process_rss_mb(),
+        "heartbeat": {
+            "max_gap_sec": round(_HEARTBEAT_MAX_GAP[0], 1),
+            "gap_at_epoch": round(_HEARTBEAT_GAP_AT[0], 1),
+            "stacks_at_gap": _HEARTBEAT_STACKS[0],
+        },
         "pool_exists": _PG_POOL is not None,
         "configured": {
             "timeout_sec": _pool_timeout_seconds(),

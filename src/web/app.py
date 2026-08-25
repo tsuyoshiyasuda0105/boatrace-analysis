@@ -7649,6 +7649,12 @@ def create_app(
 
     app.jinja_env.auto_reload = True
 
+    # プロセス凍結の検出器 (2026-08-25: 日中に 6 回、30 秒以上の完全凍結で
+    # Render に処刑された。凍結中のスタックを内側から採取する)。
+    from src.db.connection import start_process_heartbeat
+
+    start_process_heartbeat()
+
     @app.before_request
     def _start_web_db_checkout_budget():
         begin_web_request_db_budget()
