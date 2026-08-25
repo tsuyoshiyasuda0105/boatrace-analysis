@@ -197,7 +197,13 @@ def _heartbeat_black_box_path():
 
     data = _Path("/data")
     if data.is_dir():
-        return data / "heartbeat_last.json"
+        # プロセスごとに別ファイル。gunicorn の親 (arbiter) でも create_app が
+        # 走って鼓動が動くため、1 ファイル共有だと親が 2 秒ごとに worker の
+        # 記録を上書きし、worker が凍った証拠を消してしまう
+        # (2026-08-25 15:00 の読み出しで実際に親のシャットダウン姿しか
+        # 残っていなかった)。ついでにこの事故が教えてくれたこと: 凍結中も
+        # 親は正常に鼓動していた = 凍結は worker プロセス内の GIL 占有。
+        return data / f"heartbeat_{os.getpid()}.json"
     return None
 
 
@@ -262,16 +268,28 @@ def _read_previous_death_snapshot() -> object:
 def _load_black_box_from_previous_life() -> None:
     import json as _json
 
-    box = _heartbeat_black_box_path()
-    if box is None or not box.exists():
+    from pathlib import Path as _Path
+
+    data = _Path("/data")
+    if not data.is_dir():
         return
-    try:
-        payload = _json.loads(box.read_text(encoding="utf-8"))
-        # 起動直後に読むこのファイルは、必ず「前のプロセス」が最後に書いたもの。
-        payload["written_before_this_boot"] = True
-        _PREVIOUS_DEATH[0] = payload
-    except Exception:
-        _PREVIOUS_DEATH[0] = {"error": "black box unreadable"}
+    snapshots = []
+    for box in sorted(data.glob("heartbeat_*.json")):
+        try:
+            payload = _json.loads(box.read_text(encoding="utf-8"))
+            payload["file"] = box.name
+            snapshots.append(payload)
+        except Exception:
+            snapshots.append({"file": box.name, "error": "unreadable"})
+    # 直近の死に最も近い記録から並べる
+    snapshots.sort(key=lambda x: x.get("at_epoch", 0), reverse=True)
+    _PREVIOUS_DEATH[0] = snapshots[:3] if snapshots else None
+    # 溜まりすぎないよう、古い前世のファイルは掃除する (自分の分は書き直す)
+    for box in sorted(data.glob("heartbeat_*.json"))[:-6]:
+        try:
+            box.unlink()
+        except Exception:
+            pass
 
 
 def start_process_heartbeat() -> None:
