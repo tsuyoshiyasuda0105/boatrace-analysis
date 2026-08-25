@@ -307,6 +307,10 @@ def is_transient_db_error(exc: BaseException) -> bool:
             return False
         if state.startswith("08") or state in {"57P01", "57P02", "57P03"}:
             return True
+        # 53300 too_many_connections / 53000 insufficient_resources。
+        # 「今は満杯、後なら通る」であって設定や資格情報の誤りではない。
+        if state in {"53000", "53300"}:
+            return True
         try:
             from psycopg_pool import PoolTimeout, TooManyRequests
 
@@ -327,6 +331,23 @@ def is_transient_db_error(exc: BaseException) -> bool:
                 "connection timeout",
                 "connection refused",
                 "connection reset",
+                # Supabase の pooler が session mode の枠 (15) を使い切った時の
+                # 文言。実際にはこう返る:
+                #   connection failed: ... FATAL: (EMAXCONNSESSION)
+                #   max clients reached in session mode - max clients are
+                #   limited to pool_size: 15
+                # これは典型的な一時障害で、少し待てば通る。ここで「一時的では
+                # ない」と判定すると、会員の権限再確認 (60秒ごと) がその瞬間に
+                # 当たっただけでキャッシュ済みの役割を使わずに例外を送出し、
+                # ログイン中の会員に 500 を返してしまう
+                # (2026-08-25 リッキーさん報告「会員ログイン頻繁にアクセス
+                #  できなくなる」の原因)。
+                # なお "connection failed" 単体を目印にしてはいけない。
+                # 認証失敗も同じ前置きで始まるため、資格情報の誤りまで
+                # 一時障害に化けてしまう。
+                "max clients reached",
+                "emaxconnsession",
+                "too many clients already",
                 "server closed the connection",
                 "the database system is starting up",
                 "the database system is shutting down",

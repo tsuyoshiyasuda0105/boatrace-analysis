@@ -98,19 +98,26 @@ def test_extract_today_race_ids_uses_only_real_canonical_same_day_values() -> No
     ]
 
 
-def test_endpoint_mix_is_public_only_without_auth_and_get_paths_with_auth() -> None:
-    public = build_endpoints(False, "2026-08-17", [])
-    assert {endpoint.path for endpoint in public} == {"/healthz"}
+def test_endpoint_mix_measures_the_real_visitor_path() -> None:
+    """未ログインでも本物の負荷を測る。
+
+    2026-08-25 改訂: 以前は未ログインだと /healthz だけを測っていた。/healthz は
+    DB を触らないので、そこが緑でもサーバが持つ証拠にならない (2026-08-24 の
+    障害中、/healthz は終日 200 を返し続けた)。レース一覧とレース詳細は
+    2026-08-24 に公開されたので、資格情報なしで実際の経路を測れる。
+    """
+    public = build_endpoints(False, "2026-08-17", ["20260817-01-01"])
+    paths = {endpoint.path for endpoint in public}
+    assert "/races?date=2026-08-17" in paths, "DB を使うページを測らないと意味がない"
+    assert "/race/20260817-01-01" in paths
+    assert not any("/api/market-signals" in p for p in paths), "会員限定は未ログインで測らない"
 
     authenticated = build_endpoints(
         True, "2026-08-17", ["20260817-01-01", "20260817-02-03"]
     )
     assert all(endpoint.path.startswith("/") for endpoint in authenticated)
-    assert "/races?date=2026-08-17" in {endpoint.path for endpoint in authenticated}
-    assert "/race/20260817-01-01" in {endpoint.path for endpoint in authenticated}
-    assert sum(endpoint.name == "healthz" for endpoint in authenticated) * 2 >= len(
-        authenticated
-    )
+    assert "/race/20260817-02-03" in {endpoint.path for endpoint in authenticated}
+    assert any("/api/market-signals" in e.path for e in authenticated)
 
 
 def test_high_concurrency_requires_explicit_operator_guard() -> None:
