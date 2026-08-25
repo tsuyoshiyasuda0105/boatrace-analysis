@@ -635,10 +635,17 @@ def _pool_watchdog_seconds(env_name: str, default: float) -> float:
 def _note_pg_pool_checkout_success(pool) -> None:
     """Clear a pending exhaustion window after any successful checkout."""
     global _PG_POOL_EXHAUSTED_SINCE, _PG_POOL_EXHAUSTION_FAILURES
-    with _PG_POOL_LOCK:
+    # これは成功のたびにリクエスト経路から呼ばれる帳簿付け。ロックが空いて
+    # いなければ捨てる。誰かがプールを作り直している最中にここで待つと、
+    # リクエストスレッドがプールの世話に巻き込まれる (2026-08-25 19:12)。
+    if not _PG_POOL_LOCK.acquire(blocking=False):
+        return
+    try:
         if _PG_POOL is pool:
             _PG_POOL_EXHAUSTED_SINCE = None
             _PG_POOL_EXHAUSTION_FAILURES = 0
+    finally:
+        _PG_POOL_LOCK.release()
 
 
 def _maybe_rebuild_exhausted_pg_pool(
@@ -666,10 +673,13 @@ def _maybe_rebuild_exhausted_pg_pool(
     except (TypeError, ValueError):
         available, waiting = -1, 0
     if available != 0 or waiting <= 0:
-        with _PG_POOL_LOCK:
-            if _PG_POOL is pool:
-                _PG_POOL_EXHAUSTED_SINCE = None
-                _PG_POOL_EXHAUSTION_FAILURES = 0
+        if _PG_POOL_LOCK.acquire(blocking=False):
+            try:
+                if _PG_POOL is pool:
+                    _PG_POOL_EXHAUSTED_SINCE = None
+                    _PG_POOL_EXHAUSTION_FAILURES = 0
+            finally:
+                _PG_POOL_LOCK.release()
         return False
 
     observed_at = time.monotonic() if now is None else now
@@ -689,7 +699,15 @@ def _maybe_rebuild_exhausted_pg_pool(
         else max(0.0, cooldown_sec)
     )
 
-    with _PG_POOL_LOCK:
+    # 番犬は決してリクエストを待たせない。誰かが既にプールの世話をしている
+    # なら黙って譲る。2026-08-25 19:12 の全断は、この関数がロック待ちで
+    # gthread のリクエストスレッドを全部 (--threads 2 の 2 本とも) 縛り、
+    # DB を触らないはずの /healthz すら応答できずインスタンスが処刑された。
+    # ブラックボックスに「両スレッドとも with _PG_POOL_LOCK: で停止」と残った。
+    if not _PG_POOL_LOCK.acquire(blocking=False):
+        return False
+    retired_pool = None
+    try:
         if _PG_POOL is not pool:
             return False
         if _PG_POOL_EXHAUSTED_SINCE is None:
@@ -727,13 +745,29 @@ def _maybe_rebuild_exhausted_pg_pool(
         _PG_POOL_EXHAUSTED_SINCE = None
         _PG_POOL_EXHAUSTION_FAILURES = 0
         _PG_POOL_LAST_REBUILD_AT = observed_at
-        try:
-            pool.close()
-        except Exception as exc:
-            logger.warning(
-                "retired postgres pool close failed; type=%s", type(exc).__name__
-            )
+        retired_pool = pool
         return True
+    finally:
+        _PG_POOL_LOCK.release()
+        if retired_pool is not None:
+            # close() はプールの worker スレッドの終了を待つ。接続が詰まって
+            # いると何十秒も戻らないので、ロックの外へ、さらに専用スレッドへ
+            # 追い出す。retire した時点で誰もこのプールを参照していない。
+            threading.Thread(
+                target=_close_retired_pool,
+                args=(retired_pool,),
+                name="pg-pool-retire",
+                daemon=True,
+            ).start()
+
+
+def _close_retired_pool(pool) -> None:
+    try:
+        pool.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "retired postgres pool close failed; type=%s", type(exc).__name__
+        )
 
 
 def _is_postgres_url(url: str) -> bool:
