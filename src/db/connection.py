@@ -191,33 +191,87 @@ _HEARTBEAT_STACKS: list[object] = [None]
 _HEARTBEAT_INTERVAL_SEC = 2.0
 
 
-def _heartbeat_loop() -> None:
+def _heartbeat_black_box_path():
+    """再起動を生き延びる置き場所。永続ディスクが無ければ None (機能は無効)。"""
+    from pathlib import Path as _Path
+
+    data = _Path("/data")
+    if data.is_dir():
+        return data / "heartbeat_last.json"
+    return None
+
+
+def _capture_all_stacks() -> dict[str, str]:
     import sys
     import traceback
 
+    frames = sys._current_frames()
+    names = {t.ident: t.name for t in threading.enumerate()}
+    stacks = {}
+    for ident, frame in frames.items():
+        stack = traceback.format_stack(frame)[-4:]
+        stacks[names.get(ident, str(ident))] = "".join(stack)[-600:]
+    return stacks
+
+
+def _heartbeat_loop() -> None:
+    import json as _json
+
+    box = _heartbeat_black_box_path()
     while True:
         time.sleep(_HEARTBEAT_INTERVAL_SEC)
         now = time.monotonic()
         prev = _HEARTBEAT_LAST[0]
         _HEARTBEAT_LAST[0] = now
-        if prev <= 0:
-            continue
-        gap = now - prev
-        if gap > max(_HEARTBEAT_MAX_GAP[0], _HEARTBEAT_INTERVAL_SEC * 3):
-            # 鼓動が飛んだ = プロセス全体がその間、何も実行できていなかった。
-            # 飛んだ直後の全スレッドの現在地を残す (凍結の犯人は大抵まだそこにいる)。
-            _HEARTBEAT_MAX_GAP[0] = gap
-            _HEARTBEAT_GAP_AT[0] = time.time()
-            try:
-                frames = sys._current_frames()
-                names = {t.ident: t.name for t in threading.enumerate()}
-                stacks = {}
-                for ident, frame in frames.items():
-                    stack = traceback.format_stack(frame)[-4:]
-                    stacks[names.get(ident, str(ident))] = "".join(stack)[-600:]
+        try:
+            stacks = _capture_all_stacks()
+        except Exception:
+            stacks = {}
+        if prev > 0:
+            gap = now - prev
+            if gap > max(_HEARTBEAT_MAX_GAP[0], _HEARTBEAT_INTERVAL_SEC * 3):
+                # 鼓動が飛んだ = その間プロセス全体が何も実行できていなかった。
+                _HEARTBEAT_MAX_GAP[0] = gap
+                _HEARTBEAT_GAP_AT[0] = time.time()
                 _HEARTBEAT_STACKS[0] = stacks
+        # ブラックボックス: 毎拍、全スレッドの現在地を永続ディスクへ書く。
+        # 凍結中は書けないので、ファイルに残るのは「凍る直前 (最大2秒前)」の
+        # 姿。Render に処刑されてメモリが消えても、これだけは残る
+        # (2026-08-25 14:32: 凍結→処刑でメモリ内の記録ごと消えた反省)。
+        if box is not None:
+            try:
+                payload = _json.dumps(
+                    {"at_epoch": time.time(), "pid": os.getpid(), "stacks": stacks},
+                    ensure_ascii=False,
+                )
+                tmp = box.with_suffix(".tmp")
+                tmp.write_text(payload, encoding="utf-8")
+                tmp.replace(box)
             except Exception:
                 pass
+
+
+_PREVIOUS_DEATH: list[object] = [None]
+
+
+def _read_previous_death_snapshot() -> object:
+    """前回の死の直前 (最大2秒前) にプロセスが何をしていたか。"""
+    return _PREVIOUS_DEATH[0]
+
+
+def _load_black_box_from_previous_life() -> None:
+    import json as _json
+
+    box = _heartbeat_black_box_path()
+    if box is None or not box.exists():
+        return
+    try:
+        payload = _json.loads(box.read_text(encoding="utf-8"))
+        # 起動直後に読むこのファイルは、必ず「前のプロセス」が最後に書いたもの。
+        payload["written_before_this_boot"] = True
+        _PREVIOUS_DEATH[0] = payload
+    except Exception:
+        _PREVIOUS_DEATH[0] = {"error": "black box unreadable"}
 
 
 def start_process_heartbeat() -> None:
@@ -233,6 +287,7 @@ def start_process_heartbeat() -> None:
     with _HEARTBEAT_LOCK:
         if _HEARTBEAT_STARTED:
             return
+        _load_black_box_from_previous_life()
         thread = threading.Thread(
             target=_heartbeat_loop, name="process-heartbeat", daemon=True
         )
@@ -276,6 +331,7 @@ def pg_pool_report() -> dict[str, object]:
             "max_gap_sec": round(_HEARTBEAT_MAX_GAP[0], 1),
             "gap_at_epoch": round(_HEARTBEAT_GAP_AT[0], 1),
             "stacks_at_gap": _HEARTBEAT_STACKS[0],
+            "black_box": _read_previous_death_snapshot(),
         },
         "pool_exists": _PG_POOL is not None,
         "configured": {
