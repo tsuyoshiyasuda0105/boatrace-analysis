@@ -8996,6 +8996,26 @@ def create_app(
                 max_odds=max_odds,
                 max_results=max_results,
             )
+        except RuntimeError as e:
+            # 本番 web は cached_predictions_only で起動しており、三連単 joint
+            # 確率を出せる予測器を積んでいない。この API はどの画面からも
+            # 呼ばれていない休眠状態だが、会員向けに常時 500 を返すのは
+            # 「壊れている」であって「未提供」ではない。正直に未提供と返す
+            # (2026-08-25 の会員経路耐久テストで発覚)。
+            # 本提供するには夜間バッチで trifecta 確率を事前計算して DB に
+            # 置く必要がある (リッキーさん判断待ち)。
+            if "cached-predictions-only" in str(e):
+                return jsonify({
+                    "race_id": race_id,
+                    "snapshot_label": snapshot,
+                    "n_value_bets": 0,
+                    "value_bets": [],
+                    "best_ev": None,
+                    "best_combo": None,
+                    "warning": "value-bet detection is not available on this deployment",
+                }), 200
+            logger.exception("value bet failed: %s", race_id)
+            return jsonify({"error": str(e)}), 500
         except Exception as e:
             logger.exception("value bet failed: %s", race_id)
             return jsonify({"error": str(e)}), 500
