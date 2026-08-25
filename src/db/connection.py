@@ -182,6 +182,24 @@ def _note_pool_checkout_failed(pool, wait_ms: float, exc: BaseException) -> None
     )
 
 
+def _process_rss_mb() -> object:
+    """このプロセスの実メモリ使用量 (MB)。
+
+    2026-08-25 13:07 に web インスタンスが前触れなく落ちた (DB 無傷・アプリの
+    エラー記録もゼロ)。前日 07:24 の "Exited with status 137" と同型なら
+    メモリ超過での強制終了だが、落ちた後からは何も測れない。落ちる前に外から
+    読める場所に出しておく。
+    """
+    try:
+        import resource
+
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux は KB、macOS はバイトで返る。Render は Linux。
+        return round(usage / 1024, 1)
+    except Exception:
+        return None
+
+
 def pg_pool_report() -> dict[str, object]:
     """接続プールの今の姿を読み取り専用で返す (調査用)。
 
@@ -195,6 +213,7 @@ def pg_pool_report() -> dict[str, object]:
     """
     report: dict[str, object] = {
         "pid": os.getpid(),
+        "rss_mb": _process_rss_mb(),
         "pool_exists": _PG_POOL is not None,
         "configured": {
             "timeout_sec": _pool_timeout_seconds(),
