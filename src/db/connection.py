@@ -183,7 +183,7 @@ def _note_pool_checkout_failed(pool, wait_ms: float, exc: BaseException) -> None
 
 
 _HEARTBEAT_LOCK = threading.Lock()
-_HEARTBEAT_STARTED = False
+_HEARTBEAT_OWNER_PID = 0
 _HEARTBEAT_LAST: list[float] = [0.0]
 _HEARTBEAT_MAX_GAP: list[float] = [0.0]
 _HEARTBEAT_GAP_AT: list[float] = [0.0]
@@ -224,8 +224,12 @@ def _heartbeat_loop() -> None:
     import json as _json
 
     box = _heartbeat_black_box_path()
+    owner = os.getpid()
     while True:
         time.sleep(_HEARTBEAT_INTERVAL_SEC)
+        if os.getpid() != owner:
+            # fork 直後の子に紛れ込んだ場合は、この鼓動は親のもの。黙って退く。
+            return
         now = time.monotonic()
         prev = _HEARTBEAT_LAST[0]
         _HEARTBEAT_LAST[0] = now
@@ -301,16 +305,21 @@ def start_process_heartbeat() -> None:
     時間そのもの。飛んだ直後に全スレッドのスタックを保存するので、復帰後に
     pg_pool_report() で「どこで凍っていたか」を読み出せる。
     """
-    global _HEARTBEAT_STARTED
+    global _HEARTBEAT_OWNER_PID
     with _HEARTBEAT_LOCK:
-        if _HEARTBEAT_STARTED:
+        # fork の子はモジュール変数を丸ごと受け継ぐが、スレッドは受け継がない。
+        # 真偽値で「起動済み」を覚えていると、gunicorn の worker は
+        # 「親が起動済み」という記憶だけを持ったまま、自分の鼓動を一度も
+        # 打たない (2026-08-25: worker が凍った証拠を取ろうとしたのに、
+        # 残っていたのは親の姿だけだった)。所有者の pid で判定する。
+        if _HEARTBEAT_OWNER_PID == os.getpid():
             return
         _load_black_box_from_previous_life()
         thread = threading.Thread(
             target=_heartbeat_loop, name="process-heartbeat", daemon=True
         )
         thread.start()
-        _HEARTBEAT_STARTED = True
+        _HEARTBEAT_OWNER_PID = os.getpid()
 
 
 def _process_rss_mb() -> object:

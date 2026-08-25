@@ -1398,6 +1398,36 @@ def _read_top_page_snapshot(target_date: str) -> Optional[dict[str, Any]]:
     return payload
 
 
+def _read_stale_strategy_page_any_revision(
+    page_name: str, from_d: str, to_d: str
+) -> Optional[str]:
+    """同じ期間の戦略ページを、台帳リビジョン違いを許して読む。
+
+    キャッシュキーは末尾に台帳リビジョンを含むため、結果が 1 件入るたびに
+    キーが変わり、同キー検索では新旧どちらも外れる。すると 25MB 級のページを
+    リクエストスレッド上で作り直すことになり、管理者が「アクセスしただけ」で
+    worker のスレッドが数十秒単位で塞がった (2026-08-25 の日中 8 回の全断の
+    実体。健康診断が 5 秒応答できず Render に処刑されていた)。
+    1 世代前のページは「最新の 1 レースが未反映」なだけで観賞に堪える。
+    """
+    prefix = _strategy_page_cache_key(page_name, from_d, to_d)
+    try:
+        _ensure_page_html_cache_table()
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT html FROM page_html_cache WHERE cache_key LIKE ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (prefix + "%",),
+            ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        logger.warning("stale strategy page lookup failed: %s", prefix, exc_info=True)
+        return None
+
+
+_STRATEGY_BUILD_GATE = threading.BoundedSemaphore(1)
+
+
 def _strategy_page_cache_key(page_name: str, *parts: object) -> str:
     suffix = ":".join(str(p) for p in parts)
     return f"{page_name}:{STRATEGY_PAGE_CACHE_VERSION}:{_strategy_definition_signature()}:{suffix}"
@@ -7662,6 +7692,13 @@ def create_app(
     @app.teardown_request
     def _end_web_db_checkout_budget(_exc):
         end_web_request_db_budget()
+        # 戦略ページ構築の同時 1 件ゲートは、例外時も必ず返す
+        if getattr(g, "_strategy_build_gate_held", False):
+            g._strategy_build_gate_held = False
+            try:
+                _STRATEGY_BUILD_GATE.release()
+            except ValueError:
+                pass
 
     register_auth_routes(app)
     register_billing_routes(app)
@@ -22651,6 +22688,17 @@ def create_app(
             stale_html = _read_page_html_cache_stale(page_cache_key)
             if stale_html:
                 return stale_html
+            stale_html = _read_stale_strategy_page_any_revision(
+                "member_strategy", from_d, to_d
+            )
+            if stale_html:
+                return stale_html
+        # 完全な初回だけが以降の構築に進む。構築は数十秒かかりうるので、
+        # プロセス内で同時 1 件に制限する (2 件目以降は案内ページ)。全スレッド
+        # が構築で塞がると /healthz が窒息して Render に処刑される。
+        if not _STRATEGY_BUILD_GATE.acquire(blocking=False):
+            return _temporary_page_response(200)
+        g._strategy_build_gate_held = True
         # 通常表示は日別集計キャッシュのみを読む。cache miss でも Web worker 内で
         # 長い SQL 再集計に落とさない。重い再集計は Render Cron の recompute だけ。
         if force_recompute:
@@ -22870,6 +22918,14 @@ def create_app(
             stale_html = _read_page_html_cache_stale(page_cache_key)
             if stale_html:
                 return stale_html
+            stale_html = _read_stale_strategy_page_any_revision(
+                "member_strategy_monthly", monthly_from, monthly_to
+            )
+            if stale_html:
+                return stale_html
+        if not _STRATEGY_BUILD_GATE.acquire(blocking=False):
+            return _temporary_page_response(200)
+        g._strategy_build_gate_held = True
 
         bet_keys = ROI_STRATEGY_KEYS
         adopted_keys = ROI_STRATEGY_KEYS
