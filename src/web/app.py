@@ -7454,14 +7454,14 @@ def create_app(
         path = request.path
         if path == "/healthz" or path.startswith("/static/"):
             return response
-        if (os.getenv("BOATRACE_TASK_TRIGGER") or "").strip().lower() in {
-            "render-prewarm",
-            "render-cron",
-            "render-maintenance",
-        }:
-            # Cron duration/SQL metrics are persisted on task_runs. Recording
-            # the same internal request as a user-facing slow request adds two
-            # DB writes precisely while the database is under refresh load.
+        if (os.getenv("BOATRACE_TASK_TRIGGER") or "").strip():
+            # cron/バッチ内の in-process リクエストは task_runs 側に所要時間が
+            # 残る。「利用者の遅いリクエスト」として混ぜると診断を汚す:
+            # 2026-08-25、展示反映 cron の recompute レンダ (13秒 x 20件) が
+            # ここに記録され、web 凍結の調査で実利用者の症状と誤認させた。
+            # 以前は特定のトリガー名だけ除外していたが、トリガー名は増える
+            # たびに漏れる (今回漏れていたのも新しい名前)。名前を問わず
+            # 「トリガー付き = 人間ではない」で除外する。
             return response
         try:
             entry = {
