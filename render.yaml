@@ -19,13 +19,14 @@ services:
     # 復帰せず、同じレースがアクセスのたびに開けたり開けなかったりした。
     # 1 プロセスにすれば接続要求が半減し、その半々の壊れ方も構造的に消える。
     # ページのメモリキャッシュも 1 つに集約されるので当たりやすくなる。
-    # --threads 4 -> 3 (2026-08-24)。1 リクエストの中で入れ子に接続を取る経路が
-    # あるため、1 スレッドが同時に 2 本使いうる。4 スレッド x 2 = 8 本が上限 6 本
-    # を超え、全スレッドが「1 本持って 2 本目を待つ」膠着に入った (pool_available=0 /
-    # requests_waiting=6 のまま復帰しない)。3 x 2 = 6 なら必ず誰かが進める。
-    # スレッドを増やすなら BOATRACE_DB_POOL_SIZE も 2 倍に、かつ接続予算 15 本に
-    # 収まるかを tests/test_db_pool_warmth.py で検算すること。
-    startCommand: gunicorn -w 1 --worker-class gthread --threads 3 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
+    # 2026-08-25: worker 1 -> 2。日中に worker プロセスが 30 秒以上完全凍結する
+    # 事象が 8 回発生し、1 worker ではそのたび全断 + Render の処刑 (約80秒の502)
+    # になった。2 worker なら片方が凍ってももう片方が応答し、利用者には見えない。
+    # 凍結の犯人はブラックボックス (/data/heartbeat_*.json) が追跡中。
+    # 接続予算: worker数 2 x POOL_SIZE 4 = 8 + cron 6 = 14 ≦ 15 (Supavisor 上限)。
+    # 膠着回避則 (スレッド x 2 ≦ POOL_SIZE) も 2 x 2 = 4 で満たす。
+    # 検算は tests/test_db_pool_warmth.py が render.yaml を読んで行う。
+    startCommand: gunicorn -w 2 --worker-class gthread --threads 2 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
@@ -42,9 +43,9 @@ services:
       # 予算: web 1 プロセス x 6 + cron 6 = 12 (ローカル作業ぶんに 3 残す)。
       # この算数は tests/test_db_pool_warmth.py が render.yaml を読んで検算する。
       - key: BOATRACE_DB_POOL_SIZE
-        value: "6"
+        value: "4"
       - key: BOATRACE_DB_POOL_MIN_SIZE
-        value: "3"
+        value: "2"
       # BOATRACE_PROFILE_HTTP は 2026-08-24 に外した。「詳細が 16 秒かかる」の
       # 正体は接続の取得待ち (5 秒 x 回数) だと判明したため、全リクエストを
       # 計測し続ける理由がなくなった。必要になったら env で戻せる。
