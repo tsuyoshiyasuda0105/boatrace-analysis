@@ -635,17 +635,16 @@ def _pool_watchdog_seconds(env_name: str, default: float) -> float:
 def _note_pg_pool_checkout_success(pool) -> None:
     """Clear a pending exhaustion window after any successful checkout."""
     global _PG_POOL_EXHAUSTED_SINCE, _PG_POOL_EXHAUSTION_FAILURES
-    # これは成功のたびにリクエスト経路から呼ばれる帳簿付け。ロックが空いて
-    # いなければ捨てる。誰かがプールを作り直している最中にここで待つと、
-    # リクエストスレッドがプールの世話に巻き込まれる (2026-08-25 19:12)。
-    if not _PG_POOL_LOCK.acquire(blocking=False):
-        return
-    try:
-        if _PG_POOL is pool:
-            _PG_POOL_EXHAUSTED_SINCE = None
-            _PG_POOL_EXHAUSTION_FAILURES = 0
-    finally:
-        _PG_POOL_LOCK.release()
+    # ロックを取らない。単純な代入は GIL の下で不可分なので、この 2 つを消す
+    # だけならロックは要らない。
+    # 2026-08-26: ここを「ロックが空いていなければ諦める」にしたところ、
+    # 混雑時ほど成功の合図が捨てられ、番犬から見て枯渇が途切れなく続いている
+    # ように見えた。結果、健全なプールを 60〜90 秒ごとに作り直し続け、会員
+    # ページが 10〜14 秒でタイムアウトした (Supabase 側の枠は 10/15 と空いて
+    # いたのに)。回復の合図は絶対に落とさないこと。
+    if _PG_POOL is pool:
+        _PG_POOL_EXHAUSTED_SINCE = None
+        _PG_POOL_EXHAUSTION_FAILURES = 0
 
 
 def _maybe_rebuild_exhausted_pg_pool(
@@ -667,6 +666,12 @@ def _maybe_rebuild_exhausted_pg_pool(
 
     if os.getenv("BOATRACE_TASK_TRIGGER", "").strip():
         return False
+    # 既定で作り直さない。この番犬は 2026-08-25 に 2 度事故を起こした
+    # (ロック待ちでリクエストスレッドを枯らす / 健全なプールを作り直し続ける)
+    # 一方、これが救った障害は 1 件も確認できていない。待ち行列の上限撤廃・
+    # connect_timeout・tcp_user_timeout が入った今、詰まったプールは自力で
+    # 回復する。観測は続け、作り直しは BOATRACE_DB_POOL_REBUILD=1 の時だけ。
+    rebuild_enabled = os.getenv("BOATRACE_DB_POOL_REBUILD", "0") == "1"
     try:
         available = int(stats.get("pool_available", -1))
         waiting = int(stats.get("requests_waiting", 0))
@@ -741,10 +746,12 @@ def _maybe_rebuild_exhausted_pg_pool(
             waiting,
             required_cooldown,
         )
-        _PG_POOL = None
         _PG_POOL_EXHAUSTED_SINCE = None
         _PG_POOL_EXHAUSTION_FAILURES = 0
         _PG_POOL_LAST_REBUILD_AT = observed_at
+        if not rebuild_enabled:
+            return False
+        _PG_POOL = None
         retired_pool = pool
         return True
     finally:

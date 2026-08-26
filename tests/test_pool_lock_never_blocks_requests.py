@@ -67,3 +67,43 @@ def test_retired_pool_is_closed_outside_the_lock():
     body = body[: body.index("def _close_retired_pool")]
     assert "pool.close()" not in body, "retire したプールはロックの外で閉じる"
     assert "_close_retired_pool" in body
+
+
+def test_recovery_signal_is_never_dropped(monkeypatch):
+    """成功の合図はロックの都合で捨てない。
+
+    2026-08-26: ここを「ロックが空いていなければ諦める」にしたところ、混雑時
+    ほど合図が落ち、番犬から見て枯渇が途切れなく続いているように見えた。
+    健全なプールを 60〜90 秒ごとに作り直し続け、会員ページが 10〜14 秒で
+    タイムアウトした (Supabase 側の枠は 10/15 と空いていた)。
+    """
+    pool = _FakePool()
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 123.0)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 5)
+
+    connection._PG_POOL_LOCK.acquire()  # 誰かが世話中でも合図は届くこと
+    try:
+        connection._note_pg_pool_checkout_success(pool)
+    finally:
+        connection._PG_POOL_LOCK.release()
+
+    assert connection._PG_POOL_EXHAUSTED_SINCE is None
+    assert connection._PG_POOL_EXHAUSTION_FAILURES == 0
+
+
+def test_pool_is_not_rebuilt_unless_explicitly_enabled(monkeypatch):
+    """既定では作り直さない (2 度事故を起こし、救った実績は無い)。"""
+    pool = _FakePool()
+    monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.delenv("BOATRACE_DB_POOL_REBUILD", raising=False)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 0.0)
+    monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 5)
+    monkeypatch.setattr(connection, "_PG_POOL_LAST_REBUILD_AT", None)
+
+    rebuilt = connection._maybe_rebuild_exhausted_pg_pool(
+        pool, pool.get_stats(), now=10_000.0, exhaustion_sec=1.0, cooldown_sec=0.0
+    )
+
+    assert rebuilt is False
+    assert connection._PG_POOL is pool, "既定でプールを捨ててはいけない"

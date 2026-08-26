@@ -231,6 +231,9 @@ def test_pool_queue_overflow_fails_immediately_without_retry_sleep(monkeypatch):
 
 
 def test_watchdog_rebuilds_only_after_sustained_failed_exhaustion(monkeypatch):
+    # 作り直しは 2026-08-26 に既定オフ (番犬が健全なプールを壊した)。
+    # この 2 つは有効化した時の作法を確かめるテストなので明示的に有効化する。
+    monkeypatch.setenv("BOATRACE_DB_POOL_REBUILD", "1")
     pool = _ClosablePool()
     stats = {"pool_available": 0, "requests_waiting": 8}
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
@@ -280,6 +283,9 @@ def test_watchdog_does_not_rebuild_for_momentary_saturation(monkeypatch):
 
 
 def test_watchdog_respects_rebuild_cooldown(monkeypatch):
+    # 作り直しは 2026-08-26 に既定オフ (番犬が健全なプールを壊した)。
+    # この 2 つは有効化した時の作法を確かめるテストなので明示的に有効化する。
+    monkeypatch.setenv("BOATRACE_DB_POOL_REBUILD", "1")
     pool = _ClosablePool()
     stats = {"pool_available": 0, "requests_waiting": 4}
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
