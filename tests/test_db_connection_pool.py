@@ -1,3 +1,5 @@
+import os
+
 from src.db import connection
 
 
@@ -51,6 +53,7 @@ def test_pg_connection_returns_connection_to_pool_once(monkeypatch):
     pool = _FakePool()
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
 
     conn = connection._PgConnection("postgresql://unused")
     assert conn._conn is pool.raw
@@ -238,6 +241,7 @@ def test_watchdog_rebuilds_only_after_sustained_failed_exhaustion(monkeypatch):
     stats = {"pool_available": 0, "requests_waiting": 8}
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", None)
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 0)
     monkeypatch.setattr(connection, "_PG_POOL_LAST_REBUILD_AT", None)
@@ -259,6 +263,7 @@ def test_watchdog_does_not_rebuild_for_momentary_saturation(monkeypatch):
     pool = _ClosablePool()
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", None)
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 0)
     monkeypatch.setattr(connection, "_PG_POOL_LAST_REBUILD_AT", None)
@@ -290,6 +295,7 @@ def test_watchdog_respects_rebuild_cooldown(monkeypatch):
     stats = {"pool_available": 0, "requests_waiting": 4}
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 200.0)
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 1)
     monkeypatch.setattr(connection, "_PG_POOL_LAST_REBUILD_AT", 190.0)
@@ -307,6 +313,7 @@ def test_watchdog_is_disabled_for_cron_processes(monkeypatch):
     pool = _ClosablePool()
     monkeypatch.setenv("BOATRACE_TASK_TRIGGER", "render-cron")
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 0.0)
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 9)
 
@@ -328,6 +335,7 @@ def test_pg_pool_checkout_failure_logs_non_secret_stats_without_error_handler(mo
 
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", _FailingPool())
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
 
     with caplog.at_level("WARNING"):
         try:
@@ -358,6 +366,7 @@ def test_pg_pool_timeout_retries_twice_with_bounded_backoff(monkeypatch):
     monkeypatch.delenv("BOATRACE_DB_CONNECT_RETRIES", raising=False)
     monkeypatch.delenv("BOATRACE_DB_CONNECT_RETRY_DELAYS_SEC", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.setattr(connection.time, "sleep", sleeps.append)
 
     conn = connection._PgConnection("postgresql://unused")
@@ -393,6 +402,7 @@ def test_permanent_authentication_error_is_not_retried(monkeypatch):
     sleeps = []
     monkeypatch.delenv("BOATRACE_TASK_TRIGGER", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.setattr(connection.time, "sleep", sleeps.append)
 
     try:

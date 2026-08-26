@@ -30,6 +30,7 @@ import config
 
 logger = logging.getLogger(__name__)
 _PG_POOL = None
+_PG_POOL_OWNER_PID = 0
 _PG_POOL_LOCK = threading.Lock()
 _TRANSIENT_DB_RETRY_STATE = threading.local()
 _PG_POOL_EXHAUSTED_SINCE = None
@@ -1022,7 +1023,7 @@ def _configure_pg_connection(conn) -> None:
         pass
 
 
-_PG_POOL_CHECKER_STARTED = False
+_PG_POOL_CHECKER_STARTED = 0
 _DEFAULT_POOL_CHECK_INTERVAL_SEC = 45.0
 
 
@@ -1054,7 +1055,7 @@ def _start_pool_health_checker(pool) -> None:
     その代金をリクエストではなくアイドル時間が払う。
     """
     global _PG_POOL_CHECKER_STARTED
-    if _PG_POOL_CHECKER_STARTED:
+    if _PG_POOL_CHECKER_STARTED == os.getpid():
         return
     # 既定は無効。2026-08-24 に導入したが、tcp_user_timeout が無い状態では
     # pool.check() が死んだソケット上で戻らなくなり、プールの全接続を掴んだまま
@@ -1080,14 +1081,29 @@ def _start_pool_health_checker(pool) -> None:
         target=_loop, name="pg-pool-health-check", daemon=True
     )
     thread.start()
-    _PG_POOL_CHECKER_STARTED = True
+    _PG_POOL_CHECKER_STARTED = os.getpid()
 
 
 def _get_pg_pool(dsn: str):
-    global _PG_POOL
-    if _PG_POOL is not None:
+    global _PG_POOL, _PG_POOL_OWNER_PID
+    pid = os.getpid()
+    if _PG_POOL is not None and _PG_POOL_OWNER_PID == pid:
         return _PG_POOL
     with _PG_POOL_LOCK:
+        if _PG_POOL is not None and _PG_POOL_OWNER_PID != pid:
+            # fork でプールを受け継いでしまった。gunicorn は親でアプリを
+            # 読み込んでから worker を fork するので、親で作られたプールが
+            # そのまま子に渡る。だがプールの背景スレッドは fork を越えないため、
+            # 接続を新しく張る者が誰もいないまま available が 0 に落ち、
+            # さらに親と子で同じ TCP 接続を共有することになる。
+            # 2026-08-26 の証拠: 別 pid の 2 worker が connections_num=3 /
+            # connections_ms=1282 と一字一句同じ統計を報告していた。
+            # 受け継いだ物は close しない (親と共有する fd に protocol を
+            # 流してしまう)。黙って捨てて、自分のプールを作る。
+            logger.warning(
+                "discarding inherited postgres pool from pid=%s", _PG_POOL_OWNER_PID
+            )
+            _PG_POOL = None
         if _PG_POOL is None:
             from psycopg_pool import ConnectionPool
 
@@ -1170,6 +1186,7 @@ def _get_pg_pool(dsn: str):
                 check=ConnectionPool.check_connection,
                 open=True,
             )
+            _PG_POOL_OWNER_PID = pid
             if not trigger:
                 _start_pool_health_checker(_PG_POOL)
     return _PG_POOL

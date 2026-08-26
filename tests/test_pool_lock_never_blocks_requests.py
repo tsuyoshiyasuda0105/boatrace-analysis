@@ -8,6 +8,7 @@
 DB を触らないはずの /healthz すら応答できず Render にインスタンスごと
 処刑された (この日 10 回以上)。
 """
+import os
 import threading
 
 import src.db.connection as connection
@@ -27,6 +28,7 @@ class _FakePool:
 def test_watchdog_gives_up_instead_of_waiting_for_the_lock(monkeypatch):
     pool = _FakePool()
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     connection._PG_POOL_LOCK.acquire()  # 別スレッドが世話中を再現
     try:
         done = threading.Event()
@@ -44,6 +46,7 @@ def test_watchdog_gives_up_instead_of_waiting_for_the_lock(monkeypatch):
 def test_checkout_success_bookkeeping_never_waits(monkeypatch):
     pool = _FakePool()
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     connection._PG_POOL_LOCK.acquire()
     try:
         done = threading.Event()
@@ -79,6 +82,7 @@ def test_recovery_signal_is_never_dropped(monkeypatch):
     """
     pool = _FakePool()
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 123.0)
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 5)
 
@@ -96,6 +100,7 @@ def test_pool_is_not_rebuilt_unless_explicitly_enabled(monkeypatch):
     """既定では作り直さない (2 度事故を起こし、救った実績は無い)。"""
     pool = _FakePool()
     monkeypatch.setattr(connection, "_PG_POOL", pool)
+    monkeypatch.setattr(connection, "_PG_POOL_OWNER_PID", os.getpid())
     monkeypatch.delenv("BOATRACE_DB_POOL_REBUILD", raising=False)
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTED_SINCE", 0.0)
     monkeypatch.setattr(connection, "_PG_POOL_EXHAUSTION_FAILURES", 5)
