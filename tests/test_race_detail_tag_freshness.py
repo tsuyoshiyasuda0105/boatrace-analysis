@@ -108,3 +108,65 @@ def test_tag_prefetch_does_not_bake_empty_tags_on_load_failure(monkeypatch):
 
     with pytest.raises(RuntimeError):
         app_module._prefetch_race_detail_tag_inputs(["20260825-01-12"], conn=None)
+
+
+class _CountingConn:
+    """期待値と実績を返す最小の偽 conn。"""
+
+    def __init__(self, expected, written, race_ids=("20260827-01-04",)):
+        self.expected = expected
+        self.written = written
+        self.race_ids = race_ids
+
+    def execute(self, sql, params=None):
+        if "COUNT(DISTINCT e.race_id)" in sql:
+            return _Result([(self.expected,)])
+        if "entry_change_tag" in str(params or ()):
+            return _Result([(self.written,)])
+        if "FROM races" in sql:
+            return _Result([(r,) for r in self.race_ids])
+        if "racer_entry_change_snapshots" in sql:
+            return _Result([(None,)])
+        return _Result([])
+
+    def close(self):
+        pass
+
+
+def test_build_fails_when_the_marks_are_missing(monkeypatch):
+    """元データに該当があるのにタグが 0 件なら、成功と報告しない。
+
+    2026-08-25 と 08-27 の朝、生成は「成功」を報告しながら進入注意を 1 件も
+    含まないタグを焼いた。鮮度チェックはそれを完成品と見なすため、手で
+    --force を打つまで「!」が終日出なかった (どちらの日も本来 21 レース)。
+    """
+    conn = _CountingConn(expected=21, written=0)
+    monkeypatch.setattr(prewarm, "db_connect", lambda: conn)
+    monkeypatch.setattr(prewarm, "_missing_cached_race_ids", lambda *a, **k: [])
+
+    summary = prewarm.prewarm("2026-08-27")
+
+    assert summary["entry_change_expected"] == 21
+    assert summary["entry_change_written"] == 0
+    assert int(summary["failed"]) >= 1, "黙って成功にすると翌朝も同じ穴に落ちる"
+
+
+def test_build_is_content_when_the_marks_are_present(monkeypatch):
+    conn = _CountingConn(expected=21, written=21)
+    monkeypatch.setattr(prewarm, "db_connect", lambda: conn)
+    monkeypatch.setattr(prewarm, "_missing_cached_race_ids", lambda *a, **k: [])
+
+    summary = prewarm.prewarm("2026-08-27")
+
+    assert int(summary["failed"]) == 0
+
+
+def test_no_expectation_means_no_complaint(monkeypatch):
+    """該当選手がいない日に 0 件なのは正常 (誤検知しない)。"""
+    conn = _CountingConn(expected=0, written=0)
+    monkeypatch.setattr(prewarm, "db_connect", lambda: conn)
+    monkeypatch.setattr(prewarm, "_missing_cached_race_ids", lambda *a, **k: [])
+
+    summary = prewarm.prewarm("2026-08-27")
+
+    assert int(summary["failed"]) == 0

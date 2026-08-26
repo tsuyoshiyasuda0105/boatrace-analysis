@@ -16,6 +16,7 @@ os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-prewarm")
 
 from src.db.connection import connect as db_connect  # noqa: E402
 from src.web.app import (  # noqa: E402
+    RACE_DETAIL_TAG_CACHE_VERSION,
     JST,
     _prefetch_race_detail_tag_inputs,
     _race_detail_tag_cache_key,
@@ -94,6 +95,43 @@ def _missing_cached_race_ids(
         if owns_connection:
             conn.close()
     return [keyed_ids[key] for key in cache_keys if key not in fresh_enough]
+
+
+def _entry_change_expectation(target_date: str, *, conn) -> int:
+    """その日「進入注意」が付くはずのレース数 (元データから直接数える)。"""
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT e.race_id)
+              FROM race_entries e
+              JOIN races r ON r.race_id = e.race_id
+              JOIN racer_entry_change_snapshots s
+                ON s.racer_number = e.racer_number
+               AND s.snapshot_date = ?
+             WHERE r.race_date = ?
+               AND s.starts_count >= 100
+               AND s.change_rate >= 0.20
+               AND s.inner_change_rate >= 0.10
+               AND s.inner_change_rate >= s.outer_change_rate
+            """,
+            (target_date, target_date),
+        ).fetchone()
+    except Exception:
+        return 0
+    return int(row[0] or 0) if row else 0
+
+
+def _entry_change_tags_written(target_date: str, *, conn) -> int:
+    prefix = f"race_detail_tags:{RACE_DETAIL_TAG_CACHE_VERSION}:{target_date.replace('-', '')}"
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM page_html_cache "
+            "WHERE cache_key LIKE ? AND html LIKE ?",
+            (prefix + "%", "%entry_change_tag%"),
+        ).fetchone()
+    except Exception:
+        return -1
+    return int(row[0] or 0) if row else 0
 
 
 def prewarm(
@@ -193,6 +231,23 @@ def prewarm(
                 "max_seconds": round(max(durations), 3) if durations else 0.0,
             }
         )
+        # 作った物が正しいかを、元データと突き合わせて自分で確かめる。
+        # 2026-08-25 と 08-27 の朝、生成は「成功」を報告しながら進入注意を
+        # 1 件も含まないタグを焼き、鮮度チェックがそれを完成品と見なしたため
+        # 「!」が終日出なかった (どちらの日も本来 21 レース)。手で --force を
+        # 打つまで直らない。数が合わなければ失敗として扱い、再試行に委ねる。
+        expected = _entry_change_expectation(target_date, conn=conn)
+        written = _entry_change_tags_written(target_date, conn=conn)
+        summary["entry_change_expected"] = expected
+        summary["entry_change_written"] = written
+        if expected > 0 and written == 0:
+            summary["failed"] = int(summary["failed"]) + 1
+            summary["entry_change_missing"] = True
+            print(
+                f"[race-detail-tags] entry-change tags missing: "
+                f"expected={expected} written={written}",
+                flush=True,
+            )
         print(f"[race-detail-tags] date={target_date} {summary}", flush=True)
         return summary
     finally:
