@@ -17,6 +17,12 @@ ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing"}
 _SCHEMA_CHECKED = False
 
 
+# 直近の認証用接続にかかった時間 (秒)。会員だけが払うコストなので、
+# 「会員トップが遅い」の原因切り分けに要る (2026-08-26)。
+LAST_AUTH_CONNECT_SEC = [0.0]
+AUTH_CONNECT_MAX_SEC = [0.0]
+
+
 def _auth_db_connect():
     """認証クリティカル経路 (ログイン・会員確認) 用のDB接続。
 
@@ -24,8 +30,20 @@ def _auth_db_connect():
     ロール確認だけは通るように、Postgres では短命の直結接続を使う。
     クエリはすべて主キー参照の軽量なものなので接続コストは許容できる。
     SQLite では通常接続と同一。
+
+    ただし「短命」の代償は接続の張り直しで、Render(シンガポール) から
+    Supabase(東京) への新規接続は往復 + TLS で実測 2.5 秒。会員は 60 秒ごとに
+    これを踏むため、体感が悪い。所要時間を残して切り分けられるようにする。
     """
-    return db_connect(direct=True)
+    import time as _time
+
+    started = _time.perf_counter()
+    conn = db_connect(direct=True)
+    elapsed = _time.perf_counter() - started
+    LAST_AUTH_CONNECT_SEC[0] = round(elapsed, 3)
+    if elapsed > AUTH_CONNECT_MAX_SEC[0]:
+        AUTH_CONNECT_MAX_SEC[0] = round(elapsed, 3)
+    return conn
 
 
 def now_iso() -> str:

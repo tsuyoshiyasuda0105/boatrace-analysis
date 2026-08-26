@@ -71,7 +71,9 @@ def test_supabase_role_refresh_uses_session_ttl(monkeypatch):
             "email": "member@example.com",
             "role": "free_member",
             "is_member": True,
-            "supabase_role_checked_at": 950.0,
+            # TTL の 10 秒手前 = まだ再確認しない。11 秒進めれば必ず超える。
+            # TTL 値そのものには依存させない (2026-08-26 に 60 -> 300 へ変更)。
+            "supabase_role_checked_at": 1_000.0 - (auth._SUPABASE_ROLE_REFRESH_TTL_SEC - 10),
         })
         auth._refresh_supabase_membership_session()
         assert calls == []
@@ -104,7 +106,7 @@ def test_supabase_role_refresh_uses_validated_role_during_pool_timeout(monkeypat
             "user_id": "user-1",
             "role": "paid_member",
             "is_member": True,
-            "supabase_role_checked_at": 900.0,
+            "supabase_role_checked_at": 1_000.0 - auth._SUPABASE_ROLE_REFRESH_TTL_SEC - 1,
         })
 
         auth._refresh_supabase_membership_session()
@@ -155,7 +157,7 @@ def test_supabase_role_refresh_does_not_hide_programming_errors(monkeypatch):
             "user_id": "user-1",
             "role": "paid_member",
             "is_member": True,
-            "supabase_role_checked_at": 900.0,
+            "supabase_role_checked_at": 1_000.0 - auth._SUPABASE_ROLE_REFRESH_TTL_SEC - 1,
         })
 
         try:

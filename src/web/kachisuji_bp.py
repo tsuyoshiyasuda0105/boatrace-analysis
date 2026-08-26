@@ -411,6 +411,7 @@ def internal_db_pool_report():
     """
     from src.db.connection import pg_pool_report
     from src.kachisuji.delta_transport import internal_token
+    from src.web import membership
 
     provided = request.headers.get("X-Internal-Token", "")
     try:
@@ -419,7 +420,13 @@ def internal_db_pool_report():
         return jsonify(error="internal token unavailable"), 503
     if not provided or provided != expected:
         return jsonify(error="forbidden"), 403
-    return jsonify(pg_pool_report())
+    report = pg_pool_report()
+    # 会員だけが払う認証接続のコスト (2026-08-26「会員トップが遅い」の切り分け)
+    report["auth_connect"] = {
+        "last_sec": membership.LAST_AUTH_CONNECT_SEC[0],
+        "max_sec": membership.AUTH_CONNECT_MAX_SEC[0],
+    }
+    return jsonify(report)
 
 
 @bp.get("/internal/page-cache-lookup")

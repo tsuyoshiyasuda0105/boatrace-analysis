@@ -41,7 +41,12 @@ logger = logging.getLogger(__name__)
 # ===== ブルートフォース対策: IP 別の試行カウンタ (in-memory) =====
 # {ip: [(timestamp, success_bool), ...]} 直近 15 分のみ保持
 _LOGIN_ATTEMPTS: dict[str, list[tuple[float, bool]]] = {}
-_SUPABASE_ROLE_REFRESH_TTL_SEC = 60
+# 会員の役割を確かめ直す間隔。1 回ごとに直結接続を張り直すため、Render から
+# Supabase への 2.5 秒が乗る。60 秒だと会員は 1 分に 1 度その待ちを踏み、
+# 「会員トップが遅い」という体感になっていた (2026-08-26 リッキーさん報告)。
+# 300 秒なら踏む頻度は 1/5。役割変更の反映が最大 5 分遅れるが、失効の安全網は
+# _SUPABASE_ROLE_MAX_STALE_SEC (900 秒) 側が持っている。
+_SUPABASE_ROLE_REFRESH_TTL_SEC = 300
 _SUPABASE_ROLE_REFRESH_RETRY_SEC = 15
 _SUPABASE_ROLE_MAX_STALE_SEC = 900
 _SUPABASE_ROLE_CHECKED_AT_SESSION_KEY = "supabase_role_checked_at"
