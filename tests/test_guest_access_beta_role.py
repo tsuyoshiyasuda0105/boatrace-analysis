@@ -151,6 +151,29 @@ def test_guest_public_pages_are_200_cache_only_and_hide_member_content(monkeypat
     assert any(item.startswith("stale:") for item in cache_reads)
 
 
+def test_guest_receives_display_tags_but_not_member_judgment(monkeypatch):
+    """一覧の表示タグ (事故/逃げ/エースモーター/進入変更/決まり手) はゲストにも
+    渡すが、market(EV+)/signals などの会員限定キーは許可リストで落とす。"""
+    app = _create_app(monkeypatch)
+    snapshot = _snapshot()
+    snapshot["initial_market_signals"]["race_badges"] = {
+        RACE_ID: {
+            "accident": {"label": "GUEST_ACCIDENT_0P85", "boats": [1]},
+            "entry_change": {"label": "GUEST_ENTRY_CHANGE", "boats": [2]},
+            "market": {"label": "EV+"},  # 会員限定: 落とすべき
+        }
+    }
+    monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: snapshot)
+    top_html = app.test_client().get(f"/races?date={TARGET_DATE}").get_data(as_text=True)
+
+    # 表示タグは渡る
+    assert "GUEST_ACCIDENT_0P85" in top_html
+    assert "GUEST_ENTRY_CHANGE" in top_html
+    # 会員限定の判断は漏れない
+    assert "EV+" not in top_html
+    assert "採用ROI戦略" not in top_html
+
+
 def test_guest_top_cache_miss_returns_immediately_without_live_load(monkeypatch):
     app = _create_app(monkeypatch)
     monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: None)

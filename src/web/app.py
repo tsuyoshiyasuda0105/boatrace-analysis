@@ -1219,6 +1219,36 @@ def _lightweight_top_page_market_payload(
     }
 
 
+# ゲストのレース一覧に出してよい "表示タグ" のキー (記述的な統計のみ)。
+# market(EV+)/l4 等の会員限定 "判断" キーは意図的に除外する。
+_GUEST_SAFE_BADGE_KEYS = frozenset(
+    {"accident", "escape", "ace_motor", "entry_change", "kimarite"}
+)
+
+
+def _guest_safe_top_page_market_payload(
+    payload: Any,
+    target_date: str,
+) -> dict[str, Any]:
+    """ゲスト向けの一覧タグ payload。表示タグだけを許可リストで残す。
+
+    _lightweight_top_page_market_payload と違い、race_badges の各レースについて
+    _GUEST_SAFE_BADGE_KEYS に含まれるキー (逃げ/事故/エースモーター/進入変更/
+    決まり手) だけを通し、market(EV+) 等の会員限定キーは落とす。signals は
+    そもそも取り出さない。
+    """
+    base = _lightweight_top_page_market_payload(payload, target_date)
+    safe_badges: dict[str, Any] = {}
+    for race_id, badges in (base.get("race_badges") or {}).items():
+        if not isinstance(badges, dict):
+            continue
+        kept = {k: v for k, v in badges.items() if k in _GUEST_SAFE_BADGE_KEYS}
+        if kept:
+            safe_badges[race_id] = kept
+    base["race_badges"] = safe_badges
+    return base
+
+
 def _lightweight_top_page_market_payload_has_badges(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -7733,18 +7763,21 @@ def create_app(
         *,
         stale: bool = False,
     ):
-        initial_market_signals = (
-            _lightweight_top_page_market_payload(
+        # ゲストにもレース一覧の "表示タグ" (逃げ/事故/エースモーターM/進入変更/
+        # 決まり手) を見せる。これらはスナップショット生成時に焼き込み済みなので DB
+        # 追加負荷ゼロ。ただし race_badges には market(EV+) 等の会員限定キーが混ざり
+        # うるため、ゲスト向けは許可リストで表示タグだけを残す (判断系は漏らさない)。
+        # L4 の "買うべき判断" (signals) は _lightweight/_guest_safe とも常にそぎ落とす。
+        if is_member():
+            initial_market_signals = _lightweight_top_page_market_payload(
                 snapshot.get("initial_market_signals"),
                 target_date,
             )
-            if is_member()
-            else {
-                "date": target_date,
-                "race_badges": {},
-                "accident_watch": {},
-            }
-        )
+        else:
+            initial_market_signals = _guest_safe_top_page_market_payload(
+                snapshot.get("initial_market_signals"),
+                target_date,
+            )
         context = {
             "target_date": target_date,
             "today_iso": _today_jst_iso(),
