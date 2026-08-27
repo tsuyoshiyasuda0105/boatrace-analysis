@@ -6,6 +6,10 @@
   <title>{% block title %}競艇｜バックテストLAB{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ static_version }}">
   {% block head_extra %}{% endblock %}
+  {% if cf_beacon_token %}
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon='{"token": "{{ cf_beacon_token }}"}'></script>
+  {% endif %}
 </head>
 <body>
   {% set cache_neutral_auth = request.endpoint == 'race_detail' %}

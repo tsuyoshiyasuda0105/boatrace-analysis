@@ -7931,6 +7931,13 @@ def create_app(
     def _inject_today():
         return {"today_iso_global": _today_jst_iso()}
 
+    # Cloudflare Web Analytics ビーコン (公開トークン。env BOATRACE_CF_BEACON で上書き可)
+    @app.context_processor
+    def _inject_cf_beacon():
+        import os as _os
+        default = "a642b567b5764a96b500479e5238beae"
+        return {"cf_beacon_token": (_os.environ.get("BOATRACE_CF_BEACON") or default).strip()}
+
     # データ品質警告バナー用 (backlog item 3)
     @app.context_processor
     def _inject_system_status():
