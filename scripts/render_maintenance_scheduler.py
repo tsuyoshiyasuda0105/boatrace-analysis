@@ -697,8 +697,13 @@ def _kachisuji_latest_date() -> dict[str, object]:
     db_path = Path(configured) if configured else REPO / "data" / "kachisuji_slim.db"
     try:
         resolved = db_path.resolve()
-        connection = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
+        # 取込中の書き込みロックを「データ無し」と読み違えないよう待つ
+        # (2026-08-28: 点検 06:42 がデルタ適用 06:30-06:50 の最中に走っていた)
+        connection = sqlite3.connect(
+            resolved.as_uri() + "?mode=ro", uri=True, timeout=20
+        )
         try:
+            connection.execute("PRAGMA busy_timeout = 20000")
             row = connection.execute(
                 "SELECT MAX(race_date) FROM asof_race_features"
             ).fetchone()

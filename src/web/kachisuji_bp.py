@@ -380,12 +380,21 @@ def internal_disk_report():
 
 
 def _slim_latest_race_date(db_path: Path) -> str | None:
-    """slim DB が持つ最新レース日。読めなければ None。"""
+    """slim DB が持つ最新レース日。読めなければ None。
+
+    デルタ適用 (06:30) の最中はこの DB に書き込みが入る。待たずに読むと
+    "database is locked" で失敗し、朝の点検には「データ無し」と同じ None が
+    返る。実際 2026-08-28 の点検は取込の真っ最中に走り、正常な 8/27 のデータを
+    見落として毎朝警報を出していた。書き手が終わるのを少し待つ。
+    """
     if not db_path.is_file():
         return None
     try:
-        connection = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
+        connection = sqlite3.connect(
+            db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=20
+        )
         try:
+            connection.execute("PRAGMA busy_timeout = 20000")
             row = connection.execute(
                 "SELECT MAX(race_date) FROM asof_race_features"
             ).fetchone()
