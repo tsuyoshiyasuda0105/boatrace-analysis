@@ -8539,16 +8539,26 @@ def create_app(
                 except Exception as exc:
                     logger.exception("self-heal collect_all failed for %s: %s", target_date, exc)
             if not races_list:
-                return render_template(
-                    "index.html",
-                    target_date=target_date,
-                    today_iso=today_iso,
-                    stadium_groups=[],
-                    market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
-                    market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
-                    roi_picks_visible=False,
-                    empty=True,
+                # 「この日のデータはありません」を保存してはいけない。開催日で
+                # あっても、番組表が届く前や DB が一瞬答えられなかった瞬間に
+                # この画面が焼かれ、以後その利用者にだけ空の一覧が出続ける
+                # (2026-08-28: 管理者にだけ 8/28 が空で見え、未ログインでは
+                #  144 レース出ていた)。no-store にすると cached デコレータが
+                # 保存を見送るので、次の閲覧でやり直せる。
+                response = make_response(
+                    render_template(
+                        "index.html",
+                        target_date=target_date,
+                        today_iso=today_iso,
+                        stadium_groups=[],
+                        market_signal_supported_levels=MARKET_SIGNAL_SUPPORTED_LEVELS,
+                        market_signal_supported_class_prefixes=MARKET_SIGNAL_SUPPORTED_CLASS_PREFIXES,
+                        roi_picks_visible=False,
+                        empty=True,
+                    )
                 )
+                response.headers["Cache-Control"] = "no-store, max-age=0"
+                return response
 
         # 会場別にグループ化
         stadium_groups: dict[int, dict] = {}
