@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} | BOATRACE WEB{% endblock %}
+{% block head_extra %}
+<style>
+  .legal-page { max-width: 900px; margin: 2rem auto; line-height: 1.85; padding: 0 1rem; }
+  .legal-page h1 { margin-bottom: .5rem; }
+  .legal-page h2 { margin-top: 2rem; border-bottom: 1px solid #d7dde5; padding-bottom: .35rem; }
+  .legal-page h3 { margin-top: 1.25rem; }
+  .legal-page ul, .legal-page ol { padding-left: 1.5rem; }
+  .legal-page li { margin: .25rem 0; }
+  .legal-table { width: 100%; border-collapse: collapse; margin: 1.25rem 0; }
+  .legal-table th, .legal-table td { padding: .8rem; border: 1px solid #d7dde5; text-align: left; vertical-align: top; }
+  .legal-table th { background: rgba(255,255,255,.04); }
+  .legal-alert { margin: 1.25rem 0; padding: 1rem; border: 2px solid #b42318; background: #fff1f0; color: #7a271a; border-radius: 4px; }
+  .legal-alert code { overflow-wrap: anywhere; }
+  .legal-placeholder { background: #fff3cd; color: #7a5900; padding: 0 .25em; border-radius: 3px; font-weight: 600; }
+</style>
+{% endblock %}
+{% block content %}
+<article class="legal-page">
+  {% if unfilled %}
+  <section class="legal-alert" role="alert">
+    <strong>この文書には未確定の項目が {{ unfilled|length }} 件あります。</strong>
+    <div>公開前に事業者本人と専門家の確認、および環境変数の設定が必要です。黄色くハイライトされた箇所を確認してください。</div>
+  </section>
+  {% endif %}
+  {{ body|safe }}
+</article>
+{% endblock %}
