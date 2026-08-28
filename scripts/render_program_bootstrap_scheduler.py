@@ -207,6 +207,7 @@ def _record_phase_failure(
     previous = int((prior.get("detail") or {}).get("consecutive_failures", 0) or 0)
     failures = previous + 1
     wait_minutes = BACKOFF_MINUTES[min(failures - 1, len(BACKOFF_MINUTES) - 1)]
+    covered = _official_already_covers(target)
     detail = {
         "consecutive_failures": failures,
         "last_reason": reason,
@@ -214,8 +215,39 @@ def _record_phase_failure(
         "next_attempt_at": (now + timedelta(minutes=wait_minutes)).isoformat(timespec="seconds"),
         "circuit_open_minutes": wait_minutes,
         "missing_stadiums": sorted(set(missing_stadiums or [])),
+        "covered_by_official": covered,
     }
-    _write_task(task_name, target, "failure", detail)
+    # 公式ダウンロードが同じ日の番組表を全部そろえているなら、Open API が
+    # 遅れても番組データは欠けていない。それを "failure" として記録すると、
+    # 「cron 失敗が続いている」という警報が鳴り続け、朝の点検まで落ちる。
+    # 2026-08-28: Open API の公開が取得時間帯 (23-9時) を過ぎたため 11 回失敗
+    # したが、公式側で 144 レース全部そろっており実害はゼロだった。
+    # 入手経路の遅れは degraded、データの欠落だけが failure。
+    status = "degraded" if covered else "failure"
+    _write_task(task_name, target, status, detail)
+
+
+def _official_already_covers(target: date) -> bool:
+    """公式ダウンロード側でその日の番組表がそろっているか。"""
+    try:
+        expected, state = _manifest_stadiums(target)
+        if state != "available" or not expected:
+            return False
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT stadium_number), COUNT(*)
+                  FROM races
+                 WHERE race_date = ?
+                """,
+                (target.isoformat(),),
+            ).fetchone()
+    except Exception:
+        return False
+    if not row:
+        return False
+    stadiums, races = int(row[0] or 0), int(row[1] or 0)
+    return stadiums >= len(expected) and races > 0
 
 
 def _record_phase_success(
