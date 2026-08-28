@@ -7934,6 +7934,16 @@ def create_app(
             h.update(b"0")
     app.jinja_env.globals["static_version"] = h.hexdigest()[:8]
 
+    # Cloudflare Web Analytics のビーコントークン。context_processor ではなく
+    # Jinja グローバルにするのは、ゲスト/劣化系の経路が DB 負荷を避けるため
+    # render_template を通さず jinja_env.get_template().render() で直接描画し、
+    # その場合 context_processor が動かず未ログインのページ (＝一番計測したい層)
+    # にビーコンが載らなくなるため。グローバルなら全描画経路で確実に注入される。
+    _CF_BEACON_DEFAULT = "a642b567b5764a96b500479e5238beae"
+    app.jinja_env.globals["cf_beacon_token"] = (
+        os.environ.get("BOATRACE_CF_BEACON") or _CF_BEACON_DEFAULT
+    ).strip()
+
     # Jinja2 カスタムフィルタ: カンマ区切り符号付き整数 (Python %-format は ',' 非対応)
     def _signed_comma(value):
         try:
@@ -7963,13 +7973,6 @@ def create_app(
     @app.context_processor
     def _inject_today():
         return {"today_iso_global": _today_jst_iso()}
-
-    # Cloudflare Web Analytics ビーコン (公開トークン。env BOATRACE_CF_BEACON で上書き可)
-    @app.context_processor
-    def _inject_cf_beacon():
-        import os as _os
-        default = "a642b567b5764a96b500479e5238beae"
-        return {"cf_beacon_token": (_os.environ.get("BOATRACE_CF_BEACON") or default).strip()}
 
     # データ品質警告バナー用 (backlog item 3)
     @app.context_processor

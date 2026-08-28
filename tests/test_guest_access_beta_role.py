@@ -172,6 +172,8 @@ def test_guest_receives_display_tags_but_not_member_judgment(monkeypatch):
     # 会員限定の判断は漏れない
     assert "EV+" not in top_html
     assert "採用ROI戦略" not in top_html
+    # アクセス解析ビーコンはゲスト (直接描画経路) にも載る
+    assert "static.cloudflareinsights.com/beacon" in top_html
 
 
 def test_guest_top_cache_miss_returns_immediately_without_live_load(monkeypatch):
