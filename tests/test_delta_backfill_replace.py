@@ -63,3 +63,14 @@ def test_replace_marker_is_prefix_only():
     assert dt._delta_wants_replace("BACKFILL_x")
     assert not dt._delta_wants_replace("kachisuji_delta_20260829")
     assert not dt._delta_wants_replace("delta_backfill_20260829")  # 途中に含むだけは不可
+
+
+def test_canonical_name_preserves_backfill_name(tmp_path):
+    # backfill 補正デルタは名前を保持したまま輸送される必要がある。
+    # \d{8}.db に正規化されると適用側で REPLACE 判定が効かない。
+    kept = dt.canonical_delta_name(tmp_path / "backfill_20260830.db")
+    assert kept == "backfill_20260830.db"
+    assert dt._delta_wants_replace(kept)
+    # 通常デルタは従来どおり正規化される。
+    assert dt.canonical_delta_name(tmp_path / "kachisuji_delta_20260830.db") == "20260830.db"
+    assert dt.canonical_delta_name(tmp_path / "20260830.db") == "20260830.db"

@@ -31,6 +31,10 @@ from typing import Any
 TABLES = ("asof_race_features", "racers")
 TRANSPORT_TABLE = "kachisuji_delta_files"
 _DELTA_NAME_OK = __import__("re").compile(r"^\d{8}\.db$")
+# 一度きりの補正デルタ。名前を保存したまま輸送し、適用側で
+# _delta_wants_replace が既存行を上書きできるようにする (通常の \d{8}.db は
+# 追加専用のまま)。安全な文字だけ許可してパス経路の混入を防ぐ。
+_BACKFILL_NAME_OK = __import__("re").compile(r"^backfill_[A-Za-z0-9_]+\.db$")
 MIN_FREE_BYTES = 100 * 1024 * 1024
 
 
@@ -130,6 +134,9 @@ def canonical_delta_name(path: Path) -> str:
     """kachisuji_delta_20260819.db → 20260819.db (Storage 版と同じ正規化)。"""
     name = path.name
     if _DELTA_NAME_OK.fullmatch(name):
+        return name
+    if _BACKFILL_NAME_OK.fullmatch(name):
+        # backfill_YYYYMMDD.db 等は名前を保持 (適用側で REPLACE 判定に使う)。
         return name
     m = __import__("re").fullmatch(r"kachisuji_delta_(\d{8})\.db", name)
     if m:
