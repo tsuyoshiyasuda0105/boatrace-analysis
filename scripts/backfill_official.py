@@ -158,8 +158,16 @@ def upsert_k(conn: sqlite3.Connection, parsed: list[dict]) -> tuple[int, int, in
 
 def process_day(target_date: date, conn: sqlite3.Connection,
                 logger: logging.Logger,
-                skip_existing: bool = True) -> dict:
-    """1日分: B/K ダウンロード → 解凍 → パース → DB投入"""
+                skip_existing: bool = True,
+                targets: str = "bk") -> dict:
+    """1日分: B/K ダウンロード → 解凍 → パース → DB投入
+
+    targets: "bk"=両方 / "b"=番組表(選手情報)のみ / "k"=競走成績のみ。
+    2026-08-29: 選手情報(race_entries)だけを埋める修復では K(結果)は既に
+    投入済みなので "b" を使う。K の再ダウンロードを省いて所要時間が半減する。
+    """
+    want_b = "b" in targets
+    want_k = "k" in targets
     summary = {
         "date": target_date.isoformat(),
         "b_races": 0, "b_entries": 0,
@@ -167,39 +175,68 @@ def process_day(target_date: date, conn: sqlite3.Connection,
         "skipped": False,
     }
 
-    # 既に十分なデータがあればスキップ (Layer2 で取得済み等)
+    # 既に十分なデータがあればスキップ (Layer2 で取得済み等)。
+    # 2026-08-29: 従来は「結果 (K file) が 200 件超ならスキップ」だけを見ており、
+    # 結果だけ先に入って選手情報 (race_entries) が空の日まで「もう十分」と誤判定
+    # していた。これが多摩川2016-19・福岡2016-24 で entries が丸ごと欠けた原因
+    # (約3.1万レース)。結果と選手情報の両方が揃っている時だけスキップする。
     if skip_existing:
-        n_existing = conn.execute(
-            "SELECT COUNT(*) FROM race_results r JOIN races ra ON r.race_id=ra.race_id WHERE ra.race_date=?",
+        # 2026-08-29 (第2次修正): 判定は「日ごとの合計件数」ではなく
+        # 「その日に “欠けたレース” が1件でもあるか」で行う。
+        # 合計件数で見ると、1日に複数会場あるとき、ある会場 (例: 福岡) の
+        # entries が丸ごと欠けていても、他会場ぶんで合計が 200 を超え、
+        # 日ごと「済み」と誤判定してしまう。実際これで福岡2016-24・
+        # 多摩川2016-20 の欠測 (約3.1万レース) が永久にスキップされ続けた。
+        # レース単位で「未取得が残っているか」を見て、残っていれば処理する。
+        n_races = conn.execute(
+            "SELECT COUNT(*) FROM races WHERE race_date=?",
             (target_date.isoformat(),)
         ).fetchone()[0]
-        if n_existing > 200:  # 1日 144〜288 results
+        b_ok = True
+        if want_b:
+            missing_entries = conn.execute(
+                "SELECT COUNT(*) FROM races ra WHERE ra.race_date=? "
+                "AND NOT EXISTS (SELECT 1 FROM race_entries e WHERE e.race_id=ra.race_id)",
+                (target_date.isoformat(),)
+            ).fetchone()[0]
+            b_ok = (n_races > 0 and missing_entries == 0)
+        k_ok = True
+        if want_k:
+            missing_results = conn.execute(
+                "SELECT COUNT(*) FROM races ra WHERE ra.race_date=? "
+                "AND NOT EXISTS (SELECT 1 FROM race_results r WHERE r.race_id=ra.race_id)",
+                (target_date.isoformat(),)
+            ).fetchone()[0]
+            k_ok = (n_races > 0 and missing_results == 0)
+        if b_ok and k_ok:
             summary["skipped"] = True
             return summary
 
     # B file
-    b_txt = official_dl.fetch_one("B", target_date)
-    if b_txt and b_txt.exists():
-        try:
-            b_parsed = parse_b_text(b_txt.read_bytes().decode("cp932", errors="replace"), target_date)
-            n_r, n_e = upsert_b(conn, b_parsed)
-            summary["b_races"] = n_r
-            summary["b_entries"] = n_e
-        except Exception as e:
-            logger.exception("B parse/insert failed for %s: %s", target_date, e)
+    if want_b:
+        b_txt = official_dl.fetch_one("B", target_date)
+        if b_txt and b_txt.exists():
+            try:
+                b_parsed = parse_b_text(b_txt.read_bytes().decode("cp932", errors="replace"), target_date)
+                n_r, n_e = upsert_b(conn, b_parsed)
+                summary["b_races"] = n_r
+                summary["b_entries"] = n_e
+            except Exception as e:
+                logger.exception("B parse/insert failed for %s: %s", target_date, e)
 
     # K file
-    time.sleep(official_dl.DOWNLOAD_INTERVAL)
-    k_txt = official_dl.fetch_one("K", target_date)
-    if k_txt and k_txt.exists():
-        try:
-            k_parsed = parse_k_text(k_txt.read_bytes().decode("cp932", errors="replace"), target_date)
-            n_res, n_pay, n_prev = upsert_k(conn, k_parsed)
-            summary["k_results"] = n_res
-            summary["k_payouts"] = n_pay
-            summary["k_previews"] = n_prev
-        except Exception as e:
-            logger.exception("K parse/insert failed for %s: %s", target_date, e)
+    if want_k:
+        time.sleep(official_dl.DOWNLOAD_INTERVAL)
+        k_txt = official_dl.fetch_one("K", target_date)
+        if k_txt and k_txt.exists():
+            try:
+                k_parsed = parse_k_text(k_txt.read_bytes().decode("cp932", errors="replace"), target_date)
+                n_res, n_pay, n_prev = upsert_k(conn, k_parsed)
+                summary["k_results"] = n_res
+                summary["k_payouts"] = n_pay
+                summary["k_previews"] = n_prev
+            except Exception as e:
+                logger.exception("K parse/insert failed for %s: %s", target_date, e)
 
     conn.commit()
     return summary
@@ -224,7 +261,10 @@ def main():
                    help="DATABASE_URL を無視してローカル SQLite に投入する "
                         "(daily_collect.py と同じ挙動)")
     p.add_argument("--skip-existing", action="store_true",
-                   help="その日のresults数が十分なら処理スキップ")
+                   help="取得対象が揃っていれば処理スキップ (b→entries, k→results)")
+    p.add_argument("--targets", default="bk", choices=["bk", "b", "k"],
+                   help="bk=両方(既定) / b=番組表(選手情報)のみ / k=競走成績のみ。"
+                        "選手情報だけ埋める修復は b を使うと K の再DLを省いて半減")
     p.add_argument("--log-file", default=None)
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
@@ -263,7 +303,8 @@ def main():
     cur = start
     t0 = time.time()
     while cur <= end:
-        s = process_day(cur, conn, logger, skip_existing=args.skip_existing)
+        s = process_day(cur, conn, logger, skip_existing=args.skip_existing,
+                        targets=args.targets)
         total["n_days"] += 1
         if s["skipped"]:
             total["n_skipped"] += 1
