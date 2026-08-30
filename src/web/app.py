@@ -7634,10 +7634,10 @@ def create_app(
 
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
-            f"connect-src 'self'{supabase_connect_src}; "
+            f"connect-src 'self'{supabase_connect_src} https://cloudflareinsights.com; "
             "frame-ancestors 'none'; "
             "form-action 'self'; "
             "base-uri 'self';"
