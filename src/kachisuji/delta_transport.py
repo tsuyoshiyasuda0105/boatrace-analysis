@@ -260,10 +260,23 @@ def _validate_schema(
             raise ValueError(f"schema mismatch for table: {table}")
 
 
+def _delta_wants_replace(name: str) -> bool:
+    """名前が "backfill" で始まるデルタだけ既存行の上書きを許す。
+
+    通常の毎晩デルタは追加専用 (INSERT OR IGNORE) のまま。既にある行を
+    直せないので、過去の穴埋め (2026-08-29: 福岡2016-24・多摩川2016-20 の
+    選手情報欠測 約3万レース) を本番へ届けられなかった。名前で明示された
+    一度きりの補正デルタに限り INSERT OR REPLACE で古い行を置き換える。
+    誤って通常デルタを上書きモードにしないよう、判定は名前の接頭辞に固定する。
+    """
+    return name.lower().startswith("backfill")
+
+
 def _apply_one(connection: sqlite3.Connection, delta_path: Path, name: str) -> tuple[int, int]:
     delta_connection = sqlite3.connect(_readonly_uri(delta_path), uri=True)
     try:
         _validate_schema(connection, delta_connection)
+        verb = "INSERT OR REPLACE" if _delta_wants_replace(name) else "INSERT OR IGNORE"
         before = {
             t: int(connection.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
             for t in TABLES
@@ -272,7 +285,7 @@ def _apply_one(connection: sqlite3.Connection, delta_path: Path, name: str) -> t
             column_count = len(delta_connection.execute(f"PRAGMA table_info({t})").fetchall())
             placeholders = ",".join("?" for _ in range(column_count))
             connection.executemany(
-                f"INSERT OR IGNORE INTO {t} VALUES ({placeholders})",
+                f"{verb} INTO {t} VALUES ({placeholders})",
                 delta_connection.execute(f"SELECT * FROM {t}"),
             )
         connection.execute(
