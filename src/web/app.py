@@ -7939,7 +7939,7 @@ def create_app(
     # render_template を通さず jinja_env.get_template().render() で直接描画し、
     # その場合 context_processor が動かず未ログインのページ (＝一番計測したい層)
     # にビーコンが載らなくなるため。グローバルなら全描画経路で確実に注入される。
-    _CF_BEACON_DEFAULT = "a642b567b5764a96b500479e5238beae"
+    _CF_BEACON_DEFAULT = "2b6f7957877e46b8869ac37704072de2"
     app.jinja_env.globals["cf_beacon_token"] = (
         os.environ.get("BOATRACE_CF_BEACON") or _CF_BEACON_DEFAULT
     ).strip()
