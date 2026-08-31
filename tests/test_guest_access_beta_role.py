@@ -226,6 +226,36 @@ def test_member_only_and_admin_pages_remain_closed_to_guests_and_beta(monkeypatc
     assert free.get("/kachisuji/").status_code == 403
 
 
+def test_public_backtest_flag_opens_backtest_to_free_members_only(monkeypatch, tmp_path: Path):
+    """BOATRACE_PUBLIC_BACKTEST=1 のとき free_member もバックテスト可。
+    ゲストは login_required で入れず、フラグ OFF なら free_member は 403 のまま。"""
+    db_path = tmp_path / "kachisuji.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE racers (racer_number INTEGER, name TEXT, name_kana TEXT)"
+        )
+        connection.execute("INSERT INTO racers VALUES (4320, '峰竜太', 'ミネ リュウタ')")
+    monkeypatch.setenv("KACHISUJI_DB", str(db_path))
+    app = _create_app(monkeypatch)
+
+    free = app.test_client()
+    _set_role(free, "free_member")
+
+    # フラグ OFF: free_member は従来どおり 403
+    monkeypatch.delenv("BOATRACE_PUBLIC_BACKTEST", raising=False)
+    assert free.get("/kachisuji/").status_code == 403
+    assert free.get("/kachisuji/api/racers?q=峰").status_code == 403
+
+    # フラグ ON: free_member は開放される (ページ・API とも)
+    monkeypatch.setenv("BOATRACE_PUBLIC_BACKTEST", "1")
+    assert free.get("/kachisuji/").status_code == 200
+    assert free.get("/kachisuji/api/racers?q=峰").status_code == 200
+
+    # フラグ ON でもゲスト (未ログイン) は login_required でリダイレクト＝登録動機を維持
+    guest = app.test_client()
+    assert guest.get("/kachisuji/").status_code in {302, 403}
+
+
 def test_backtest_page_and_api_share_the_beta_permission(monkeypatch, tmp_path: Path):
     db_path = tmp_path / "kachisuji.db"
     with sqlite3.connect(db_path) as connection:

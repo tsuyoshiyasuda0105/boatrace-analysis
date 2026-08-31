@@ -171,13 +171,23 @@ def is_paid_member() -> bool:
 
 def can_use_backtest() -> bool:
     """Return whether the current session may use the Backtest feature."""
-    return current_role() in {
+    import os
+
+    role = current_role()
+    if role in {
         "beta_member",
         "paid_member",
         "admin",
         # Preserve the existing read-only Playwright inspection role.
         "test_viewer",
-    }
+    }:
+        return True
+    # 期間限定・無料ベータ: 環境変数 ON のとき、ログイン済みの無料会員にも開放する。
+    # ゲスト (未ログイン) は current_role() が "guest" なので対象外＝登録動機を維持。
+    # Render の環境変数 BOATRACE_PUBLIC_BACKTEST を消せば即クローズできる。
+    if role == "free_member" and os.getenv("BOATRACE_PUBLIC_BACKTEST", "0") == "1":
+        return True
+    return False
 
 
 def guest_access_enabled() -> bool:
