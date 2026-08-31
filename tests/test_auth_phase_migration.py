@@ -263,6 +263,83 @@ def test_supabase_login_redirects_with_minimum_role_when_membership_db_is_busy(m
         assert "supabase_role_pending_at" in logged_in_session
 
 
+def test_confirmed_email_signup_creates_free_member_profile(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    profile_calls = []
+
+    monkeypatch.setattr(auth.supabase_auth_client, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        auth.supabase_auth_client,
+        "sign_up_with_password",
+        lambda _email, _password: SimpleNamespace(
+            user_id="new-user",
+            email="new@example.com",
+            access_token="",
+        ),
+    )
+    monkeypatch.setattr(
+        auth,
+        "ensure_profile",
+        lambda user_id, email: profile_calls.append((user_id, email)),
+    )
+    monkeypatch.setattr(
+        auth,
+        "_render_supabase_signup",
+        lambda error=None, message=None: error or message or "signup-form",
+    )
+    auth.register_auth_routes(app)
+    client = app.test_client()
+    with client.session_transaction() as signup_session:
+        signup_session["csrf_token"] = "csrf-test"
+
+    response = client.post(
+        "/signup-supabase",
+        data={
+            "csrf_token": "csrf-test",
+            "email": "new@example.com",
+            "password": "valid-password",
+        },
+    )
+
+    assert response.status_code == 200
+    assert profile_calls == [("new-user", "new@example.com")]
+    assert "確認メールを送信しました" in response.get_data(as_text=True)
+
+
+def test_password_recovery_request_uses_reset_page_redirect(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    recovery_calls = []
+
+    monkeypatch.setattr(auth.supabase_auth_client, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        auth.supabase_auth_client,
+        "request_password_recovery",
+        lambda email, redirect_to: recovery_calls.append((email, redirect_to)),
+    )
+    monkeypatch.setattr(
+        auth,
+        "_render_forgot_password",
+        lambda error=None, message=None: error or message or "recovery-form",
+    )
+    auth.register_auth_routes(app)
+    client = app.test_client()
+    with client.session_transaction() as recovery_session:
+        recovery_session["csrf_token"] = "csrf-test"
+
+    response = client.post(
+        "/forgot-password",
+        data={"csrf_token": "csrf-test", "email": "NEW@example.com"},
+    )
+
+    assert response.status_code == 200
+    assert recovery_calls == [
+        ("new@example.com", "http://localhost/reset-password")
+    ]
+    assert "登録済みの場合" in response.get_data(as_text=True)
+
+
 def test_public_race_and_health_requests_skip_supabase_role_refresh(monkeypatch):
     app = Flask(__name__, static_folder="static")
     app.secret_key = "test-secret"
@@ -321,6 +398,7 @@ def test_base_template_shows_admin_menu_and_auth_badge():
     assert "url_for('login_supabase')" in base
     assert "url_for('member_today_races'" in base
     assert "url_for('public_roi')" not in base
+    assert "{% if current_role() != 'free_member' %}" in base
     assert base.index("本日のレース</span>") < base.index("バックテスト</span>")
     assert "/alerts/subscribe" not in base  # 通知登録ボタンは撤去済み
 

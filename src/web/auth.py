@@ -427,11 +427,11 @@ LOGIN_TEMPLATE = """
 
 SUPABASE_LOGIN_TEMPLATE = """
 {% extends "base.html" %}
-{% block title %}Supabaseログイン{% endblock %}
+{% block title %}会員ログイン{% endblock %}
 {% block content %}
 <div class="login-wrap">
-  <h2>Supabaseログイン</h2>
-  <p class="login-hint">新しい会員ログインです。既存ログインは <a href="{{ url_for('login') }}">こちら</a> から利用できます。</p>
+  <h2>会員ログイン</h2>
+  <p class="login-hint">新規登録した会員は、登録時のメールアドレスとパスワードでログインしてください。</p>
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('login_supabase') }}" class="login-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -446,6 +446,7 @@ SUPABASE_LOGIN_TEMPLATE = """
     </label>
     <button type="submit">ログイン</button>
   </form>
+  <p class="login-hint"><a href="{{ url_for('forgot_password') }}">パスワードを忘れた場合</a></p>
   <p class="login-hint"><a href="{{ url_for('signup_supabase') }}">新規登録はこちら</a></p>
 </div>
 {% endblock %}
@@ -473,6 +474,29 @@ SUPABASE_SIGNUP_TEMPLATE = """
     </label>
     <button type="submit">登録</button>
   </form>
+</div>
+{% endblock %}
+"""
+
+
+SUPABASE_FORGOT_PASSWORD_TEMPLATE = """
+{% extends "base.html" %}
+{% block title %}パスワード再設定{% endblock %}
+{% block content %}
+<div class="login-wrap">
+  <h2>パスワード再設定</h2>
+  <p class="login-hint">登録したメールアドレスへ、パスワード再設定リンクを送信します。</p>
+  {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+  {% if message %}<div class="login-hint">{{ message }}</div>{% endif %}
+  <form method="post" action="{{ url_for('forgot_password') }}" class="login-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>
+      <span>メールアドレス</span>
+      <input type="email" name="email" autocomplete="email" required autofocus>
+    </label>
+    <button type="submit">再設定メールを送信</button>
+  </form>
+  <p class="login-hint"><a href="{{ url_for('login_supabase') }}">ログイン画面へ戻る</a></p>
 </div>
 {% endblock %}
 """
@@ -631,13 +655,18 @@ def register_auth_routes(app):
         """Return cookie-only header state for shared cache-neutral HTML."""
         payload: dict[str, object] = {"is_member": is_member()}
         if is_member():
-            items = [
-                {
-                    "href": url_for("member_today_races"),
-                    "icon": "今",
-                    "label": "本日のレース",
-                    "class_name": "nav-btn-today",
-                },
+            today_races_url = url_for("member_today_races")
+            items = []
+            if current_role() != "free_member":
+                items.append(
+                    {
+                        "href": today_races_url,
+                        "icon": "今",
+                        "label": "本日のレース",
+                        "class_name": "nav-btn-today",
+                    }
+                )
+            items.extend([
                 {
                     "href": url_for("kachisuji.index"),
                     "icon": "検",
@@ -650,7 +679,7 @@ def register_auth_routes(app):
                     "label": "プラン申込",
                     "class_name": "",
                 },
-            ]
+            ])
             if is_admin():
                 items.extend(
                     [
@@ -699,7 +728,7 @@ def register_auth_routes(app):
                 )
             payload.update(
                 {
-                    "home_url": items[0]["href"],
+                    "home_url": today_races_url,
                     "home_title": "本日のROI候補一覧",
                     "items": items,
                     "role_label": f"{current_role()} / {current_auth_provider()}",
@@ -854,6 +883,41 @@ def register_auth_routes(app):
                 return _render_supabase_signup(error=str(e)), 400
         return _render_supabase_signup()
 
+    @app.route("/forgot-password", methods=["GET", "POST"])
+    def forgot_password():
+        if not supabase_auth_client.is_configured():
+            abort(404)
+        if request.method == "POST":
+            if not _verify_csrf_token():
+                return _render_forgot_password(
+                    error="セッションが無効です。ページを再読み込みしてください。"
+                ), 400
+            allowed, retry_after = _check_rate_limit(_client_ip())
+            if not allowed:
+                return _render_forgot_password(
+                    error=f"試行回数が多すぎます。{retry_after//60+1}分後に再度お試しください。"
+                ), 429
+            email = request.form.get("email", "").strip().lower()
+            try:
+                supabase_auth_client.request_password_recovery(
+                    email,
+                    url_for("reset_password", _external=True),
+                )
+            except supabase_auth_client.SupabaseAuthError:
+                logger.warning("supabase password recovery rejected from %s", _client_ip())
+                return _render_forgot_password(
+                    error="再設定メールを送信できませんでした。少し待ってから再度お試しください。"
+                ), 400
+            except Exception:
+                logger.exception("supabase password recovery unavailable from %s", _client_ip())
+                return _render_forgot_password(
+                    error="認証サービスに一時的に接続できません。少し待ってから再度お試しください。"
+                ), 503
+            return _render_forgot_password(
+                message="登録済みの場合、パスワード再設定メールを送信しました。"
+            )
+        return _render_forgot_password()
+
     @app.route("/reset-password", methods=["GET"])
     def reset_password():
         if not supabase_auth_client.is_configured():
@@ -901,3 +965,11 @@ def _render_supabase_login(error: str | None):
 
 def _render_supabase_signup(error: str | None = None, message: str | None = None):
     return render_template_string(SUPABASE_SIGNUP_TEMPLATE, error=error, message=message)
+
+
+def _render_forgot_password(error: str | None = None, message: str | None = None):
+    return render_template_string(
+        SUPABASE_FORGOT_PASSWORD_TEMPLATE,
+        error=error,
+        message=message,
+    )

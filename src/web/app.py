@@ -7452,6 +7452,7 @@ def create_app(
         "/login",
         "/login-supabase",
         "/signup-supabase",
+        "/forgot-password",
         "/reset-password",
         "/logout",
     })

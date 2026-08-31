@@ -41,7 +41,7 @@ def test_maintenance_window_keeps_login_routes_available(monkeypatch):
 
     # 認証系はメンテ時間帯でも締め出さない (「早朝ログインできない」対策)
     for path in ("/login", "/login-supabase", "/signup-supabase",
-                 "/reset-password", "/logout"):
+                 "/forgot-password", "/reset-password", "/logout"):
         status = client.get(path).status_code
         assert status != 503, f"{path} must stay reachable during maintenance"
 

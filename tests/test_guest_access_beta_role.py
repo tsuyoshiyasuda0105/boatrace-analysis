@@ -320,6 +320,19 @@ def test_shared_race_detail_html_is_guest_safe_even_when_generated_by_member(
 def test_session_navigation_restores_member_race_link_without_guest_leak(monkeypatch):
     app = _create_app(monkeypatch)
 
+    free = app.test_client()
+    _set_role(free, "free_member")
+    free_payload = free.get("/api/session-navigation").get_json()
+    assert [item["label"] for item in free_payload["items"]] == [
+        "バックテスト", "プラン申込",
+    ]
+    assert free_payload["home_url"] == "/member/today-races"
+
+    paid = app.test_client()
+    _set_role(paid, "paid_member")
+    paid_payload = paid.get("/api/session-navigation").get_json()
+    assert paid_payload["items"][0]["label"] == "本日のレース"
+
     member = app.test_client()
     _set_role(member, "admin")
     member_response = member.get("/api/session-navigation")
@@ -341,6 +354,23 @@ def test_session_navigation_restores_member_race_link_without_guest_leak(monkeyp
     assert guest_response.get_json() == {"is_member": False}
     assert "/member/today-races" not in guest_body
     assert "バックテスト" not in guest_body
+
+
+def test_free_member_header_hides_only_today_races_button(monkeypatch):
+    app = _create_app(monkeypatch)
+    monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: _snapshot())
+
+    free = app.test_client()
+    _set_role(free, "free_member")
+    free_html = free.get("/").get_data(as_text=True)
+    assert "nav-btn nav-btn-today" not in free_html
+    assert "バックテスト</span>" in free_html
+    assert "プラン申込</span>" in free_html
+
+    paid = app.test_client()
+    _set_role(paid, "paid_member")
+    paid_html = paid.get("/").get_data(as_text=True)
+    assert "nav-btn nav-btn-today" in paid_html
 
 
 def test_shared_cached_race_detail_hydrates_navigation_from_session_only(monkeypatch):

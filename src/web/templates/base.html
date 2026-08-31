@@ -27,9 +27,11 @@
 
       {% if is_member() and not cache_neutral_auth %}
       <nav class="nav-actions" aria-label="会員メニュー">
+        {% if current_role() != 'free_member' %}
         <a href="{{ url_for('member_today_races', date=today_iso_global) }}" class="nav-btn nav-btn-today" title="本日のROI候補一覧">
           <span class="nav-icon">今</span><span class="nav-label">本日のレース</span>
         </a>
+        {% endif %}
         <a href="{{ url_for('kachisuji.index') }}" class="nav-btn" title="過去データで条件を検証">
           <span class="nav-icon">検</span><span class="nav-label">バックテスト</span>
         </a>

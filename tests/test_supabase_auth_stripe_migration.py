@@ -9,6 +9,7 @@ def test_supabase_auth_is_added_as_parallel_login():
     assert '@app.route("/login", methods=["GET", "POST"])' in source
     assert '@app.route("/login-supabase", methods=["GET", "POST"])' in source
     assert '@app.route("/signup-supabase", methods=["GET", "POST"])' in source
+    assert '@app.route("/forgot-password", methods=["GET", "POST"])' in source
     assert '@app.route("/reset-password", methods=["GET"])' in source
 
 
@@ -25,6 +26,29 @@ def test_reset_password_page_uses_only_public_supabase_key():
     assert 'fetch(supabaseUrl.replace(/\\\\/$/, "") + "/auth/v1/user"' in source
     assert "SUPABASE_SECRET_KEY" not in source
     assert "SERVICE_ROLE" not in source
+
+
+def test_login_page_links_to_password_recovery():
+    source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
+    assert "url_for('forgot_password')" in source
+    assert "パスワードを忘れた場合" in source
+
+
+def test_confirmed_signup_creates_profile_before_session_decision():
+    source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
+    route = source[source.index("def signup_supabase()") : source.index("def forgot_password()")]
+    assert "ensure_profile(auth_session.user_id, auth_session.email)" in route
+    assert route.index("ensure_profile(auth_session.user_id") < route.index(
+        "if auth_session.access_token"
+    )
+
+
+def test_password_recovery_route_uses_supabase_client_and_generic_success_message():
+    source = (ROOT / "src" / "web" / "auth.py").read_text(encoding="utf-8")
+    route = source[source.index("def forgot_password()") : source.index("def reset_password()")]
+    assert "supabase_auth_client.request_password_recovery" in route
+    assert 'url_for("reset_password", _external=True)' in route
+    assert "登録済みの場合、パスワード再設定メールを送信しました。" in route
 
 
 def test_recovery_link_landing_on_top_redirects_to_reset_password():
