@@ -15,6 +15,30 @@ def _read(rel_path: str) -> str:
     return (ROOT / rel_path).read_text(encoding="utf-8")
 
 
+def test_page_html_memory_cache_has_no_direct_assignment_outside_cache_class():
+    path = ROOT / "src/web/app.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    cache_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "_PageHtmlMemCache"
+    )
+    direct_assignments = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.ctx, ast.Store)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "_PAGE_HTML_MEM_CACHE"
+        and not (cache_class.lineno <= node.lineno <= cache_class.end_lineno)
+    ]
+
+    assert not direct_assignments, (
+        "_PAGE_HTML_MEM_CACHE への直接代入は _PageHtmlMemCache の外で禁止です: "
+        f"lines={direct_assignments}"
+    )
+
+
 def test_kachisuji_apply_paths_never_full_copy_the_slim_database():
     for rel_path in (
         "src/kachisuji/delta_transport.py",

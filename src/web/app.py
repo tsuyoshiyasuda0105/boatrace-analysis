@@ -379,8 +379,72 @@ def _with_transient_db_fallback(
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_DEFAULT_TTL = 300  # 5分
 
-_PAGE_HTML_MEM_CACHE: dict[str, tuple[float, str]] = {}
+class _PageHtmlMemCache(dict[str, tuple[float, str]]):
+    """値とメモ化時刻を必ず対で管理するメモリキャッシュ。
+
+    時刻を別辞書で持って呼び出し側の規律に任せると、直接代入や clear() の
+    片手落ちで「永久に新鮮」なキーが生まれ、DB を読み直さなくなる
+    (2026-08-30 / 09-01 の TOP 画面固着の再発経路)。書き込み口を型で塞ぐ。
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__()
+        self._memoized_times: dict[str, float] = {}
+        self.update(*args, **kwargs)
+
+    def __setitem__(self, key: str, value: tuple[float, str]) -> None:
+        memoized_at = time.time()
+        super().__setitem__(key, value)
+        self._memoized_times[key] = memoized_at
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def setdefault(
+        self, key: str, default: tuple[float, str] | None = None
+    ) -> tuple[float, str] | None:
+        if key not in self:
+            self[key] = default  # type: ignore[assignment]
+        return self[key]
+
+    def __ior__(self, other: Any) -> "_PageHtmlMemCache":
+        self.update(other)
+        return self
+
+    def pop(self, key: str, *default: Any) -> Any:
+        value = super().pop(key, *default)
+        self._memoized_times.pop(key, None)
+        return value
+
+    def popitem(self) -> tuple[str, tuple[float, str]]:
+        key, value = super().popitem()
+        self._memoized_times.pop(key, None)
+        return key, value
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        self._memoized_times.pop(key, None)
+
+    def clear(self) -> None:
+        super().clear()
+        self._memoized_times.clear()
+
+    def memoized_at(self, key: str) -> float | None:
+        return self._memoized_times.get(key)
+
+
+_PAGE_HTML_MEM_CACHE = _PageHtmlMemCache()
 _PAGE_HTML_MEM_CACHE_MAX = 2000
+# メモ化後にこの秒数を過ぎたら DB を読み直し、古い値の固着を防ぐ。
+# DB 側の再検証に失敗したときは、従来どおりメモ上の値を返す。
+_PAGE_HTML_MEM_CACHE_REVALIDATE_SEC = float(
+    os.environ.get("BOATRACE_PAGE_CACHE_REVALIDATE_SEC", "60")
+)
+_PAGE_HTML_MEM_CACHE_NEGATIVE_SEC = 10.0
+_PAGE_HTML_FORCE_REVALIDATE: ContextVar[bool] = ContextVar(
+    "page_html_force_revalidate", default=False
+)
 _PAGE_HTML_CACHE_TABLE_READY = False
 _RACE_DETAIL_BACKGROUND_RECOMPUTE: ContextVar[bool] = ContextVar(
     "race_detail_background_recompute",
@@ -395,6 +459,22 @@ EXPENSIVE_RECOMPUTE_TRIGGERS = {
     "render-detail-prewarm",
     "db-maintenance",
 }
+
+
+def _mem_cache_put(key: str, updated_at: float, html: str) -> None:
+    """値とメモ化時刻を必ず対にして保存する。"""
+    _PAGE_HTML_MEM_CACHE.update({key: (float(updated_at or 0), html)})
+
+
+def _mem_cache_is_fresh(key: str, revalidate_sec: float | None = None) -> bool:
+    """メモ化からの経過が再検証間隔以内なら True。"""
+    cached_at = _PAGE_HTML_MEM_CACHE.memoized_at(key)
+    if cached_at is None:
+        return False
+    interval = revalidate_sec
+    if interval is None:
+        interval = _PAGE_HTML_MEM_CACHE_REVALIDATE_SEC
+    return time.time() - cached_at <= interval
 
 
 def _rebuild_race_detail_page_in_background(app: Flask, race_id: str) -> None:
@@ -1416,7 +1496,13 @@ def _update_top_page_snapshot_market_payload(
 
 
 def _read_top_page_snapshot(target_date: str) -> Optional[dict[str, Any]]:
-    payload = _read_json_cache_stale(_top_page_snapshot_cache_key(target_date))
+    cache_key = _top_page_snapshot_cache_key(target_date)
+    # 当日の空は番組表取込前の一時状態になり得るため、最初の一読で DB まで確認する。
+    token = _PAGE_HTML_FORCE_REVALIDATE.set(target_date == _today_jst_iso())
+    try:
+        payload = _read_json_cache_stale(cache_key)
+    finally:
+        _PAGE_HTML_FORCE_REVALIDATE.reset(token)
     if not isinstance(payload, dict):
         return None
     if payload.get("version") != TOP_PAGE_SNAPSHOT_VERSION:
@@ -1746,6 +1832,7 @@ def _read_page_html_caches(
         return {}
     now_ts = time.time()
     found: dict[str, str] = {}
+    stale_found: dict[str, str] = {}
     persistent_keys: list[str] = []
     prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
     prefetched_rows = prewarm_context.get("page_cache_rows")
@@ -1755,20 +1842,28 @@ def _read_page_html_caches(
         if mem_entry:
             updated_at, html = float(mem_entry[0] or 0), mem_entry[1]
             if max_age_sec is None or now_ts - updated_at <= max_age_sec:
-                found[key] = html
-                continue
+                if _mem_cache_is_fresh(key):
+                    found[key] = html
+                    continue
+                stale_found[key] = html
         if prefetched_rows is not None:
             prefetched_row = prefetched_rows.get(key)
             if prefetched_row is None:
+                if key in stale_found:
+                    found[key] = stale_found[key]
                 continue
             html, updated_at = prefetched_row
             updated_at = float(updated_at or 0)
             if max_age_sec is None:
                 if not html:
+                    if key in stale_found:
+                        found[key] = stale_found[key]
                     continue
             elif now_ts - updated_at > max_age_sec:
+                if key in stale_found:
+                    found[key] = stale_found[key]
                 continue
-            _PAGE_HTML_MEM_CACHE[key] = (updated_at, html)
+            _mem_cache_put(key, updated_at, html)
             found[key] = html
             continue
         persistent_keys.append(key)
@@ -1780,20 +1875,27 @@ def _read_page_html_caches(
         for key in persistent_keys:
             row = rows_by_key.get(key)
             if row is None:
+                if key in stale_found:
+                    found[key] = stale_found[key]
                 continue
             html, updated_at = row
             if max_age_sec is None:
                 if not html:
+                    if key in stale_found:
+                        found[key] = stale_found[key]
                     continue
             elif now_ts - updated_at > max_age_sec:
+                if key in stale_found:
+                    found[key] = stale_found[key]
                 continue
-            _PAGE_HTML_MEM_CACHE[key] = (updated_at, html)
+            _mem_cache_put(key, updated_at, html)
             if max_age_sec is not None and len(_PAGE_HTML_MEM_CACHE) > _PAGE_HTML_MEM_CACHE_MAX:
                 items = sorted(_PAGE_HTML_MEM_CACHE.items(), key=lambda item: item[1][0])
                 for old_key, _ in items[:1000]:
                     _PAGE_HTML_MEM_CACHE.pop(old_key, None)
             found[key] = html
     except Exception as exc:
+        found.update(stale_found)
         if is_transient_db_error(exc):
             _note_transient_db_error("page_cache_bulk", exc)
         logger.exception("failed to bulk read page_html_cache: count=%s", len(persistent_keys))
@@ -1801,24 +1903,27 @@ def _read_page_html_caches(
 
 
 def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
+    stale_html = None
     try:
         now_ts = time.time()
         mem_row = _PAGE_HTML_MEM_CACHE.get(cache_key)
         if mem_row:
             updated_at, html = float(mem_row[0] or 0), mem_row[1]
             if now_ts - updated_at <= max_age_sec:
-                return html
+                if _mem_cache_is_fresh(cache_key):
+                    return html
+                stale_html = html
         prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
         prefetched_rows = prewarm_context.get("page_cache_rows")
         if prefetched_rows is not None:
             prefetched_row = prefetched_rows.get(cache_key)
             if prefetched_row is None:
-                return None
+                return stale_html
             html, updated_at = prefetched_row
             if now_ts - float(updated_at or 0) <= max_age_sec:
-                _PAGE_HTML_MEM_CACHE[cache_key] = (float(updated_at or 0), html)
+                _mem_cache_put(cache_key, float(updated_at or 0), html)
                 return html
-            return None
+            return stale_html
         _ensure_page_html_cache_table()
         with db_connect() as conn:
             row = conn.execute(
@@ -1826,11 +1931,11 @@ def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
                 (cache_key,),
             ).fetchone()
         if not row:
-            return None
+            return stale_html
         html, updated_at = row[0], float(row[1] or 0)
         if now_ts - updated_at > max_age_sec:
-            return None
-        _PAGE_HTML_MEM_CACHE[cache_key] = (updated_at, html)
+            return stale_html
+        _mem_cache_put(cache_key, updated_at, html)
         if len(_PAGE_HTML_MEM_CACHE) > _PAGE_HTML_MEM_CACHE_MAX:
             items = sorted(_PAGE_HTML_MEM_CACHE.items(), key=lambda x: x[1][0])
             for k, _ in items[:1000]:
@@ -1840,14 +1945,14 @@ def _read_page_html_cache(cache_key: str, max_age_sec: int) -> Optional[str]:
         if is_transient_db_error(exc):
             _note_transient_db_error("page_cache_fresh", exc)
         logger.exception("failed to read page_html_cache: %s", cache_key)
-        return None
+        return stale_html
 
 
 def _write_page_html_cache(cache_key: str, html: str) -> None:
     try:
         _ensure_page_html_cache_table()
         now_ts = time.time()
-        _PAGE_HTML_MEM_CACHE[cache_key] = (now_ts, html)
+        _mem_cache_put(cache_key, now_ts, html)
         with db_connect() as conn:
             conn.execute(
                 """
@@ -1879,20 +1984,23 @@ def _read_page_html_cache_stale(cache_key: str) -> Optional[str]:
     request must not fall back to a multi-minute historical aggregation just
     because the fresh TTL elapsed between cron runs.
     """
+    stale_html = None
     try:
         mem_entry = _PAGE_HTML_MEM_CACHE.get(cache_key)
         if mem_entry:
-            return mem_entry[1]
+            if _mem_cache_is_fresh(cache_key):
+                return mem_entry[1]
+            stale_html = mem_entry[1]
         prewarm_context = _RACE_DETAIL_PREWARM_CONTEXT.get() or {}
         prefetched_rows = prewarm_context.get("page_cache_rows")
         if prefetched_rows is not None:
             prefetched_row = prefetched_rows.get(cache_key)
             if prefetched_row is None:
-                return None
+                return stale_html
             html, updated_at = prefetched_row
             if not html:
                 return None
-            _PAGE_HTML_MEM_CACHE[cache_key] = (float(updated_at or 0), html)
+            _mem_cache_put(cache_key, float(updated_at or 0), html)
             return html
         _ensure_page_html_cache_table()
         with db_connect() as conn:
@@ -1901,15 +2009,15 @@ def _read_page_html_cache_stale(cache_key: str) -> Optional[str]:
                 (cache_key,),
             ).fetchone()
         if not row or not row[0]:
-            return None
+            return stale_html
         html, updated_at = row[0], float(row[1] or 0)
-        _PAGE_HTML_MEM_CACHE[cache_key] = (updated_at, html)
+        _mem_cache_put(cache_key, updated_at, html)
         return html
     except Exception as exc:
         if is_transient_db_error(exc):
             _note_transient_db_error("page_cache_stale", exc)
         logger.exception("failed to read stale page cache: %s", cache_key)
-        return None
+        return stale_html
 
 
 def _read_json_cache(cache_key: str, max_age_sec: int) -> Optional[Any]:
@@ -1943,7 +2051,7 @@ def _write_json_caches(payloads: dict[str, Any]) -> None:
         rows = []
         for cache_key, payload in payloads.items():
             raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-            _PAGE_HTML_MEM_CACHE[cache_key] = (now_ts, raw)
+            _mem_cache_put(cache_key, now_ts, raw)
             rows.append((cache_key, raw, now_ts))
         with db_connect() as conn:
             conn.executemany(
@@ -1961,17 +2069,34 @@ def _write_json_caches(payloads: dict[str, Any]) -> None:
         logger.exception("failed to bulk write JSON caches: count=%s", len(payloads))
 
 
-def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
+def _decode_stale_json(raw: str | None, cache_key: str) -> Optional[Any]:
+    """Decode a resilience fallback without letting corrupt JSON stop the UI."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        logger.warning("failed to decode stale json cache fallback: %s", cache_key)
+        return None
+
+
+def _read_json_cache_stale(
+    cache_key: str, *, force_revalidate: bool = False
+) -> Optional[Any]:
     """Read a JSON cache entry without TTL checks.
 
     This is used as a resilience fallback for expensive pages/APIs so we can
     return the last known-good payload instead of blocking the UI on a full
     recomputation.
     """
+    force_revalidate = force_revalidate or _PAGE_HTML_FORCE_REVALIDATE.get()
+    stale_raw = None
     try:
         mem_entry = _PAGE_HTML_MEM_CACHE.get(cache_key)
         if mem_entry:
-            return json.loads(mem_entry[1])
+            stale_raw = mem_entry[1]
+            if not force_revalidate and _mem_cache_is_fresh(cache_key):
+                return json.loads(stale_raw)
         _ensure_page_html_cache_table()
         with db_connect() as conn:
             row = conn.execute(
@@ -1980,14 +2105,14 @@ def _read_json_cache_stale(cache_key: str) -> Optional[Any]:
             ).fetchone()
         raw = row[0] if row else None
         if not raw:
-            return None
-        _PAGE_HTML_MEM_CACHE[cache_key] = (float(row[1] or 0), raw)
+            return _decode_stale_json(stale_raw, cache_key)
+        _mem_cache_put(cache_key, float(row[1] or 0), raw)
         return json.loads(raw)
     except Exception as exc:
         if is_transient_db_error(exc):
             _note_transient_db_error("json_cache_stale", exc)
         logger.exception("failed to read stale json cache: %s", cache_key)
-        return None
+        return _decode_stale_json(stale_raw, cache_key)
 
 
 def _read_json_caches_stale(
@@ -2005,13 +2130,22 @@ def _read_json_caches_stale(
     if not keys:
         return {}
     found: dict[str, Any] = {}
+    stale_found: dict[str, Any] = {}
     missing: list[str] = []
     for key in keys:
         mem_entry = _PAGE_HTML_MEM_CACHE.get(key)
         if mem_entry:
             try:
-                found[key] = json.loads(mem_entry[1])
-                continue
+                cached = json.loads(mem_entry[1])
+                interval = (
+                    _PAGE_HTML_MEM_CACHE_NEGATIVE_SEC
+                    if float(mem_entry[0] or 0) == 0 and mem_entry[1] == "{}"
+                    else None
+                )
+                if _mem_cache_is_fresh(key, interval):
+                    found[key] = cached
+                    continue
+                stale_found[key] = cached
             except Exception:
                 pass
         missing.append(key)
@@ -2024,17 +2158,21 @@ def _read_json_caches_stale(
                 continue
             try:
                 found[str(cache_key)] = json.loads(raw)
-                _PAGE_HTML_MEM_CACHE[str(cache_key)] = (float(updated_at or 0), raw)
+                _mem_cache_put(str(cache_key), float(updated_at or 0), raw)
             except Exception:
                 logger.warning("failed to decode bulk json cache: %s", cache_key)
         for key in missing:
             if key not in found:
+                if key in stale_found:
+                    found[key] = stale_found[key]
+                    continue
                 # Avoid an immediate per-race miss query later in the same
                 # reconstruction. This process-local negative entry is cleared
                 # by normal cache invalidation.
                 found[key] = {}
-                _PAGE_HTML_MEM_CACHE[key] = (0.0, "{}")
+                _mem_cache_put(key, 0.0, "{}")
     except Exception as exc:
+        found.update(stale_found)
         if is_transient_db_error(exc):
             _note_transient_db_error("json_cache_bulk_stale", exc)
         logger.exception("failed to bulk read stale json caches: count=%s", len(missing))
