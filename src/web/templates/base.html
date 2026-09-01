@@ -76,7 +76,8 @@
           </a>
         {% else %}
           {% if is_supabase_auth_enabled() %}
-          <a href="{{ url_for('login_supabase') }}" class="account-btn account-btn-login">メールログイン</a>
+          <a href="{{ url_for('signup_supabase') }}" class="account-btn account-btn-signup">新規登録</a>
+          <a href="{{ url_for('login_supabase') }}" class="account-btn account-btn-login">ログイン</a>
           <a href="{{ url_for('login') }}" class="account-btn account-btn-public-roi">既存ログイン</a>
           {% else %}
           <a href="{{ url_for('login') }}" class="account-btn account-btn-login">ログイン</a>

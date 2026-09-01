@@ -1218,6 +1218,23 @@ html.is-navigating::before {
   border-color: rgba(0, 212, 255, 0.9);
   box-shadow: 0 4px 14px rgba(0, 212, 255, 0.4);
 }
+.account-btn-signup {
+  border-color: #ffd166;
+  background: linear-gradient(135deg, #ffd166, #ff7a45);
+  color: #2a1402;
+  font-weight: 800;
+}
+.account-btn-signup:hover {
+  border-color: #ffd166;
+  background: linear-gradient(135deg, #ffd166, #ff7a45);
+  box-shadow: 0 4px 16px rgba(255, 158, 30, 0.35);
+  transform: translateY(-1px);
+}
+.account-btn-signup:active {
+  background: linear-gradient(135deg, #ffd166, #ff7a45);
+  box-shadow: 0 2px 8px rgba(255, 158, 30, 0.28);
+  transform: translateY(0);
+}
 
 /* レガシー .auth-link (削除予定) */
 .auth-link {
@@ -1251,6 +1268,9 @@ html.is-navigating::before {
     padding: 6px 8px;
     min-width: 0;
     gap: 4px;
+  }
+  .account-btn-signup {
+    min-height: 44px;
   }
   /* スマホ最小: アイコンのみ表示にしてラベルを隠す手も */
   /* .nav-btn .nav-label { display: none; } */
