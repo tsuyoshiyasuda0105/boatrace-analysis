@@ -848,8 +848,18 @@ def run_lite_daytime_bootstrap(now: datetime) -> bool:
         )
     if not source_recovery_ok:
         print("[lite-bootstrap] source gate not ready -> skip downstream prewarm", flush=True)
-        record_task(task, today, "failure", detail="source_gate_not_ready")
-        record_task(attempt_task, today, "failure", detail="source_gate_not_ready")
+        # 2026-09-02: OpenAPI が 3 会場欠けただけでゲートが通らず、ここで止まって
+        # TOP スナップショットが当日一度も作り直されなかった。公式ソース経由で
+        # レースは既に揃っていたのに、画面だけが空のまま一日固まった。
+        # ゲート自体は緩めない (重い prewarm は下で従来どおり止める)。
+        # ただし当日のレースが DB にあるなら、画面を出さない理由はないので
+        # TOP スナップショットの生成だけを例外的に通す。
+        detail = "source_gate_not_ready"
+        if race_count_for_date(today) > 0:
+            rebuilt = run_top_page_snapshot(now, lightweight=True)
+            detail += "(top_snapshot_rebuilt)" if rebuilt else "(top_snapshot_failed)"
+        record_task(task, today, "failure", detail=detail)
+        record_task(attempt_task, today, "failure", detail=detail)
         return False
 
     ok = run_signal_refresh_slot(now, source_gate_verified=True)

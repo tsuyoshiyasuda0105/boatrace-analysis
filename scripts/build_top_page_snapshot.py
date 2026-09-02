@@ -43,7 +43,6 @@ def main() -> int:
         market["degraded_reason"] = "signal_refresh_failed"
         payload["initial_market_signals"] = market
         payload["market_signals_degraded"] = True
-    web_app._write_top_page_snapshot(args.date, payload)
     groups = payload.get("stadium_groups") or []
     races = sum(len((group.get("races") or [])) for group in groups if isinstance(group, dict))
     badges = (
@@ -51,6 +50,20 @@ def main() -> int:
         if isinstance(payload.get("initial_market_signals"), dict)
         else {}
     )
+    if races == 0:
+        # レース 0 件のスナップショットを焼いてはいけない。前夜 22 時の翌日先回り
+        # 生成は番組表取込 (23 時台) より先に走るため、そのまま保存すると
+        # 「この日のデータはありません」が一日中出続ける (2026-09-02 の障害)。
+        # 開催が本当に無い日は事実上存在しないので、書かずに終える方が安全。
+        # 失敗ではなく「まだ早い」だけなので終了コードは 0 のままにする。
+        print(
+            "[top-snapshot] "
+            f"date={args.date} SKIPPED write: no races yet "
+            f"(existing snapshot left untouched) lightweight={bool(args.lightweight)}",
+            flush=True,
+        )
+        return 0
+    web_app._write_top_page_snapshot(args.date, payload)
     print(
         "[top-snapshot] "
         f"date={args.date} stadiums={len(groups)} races={races} "

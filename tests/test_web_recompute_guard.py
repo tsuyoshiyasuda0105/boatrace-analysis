@@ -745,6 +745,11 @@ def test_lite_daytime_bootstrap_stops_when_revalidated_gate_is_not_ready(monkeyp
         "run_program_source_gate",
         lambda _run_date, **_kwargs: False,
     )
+    # 当日のレースが 0 件の状況を固定する。2026-09-02 以降、レースが既にあるときは
+    # ゲート不成立でも TOP スナップショットだけは作り直す (detail に印が付く)。
+    # ここはその例外に入らない「作るものが無い」側を検証したいので 0 を明示する。
+    # 併せて、この行が無いと race_count_for_date が実 DB を引いてしまう点も塞ぐ。
+    monkeypatch.setattr(scheduler, "race_count_for_date", lambda _run_date: 0)
     monkeypatch.setattr(
         scheduler,
         "run_signal_refresh_slot",
