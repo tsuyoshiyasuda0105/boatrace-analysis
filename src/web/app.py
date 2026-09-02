@@ -594,6 +594,144 @@ ENTRY_CHANGE_MIN_STARTS = 100
 ENTRY_CHANGE_WATCH_RATE = 0.15
 ENTRY_CHANGE_HIGH_RATE = 0.20
 ENTRY_CHANGE_INNER_MIN_RATE = 0.10
+COURSE_ROLE_MIN_STARTS = 20
+ESCAPE_WIN_RATE_MIN = 0.70
+NIGASHI_RATE_MIN = 0.65
+
+
+def _load_course_role_snapshot_stats(
+    snapshot_date: str,
+    racer_numbers: list[int],
+) -> dict[int, dict[str, Any]]:
+    """コース役割スナップショットを当日出走選手ぶんまとめて読む。"""
+    if not racer_numbers:
+        return {}
+    wanted = sorted({int(r) for r in racer_numbers if r is not None})
+    if not wanted:
+        return {}
+    placeholders = ",".join("?" for _ in wanted)
+    try:
+        with db_connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT racer_number,
+                       course1_starts,
+                       course1_wins,
+                       course1_win_rate,
+                       course2_starts,
+                       course2_nigashi_count,
+                       course2_nigashi_rate
+                  FROM racer_course_role_snapshots
+                 WHERE snapshot_date = ?
+                   AND racer_number IN ({placeholders})
+                """,
+                (snapshot_date, *wanted),
+            ).fetchall()
+    except Exception:
+        logger.warning("course role snapshot load failed: %s", snapshot_date, exc_info=True)
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if len(row) < 7:
+            logger.warning(
+                "course role snapshot row has unexpected columns: %s",
+                len(row),
+            )
+            continue
+        racer = _safe_int(row[0])
+        if racer is None:
+            continue
+        out[racer] = {
+            "course1_starts": int(row[1] or 0),
+            "course1_wins": int(row[2] or 0),
+            "course1_win_rate": _safe_float(row[3]),
+            "course2_starts": int(row[4] or 0),
+            "course2_nigashi_count": int(row[5] or 0),
+            "course2_nigashi_rate": _safe_float(row[6]),
+        }
+    return out
+
+
+def _course_role_escape_tag(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
+    if not isinstance(stats, dict):
+        return None
+    starts = int(stats.get("course1_starts") or 0)
+    rate = _safe_float(stats.get("course1_win_rate"))
+    if starts < COURSE_ROLE_MIN_STARTS or rate is None or rate < ESCAPE_WIN_RATE_MIN:
+        return None
+    return {
+        "label": "逃げ",
+        "rate": round(rate * 100.0, 1),
+        "wins": int(stats.get("course1_wins") or 0),
+        "starts": starts,
+    }
+
+
+def _course_role_nigashi_tag(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
+    if not isinstance(stats, dict):
+        return None
+    starts = int(stats.get("course2_starts") or 0)
+    rate = _safe_float(stats.get("course2_nigashi_rate"))
+    if starts < COURSE_ROLE_MIN_STARTS or rate is None or rate < NIGASHI_RATE_MIN:
+        return None
+    return {
+        "label": "壁",
+        "rate": round(rate * 100.0, 1),
+        "wins": int(stats.get("course2_nigashi_count") or 0),
+        "starts": starts,
+    }
+
+
+def _load_legacy_escape_by_race(target_date: str) -> dict[str, dict[str, Any]]:
+    """過去日のスナップショット未整備期間だけ既存定義で逃げ率を読む。"""
+    with db_connect() as conn:
+        rows = conn.execute(
+            """
+            WITH target_boat1 AS (
+                SELECT r.race_id,
+                       e.racer_number
+                  FROM races r
+                  JOIN race_entries e
+                    ON e.race_id = r.race_id
+                   AND e.boat_number = 1
+                 WHERE r.race_date = ?
+                   AND e.racer_number IS NOT NULL
+            )
+            SELECT t.race_id,
+                   COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+              FROM target_boat1 t
+              JOIN race_entries e
+                ON e.racer_number = t.racer_number
+              JOIN races r
+                ON r.race_id = e.race_id
+               AND r.race_date < ?
+              JOIN race_results rr
+                ON rr.race_id = e.race_id
+               AND rr.boat_number = e.boat_number
+             WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
+               AND rr.finishing_position IS NOT NULL
+             GROUP BY t.race_id
+            """,
+            (target_date, target_date),
+        ).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for race_id, starts, wins in rows:
+        starts_i = int(starts or 0)
+        wins_i = int(wins or 0)
+        if starts_i <= 0:
+            continue
+        rate = wins_i / starts_i
+        if rate < ESCAPE_WIN_RATE_MIN:
+            continue
+        out[str(race_id)] = {
+            "boat": 1,
+            "label": "逃げ",
+            "rate": round(rate * 100.0, 1),
+            "wins": wins_i,
+            "starts": starts_i,
+        }
+    return out
 
 
 def _load_entry_change_snapshot_stats(
@@ -796,57 +934,25 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                     """,
                     (accident_period_start, accident_period_start, payload_date, payload_date),
                 ).fetchall()
-            escape_rows = conn.execute(
-                """
-                WITH target_boat1 AS (
-                    SELECT r.race_id,
-                           e.racer_number
-                      FROM races r
-                      JOIN race_entries e
-                        ON e.race_id = r.race_id
-                       AND e.boat_number = 1
-                     WHERE r.race_date = ?
-                       AND e.racer_number IS NOT NULL
-                )
-                SELECT t.race_id,
-                       COUNT(*) AS starts,
-                       SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
-                  FROM target_boat1 t
-                  JOIN race_entries e
-                    ON e.racer_number = t.racer_number
-                  JOIN races r
-                    ON r.race_id = e.race_id
-                   AND r.race_date < ?
-                  JOIN race_results rr
-                    ON rr.race_id = e.race_id
-                   AND rr.boat_number = e.boat_number
-                 WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
-                   AND rr.finishing_position IS NOT NULL
-                 GROUP BY t.race_id
-                """,
-                (payload_date, payload_date),
-            ).fetchall()
     except Exception as exc:  # noqa: BLE001
         logger.warning("market race badge hydration failed: %s", exc)
         return payload
 
-    escape_by_race: dict[str, dict[str, Any]] = {}
-    for rid, starts, wins in escape_rows:
-        starts_i = int(starts or 0)
-        wins_i = int(wins or 0)
-        if starts_i <= 0:
-            continue
-        rate = wins_i / starts_i * 100.0
-        if rate >= 70.0:
-            escape_by_race[str(rid)] = {
-                "boat": 1,
-                "label": "逃げ",
-                "rate": round(rate, 1),
-                "wins": wins_i,
-                "starts": starts_i,
-            }
-
     racer_numbers = [_safe_int(row[3]) for row in rows]
+    course_role_by_racer = _load_course_role_snapshot_stats(
+        payload_date,
+        [r for r in racer_numbers if r is not None],
+    )
+    has_course_role_snapshot = bool(course_role_by_racer)
+    try:
+        escape_by_race = (
+            {}
+            if has_course_role_snapshot
+            else _load_legacy_escape_by_race(payload_date)
+        )
+    except Exception:
+        escape_by_race = {}
+        logger.warning("legacy escape badge fallback failed: %s", payload_date, exc_info=True)
     entry_change_by_racer = _load_entry_change_snapshot_stats(
         payload_date,
         [r for r in racer_numbers if r is not None],
@@ -866,9 +972,23 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                 "accident_items": [],
                 "ace_items": [],
                 "entry_change_items": [],
+                "course_role_items": [],
             },
         )
         racer_number = _safe_int(row[3])
+        course_role_stats = (
+            course_role_by_racer.get(racer_number)
+            if racer_number is not None
+            else None
+        )
+        if course_role_stats:
+            info["course_role_items"].append(
+                {
+                    "boat": boat_no,
+                    "racer": racer_number,
+                    "stats": course_role_stats,
+                }
+            )
         rate = _safe_float(row[6])
         if rate is not None and rate >= 0.5:
             info["accident_items"].append(
@@ -919,6 +1039,26 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
     detail_tag_payloads = _read_json_caches_stale(list(detail_tag_keys.values()))
     for rid, info in by_race.items():
         badge_info: dict[str, Any] = {}
+        for item in info.get("course_role_items") or []:
+            boat_no = int(item["boat"])
+            stats = item.get("stats")
+            if boat_no == 1:
+                escape_tag = _course_role_escape_tag(stats)
+                if escape_tag:
+                    escape_by_race[rid] = {"boat": boat_no, **escape_tag}
+            elif boat_no == 2:
+                nigashi_tag = _course_role_nigashi_tag(stats)
+                if nigashi_tag:
+                    nigashi_item = {"boat": boat_no, **nigashi_tag}
+                    badge_info["nigashi"] = {
+                        "items": [nigashi_item],
+                        "boats": [boat_no],
+                        "max_rate": nigashi_tag["rate"],
+                        "label": (
+                            f"2号:壁 {nigashi_tag['rate']:.1f}% "
+                            f"({nigashi_tag['wins']}/{nigashi_tag['starts']})"
+                        ),
+                    }
         direct_escape = escape_by_race.get(rid)
         if direct_escape:
             badge_info["escape"] = {
@@ -1027,6 +1167,41 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                     "max_rate": escape_items[0].get("rate"),
                     "label": " / ".join(
                         f"{x['boat']}号:{x['label']}" for x in escape_items[:1]
+                    ),
+                }
+
+            nigashi_items = []
+            for boat_key, tag in boats.items():
+                if not isinstance(tag, dict):
+                    continue
+                nigashi = tag.get("nigashi_tag")
+                if not isinstance(nigashi, dict):
+                    continue
+                boat_no = _safe_int(boat_key)
+                if boat_no is None:
+                    continue
+                nigashi_items.append(
+                    {
+                        "boat": boat_no,
+                        "label": str(nigashi.get("label") or "壁"),
+                        "rate": _safe_float(nigashi.get("rate")),
+                        "wins": _safe_int(nigashi.get("wins")),
+                        "starts": _safe_int(nigashi.get("starts")),
+                    }
+                )
+            if nigashi_items:
+                nigashi_items.sort(
+                    key=lambda x: float(x.get("rate") or 0.0),
+                    reverse=True,
+                )
+                primary = nigashi_items[0]
+                badge_info["nigashi"] = {
+                    "items": nigashi_items[:1],
+                    "boats": [x["boat"] for x in nigashi_items],
+                    "max_rate": primary.get("rate"),
+                    "label": (
+                        f"{primary['boat']}号:壁 {float(primary.get('rate') or 0.0):.1f}% "
+                        f"({int(primary.get('wins') or 0)}/{int(primary.get('starts') or 0)})"
                     ),
                 }
 
@@ -1151,6 +1326,23 @@ def _normalize_race_badge_labels(race_badges: Any) -> dict[str, dict[str, Any]]:
                 else f"{boat}号:逃げ"
             )
             next_badges["escape"] = escape
+
+        nigashi = next_badges.get("nigashi")
+        if isinstance(nigashi, dict):
+            items = [item for item in (nigashi.get("items") or []) if isinstance(item, dict)]
+            primary = items[0] if items else {}
+            boat = primary.get("boat") or 2
+            rate = _safe_float(primary.get("rate") or nigashi.get("max_rate"))
+            wins = _safe_int(primary.get("wins"))
+            starts = _safe_int(primary.get("starts"))
+            nigashi = dict(nigashi)
+            label = f"{boat}号:壁"
+            if rate is not None:
+                label += f" {rate:.1f}%"
+            if wins is not None and starts is not None:
+                label += f" ({wins}/{starts})"
+            nigashi["label"] = label
+            next_badges["nigashi"] = nigashi
 
         ace = next_badges.get("ace_motor")
         if isinstance(ace, dict):
@@ -1302,7 +1494,7 @@ def _lightweight_top_page_market_payload(
 # ゲストのレース一覧に出してよい "表示タグ" のキー (記述的な統計のみ)。
 # market(EV+)/l4 等の会員限定 "判断" キーは意図的に除外する。
 _GUEST_SAFE_BADGE_KEYS = frozenset(
-    {"accident", "escape", "ace_motor", "entry_change", "kimarite"}
+    {"accident", "escape", "nigashi", "ace_motor", "entry_change", "kimarite"}
 )
 
 
@@ -1339,7 +1531,7 @@ def _lightweight_top_page_market_payload_has_badges(payload: Any) -> bool:
     return isinstance(accident_watch, dict) and bool(accident_watch)
 
 
-TOP_PAGE_SNAPSHOT_VERSION = "v3"
+TOP_PAGE_SNAPSHOT_VERSION = "v4"
 
 
 def _top_page_snapshot_cache_key(target_date: str) -> str:
@@ -5940,7 +6132,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v6"
+RACE_DETAIL_TAG_CACHE_VERSION = "v7"
 RACE_DETAIL_PAGE_CACHE_VERSION = "v18"
 
 
@@ -6060,52 +6252,59 @@ def _prefetch_race_detail_tag_inputs(
         list(all_racers),
         strict=True,
     )
+    course_role_by_racer = _load_course_role_snapshot_stats(
+        race_date,
+        list(all_racers),
+    )
     unique_ids = list(info_by_race)
-    placeholders = ",".join("?" for _ in unique_ids)
-    window = _monthly_snapshot_window(race_date)
-    try:
-        escape_rows = conn.execute(
-            f"""
-            WITH current_boat1 AS (
-                SELECT race_id AS current_race_id, racer_number
-                  FROM race_entries
-                 WHERE race_id IN ({placeholders}) AND boat_number = 1
-            )
-            SELECT c.current_race_id,
-                   COUNT(*) AS starts,
-                   SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
-              FROM current_boat1 c
-              JOIN race_entries e ON e.racer_number = c.racer_number
-              JOIN races r ON r.race_id = e.race_id
-                           AND r.race_date >= ? AND r.race_date < ?
-              JOIN race_results rr ON rr.race_id = e.race_id
-                                  AND rr.boat_number = e.boat_number
-             WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
-               AND rr.finishing_position IS NOT NULL
-             GROUP BY c.current_race_id
-            """,
-            (*unique_ids, window["from_date"], window["to_date"]),
-        ).fetchall()
-    except Exception:
-        escape_rows = []
-        logger.warning("batch escape-profile prefetch failed: %s", race_date, exc_info=True)
-    escape_by_race = {
-        str(rid): {
-            "starts": int(starts or 0),
-            "wins": int(wins or 0),
-            "rate": float(wins or 0) / int(starts) * 100.0,
-            "snapshot_month": str(window["snapshot_month"] or ""),
-            "preferred_course": 1,
+    escape_by_race: dict[str, dict[str, Any]] = {}
+    if not course_role_by_racer:
+        placeholders = ",".join("?" for _ in unique_ids)
+        window = _monthly_snapshot_window(race_date)
+        try:
+            escape_rows = conn.execute(
+                f"""
+                WITH current_boat1 AS (
+                    SELECT race_id AS current_race_id, racer_number
+                      FROM race_entries
+                     WHERE race_id IN ({placeholders}) AND boat_number = 1
+                )
+                SELECT c.current_race_id,
+                       COUNT(*) AS starts,
+                       SUM(CASE WHEN rr.finishing_position = 1 THEN 1 ELSE 0 END) AS wins
+                  FROM current_boat1 c
+                  JOIN race_entries e ON e.racer_number = c.racer_number
+                  JOIN races r ON r.race_id = e.race_id
+                               AND r.race_date >= ? AND r.race_date < ?
+                  JOIN race_results rr ON rr.race_id = e.race_id
+                                      AND rr.boat_number = e.boat_number
+                 WHERE COALESCE(NULLIF(rr.course_number, 0), e.boat_number) = 1
+                   AND rr.finishing_position IS NOT NULL
+                 GROUP BY c.current_race_id
+                """,
+                (*unique_ids, window["from_date"], window["to_date"]),
+            ).fetchall()
+        except Exception:
+            escape_rows = []
+            logger.warning("batch escape-profile prefetch failed: %s", race_date, exc_info=True)
+        escape_by_race = {
+            str(rid): {
+                "starts": int(starts or 0),
+                "wins": int(wins or 0),
+                "rate": float(wins or 0) / int(starts) * 100.0,
+                "snapshot_month": str(window["snapshot_month"] or ""),
+                "preferred_course": 1,
+            }
+            for rid, starts, wins in escape_rows
+            if int(starts or 0) > 0
         }
-        for rid, starts, wins in escape_rows
-        if int(starts or 0) > 0
-    }
     prefetched.update(
         {
             "accident_by_racer": accident_by_racer,
             "ace_thresholds": ace_thresholds,
             "escape_by_race": escape_by_race,
             "entry_change_by_racer": entry_change_by_racer,
+            "course_role_by_racer": course_role_by_racer,
         }
     )
     return prefetched
@@ -6330,16 +6529,25 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         ace_threshold = None
         logger.warning("ace motor snapshot failed for %s", race_id, exc_info=True)
 
-    try:
-        escape_by_race = prewarm_context.get("escape_by_race")
-        boat1_escape = (
-            escape_by_race.get(race_id)
-            if escape_by_race is not None
-            else _boat1_monthly_escape_profile(race_id, str(info["race_date"]))
+    course_role_by_racer = prewarm_context.get("course_role_by_racer")
+    if course_role_by_racer is None:
+        course_role_by_racer = (
+            {}
+            if prewarm_context
+            else _load_course_role_snapshot_stats(race_date, list(racer_numbers))
         )
-    except Exception:
-        boat1_escape = None
-        logger.warning("escape tag snapshot failed for %s", race_id, exc_info=True)
+
+    boat1_escape = None
+    if not course_role_by_racer:
+        try:
+            escape_by_race = prewarm_context.get("escape_by_race")
+            boat1_escape = (
+                escape_by_race.get(race_id)
+                if escape_by_race is not None
+                else _boat1_monthly_escape_profile(race_id, str(info["race_date"]))
+            )
+        except Exception:
+            logger.warning("escape tag snapshot failed for %s", race_id, exc_info=True)
 
     entry_change_by_racer = prewarm_context.get("entry_change_by_racer")
     if entry_change_by_racer is None:
@@ -6373,9 +6581,21 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
             and ace_threshold is not None
             and motor_rate >= ace_threshold
         )
-        if int(boat_number) == 1 and boat1_escape:
+        course_role_stats = (
+            course_role_by_racer.get(int(racer_number))
+            if racer_number is not None
+            else None
+        )
+        if int(boat_number) == 1 and course_role_by_racer:
+            escape_tag = _course_role_escape_tag(course_role_stats)
+            if escape_tag:
+                boat["escape_tag"] = escape_tag
+        elif int(boat_number) == 1 and boat1_escape:
             escape_rate = _safe_float(boat1_escape.get("rate"))
-            if escape_rate is not None and escape_rate >= 70.0:
+            if (
+                escape_rate is not None
+                and escape_rate / 100.0 >= ESCAPE_WIN_RATE_MIN
+            ):
                 boat["escape_tag"] = {
                     "label": "逃げ",
                     "rate": round(float(escape_rate), 1),
@@ -6385,6 +6605,10 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
                     "preferred_course": int(boat1_escape.get("preferred_course") or 1),
                 }
                 boat["escape_tag"]["label"] = "逃げ"
+        if int(boat_number) == 2 and course_role_by_racer:
+            nigashi_tag = _course_role_nigashi_tag(course_role_stats)
+            if nigashi_tag:
+                boat["nigashi_tag"] = nigashi_tag
         entry_change_stats = entry_change_by_racer.get(int(racer_number)) if racer_number is not None else None
         entry_change_tag = _entry_change_tag_payload(entry_change_stats)
         if entry_change_tag:

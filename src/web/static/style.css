@@ -5028,6 +5028,7 @@ main h2 {
 .ace-motor-watch-badge,
 .kimarite-watch-badge,
 .escape-watch-badge,
+.nigashi-watch-badge,
 .entry-change-watch-badge {
   display: inline-flex;
   align-items: center;
@@ -5056,6 +5057,7 @@ main h2 {
 .race-item a .ace-motor-watch-badge,
 .race-item a .kimarite-watch-badge,
 .race-item a .escape-watch-badge,
+.race-item a .nigashi-watch-badge,
 .race-item a .entry-change-watch-badge {
   position: static;
   z-index: 4;
@@ -5097,6 +5099,13 @@ main h2 {
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.36);
 }
 
+.nigashi-watch-badge {
+  border: 1px solid rgba(168, 85, 247, 0.9);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.96), rgba(168, 85, 247, 0.82));
+  color: #f3e8ff;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
+}
+
 .entry-change-watch-badge {
   border: 1px solid rgba(251, 191, 36, 0.92);
   background: linear-gradient(135deg, rgba(120, 53, 15, 0.96), rgba(245, 158, 11, 0.84));
@@ -5108,11 +5117,13 @@ main h2 {
 .race-item.done .ace-motor-watch-badge,
 .race-item.done .kimarite-watch-badge,
 .race-item.done .escape-watch-badge,
+.race-item.done .nigashi-watch-badge,
 .race-item.done .entry-change-watch-badge,
 .race-item.is-closed .accident-watch-badge,
 .race-item.is-closed .ace-motor-watch-badge,
 .race-item.is-closed .kimarite-watch-badge,
 .race-item.is-closed .escape-watch-badge,
+.race-item.is-closed .nigashi-watch-badge,
 .race-item.is-closed .entry-change-watch-badge {
   opacity: 1;
   filter: none;

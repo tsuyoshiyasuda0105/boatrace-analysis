@@ -335,7 +335,7 @@
       (() => {
         const marketSignalsEnabled = false;
         const payload = {{ initial_market_signals|default({})|tojson }};
-        const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .entry-change-watch-badge';
+        const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge';
         const raceItems = Array.from(document.querySelectorAll('.race-item[data-race-id]'));
         const raceItemMap = new Map(raceItems.map((item) => [item.dataset.raceId, item]));
         const diagnostics = {
@@ -422,6 +422,8 @@
             if (ace) addBadge(row, 'ace-motor-watch-badge', 'M', ace.label || 'エースモーター');
             const escape = badges?.escape;
             if (escape) addBadge(row, 'escape-watch-badge', '逃げ', escape.label || '1号艇逃げ注目');
+            const nigashi = badges?.nigashi;
+            if (nigashi) addBadge(row, 'nigashi-watch-badge', '壁', nigashi.label || '2号艇 壁');
             const entryChange = badges?.entry_change;
             if (entryChange) addBadge(row, 'entry-change-watch-badge', '!', entryChange.label || '進入注意');
             if (!row.children.length) row.remove();
@@ -507,7 +509,7 @@
         let renderTodaysPicks = () => {};
         let raceBadgesCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.race_badges) || {};
         const SHOW_STRATEGY_RACE_CHIPS = false;
-        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .entry-change-watch-badge';
+        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge';
         const STRATEGY_BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetails = () => {
           // Race detail pages now load heavy motor/history/affinity data lazily
@@ -835,6 +837,14 @@
               const primary = items[0] || null;
               badge.textContent = '逃げ';
               badge.title = escape.label || (primary?.rate != null ? `全国1コース1着率 ${Number(primary.rate).toFixed(1)}%` : '1号艇の全国1コース1着率70%以上');
+              ensureBadgeRow().appendChild(badge);
+            }
+            const nigashi = badges?.nigashi;
+            if (nigashi) {
+              const badge = document.createElement('span');
+              badge.className = 'nigashi-watch-badge';
+              badge.textContent = '壁';
+              badge.title = nigashi.label || '2号艇 壁';
               ensureBadgeRow().appendChild(badge);
             }
             const entryChange = badges?.entry_change;
