@@ -342,6 +342,15 @@ def run_integrity_phase(now: datetime) -> tuple[bool, dict]:
             flush=True,
         )
     try:
+        # 逃がし率 (壁) / 逃げ率タグ用のコース役割スナップショット。
+        # 進入変更と同じく optional data なので、失敗してもメンテ全体は止めない。
+        regular.run_course_role_snapshots_nonfatal(now)
+    except Exception as exc:  # noqa: BLE001 - optional data cannot block maintenance
+        print(
+            f"[maintenance] course-role snapshots skipped nonfatally: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+    try:
         # 前夜 PC がアップロードした kachisuji デルタを web の slim DB に適用させる
         regular.run_kachisuji_delta_apply_nonfatal(now)
     except Exception as exc:  # noqa: BLE001 - optional data cannot block maintenance

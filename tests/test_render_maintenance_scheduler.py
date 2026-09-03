@@ -403,6 +403,12 @@ def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatc
         "run_entry_change_snapshots_nonfatal",
         lambda _now: calls.append("entry-change") or {"today": False, "tomorrow": True},
     )
+    # 2026-09-03: 逃がし率スナップショット生成も integrity フェーズで走る。
+    monkeypatch.setattr(
+        scheduler.regular,
+        "run_course_role_snapshots_nonfatal",
+        lambda _now: calls.append("course-role") or {"today": True, "tomorrow": True},
+    )
     monkeypatch.setattr(
         scheduler.regular,
         "run_roi_daily_self_heal",
@@ -420,7 +426,7 @@ def test_integrity_phase_reconciles_roi_and_allows_persisted_warnings(monkeypatc
     assert ok is True
     assert detail["roi_ok"] is True
     assert detail["entry_change_snapshots"] == {"today": False, "tomorrow": True}
-    assert calls[:2] == ["entry-change", "roi"]
+    assert calls[:3] == ["entry-change", "course-role", "roi"]
     assert "--warnings-ok" in calls[-1]
 
 

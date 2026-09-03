@@ -724,3 +724,24 @@ def test_kachisuji_delta_transport_uses_direct_connections():
 
     source = Path("src/kachisuji/delta_transport.py").read_text(encoding="utf-8")
     assert "return connect(direct=True)" in source
+
+
+def test_maintenance_wires_course_role_snapshots():
+    """逃がし率スナップショット生成がメンテ窓に配線されていることをソースで固定する。
+
+    2026-09-03: これが外れると毎晩の集計が止まり、翌日から画面のタグが消える。
+    モックでは「呼ばれること」しか守れないので、実ソースの結線も静的に固定する。
+    """
+    from pathlib import Path
+
+    maint = (Path(__file__).resolve().parents[1]
+             / "scripts" / "render_maintenance_scheduler.py").read_text(encoding="utf-8")
+    assert "run_course_role_snapshots_nonfatal" in maint, (
+        "メンテ窓が course-role スナップショット生成を呼んでいない"
+    )
+    regular = (Path(__file__).resolve().parents[1]
+               / "scripts" / "render_regular_scheduler.py").read_text(encoding="utf-8")
+    assert "def run_course_role_snapshots_nonfatal" in regular
+    assert "scripts/build_racer_course_role_stats.py" in regular, (
+        "スナップショット生成ジョブが正しい集計スクリプトを起動していない"
+    )

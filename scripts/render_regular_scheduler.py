@@ -456,6 +456,73 @@ def run_entry_change_snapshots_nonfatal(now: datetime) -> dict[str, bool]:
     return results
 
 
+def course_role_snapshot_row_count(target_date: str) -> int | None:
+    """当日ぶんの逃がし率スナップショット行数。テーブル未作成なら None。"""
+    try:
+        with db_connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM racer_course_role_snapshots WHERE snapshot_date = ?",
+                (target_date,),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception as exc:
+        if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
+            print(f"[course-role] row-count unavailable date={target_date} reason=missing-table", flush=True)
+            return None
+        print(f"[course-role] row-count failed date={target_date} error={type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
+def run_course_role_snapshot(target_date: str) -> bool:
+    """逃がし率 (壁) / 逃げ率タグ用のコース役割スナップショットを 1 日分作る。
+
+    進入変更スナップショット (run_entry_change_snapshot) と同じ構造・同じ
+    フェイルセーフで運用する。レース 0 件の日は空振りさせず成功扱いで抜ける。
+    """
+    race_count = race_count_for_date(target_date)
+    if race_count <= 0:
+        print(f"[course-role] skip date={target_date} reason=no-races", flush=True)
+        record_task("render_course_role_snapshot", target_date, "success", detail="skip:no-races")
+        return True
+    ok = run_py(["scripts/build_racer_course_role_stats.py", "--date", target_date], timeout=900)
+    row_count = course_role_snapshot_row_count(target_date) if ok else 0
+    verified = bool(ok and (row_count is None or row_count > 0))
+    print(
+        f"[course-role] date={target_date} races={race_count} rows={row_count} verified={verified}",
+        flush=True,
+    )
+    record_task(
+        "render_course_role_snapshot",
+        target_date,
+        "success" if verified else "failure",
+        detail=f"races={race_count} rows={row_count} build_ok={ok}",
+    )
+    return verified
+
+
+def run_course_role_snapshots_nonfatal(now: datetime) -> dict[str, bool]:
+    """today/tomorrow のコース役割スナップショットを、制御フローを持たずに作る。"""
+    today = now.date().isoformat()
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+    results: dict[str, bool] = {}
+    for label, target_date in (("today", today), ("tomorrow", tomorrow)):
+        try:
+            ok = bool(run_course_role_snapshot(target_date))
+        except Exception as exc:  # noqa: BLE001 - each date must remain isolated
+            ok = False
+            detail = f"exception={type(exc).__name__}: {exc}"[:1000]
+            print(f"[course-role] nonfatal failure date={target_date} {detail}", flush=True)
+            record_task("render_course_role_snapshot", target_date, "failure", detail=detail)
+        results[label] = ok
+        if not ok:
+            _notify_failure_best_effort(
+                f"boatrace-course-role-snapshot-{label}",
+                f"course-role snapshot failed for {target_date}",
+                detail={"date": target_date, "label": label},
+            )
+    return results
+
+
 def run_kachisuji_delta_apply_nonfatal(now: datetime) -> bool:
     """web の内部エンドポイントを叩き、未適用の kachisuji デルタを適用させる。
 
