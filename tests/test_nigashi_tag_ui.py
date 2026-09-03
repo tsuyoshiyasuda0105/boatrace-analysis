@@ -207,3 +207,60 @@ def test_course_role_loader_batches_all_racers_in_one_query(monkeypatch):
 def test_both_badge_cache_versions_are_bumped():
     assert web_app.RACE_DETAIL_TAG_CACHE_VERSION == "v7"
     assert web_app.TOP_PAGE_SNAPSHOT_VERSION == "v4"
+
+
+def test_badge_hydration_is_not_short_circuited_by_older_badge_families():
+    """バッジ種別を増やしたとき、古いキャッシュが再計算されずに残らないこと。
+
+    2026-09-03 の実バグ: `_hydrate_market_race_badges` に
+    「事故・逃げ・進入変更が揃っていれば再計算しない」という種別を数え上げる
+    短絡ガードがあり、4 種別目の壁を足したときに古いキャッシュがそのまま返され、
+    壁バッジが画面に一切出なかった。版数一致での判定に変えて塞いだ。
+    """
+    from src.web import app as web_app
+
+    # 旧構成 (壁なし・版数なし) のキャッシュ済みペイロード
+    stale = {
+        "date": "2026-09-01",
+        "signals": {},
+        "race_badges": {
+            "20260901-01-01": {
+                "accident": {"items": [], "boats": [1]},
+                "escape": {"items": [], "boats": [1]},
+                "entry_change": {"items": [], "boats": [4]},
+            }
+        },
+    }
+    # 版数が一致しないので短絡してはいけない = 中身が作り直される
+    assert stale.get("race_badges_schema") != web_app.RACE_BADGE_SCHEMA_VERSION
+
+    # 現行版数が刻まれていれば短絡してよい
+    fresh = dict(stale)
+    fresh["race_badges_schema"] = web_app.RACE_BADGE_SCHEMA_VERSION
+    out = web_app._hydrate_market_race_badges(fresh, "2026-09-01")
+    assert out["race_badges"] is fresh["race_badges"], (
+        "版数が一致するなら再計算せずそのまま返す"
+    )
+
+
+def test_badge_schema_version_is_bumped_for_nigashi():
+    """壁バッジ追加に伴い、バッジ構成の版数が初期値から上がっていること。"""
+    from src.web import app as web_app
+
+    assert web_app.RACE_BADGE_SCHEMA_VERSION != "v1"
+
+
+def test_legacy_escape_fallback_applies_the_same_minimum_starts():
+    """スナップショット未整備日のフォールバックも 20 走以上を要求すること。
+
+    下限を課さないと、過去日だけ 1 走 1 勝 (100%) の選手にも逃げバッジが付き、
+    同じバッジが日付によって違う基準で出てしまう。
+    """
+    import inspect
+
+    from src.web import app as web_app
+
+    source = inspect.getsource(web_app._load_legacy_escape_by_race)
+    assert "COURSE_ROLE_MIN_STARTS" in source, (
+        "フォールバック経路にも最低走数の下限が必要"
+    )

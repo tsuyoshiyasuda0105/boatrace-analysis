@@ -594,6 +594,12 @@ ENTRY_CHANGE_MIN_STARTS = 100
 ENTRY_CHANGE_WATCH_RATE = 0.15
 ENTRY_CHANGE_HIGH_RATE = 0.20
 ENTRY_CHANGE_INNER_MIN_RATE = 0.10
+# レースグリッドのバッジ構成の版数。バッジ種別を増減したら必ず上げること。
+# 以前は「事故・逃げ・進入変更が揃っていれば再計算しない」と種別を数え上げて
+# 判定していたため、4 種別目 (壁) を足したときに古いキャッシュが再計算されず
+# 新バッジが画面に出なかった (2026-09-03)。版数一致で判定すれば同じ事故は起きない。
+RACE_BADGE_SCHEMA_VERSION = "v2"
+
 COURSE_ROLE_MIN_STARTS = 20
 ESCAPE_WIN_RATE_MIN = 0.70
 NIGASHI_RATE_MIN = 0.65
@@ -719,7 +725,10 @@ def _load_legacy_escape_by_race(target_date: str) -> dict[str, dict[str, Any]]:
     for race_id, starts, wins in rows:
         starts_i = int(starts or 0)
         wins_i = int(wins or 0)
-        if starts_i <= 0:
+        # 表経由と同じ下限を課す。ここを省くと、スナップショット未整備の
+        # 過去日だけ 1 走 1 勝 (100%) の新人にもバッジが付き、同じバッジが
+        # 日付によって違う基準で出てしまう。
+        if starts_i < COURSE_ROLE_MIN_STARTS:
             continue
         rate = wins_i / starts_i
         if rate < ESCAPE_WIN_RATE_MIN:
@@ -843,24 +852,14 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
         payload = dict(payload)
         payload["signals"] = {}
     existing = payload.get("race_badges")
-    if isinstance(existing, dict) and existing:
-        has_accident_badges = any(
-            isinstance(value, dict)
-            and value.get("accident")
-            for value in existing.values()
-        )
-        has_escape_badges = any(
-            isinstance(value, dict)
-            and value.get("escape")
-            for value in existing.values()
-        )
-        has_entry_change_badges = any(
-            isinstance(value, dict)
-            and value.get("entry_change")
-            for value in existing.values()
-        )
-        if has_accident_badges and has_escape_badges and has_entry_change_badges:
-            return payload
+    if (
+        isinstance(existing, dict)
+        and existing
+        and payload.get("race_badges_schema") == RACE_BADGE_SCHEMA_VERSION
+    ):
+        # 現行の構成で作られたバッジがもう入っているなら作り直さない。
+        # 種別を数える判定に戻してはいけない (種別追加時に取りこぼす)。
+        return payload
     payload = dict(payload)
     payload["race_badges"] = {}
     payload_date = str(payload.get("date") or target_date)
@@ -1280,6 +1279,7 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
         if badge_info:
             race_badges[rid] = badge_info
     payload["race_badges"] = _normalize_race_badge_labels(race_badges)
+    payload["race_badges_schema"] = RACE_BADGE_SCHEMA_VERSION
     return payload
 
 
@@ -1431,6 +1431,8 @@ def _race_grid_badges_payload(
             return {
                 "date": target_date,
                 "signals": filtered_signals,
+                # バッジ構成の版数を引き継ぐ。落とすと再計算の短絡判定が効かない。
+                "race_badges_schema": payload.get("race_badges_schema"),
                 "race_badges": filtered,
                 "accident_watch": {},
             }

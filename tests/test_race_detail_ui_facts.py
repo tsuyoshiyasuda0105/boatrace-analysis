@@ -271,7 +271,12 @@ def test_race_detail_tag_snapshot_contains_all_three_tag_families():
     function_source = source[start:end]
 
     assert "escape_tag" in function_source
-    assert "escape_rate >= 70.0" in function_source
+    # 2026-09-01: 逃がし率タグ追加に伴い、閾値の直書き (escape_rate >= 70.0) を
+    # 定数 ESCAPE_WIN_RATE_MIN に集約した。直書きへの逆戻りも同時に禁じる。
+    assert "ESCAPE_WIN_RATE_MIN" in function_source
+    assert "escape_rate >= 70.0" not in function_source
+    # 2 号艇の「壁」タグ (逃がし率) もここで組み立てる。
+    assert "nigashi_tag" in function_source
     assert "kimarite_skill" not in function_source
     assert "accident_display_level" in function_source
     assert "is_ace_motor" in function_source

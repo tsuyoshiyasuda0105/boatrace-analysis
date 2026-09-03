@@ -114,7 +114,10 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # (同モジュール内の固定値) のみで、外部入力は一切届かないと監査済み。
     # Disk-pressure repair removes one ATTACH DATABASE f-string call from
     # each apply implementation; delta values remain bound parameters.
-    assert len(calls) == 172, (
+    # 2026-09-01: 逃がし率タグ用の _load_course_role_snapshot_stats を追加し 173 に。
+    # 追加分の f-string は placeholders = ",".join("?" ...) のみで、値は
+    # パラメータ渡し・racer_number は int() 強制。既存の進入変更タグと同じ作法で監査済。
+    assert len(calls) == 173, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )

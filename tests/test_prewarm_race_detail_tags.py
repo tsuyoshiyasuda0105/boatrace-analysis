@@ -197,7 +197,12 @@ def test_prefetched_tag_build_is_byte_identical_to_individual_build(monkeypatch)
         payload, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
     assert encode(optimized) == encode(legacy)
-    assert legacy_conn.execute_count == 1
+    # プリウォーム文脈が無い経路は、選手コース別スナップショットの
+    # まとめ読みが 1 回増えた (2026-09-01)。レースごとの N+1 ではなく、
+    # その日の出走選手ぶんを 1 クエリで引く形なので 1 -> 2 で正しい。
+    assert legacy_conn.execute_count == 2
+    # ここは絶対に緩めない。プリウォーム経路がレースごとに DB を引き始めると
+    # 接続枠の取り合いで画面が止まる (過去の「準備しています」障害の原因)。
     assert optimized_conn.execute_count == 0
 
 
@@ -222,12 +227,20 @@ def test_tag_prewarm_uses_one_connection_for_selection_prefetch_and_loop(monkeyp
 def test_escape_tag_uses_monthly_frozen_boat1_profile():
     source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
 
-    assert 'RACE_DETAIL_TAG_CACHE_VERSION = "v6"' in source
+    # boats[n] に nigashi_tag が増えたので版数を上げた (2026-09-01)。
+    # 上げ忘れると既存キャッシュが優先され、新タグが画面に出ない。
+    assert 'RACE_DETAIL_TAG_CACHE_VERSION = "v7"' in source
     assert "def _boat1_monthly_escape_profile" in source
     assert "def _monthly_snapshot_window" in source
     assert "WHERE race_id = ? AND boat_number = 1" in source
     assert "COALESCE(NULLIF(rr1.course_number, 0), e1.boat_number) = 1" in source
-    assert "escape_rate >= 70.0" in source
+    # 閾値は定数 1 箇所に集約した。直書きに戻すと逃げ/逃がしで食い違うため、
+    # 定数が存在すること + 70.0 の直書きが定数定義以外に無いことを固定する。
+    assert "ESCAPE_WIN_RATE_MIN = 0.70" in source
+    assert "ESCAPE_WIN_RATE_MIN" in source.split("ESCAPE_WIN_RATE_MIN = 0.70", 1)[1], (
+        "定数が定義されただけで使われていない"
+    )
+    assert "escape_rate >= 70.0" not in source, "閾値を直書きに戻してはいけない"
     assert '"snapshot_month": str(boat1_escape.get("snapshot_month") or "")' in source
     assert "escape_context_tag" in source
     assert "preferred_course" in source
