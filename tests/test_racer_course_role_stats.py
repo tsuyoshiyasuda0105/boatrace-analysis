@@ -220,6 +220,21 @@ def test_main_builds_snapshot_with_local_sqlite(conn, monkeypatch) -> None:
     assert all(index[1] != "idx_racer_course_role_snapshot_date" for index in indexes)
 
 
+def test_script_declares_itself_a_batch_before_importing_the_connection() -> None:
+    """バッチ宣言が接続 import より前にあること。
+
+    宣言が無いと本番 Postgres の既定 statement_timeout 8 秒に当たり、1 年ぶんの
+    集計が QueryCanceled で必ず落ちる (2026-09-04 に本番で再現)。cron 経由では
+    親から継承できてしまうため、手動実行だけが壊れる=気付きにくい。
+    """
+    source = (Path("scripts") / "build_racer_course_role_stats.py").read_text(encoding="utf-8")
+
+    assert 'os.environ.setdefault("BOATRACE_TASK_TRIGGER"' in source
+    assert source.index('BOATRACE_TASK_TRIGGER"') < source.index(
+        "from src.db.connection import connect"
+    )
+
+
 def test_main_returns_one_for_invalid_date(conn, monkeypatch) -> None:
     def unexpected_connect(*args, **kwargs):
         pytest.fail("invalid --date must be rejected before opening the database")

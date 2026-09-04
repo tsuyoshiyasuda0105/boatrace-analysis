@@ -17,6 +17,13 @@ if "--local" in sys.argv:
     os.environ.pop("DATABASE_URL", None)
     os.environ["DATABASE_URL"] = ""
 
+# 自分をバッチとして宣言する。夜間 cron から呼ばれるときは親 (render_maintenance_
+# scheduler) の値を継承できるが、手動・単体で走らせると既定の statement_timeout
+# 8 秒に当たって 1 年ぶんの集計が必ず QueryCanceled で落ちる (2026-09-04 に本番で
+# 再現)。他のバッチ (ensure_performance_indexes.py 等) と同じく setdefault で宣言し、
+# 直結接続 + タイムアウト無しを自力で確保する。
+os.environ.setdefault("BOATRACE_TASK_TRIGGER", "render-maintenance")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.db.connection import connect as db_connect
