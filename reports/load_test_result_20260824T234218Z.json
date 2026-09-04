@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-08-24T23:42:18.273615+00:00",
+  "finished_at": "2026-08-24T23:42:43.875355+00:00",
+  "base_url": "https://boatrace-web.onrender.com",
+  "authentication": "off",
+  "race_ids": [
+    "20260825-01-01",
+    "20260825-01-02",
+    "20260825-01-03"
+  ],
+  "configuration": {
+    "stages": [
+      35
+    ],
+    "stage_seconds": 25.0,
+    "max_concurrency": 100,
+    "error_rate_stop": 0.1,
+    "p95_stop_sec": 15.0,
+    "request_interval_sec": 25.0,
+    "request_method": "GET"
+  },
+  "stages": [
+    {
+      "concurrency": 35,
+      "elapsed_sec": 25.000777,
+      "requests": 35,
+      "successes": 35,
+      "failures": 0,
+      "error_rate": 0.0,
+      "p50_sec": 0.3588791000074707,
+      "p95_sec": 0.44452468999079425,
+      "p99_sec": 0.45287791999988253,
+      "throughput_rps": 1.399956483752147,
+      "status_breakdown": {
+        "200": 35
+      },
+      "endpoint_breakdown": {
+        "healthz": 5,
+        "race_detail": 15,
+        "races": 10,
+        "top": 5
+      },
+      "stopped": false,
+      "stop_reason": null
+    }
+  ],
+  "safe_max_concurrency": 35,
+  "knee_concurrency": null,
+  "bottleneck_hypothesis": "No knee was observed; bottleneck is not identifiable from this run."
+}

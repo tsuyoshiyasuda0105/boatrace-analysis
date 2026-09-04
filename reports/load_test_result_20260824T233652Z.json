@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-08-24T23:36:52.118159+00:00",
+  "finished_at": "2026-08-24T23:37:13.981633+00:00",
+  "base_url": "https://boatrace-web.onrender.com",
+  "authentication": "off",
+  "race_ids": [
+    "20260825-01-01",
+    "20260825-01-02",
+    "20260825-01-03"
+  ],
+  "configuration": {
+    "stages": [
+      5,
+      8,
+      12
+    ],
+    "stage_seconds": 20.0,
+    "max_concurrency": 100,
+    "error_rate_stop": 0.1,
+    "p95_stop_sec": 10.0,
+    "request_interval_sec": 1.0,
+    "request_method": "GET"
+  },
+  "stages": [
+    {
+      "concurrency": 5,
+      "elapsed_sec": 20.004313,
+      "requests": 90,
+      "successes": 90,
+      "failures": 0,
+      "error_rate": 0.0,
+      "p50_sec": 0.1046626000024844,
+      "p95_sec": 0.12548190999659703,
+      "p99_sec": 0.336867484987888,
+      "throughput_rps": 4.499029694262411,
+      "status_breakdown": {
+        "200": 90
+      },
+      "endpoint_breakdown": {
+        "healthz": 12,
+        "race_detail": 39,
+        "races": 27,
+        "top": 12
+      },
+      "stopped": false,
+      "stop_reason": null
+    },
+    {
+      "concurrency": 8,
+      "elapsed_sec": 1.521394,
+      "requests": 16,
+      "successes": 14,
+      "failures": 2,
+      "error_rate": 0.125,
+      "p50_sec": 0.10748715000227094,
+      "p95_sec": 0.21962150000763359,
+      "p99_sec": 0.3662888600039877,
+      "throughput_rps": 10.516670895173334,
+      "status_breakdown": {
+        "200": 14,
+        "429": 2
+      },
+      "endpoint_breakdown": {
+        "healthz": 3,
+        "race_detail": 6,
+        "races": 4,
+        "top": 3
+      },
+      "stopped": true,
+      "stop_reason": "error_rate 12.5% exceeded threshold 10.0%"
+    }
+  ],
+  "safe_max_concurrency": 5,
+  "knee_concurrency": 8,
+  "bottleneck_hypothesis": "HTTP 429/502/503/504 increased near the knee; request-slot, upstream, or DB-pool saturation is the leading hypothesis. Correlate Render and DB metrics."
+}

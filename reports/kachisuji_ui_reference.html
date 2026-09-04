@@ -1,0 +1,692 @@
+<title>勝ち筋サーチ</title>
+<style>
+  :root {
+    --ground: #f5f7f8;
+    --surface: #ffffff;
+    --surface-2: #eef2f4;
+    --ink: #1c2830;
+    --ink-2: #4a5a66;
+    --ink-3: #75858f;
+    --line: #d8e0e4;
+    --accent: #9a7420;
+    --accent-ink: #7a5c15;
+    --accent-soft: #f3ead3;
+    --good: #2e7d4f;
+    --warn: #b3551d;
+    --crit: #b02a37;
+    --good-soft: #e3f0e8;
+    --warn-soft: #f8e9dd;
+    --crit-soft: #f7e2e4;
+    --chip-day: #e8eef7;
+    --chip-day-ink: #2f5a8f;
+    --chip-live: #f3e8f5;
+    --chip-live-ink: #7d3a8f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0e1720; --surface: #16222e; --surface-2: #1d2c3a;
+      --ink: #e8edf0; --ink-2: #a8b8c2; --ink-3: #77899a; --line: #2b3c4b;
+      --accent: #dfb154; --accent-ink: #dfb154; --accent-soft: #33301f;
+      --good: #6fbf90; --warn: #e09a63; --crit: #e07f88;
+      --good-soft: #1c3227; --warn-soft: #3a2a1c; --crit-soft: #3a2226;
+      --chip-day: #1e3048; --chip-day-ink: #8fb4e0;
+      --chip-live: #34243a; --chip-live-ink: #c79ad4;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0e1720; --surface: #16222e; --surface-2: #1d2c3a;
+    --ink: #e8edf0; --ink-2: #a8b8c2; --ink-3: #77899a; --line: #2b3c4b;
+    --accent: #dfb154; --accent-ink: #dfb154; --accent-soft: #33301f;
+    --good: #6fbf90; --warn: #e09a63; --crit: #e07f88;
+    --good-soft: #1c3227; --warn-soft: #3a2a1c; --crit-soft: #3a2226;
+    --chip-day: #1e3048; --chip-day-ink: #8fb4e0;
+    --chip-live: #34243a; --chip-live-ink: #c79ad4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic Medium", "Yu Gothic", Meiryo, sans-serif;
+    margin: 0; font-size: 14px; line-height: 1.7;
+  }
+  .app { max-width: 1080px; margin: 0 auto; padding: 28px 18px 80px; }
+  header.top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+  .logo {
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    font-size: 26px; font-weight: 600; letter-spacing: .02em;
+  }
+  .logo .mark { color: var(--accent); }
+  .tagline { color: var(--ink-3); font-size: 12px; }
+  .demo-note {
+    background: var(--accent-soft); color: var(--accent-ink); border-radius: 6px;
+    font-size: 12px; padding: 6px 12px; margin: 10px 0 22px; display: inline-block;
+  }
+  .cols { display: grid; grid-template-columns: 420px 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 880px) { .cols { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 18px 20px;
+  }
+  .panel h2 {
+    font-size: 13px; letter-spacing: .14em; color: var(--ink-3); font-weight: 700;
+    margin: 0 0 14px; text-transform: uppercase;
+  }
+  fieldset {
+    border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; padding: 12px 14px 14px;
+  }
+  legend {
+    font-size: 12.5px; font-weight: 700; padding: 0 6px; display: flex; gap: 6px; align-items: center;
+  }
+  .chip {
+    font-size: 10px; font-weight: 700; letter-spacing: .06em; border-radius: 999px;
+    padding: 1px 8px; white-space: nowrap;
+  }
+  .chip.day { background: var(--chip-day); color: var(--chip-day-ink); }
+  .chip.live { background: var(--chip-live); color: var(--chip-live-ink); }
+  .chip.lim { background: var(--warn-soft); color: var(--warn); }
+  .cond.limited {
+    background: var(--warn-soft); border-radius: 6px;
+    padding: 3px 8px; margin-left: -8px;
+  }
+  .chip.lim2 { background: var(--crit-soft); color: var(--crit); }
+  .cond.limited2 {
+    background: var(--crit-soft); border-radius: 6px;
+    padding: 3px 8px; margin-left: -8px;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 7px 0; }
+  .row label { font-size: 13px; color: var(--ink-2); min-width: 7.5em; }
+  select, input[type="number"], input[type="text"] {
+    background: var(--surface-2); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 8px; font-size: 13px; font-family: inherit;
+  }
+  input[type="number"] { width: 72px; font-variant-numeric: tabular-nums; }
+  select:focus, input:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .wchips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .wchip {
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; font-size: 12.5px;
+    cursor: pointer; background: var(--surface-2); color: var(--ink-2); user-select: none;
+  }
+  .wchip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  .boatrow {
+    display: grid; grid-template-columns: 3.2em 1fr; gap: 8px; align-items: start;
+    padding: 7px 0; border-top: 1px dashed var(--line);
+  }
+  .boatrow:first-of-type { border-top: none; }
+  .bnum {
+    font-weight: 800; font-size: 13px; border-radius: 6px; text-align: center; padding: 3px 0;
+    margin-top: 3px;
+  }
+  .b1 { background: #f4f4f4; color: #333; } .b2 { background: #2b2b2b; color: #fff; }
+  .b3 { background: #c0392b; color: #fff; } .b4 { background: #2471a3; color: #fff; }
+  .b5 { background: #d4ac0d; color: #2b2b2b; } .b6 { background: #1e8449; color: #fff; }
+  details.boatdet { border-top: 1px dashed var(--line); padding: 4px 0; }
+  details.boatdet:first-of-type { border-top: none; }
+  details.boatdet summary {
+    cursor: pointer; display: flex; gap: 10px; align-items: center;
+    font-weight: 700; font-size: 13px; list-style: none; padding: 5px 0;
+  }
+  details.boatdet summary::-webkit-details-marker { display: none; }
+  details.boatdet summary::before { content: "▸"; color: var(--ink-3); font-size: 11px; }
+  details.boatdet[open] summary::before { content: "▾"; }
+  details.boatdet summary .bnum { min-width: 3.2em; margin-top: 0; }
+  .bsum { font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
+  details.boatdet .conds { padding: 2px 0 10px 26px; }
+  .cond input[type="number"] { width: 64px; }
+  .cond .unit { color: var(--ink-3); font-size: 12px; }
+  .conds { display: flex; flex-direction: column; gap: 5px; }
+  .cond { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12.8px; color: var(--ink-2); }
+  .cond select { font-size: 12.5px; padding: 3px 6px; }
+  .orlabel { font-size: 11px; color: var(--ink-3); font-weight: 700; padding-left: 2px; }
+  .btnrow { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  button {
+    font-family: inherit; font-size: 14px; font-weight: 700; border-radius: 8px;
+    padding: 10px 22px; cursor: pointer; border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--ink-2);
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  :root[data-theme="dark"] button.primary, body button.primary { color: #fff; }
+  button.primary:hover { filter: brightness(1.06); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  .results .empty { color: var(--ink-3); text-align: center; padding: 60px 10px; font-size: 13.5px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 4px; }
+  @media (max-width: 560px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi {
+    background: var(--surface-2); border-radius: 10px; padding: 12px 14px 10px;
+  }
+  .kpi .v { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .kpi .v.roi-good { color: var(--good); } .kpi .v.roi-bad { color: var(--crit); } .kpi .v.roi-mid { color: var(--warn); }
+  .kpi .l { font-size: 11px; color: var(--ink-3); letter-spacing: .08em; margin-top: 2px; }
+  .ci { font-size: 12px; color: var(--ink-2); margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+  .warnbox, .okbox {
+    border-radius: 8px; padding: 10px 14px; font-size: 12.8px; margin: 12px 0;
+  }
+  .warnbox { background: var(--warn-soft); color: var(--warn); }
+  .okbox { background: var(--good-soft); color: var(--good); }
+  .cumwrap { margin: 14px 0 4px; }
+  .cumwrap .cap { font-size: 11px; color: var(--ink-3); letter-spacing: .06em; margin-bottom: 4px; }
+  svg.spark { width: 100%; height: 90px; display: block; }
+  .yeartbl { width: 100%; border-collapse: collapse; font-size: 12.8px; margin-top: 10px; }
+  .yeartbl th {
+    text-align: right; font-size: 11px; color: var(--ink-3); font-weight: 700;
+    padding: 6px 10px; border-bottom: 1px solid var(--line); letter-spacing: .06em;
+  }
+  .yeartbl th:first-child, .yeartbl td:first-child { text-align: left; }
+  .yeartbl td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .yeartbl tr:last-child td { border-bottom: none; }
+  .roi-pos { color: var(--good); font-weight: 700; } .roi-neg { color: var(--crit); font-weight: 700; }
+  .divider { border: none; border-top: 1px solid var(--line); margin: 18px 0 14px; }
+  .h3row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 2px 0 8px; }
+  .h3row h3 { font-size: 13.5px; margin: 0; }
+  .h3row .sub { font-size: 11.5px; color: var(--ink-3); }
+  .mylist { display: flex; flex-direction: column; gap: 8px; }
+  .mycard {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
+    display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap;
+    background: var(--surface);
+  }
+  .mycard .nm { font-weight: 700; font-size: 13.5px; }
+  .mycard .st { font-size: 11.5px; color: var(--ink-3); }
+  .matchcard {
+    border-left: 3px solid var(--accent); background: var(--surface-2);
+    border-radius: 0 8px 8px 0; padding: 8px 14px; font-size: 12.8px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .matchcard b { font-variant-numeric: tabular-nums; }
+  .stat-morning { background: var(--chip-day); color: var(--chip-day-ink); }
+  .stat-live { background: var(--good-soft); color: var(--good); }
+  .stat { font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 2px 9px; }
+  .legendbar { display: flex; gap: 14px; flex-wrap: wrap; margin: 0 0 16px; font-size: 11.5px; color: var(--ink-3); align-items: center; }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="logo"><span class="mark">◤</span> 勝ち筋サーチ</div>
+    <div class="tagline">条件を組む → 過去4年で答え合わせ → 保存すると本日レースを自動監視</div>
+  </header>
+  <div class="demo-note">⚠ デモ版 — 数値はすべてダミーです。実データベース（22.4万レース）には接続していません。</div>
+
+  <div class="legendbar">
+    <span><span class="chip day">📋 前日確定</span> 番組表・前日までの集計・潮汐計算。前夜に合致判定が完了</span>
+    <span><span class="chip live">⏱ 直前確定</span> 天候・風・展示は当日確定のため、本日照合では直前に再判定になります</span>
+    <span><span class="chip lim">📅 2023/5〜</span> 集計に1年の助走が必要なため、検証できるのは2023年5月以降のレースです</span>
+    <span><span class="chip lim2">📅 2024/12〜</span> 公式展示タイム・展示STの蓄積開始以降のみ検証できます</span>
+  </div>
+
+  <div class="cols">
+    <!-- ============ 左: 条件ビルダー ============ -->
+    <div class="panel">
+      <h2>検索条件</h2>
+
+      <fieldset>
+        <legend>レース条件</legend>
+        <div class="row">
+          <label for="venue">会場</label>
+          <select id="venue">
+            <option>全会場</option>
+            <option>桐生</option><option>戸田</option><option>江戸川</option><option>平和島</option>
+            <option>多摩川</option><option>浜名湖</option><option>蒲郡</option><option>常滑</option>
+            <option>津</option><option>三国</option><option>びわこ</option><option>住之江</option>
+            <option>尼崎</option><option selected>鳴門</option><option>丸亀</option><option>児島</option>
+            <option>宮島</option><option>徳山</option><option>下関</option><option>若松</option>
+            <option>芦屋</option><option>福岡</option><option>唐津</option><option>大村</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="betType">買い目</label>
+          <select id="betType">
+            <option selected>3連単</option>
+            <option>2連単</option>
+            <option>単勝</option>
+          </select>
+          <span class="unit">1着</span>
+          <select id="pos1"><option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+          <span id="pos2wrap"><span class="unit">2着</span>
+          <select id="pos2"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></span>
+          <span id="pos3wrap"><span class="unit">3着</span>
+          <select id="pos3"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></span>
+          <span class="unit">号艇</span>
+        </div>
+        <div class="row">
+          <label>天候 <span class="chip live">⏱</span></label>
+          <div class="wchips" id="weatherChips">
+            <span class="wchip on" data-v="晴">☀ 晴</span>
+            <span class="wchip on" data-v="曇">☁ 曇</span>
+            <span class="wchip" data-v="雨">☔ 雨</span>
+          </div>
+        </div>
+        <div class="row">
+          <label for="windDir">風向き <span class="chip live">⏱</span></label>
+          <select id="windDir">
+            <option selected>指定なし</option>
+            <option>追い風</option>
+            <option>向かい風</option>
+            <option>横風（左）</option>
+            <option>横風（右）</option>
+          </select>
+          <label for="windStr" style="min-width:auto">強さ</label>
+          <select id="windStr">
+            <option selected>指定なし</option>
+            <option>無風（0〜1m）</option>
+            <option>弱風（2〜3m）</option>
+            <option>中風（4〜5m）</option>
+            <option>強風（6m以上）</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="tide">潮 <span class="chip day">📋</span></label>
+          <select id="tide">
+            <option selected>指定なし</option>
+            <option>満潮前後</option>
+            <option>干潮前後</option>
+            <option>上げ潮</option>
+            <option>下げ潮</option>
+          </select>
+          <span class="unit">（潮汐は天文計算のため前日に確定できます）</span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>番組・市場条件</legend>
+        <div class="row">
+          <label for="female">性別構成 <span class="chip day">📋</span></label>
+          <select id="female">
+            <option selected>指定なし</option>
+            <option>男性のみ</option>
+            <option>女性選手あり</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="classmix">級別構成 <span class="chip day">📋</span></label>
+          <select id="classmix">
+            <option selected>指定なし</option>
+            <option>1号艇のみA1（A1単騎）</option>
+            <option>1号艇A1</option>
+            <option>A1が2人以上</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="dayidx">開催日程 <span class="chip day">📋</span></label>
+          <select id="dayidx">
+            <option selected>指定なし</option>
+            <option>初日</option>
+            <option>中日</option>
+            <option>最終日</option>
+          </select>
+          <select id="daypart">
+            <option selected>時間帯指定なし</option>
+            <option>モーニング</option>
+            <option>デイ</option>
+            <option>ナイター</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>艇別条件（1〜6号艇）</legend>
+        <div id="boats"></div>
+      </fieldset>
+      <datalist id="racerList">
+        <option value="4320 峰竜太"></option>
+        <option value="4444 桐生順平"></option>
+        <option value="4477 篠崎仁志"></option>
+        <option value="3941 池田浩二"></option>
+        <option value="4028 田村隆信"></option>
+        <option value="4586 磯部誠"></option>
+        <option value="4885 大山千広"></option>
+        <option value="4804 遠藤エミ"></option>
+      </datalist>
+
+      <fieldset>
+        <legend>検索期間</legend>
+        <div class="row">
+          <label for="period">探索期間</label>
+          <select id="period">
+            <option selected>2022-05 〜 2024-12（探索用）</option>
+            <option>2022-05 〜 2026-08（全期間）</option>
+          </select>
+        </div>
+        <div class="row" style="font-size:12px;color:var(--ink-3)">
+          2025年以降は「追試」用に取り置くのがおすすめです（偶然の当たり対策）。
+        </div>
+      </fieldset>
+
+      <div class="btnrow">
+        <button class="primary" id="btnSearch">🔍 この条件で検索</button>
+        <button id="btnSave" disabled>★ マイ手法として保存</button>
+      </div>
+    </div>
+
+    <!-- ============ 右: 結果 ============ -->
+    <div class="panel results">
+      <h2>検索結果</h2>
+      <div id="resultArea"><div class="empty">左の条件を組んで「検索」を押してください。<br>その条件に合致した過去レースの回収率・的中率が返ります。</div></div>
+
+      <hr class="divider">
+      <div class="h3row">
+        <h3>★ マイ手法</h3>
+        <span class="sub">保存すると毎朝、本日レースと自動照合します</span>
+      </div>
+      <div class="mylist" id="myList">
+        <div class="mycard" style="opacity:.6">
+          <div><div class="nm">（保存した手法がここに並びます）</div>
+          <div class="st">保存日以降のレースだけで別集計するフォワード成績も自動で貯まります</div></div>
+        </div>
+      </div>
+      <div id="todayMatches"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+
+  // 天候チップのトグル
+  Array.prototype.forEach.call(document.querySelectorAll('#weatherChips .wchip'), function (ch) {
+    ch.addEventListener('click', function () { ch.classList.toggle('on'); });
+  });
+
+  // 買い目タイプに応じて 2着/3着 セレクトを表示切替
+  function refreshBetUI() {
+    var t = $('betType').value;
+    $('pos2wrap').hidden = (t === '単勝');
+    $('pos3wrap').hidden = (t !== '3連単');
+  }
+  $('betType').addEventListener('change', refreshBetUI);
+  refreshBetUI();
+
+  function betLabel(c) {
+    if (c.betType === '単勝') return '単勝 ' + c.pos1;
+    if (c.betType === '2連単') return '2連単 ' + c.pos1 + '-' + c.pos2;
+    return '3連単 ' + c.pos1 + '-' + c.pos2 + '-' + c.pos3;
+  }
+
+  // ---- 艇別条件ブロック (1〜6号艇) を生成 ----
+  var KIMARITE = ['指定なし', '逃げ', '差し', 'まくり', 'まくり差し', '抜き', '恵まれ'];
+  function cmpSel(id) {
+    return '<select id="' + id + '"><option>指定なし</option><option>以上</option><option>以下</option></select>';
+  }
+  function boatBlock(i) {
+    var kimOpts = KIMARITE.map(function (k) { return '<option>' + k + '</option>'; }).join('');
+    return '<details class="boatdet" id="bdet' + i + '"' + (i === 1 ? ' open' : '') + '>' +
+      '<summary><span class="bnum b' + i + '">' + i + '</span>' + i + '号艇 <span class="bsum" id="bsum' + i + '">条件なし</span></summary>' +
+      '<div class="conds">' +
+      '<div class="cond">級別 <span class="chip day">📋</span>' +
+        '<span class="wchips" id="b' + i + 'cls">' +
+        ['A1', 'A2', 'B1', 'B2'].map(function (cl) { return '<span class="wchip" data-v="' + cl + '">' + cl + '</span>'; }).join('') +
+        '</span><span class="unit">（複数選択可・未選択＝指定なし）</span>' +
+      '</div>' +
+      '<div class="cond">選手 <span class="chip day">📋</span>' +
+        '<input type="text" id="b' + i + 'racer" list="racerList" placeholder="選手番号 または 選手名" style="width:170px">' +
+        '<span class="unit">（空欄＝指定なし）</span>' +
+      '</div>' +
+      '<div class="cond">平均ST（番組表値） <span class="chip day">📋</span>' +
+        cmpSel('b' + i + 'avgstcmp') +
+        '<input type="number" id="b' + i + 'avgst" value="0.15" min="0" max="0.5" step="0.01"><span class="unit">秒</span>' +
+      '</div>' +
+      '<div class="cond">全国勝率 <span class="chip day">📋</span>' +
+        cmpSel('b' + i + 'natcmp') +
+        '<input type="number" id="b' + i + 'nat" value="6.00" min="0" max="10" step="0.10"><span class="unit">点</span>' +
+      '</div>' +
+      '<div class="cond">当地勝率 <span class="chip day">📋</span>' +
+        cmpSel('b' + i + 'loccmp') +
+        '<input type="number" id="b' + i + 'loc" value="6.00" min="0" max="10" step="0.10"><span class="unit">点</span>' +
+      '</div>' +
+      '<div class="cond">モーター2連対率 <span class="chip day">📋</span>' +
+        cmpSel('b' + i + 'mtrcmp') +
+        '<input type="number" id="b' + i + 'mtr" value="35" min="0" max="100" step="1"><span class="unit">％</span>' +
+      '</div>' +
+      '<div class="cond limited2">展示順位 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span>' +
+        '<select id="b' + i + 'exfrom"><option>指定なし</option><option>1位</option><option>2位</option><option>3位</option><option>4位</option><option>5位</option><option>6位</option></select>' +
+        '<span class="unit">〜</span>' +
+        '<select id="b' + i + 'exto"><option>1位</option><option>2位</option><option selected>3位</option><option>4位</option><option>5位</option><option>6位</option></select>' +
+      '</div>' +
+      '<div class="cond limited2">展示タイム 会場平均比 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span>' +
+        '<select id="b' + i + 'exdevdir"><option>指定なし</option><option>平均より速い</option><option>平均より遅い</option></select>' +
+        '<input type="number" id="b' + i + 'exdev" value="0.10" min="0" max="1" step="0.05"><span class="unit">秒以上</span>' +
+      '</div>' +
+      '<div class="cond limited2">展示ST <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span>' +
+        cmpSel('b' + i + 'exstcmp') +
+        '<input type="number" id="b' + i + 'exst" value="0.10" min="-0.1" max="0.5" step="0.01"><span class="unit">秒</span>' +
+      '</div>' +
+      '<div class="cond limited">決まり手 <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span>' +
+        '<select id="b' + i + 'kim">' + kimOpts + '</select>' +
+        '<span class="unit">勝率</span><input type="number" id="b' + i + 'kimrate" value="50" min="0" max="100" step="5"><span class="unit">％以上</span>' +
+      '</div>' +
+      '<div class="cond limited">事故率（前日まで） <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span>' +
+        cmpSel('b' + i + 'acccmp') +
+        '<input type="number" id="b' + i + 'acc" value="0.30" min="0" max="5" step="0.05"><span class="unit">％</span>' +
+      '</div>' +
+      '</div></details>';
+  }
+  var boatsHtml = '';
+  for (var bi = 1; bi <= 6; bi++) boatsHtml += boatBlock(bi);
+  $('boats').innerHTML = boatsHtml;
+
+  // 初期値: 例の条件 (1号艇 逃げ60%・モーター40%以上 / 2・3号艇 モーター35%以上)
+  document.querySelector('#b1cls .wchip[data-v="A1"]').classList.add('on');
+  $('b1kim').value = '逃げ'; $('b1kimrate').value = 60;
+  $('b1mtrcmp').value = '以上'; $('b1mtr').value = 40;
+  $('b2mtrcmp').value = '以上'; $('b2mtr').value = 35;
+  $('b3mtrcmp').value = '以上'; $('b3mtr').value = 35;
+
+  function boatCond(i) {
+    var cls = Array.prototype.filter.call(document.querySelectorAll('#b' + i + 'cls .wchip'), function (c) { return c.classList.contains('on'); })
+      .map(function (c) { return c.getAttribute('data-v'); });
+    return {
+      cls: cls,
+      racer: $('b' + i + 'racer').value.trim(),
+      kim: $('b' + i + 'kim').value, kimrate: $('b' + i + 'kimrate').value,
+      mtrcmp: $('b' + i + 'mtrcmp').value, mtr: $('b' + i + 'mtr').value,
+      avgstcmp: $('b' + i + 'avgstcmp').value, avgst: $('b' + i + 'avgst').value,
+      natcmp: $('b' + i + 'natcmp').value, nat: $('b' + i + 'nat').value,
+      loccmp: $('b' + i + 'loccmp').value, loc: $('b' + i + 'loc').value,
+      acccmp: $('b' + i + 'acccmp').value, acc: $('b' + i + 'acc').value,
+      exfrom: $('b' + i + 'exfrom').value, exto: $('b' + i + 'exto').value,
+      exdevdir: $('b' + i + 'exdevdir').value, exdev: $('b' + i + 'exdev').value,
+      exstcmp: $('b' + i + 'exstcmp').value, exst: $('b' + i + 'exst').value
+    };
+  }
+  function boatActiveCount(bc) {
+    var n = 0;
+    if (bc.cls.length > 0 && bc.cls.length < 4) n++;
+    if (bc.racer) n++;
+    if (bc.kim !== '指定なし') n++;
+    if (bc.mtrcmp !== '指定なし') n++;
+    if (bc.avgstcmp !== '指定なし') n++;
+    if (bc.natcmp !== '指定なし') n++;
+    if (bc.loccmp !== '指定なし') n++;
+    if (bc.acccmp !== '指定なし') n++;
+    if (bc.exfrom !== '指定なし') n++;
+    if (bc.exdevdir !== '指定なし') n++;
+    if (bc.exstcmp !== '指定なし') n++;
+    return n;
+  }
+  function refreshBoatUI() {
+    for (var i = 1; i <= 6; i++) {
+      var n = boatActiveCount(boatCond(i));
+      $('bsum' + i).textContent = n ? '条件 ' + n + ' 個' : '条件なし';
+    }
+  }
+  $('boats').addEventListener('change', refreshBoatUI);
+  $('boats').addEventListener('input', refreshBoatUI);
+  $('boats').addEventListener('click', function (e) {
+    if (e.target.classList && e.target.classList.contains('wchip')) {
+      e.target.classList.toggle('on');
+      refreshBoatUI();
+    }
+  });
+  refreshBoatUI();
+
+  // 条件からシードを作る決定的な擬似乱数（同じ条件なら同じ結果）
+  function hashStr(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+    return h;
+  }
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function collectConditions() {
+    var weather = Array.prototype.filter.call(document.querySelectorAll('#weatherChips .wchip'), function (c) { return c.classList.contains('on'); })
+      .map(function (c) { return c.getAttribute('data-v'); });
+    var boats = [];
+    for (var i = 1; i <= 6; i++) boats.push(boatCond(i));
+    return {
+      venue: $('venue').value,
+      betType: $('betType').value, pos1: $('pos1').value, pos2: $('pos2').value, pos3: $('pos3').value,
+      weather: weather, windDir: $('windDir').value, windStr: $('windStr').value,
+      tide: $('tide').value,
+      female: $('female').value, classmix: $('classmix').value,
+      dayidx: $('dayidx').value, daypart: $('daypart').value,
+      boats: boats,
+      period: $('period').value
+    };
+  }
+
+  function countActive(c) {
+    var n = 0;
+    if (c.venue !== '全会場') n++;
+    if (c.weather.length > 0 && c.weather.length < 3) n++;
+    if (c.windDir !== '指定なし') n++;
+    if (c.windStr !== '指定なし') n++;
+    if (c.tide !== '指定なし') n++;
+    if (c.female !== '指定なし') n++;
+    if (c.classmix !== '指定なし') n++;
+    if (c.dayidx !== '指定なし') n++;
+    if (c.daypart !== '時間帯指定なし') n++;
+    c.boats.forEach(function (bc) { n += boatActiveCount(bc); });
+    return n;
+  }
+
+  function simulate(c) {
+    var seed = hashStr(JSON.stringify(c));
+    var rnd = mulberry32(seed);
+    var act = countActive(c);
+    // 条件が増えるほど母数Nが減る
+    var baseN = c.venue === '全会場' ? 42000 : 1750;
+    var N = Math.max(8, Math.round(baseN * Math.pow(0.52, act) * (0.8 + rnd() * 0.4)));
+    var hitRate = 0.06 + rnd() * 0.10;               // 3連単想定
+    if (c.betType === '単勝') hitRate = 0.45 + rnd() * 0.25;
+    if (c.betType === '2連単') hitRate = 0.25 + rnd() * 0.15;
+    var hits = Math.round(N * hitRate);
+    var roi = 62 + rnd() * 75;                        // 62〜137%
+    if (act >= 6 && N < 120) roi = 75 + rnd() * 110;  // 小Nほど上振れしやすい（現実の再現）
+    var half = Math.round(320 / Math.sqrt(Math.max(N, 1)) * (8 + rnd() * 5));
+    return { N: N, hits: hits, hitRate: hitRate, roi: roi, lo: Math.max(0, Math.round(roi - half)), hi: Math.round(roi + half), seed: seed };
+  }
+
+  function sparkline(seed, roi, N) {
+    var rnd = mulberry32(seed ^ 0x9e3779b9);
+    var pts = [], bal = 0, steps = 60;
+    for (var i = 0; i < steps; i++) {
+      bal += (roi / 100 - 1) / steps + (rnd() - 0.5) * (0.5 / Math.sqrt(Math.max(N, 10)) * 6);
+      pts.push(bal);
+    }
+    var min = Math.min.apply(null, pts.concat([0])), max = Math.max.apply(null, pts.concat([0]));
+    var span = (max - min) || 1;
+    var W = 600, H = 90, P = 6;
+    function X(i) { return P + i / (steps - 1) * (W - 2 * P); }
+    function Y(v) { return H - P - (v - min) / span * (H - 2 * P); }
+    var d = pts.map(function (v, i) { return (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); }).join('');
+    var zero = Y(0).toFixed(1);
+    var endCol = pts[steps - 1] >= 0 ? 'var(--good)' : 'var(--crit)';
+    return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="累積収支の推移">' +
+      '<line x1="0" y1="' + zero + '" x2="' + W + '" y2="' + zero + '" stroke="var(--line)" stroke-dasharray="4 4"/>' +
+      '<path d="' + d + '" fill="none" stroke="' + endCol + '" stroke-width="2"/>' +
+      '<circle cx="' + X(steps - 1).toFixed(1) + '" cy="' + Y(pts[steps - 1]).toFixed(1) + '" r="3.5" fill="' + endCol + '"/></svg>';
+  }
+
+  function yearRows(seed, roi, N) {
+    var rnd = mulberry32(seed ^ 0x1234567);
+    var years = ['2022', '2023', '2024'];
+    var html = '';
+    years.forEach(function (y) {
+      var n = Math.max(2, Math.round(N / 3 * (0.7 + rnd() * 0.6)));
+      var r = Math.max(20, roi + (rnd() - 0.5) * 60);
+      html += '<tr><td>' + y + '年</td><td>' + n + '</td><td class="' + (r >= 100 ? 'roi-pos' : 'roi-neg') + '">' + r.toFixed(1) + '%</td></tr>';
+    });
+    return html;
+  }
+
+  var lastResult = null, lastCond = null, savedCount = 0;
+
+  function render(res, c, retest) {
+    var cls = res.roi >= 110 ? 'roi-good' : (res.roi >= 90 ? 'roi-mid' : 'roi-bad');
+    var warn = '';
+    if (res.N < 30) {
+      warn = '<div class="warnbox">⚠ <b>母数が少なすぎます（N=' + res.N + '）。</b>この回収率は偶然の可能性が高く、参考になりません。条件を少し緩めるか、期間を広げてください。</div>';
+    } else if (res.N < 100) {
+      warn = '<div class="warnbox">⚠ <b>母数が少なめです（N=' + res.N + '）。</b>信頼区間が広いため上振れの可能性があります。保存して<b>フォワード検証</b>で確かめるのがおすすめです。</div>';
+    } else {
+      warn = '<div class="okbox">✓ 母数は十分です（N=' + res.N + '）。それでも探索で見つけた条件は上振れを含みます。2025年以降での「追試」を必ず行ってください。</div>';
+    }
+    var retestHtml = '';
+    if (retest) {
+      var rcls = retest.roi >= 100 ? 'roi-pos' : 'roi-neg';
+      retestHtml =
+        '<div class="warnbox" style="background:var(--surface-2);color:var(--ink-2)">' +
+        '🧪 <b>追試結果（2025-01〜2026-08 / 探索に使っていない期間）:</b> N=' + retest.N +
+        ' ／ 回収率 <span class="' + rcls + '">' + retest.roi.toFixed(1) + '%</span>' +
+        '（95%CI ' + retest.lo + '〜' + retest.hi + '%）— 探索期間より ' +
+        (retest.roi < lastResult.roi ? '低下しています。探索期間の数字には上振れが含まれていた可能性が高いです。' : '維持されています。有望な条件です。') +
+        '</div>';
+    }
+    $('resultArea').innerHTML =
+      '<div class="kpis">' +
+      '<div class="kpi"><div class="v ' + cls + '">' + res.roi.toFixed(1) + '%</div><div class="l">回収率（100円固定）</div><div class="ci">95%CI ' + res.lo + '〜' + res.hi + '%</div></div>' +
+      '<div class="kpi"><div class="v">' + (res.hitRate * 100).toFixed(1) + '%</div><div class="l">的中率</div><div class="ci">' + res.hits + ' / ' + res.N + ' 本</div></div>' +
+      '<div class="kpi"><div class="v">' + res.N + '</div><div class="l">合致レース数 N</div><div class="ci">' + ($('period').value.indexOf('全期間') >= 0 ? '2022-05〜2026-08' : '2022-05〜2024-12') + '</div></div>' +
+      '<div class="kpi"><div class="v">' + Math.round(res.N / 32) + '</div><div class="l">月あたり出現数（目安）</div><div class="ci">約' + (res.N > 320 ? '毎日' : (res.N > 100 ? '2〜3日に1回' : '週1回以下')) + '</div></div>' +
+      '</div>' +
+      warn + retestHtml +
+      '<div class="cumwrap"><div class="cap">累積収支イメージ（100円固定買い）</div>' + sparkline(res.seed, res.roi, res.N) + '</div>' +
+      '<table class="yeartbl"><thead><tr><th>年</th><th>N</th><th>回収率</th></tr></thead><tbody>' + yearRows(res.seed, res.roi, res.N) + '</tbody></table>' +
+      '<div class="btnrow"><button id="btnRetest"' + (retest ? ' disabled' : '') + '>🧪 2025年以降で追試する</button></div>';
+    var bt = $('btnRetest');
+    if (bt) bt.addEventListener('click', function () {
+      var r2 = simulate(Object.assign({}, c, { period: 'retest' }));
+      r2.roi = Math.max(35, res.roi * (0.62 + mulberry32(res.seed ^ 77)() * 0.55));
+      r2.N = Math.max(5, Math.round(res.N * 0.55));
+      var half = Math.round(320 / Math.sqrt(r2.N) * 10);
+      r2.lo = Math.max(0, Math.round(r2.roi - half)); r2.hi = Math.round(r2.roi + half);
+      render(res, c, r2);
+    });
+  }
+
+  $('btnSearch').addEventListener('click', function () {
+    lastCond = collectConditions();
+    lastResult = simulate(lastCond);
+    render(lastResult, lastCond, null);
+    $('btnSave').disabled = false;
+  });
+
+  $('btnSave').addEventListener('click', function () {
+    if (!lastResult) return;
+    savedCount++;
+    var name = lastCond.venue + '・' + betLabel(lastCond) + '（条件' + countActive(lastCond) + '個）';
+    var list = $('myList');
+    if (savedCount === 1) list.innerHTML = '';
+    var card = document.createElement('div');
+    card.className = 'mycard';
+    card.innerHTML = '<div><div class="nm">★ ' + name + '</div>' +
+      '<div class="st">探索: 回収率 ' + lastResult.roi.toFixed(1) + '%（N=' + lastResult.N + '）｜ フォワード: 集計待ち（保存日以降のレースのみで別集計）</div></div>' +
+      '<span class="stat stat-morning">監視中</span>';
+    list.appendChild(card);
+    $('todayMatches').innerHTML =
+      '<div class="h3row" style="margin-top:14px"><h3>本日の合致レース</h3><span class="sub">📋条件は前夜判定済み。天候・風（⏱）の条件は直前情報が出た時点で再判定します</span></div>' +
+      '<div class="mylist">' +
+      '<div class="matchcard"><b>鳴門 7R</b> 締切 14:52 <span class="stat stat-morning">🌅 朝候補（天候・風は未確定）</span></div>' +
+      '<div class="matchcard"><b>鳴門 10R</b> 締切 16:21 <span class="stat stat-live">✓ 直前確定（風0m・晴）締切12分前に通知します</span></div>' +
+      '</div>';
+    $('btnSave').disabled = true;
+  });
+})();
+</script>
