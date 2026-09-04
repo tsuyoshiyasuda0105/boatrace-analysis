@@ -207,4 +207,71 @@ def test_status_from_summary_marks_large_point_drift_as_warning():
     )
 
     assert status == "warning"
-    assert "監査差分あり" in message
+    assert "事故点差分=7件" in message
+
+
+def test_status_is_judged_before_calibration_not_after():
+    """補正後の完璧な数字ではなく、補正前の素の一致度で判定すること。
+
+    build_and_compare は比較 → 外部の値を内部へ書き写す → 再比較、の順に動く。
+    補正後の数字で判定すると答えを写してから答え合わせをすることになり、
+    ほぼ必ず ok になる。実際 2026-08-24〜09-02 は補正前が毎日 3 割ズレていた
+    のに 10 日連続 ok と記録され、K ファイル欠損やパース退行を検知するという
+    このスクリプト本来の目的が働いていなかった。
+    """
+    status, message = status_from_summary(
+        {
+            # 補正後は完璧 (書き写した直後なので当然)
+            "compared_rows": 1620,
+            "mismatch_rows": 0,
+            "point_mismatch_rows": 0,
+            "nonzero_point_coverage": 1.0,
+            # 補正前は 2026-08-05 の実障害の数字
+            "pre_calibration": {
+                "compared_rows": 1620,
+                "mismatch_rows": 1454,
+                "point_mismatch_rows": 1029,
+                "nonzero_point_coverage": 0.001,
+            },
+        }
+    )
+
+    assert status == "error", "補正前が壊れているのに ok を返してはいけない"
+    assert "1029件" in message
+
+
+def test_ordinary_ingestion_lag_stays_ok():
+    """平常運転 (取り込みが1〜2走遅れるだけ) では静かにしていること。
+
+    2026-09-01 の実測値。出走数だけの差分は毎日 3 割前後出るので、
+    これで警告を出すと常時黄色になり監視として死ぬ。
+    """
+    status, message = status_from_summary(
+        {
+            "pre_calibration": {
+                "compared_rows": 1622,
+                "mismatch_rows": 526,
+                "point_mismatch_rows": 15,
+                "nonzero_point_coverage": 0.6738,
+            }
+        }
+    )
+
+    assert status == "ok"
+    assert "出走数のみ差分=511件" in message
+
+
+def test_real_regression_is_escalated_to_error():
+    """2026-08-05 に実際に起きた K ファイル欠損を error として捕まえること。"""
+    status, _message = status_from_summary(
+        {
+            "pre_calibration": {
+                "compared_rows": 1620,
+                "mismatch_rows": 1454,
+                "point_mismatch_rows": 1029,
+                "nonzero_point_coverage": 0.001,
+            }
+        }
+    )
+
+    assert status == "error"

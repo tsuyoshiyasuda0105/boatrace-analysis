@@ -482,22 +482,48 @@ def compare_rows(
     }
 
 
-def status_from_summary(summary: dict[str, Any]) -> tuple[str, str]:
-    compared_rows = int(summary.get("compared_rows") or 0)
-    mismatch_rows = int(summary.get("mismatch_rows") or 0)
-    point_mismatch_rows = int(summary.get("point_mismatch_rows") or 0)
-    coverage = float(summary.get("nonzero_point_coverage") or 0.0)
+# 判定のしきい値は本番の実測から決めた (2026-08-05〜09-02 の pre_calibration)。
+#   平常時 : 事故点差分 0〜48 件 = 0.0〜3.0% / 非ゼロ事故点一致率 0.49〜1.00
+#   実障害 : 2026-08-05 の K ファイル欠損は 1029 件 = 63.5% / 一致率 0.001
+# 平常のばらつきの倍以上、実障害のはるか手前に置く。出走数だけの差分は
+# 取り込みが 1〜2 走遅れるだけで毎日 3 割前後出るため、判定には使わない。
+POINT_MISMATCH_WARN_RATIO = 0.05
+POINT_MISMATCH_ERROR_RATIO = 0.10
+NONZERO_COVERAGE_WARN = 0.40
+NONZERO_COVERAGE_ERROR = 0.25
 
+
+def status_from_summary(summary: dict[str, Any]) -> tuple[str, str]:
+    """照合結果を判定する。判定は必ず「補正前」の数字で行う。
+
+    build_and_compare は比較のあとに外部の値を内部へ書き写して
+    (mirror_external_period_stats / calibrate_reconstructed_period_stats)、
+    その後でもう一度比較している。つまり補正後の summary は答えを写してから
+    答え合わせをした数字で、ほぼ必ず一致する。実際 2026-08-24〜09-02 は
+    補正前が毎日 3 割ズレていたのに 10 日連続で ok と記録されていた。
+    このスクリプトの目的は K ファイル欠損やパース退行の検知なので、
+    素の一致度だけが判定に使える数字になる。書き写し自体は「現行期間は
+    外部を正とする」設計として残し、ここでは触らない。
+    """
+    audited = summary.get("pre_calibration") or summary
+    compared_rows = int(audited.get("compared_rows") or 0)
     if compared_rows == 0:
         return "error", "外部事故率との照合対象が0件です"
-    if point_mismatch_rows > 0 or coverage < 0.98:
-        return (
-            "warning",
-            f"事故率監査差分あり: points差分={point_mismatch_rows}件 / 非ゼロ事故点一致率={coverage:.1%}",
-        )
-    if mismatch_rows > 0:
-        return "warning", f"事故率照合に差分あり: {mismatch_rows}件"
-    return "ok", f"事故率照合OK: {compared_rows}件一致"
+
+    point_mismatch_rows = int(audited.get("point_mismatch_rows") or 0)
+    coverage = float(audited.get("nonzero_point_coverage") or 0.0)
+    starts_only_rows = max(0, int(audited.get("mismatch_rows") or 0) - point_mismatch_rows)
+    point_ratio = point_mismatch_rows / compared_rows
+    detail = (
+        f"事故点差分={point_mismatch_rows}件({point_ratio:.1%}) / "
+        f"非ゼロ事故点一致率={coverage:.1%} / 出走数のみ差分={starts_only_rows}件"
+    )
+
+    if point_ratio >= POINT_MISMATCH_ERROR_RATIO or coverage < NONZERO_COVERAGE_ERROR:
+        return "error", f"事故率の再構築が外部と大きく乖離: {detail}"
+    if point_ratio >= POINT_MISMATCH_WARN_RATIO or coverage < NONZERO_COVERAGE_WARN:
+        return "warning", f"事故率照合に差分あり: {detail}"
+    return "ok", f"事故率照合OK(補正前で判定): {detail}"
 
 
 def fetch_external_data() -> tuple[str, str, dict[int, ExternalAccidentRow]]:
