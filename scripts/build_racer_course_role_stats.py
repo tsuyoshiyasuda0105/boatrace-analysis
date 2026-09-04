@@ -42,10 +42,16 @@ def ensure_schema(conn) -> None:
           window_days           INTEGER NOT NULL,
           course1_starts        INTEGER NOT NULL,
           course1_wins          INTEGER NOT NULL,
-          course1_win_rate      REAL,
+          -- DOUBLE PRECISION にするのは REAL が Postgres では 4 バイトになり、
+          -- 42/60 や 26/40 の「ちょうど 0.70 / 0.65」を 0.6999999... に丸めて
+          -- しまうため。閾値がその値ちょうどなので、境界の選手が SQL 側の
+          -- 比較で静かに落ちる (2026-09-04)。判定自体は整数の分母分子から
+          -- 出すので率は表示用だが、後から SQL で数えた人が別の答えを得る
+          -- 状態を残さない。SQLite では REAL 相当 (8 バイト) で従来どおり。
+          course1_win_rate      DOUBLE PRECISION,
           course2_starts        INTEGER NOT NULL,
           course2_nigashi_count INTEGER NOT NULL,
-          course2_nigashi_rate  REAL,
+          course2_nigashi_rate  DOUBLE PRECISION,
           updated_at            TEXT NOT NULL,
           PRIMARY KEY (snapshot_date, racer_number)
         );

@@ -658,17 +658,36 @@ def _load_course_role_snapshot_stats(
     return out
 
 
+def _course_role_rate(hits: int, starts: int, stored_rate: Any) -> Optional[float]:
+    """判定に使う率は保存済みの浮動小数ではなく整数の実数から出す。
+
+    率カラムは Postgres では real (4バイト) で、42/60 や 26/40 のような
+    「ちょうど 0.70 / 0.65」が 0.6999999... に丸められる。閾値がちょうど
+    その値なので、境界の選手だけが静かにバッジを失う。しかも結果が比較の
+    場所で変わる: SQL で比べると落ち、psycopg がテキストで返した値を
+    Python で比べると通る。psycopg3 は同じ文を繰り返すと自動で prepare +
+    バイナリ転送に切り替えるため、プロセスが温まった後だけ境界の選手が
+    消える、という再現しにくい形になりうる (2026-09-04 に本番投入後の
+    検算で発見。逃げ 112→110 / 壁 71→69)。
+    分母・分子は整数で保存してあるので、そこから割れば転送形式に依存しない。
+    """
+    if starts > 0:
+        return hits / starts
+    return _safe_float(stored_rate)
+
+
 def _course_role_escape_tag(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
     if not isinstance(stats, dict):
         return None
     starts = int(stats.get("course1_starts") or 0)
-    rate = _safe_float(stats.get("course1_win_rate"))
+    wins = int(stats.get("course1_wins") or 0)
+    rate = _course_role_rate(wins, starts, stats.get("course1_win_rate"))
     if starts < COURSE_ROLE_MIN_STARTS or rate is None or rate < ESCAPE_WIN_RATE_MIN:
         return None
     return {
         "label": "逃げ",
         "rate": round(rate * 100.0, 1),
-        "wins": int(stats.get("course1_wins") or 0),
+        "wins": wins,
         "starts": starts,
     }
 
@@ -677,13 +696,14 @@ def _course_role_nigashi_tag(stats: dict[str, Any] | None) -> Optional[dict[str,
     if not isinstance(stats, dict):
         return None
     starts = int(stats.get("course2_starts") or 0)
-    rate = _safe_float(stats.get("course2_nigashi_rate"))
+    hits = int(stats.get("course2_nigashi_count") or 0)
+    rate = _course_role_rate(hits, starts, stats.get("course2_nigashi_rate"))
     if starts < COURSE_ROLE_MIN_STARTS or rate is None or rate < NIGASHI_RATE_MIN:
         return None
     return {
         "label": "壁",
         "rate": round(rate * 100.0, 1),
-        "wins": int(stats.get("course2_nigashi_count") or 0),
+        "wins": hits,
         "starts": starts,
     }
 

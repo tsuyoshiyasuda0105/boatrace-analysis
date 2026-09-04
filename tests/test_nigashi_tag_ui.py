@@ -38,11 +38,16 @@ def _snapshot_stats(
     nigashi_rate=0.0,
     nigashi_starts=0,
 ):
+    # 率は必ず丸めた実数から作り直す。率と分母分子がずれた stats を渡すと
+    # 「70.0% (18/25)」のように画面上で矛盾した表示になり、そのずれた値を
+    # 期待値に焼き付けてしまう (2026-09-04 まで実際にそうなっていた)。
+    escape_wins = round(escape_rate * escape_starts)
+    nigashi_count = round(nigashi_rate * nigashi_starts)
     return {
         1001: {
             "course1_starts": escape_starts,
-            "course1_wins": round(escape_rate * escape_starts),
-            "course1_win_rate": escape_rate,
+            "course1_wins": escape_wins,
+            "course1_win_rate": escape_wins / escape_starts if escape_starts else None,
             "course2_starts": 0,
             "course2_nigashi_count": 0,
             "course2_nigashi_rate": None,
@@ -52,8 +57,8 @@ def _snapshot_stats(
             "course1_wins": 0,
             "course1_win_rate": None,
             "course2_starts": nigashi_starts,
-            "course2_nigashi_count": round(nigashi_rate * nigashi_starts),
-            "course2_nigashi_rate": nigashi_rate,
+            "course2_nigashi_count": nigashi_count,
+            "course2_nigashi_rate": nigashi_count / nigashi_starts if nigashi_starts else None,
         },
     }
 
@@ -91,11 +96,13 @@ def test_nigashi_badge_is_built_from_course_role_snapshot(monkeypatch):
         _snapshot_stats(nigashi_rate=0.70, nigashi_starts=25),
     )
 
+    # 18/25 = 72.0%。旧実装は保存された率 (0.70) をそのまま出していたため
+    # 「70.0% (18/25)」と、率と分数が食い違う表示になっていた。
     assert badges["nigashi"] == {
-        "items": [{"boat": 2, "label": "壁", "rate": 70.0, "wins": 18, "starts": 25}],
+        "items": [{"boat": 2, "label": "壁", "rate": 72.0, "wins": 18, "starts": 25}],
         "boats": [2],
-        "max_rate": 70.0,
-        "label": "2号:壁 70.0% (18/25)",
+        "max_rate": 72.0,
+        "label": "2号:壁 72.0% (18/25)",
     }
     assert conn.execute_count == 1
     assert legacy_calls == []
@@ -125,7 +132,9 @@ def test_escape_badge_uses_snapshot_percent_rate(monkeypatch):
         _snapshot_stats(escape_rate=0.75, escape_starts=25),
     )
 
-    assert badges["escape"]["items"][0]["rate"] == 75.0
+    # round(0.75 * 25) = 19 → 19/25 = 76.0%。率は分母分子と必ず一致する。
+    assert badges["escape"]["items"][0]["rate"] == 76.0
+    assert badges["escape"]["items"][0]["wins"] == 19
     assert badges["escape"]["items"][0]["starts"] == 25
 
 
@@ -264,3 +273,65 @@ def test_legacy_escape_fallback_applies_the_same_minimum_starts():
     assert "COURSE_ROLE_MIN_STARTS" in source, (
         "フォールバック経路にも最低走数の下限が必要"
     )
+
+
+def test_boundary_rates_survive_float4_rounding():
+    """ちょうど閾値の選手が、保存された率の丸めでバッジを失わないこと。
+
+    本番の率カラムは real (4バイト) で、42/60 や 26/40 の「ちょうど 0.70 /
+    0.65」が 0.6999999... として返る場合がある。判定を保存値ではなく整数の
+    分母分子から出しているので、丸めた率が来ても該当し続ける。
+    2026-09-04 に本番投入後の検算で発見 (逃げ 112→110 / 壁 71→69)。
+    """
+    escape = web_app._course_role_escape_tag(
+        {
+            "course1_starts": 60,
+            "course1_wins": 42,
+            "course1_win_rate": 0.699999988079071,
+        }
+    )
+    assert escape is not None
+    assert escape["rate"] == 70.0
+
+    nigashi = web_app._course_role_nigashi_tag(
+        {
+            "course2_starts": 40,
+            "course2_nigashi_count": 26,
+            "course2_nigashi_rate": 0.6499999761581421,
+        }
+    )
+    assert nigashi is not None
+    assert nigashi["rate"] == 65.0
+
+
+def test_rates_just_below_threshold_still_get_no_badge():
+    """整数から出すようにしても、閾値未満は従来どおり落ちること。"""
+    assert (
+        web_app._course_role_escape_tag(
+            {"course1_starts": 60, "course1_wins": 41, "course1_win_rate": 0.9}
+        )
+        is None
+    )
+    assert (
+        web_app._course_role_nigashi_tag(
+            {"course2_starts": 40, "course2_nigashi_count": 25, "course2_nigashi_rate": 0.9}
+        )
+        is None
+    )
+
+
+def test_course_role_rate_ignores_stored_value_when_counts_exist():
+    """保存値が壊れていても分母分子が正なら実数で判定すること。"""
+    assert web_app._course_role_rate(42, 60, 0.0) == 42 / 60
+    # 分母が 0 のときだけ保存値に落ちる (率カラムしか無い経路の保険)。
+    assert web_app._course_role_rate(0, 0, 0.71) == 0.71
+    assert web_app._course_role_rate(0, 0, None) is None
+
+
+def test_snapshot_table_stores_rates_as_double_precision():
+    """REAL だと Postgres で 4 バイトになり SQL 側の集計が別の答えを出す。"""
+    source = (ROOT / "scripts" / "build_racer_course_role_stats.py").read_text(encoding="utf-8")
+    assert "course1_win_rate      DOUBLE PRECISION" in source
+    assert "course2_nigashi_rate  DOUBLE PRECISION" in source
+    assert "_rate      REAL" not in source
+    assert "_rate  REAL" not in source
