@@ -1485,6 +1485,11 @@ def _race_grid_badges_payload(
         return {
             "date": target_date,
             "signals": {},
+            # キャッシュ経路と同じく版数を引き継ぐ。ここで落とすと、市場シグナルの
+            # キャッシュが無い日 (cron 停止明けなど) に焼いたスナップショットだけ
+            # 版数 None になり、次の評価でバッジを一度空にして作り直す分岐へ落ちる
+            # (2026-09-05 に本番のスナップショットで実際に None を確認)。
+            "race_badges_schema": fallback_payload.get("race_badges_schema"),
             "race_badges": filtered,
             "accident_watch": {},
         }

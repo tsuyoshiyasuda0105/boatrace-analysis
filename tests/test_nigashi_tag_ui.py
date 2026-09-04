@@ -335,3 +335,24 @@ def test_snapshot_table_stores_rates_as_double_precision():
     assert "course2_nigashi_rate  DOUBLE PRECISION" in source
     assert "_rate      REAL" not in source
     assert "_rate  REAL" not in source
+
+
+def test_fallback_badge_payload_keeps_the_schema_version():
+    """市場シグナルのキャッシュが無い日でも版数を落とさないこと。
+
+    _race_grid_badges_payload はバッジを返す分岐が 2 つある。キャッシュ経路は
+    race_badges_schema を引き継いでいたが、フォールバック経路だけ落としていた。
+    cron 停止明けのようにキャッシュが無い日はフォールバックを通るため、その日の
+    スナップショットだけ版数 None になり、次の評価で「バッジを空にして作り直す」
+    分岐に入る (バッジが消える経路)。2026-09-05 に本番で None を確認。
+    """
+    source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
+    fn = source[source.index("def _race_grid_badges_payload") : source.index("def _lightweight_top_page_market_payload")]
+
+    # バッジ入りで返る分岐の数だけ、版数の引き継ぎがあること。
+    returns_with_badges = fn.count('"race_badges": filtered,')
+    schema_propagations = fn.count('"race_badges_schema":')
+    assert returns_with_badges >= 2, "バッジを返す分岐が想定より少ない"
+    assert schema_propagations == returns_with_badges, (
+        "バッジを返す分岐と版数を引き継ぐ箇所の数が一致しない"
+    )
