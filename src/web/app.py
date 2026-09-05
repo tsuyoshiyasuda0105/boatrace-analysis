@@ -17164,11 +17164,23 @@ def create_app(
         except Exception as exc:  # noqa: BLE001
             logger.warning("course-fit live signals failed: %s", exc)
 
-        data_status = (
-            dict(incremental_base_payload.get("data_status") or {})
-            if incremental_base_payload is not None and requested_race_ids
-            else _load_market_data_status()
-        )
+        # data_status は「その日のソースが何件揃っているか」の実測値で、差分更新の
+        # 対象レースとは無関係。焼き済みの値を引き写すと、一度でも欠けた状態で
+        # 焼かれた瞬間からその値を運び続け、DB が直っても永久に古い数字を返す。
+        # 差分更新はフル再計算が来るまで自力で直せないので、毎回引き直す。
+        # 2026-09-05 の実障害: 朝 predictions=0 で焼かれた data_status を差分更新が
+        # 引き継ぎ、昼に予測を投入した後も prewarm の検証が
+        # "race source incomplete: predictions=0/168" で落ち続け、
+        # exhibition-detail-cron が約 10 時間赤のままになった。クエリは 1 本で軽い。
+        data_status = _load_market_data_status()
+        if incremental_base_payload is not None and requested_race_ids:
+            # cache_only / cache_miss は「この応答がキャッシュ由来か」を表す印で、
+            # ソース件数とは別軸。差分更新のベースが持っていれば引き継ぐ。
+            previous_status = incremental_base_payload.get("data_status")
+            if isinstance(previous_status, dict):
+                for flag in ("cache_only", "cache_miss"):
+                    if flag in previous_status:
+                        data_status[flag] = previous_status[flag]
         try:
             promoted_start_prediction_candidates = _apply_l4_reference_start_prediction_candidates(signals)
             if promoted_start_prediction_candidates:
