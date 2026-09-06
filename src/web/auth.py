@@ -459,7 +459,12 @@ SUPABASE_SIGNUP_TEMPLATE = """
 {% block content %}
 <div class="login-wrap">
   <h2>新規登録</h2>
-  <p class="login-hint">登録直後は無料会員です。有料権限はStripe決済または管理者付与で反映します。</p>
+  <p class="login-hint">登録直後は無料会員です。</p>
+  <p class="login-hint">
+    無料ベータは期間限定の試験提供で、提供機能・期間は予告なく変更または終了する場合があります。
+    終了後の継続利用には有料プランへのお申込みが必要です（無料から有料へ自動で切り替わることはありません）。
+  </p>
+  <p class="login-hint"><strong>ご登録は20歳以上の方に限ります。</strong></p>
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   {% if message %}<div class="login-hint">{{ message }}</div>{% endif %}
   <form method="post" action="{{ url_for('signup_supabase') }}" class="login-form">
@@ -474,6 +479,11 @@ SUPABASE_SIGNUP_TEMPLATE = """
     </label>
     <button type="submit">登録</button>
   </form>
+  <p class="login-hint">
+    登録をもって<a href="{{ url_for('legal.terms') }}">利用規約</a>および
+    <a href="{{ url_for('legal.privacy') }}">プライバシーポリシー</a>に同意したものとみなします。
+    <a href="{{ url_for('legal.tokushoho') }}">特定商取引法に基づく表記</a>
+  </p>
 </div>
 {% endblock %}
 """

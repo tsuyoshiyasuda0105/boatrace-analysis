@@ -86,10 +86,15 @@
   </header>
 
   {% if plan_incomplete %}
-  <section class="signup-alert" role="alert" aria-label="申込条件の未設定警告">
-    <strong>申込条件の設定が未完了です。</strong>
+  <section class="signup-alert" role="alert" aria-label="申込受付の状態">
+    {% if is_admin() %}
+    <strong>[管理者向け] 申込条件の設定が未完了です。</strong>
     <div>未設定の環境変数: <code>{{ missing_plan_fields | join(', ') }}</code></div>
     {% if not checkout_available %}<div>価格またはStripe Priceが未設定のため、申込はできません。</div>{% endif %}
+    {% else %}
+    <strong>有料プランは現在準備中です。</strong>
+    <div>受付開始まで、いましばらくお待ちください。無料ベータをご利用の方は、期間中そのままご利用いただけます。</div>
+    {% endif %}
   </section>
   {% endif %}
 

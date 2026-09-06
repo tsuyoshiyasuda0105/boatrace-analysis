@@ -68,14 +68,28 @@ def test_signup_plan_renders_for_logged_in_user(app):
 
 
 def test_unconfigured_price_disables_checkout_and_shows_warning(app):
+    """管理者には未設定の環境変数名を出す（設定作業のため）。"""
     client = app.test_client()
-    _login(client)
+    _login(client, role="admin")
 
     html = client.get("/signup/plan").get_data(as_text=True)
 
     assert "価格またはStripe Priceが未設定のため、申込はできません。" in html
     assert "LEGAL_PRICE" in html
     assert "STRIPE_PRICE_ID" in html
+
+
+def test_unconfigured_price_hides_internals_from_normal_members(app):
+    """一般会員には環境変数名などの内部情報を見せず、準備中の案内だけを出す。"""
+    client = app.test_client()
+    _login(client)  # free_member
+
+    html = client.get("/signup/plan").get_data(as_text=True)
+
+    assert "有料プランは現在準備中です。" in html
+    assert "LEGAL_PRICE" not in html
+    assert "STRIPE_PRICE_ID" not in html
+    assert "環境変数" not in html
     assert 'id="checkout-button" type="submit" disabled' in html
 
 
