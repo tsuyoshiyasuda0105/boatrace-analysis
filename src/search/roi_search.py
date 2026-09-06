@@ -34,6 +34,7 @@ TOP_LEVEL_KEYS = frozenset(
         "date_from",
         "date_to",
         "season",
+        "grade",
         "boats",
         "compare",
     }
@@ -50,6 +51,11 @@ SEASON_MONTHS: dict[str, tuple[int, ...]] = {
 SEASON_ORDER = ("春", "夏", "秋", "冬")
 # race_date は 'YYYY-MM-DD' 固定長。SQLite でも Postgres でも substr が使える。
 SEASON_MONTH_SQL = "CAST(substr(race_date, 6, 2) AS INTEGER)"
+# グレードは races.grade (INTEGER) をそのまま持つ。番号の対応は
+# src/evaluation/subgroup_analysis.py の表と同じ。約 1 割が NULL で、
+# 2025-07 より前は大会名からの推定値 (src/parsers/official_b.py GRADE_KEYWORDS)。
+GRADE_LABELS: dict[int, str] = {1: "SG", 2: "G1", 3: "G2", 4: "G3", 5: "一般"}
+GRADE_UNKNOWN_LABEL = "不明"
 
 
 # 月 → 季節の引き当て表。行ループは 55 万回まわるので、毎回 SEASON_MONTHS を
@@ -563,6 +569,27 @@ def _compile_conditions(
             filters.append(f"{SEASON_MONTH_SQL} IN ({placeholders})")
             params.extend(months)
 
+    grade = conditions.get("grade")
+    if grade is not None:
+        raw_values = _sequence(grade, "grade")
+        try:
+            values = [_integer(item, "grade") for item in raw_values]
+        except ValueError as exc:
+            raise ValueError("グレードはSG・G1・G2・G3・一般から選んでください") from exc
+        if any(item not in GRADE_LABELS for item in values):
+            raise ValueError("グレードはSG・G1・G2・G3・一般から選んでください")
+        if len(set(values)) != len(values):
+            raise ValueError("グレードは重複しています。同じグレードは1回だけ指定してください")
+        # 5 つ全部なら絞り込みにならないので SQL を足さない (欠損レースも残る)。
+        if len(set(values)) < len(GRADE_LABELS):
+            chosen = sorted(set(values))
+            placeholders = ",".join("?" for _ in chosen)
+            # grade は約 1 割が NULL。天候などと同じく「判定不能」として除外し、
+            # 除外件数に出す (黙って落とすと母数の減りに気づけない)。
+            _add_predicate(
+                filters, params, null_columns, "grade", f"grade IN ({placeholders})", chosen
+            )
+
     where = " AND ".join(filters) if filters else "1=1"
     # Keep the final slot for internal callers that predate Step 12.  Retired
     # odds conditions are rejected above, so it is always empty.
@@ -647,8 +674,11 @@ def search_roi(
         payout_json_column = f"{bet.payout_column}_json"
         result_json_sql = result_json_column if result_json_column in columns else "NULL"
         payout_json_sql = payout_json_column if payout_json_column in columns else "NULL"
+        # グレード別内訳のために grade も引く。古い DB で列が無ければ NULL 扱い。
+        grade_sql = "grade" if "grade" in columns else "NULL"
         sql = (
-            f"SELECT race_date, schema_version, {bet.result_column} AS result_value, "
+            f"SELECT race_date, schema_version, {grade_sql} AS grade_value, "
+            f"{bet.result_column} AS result_value, "
             f"{bet.payout_column} AS payout_value, "
             f"{result_json_sql} AS result_values_json, "
             f"{payout_json_sql} AS payout_values_json, "
@@ -659,14 +689,19 @@ def search_roi(
 
     excluded_condition = 0
     excluded_result = 0
-    included: list[tuple[str, bool, float]] = []
+    included: list[tuple[str, bool, float, int | None]] = []
     # 点ごとの成績。合算だけ出すと「どの目が足を引っ張っているか」が見えない。
     ticket_hits: dict[int | str, int] = {ticket: 0 for ticket in bet.expected}
     ticket_payout: dict[int | str, float] = {ticket: 0.0 for ticket in bet.expected}
-    for race_date, schema_version, result, payout, result_json, payout_json, condition_null in rows:
+    for race_date, schema_version, grade_value, result, payout, result_json, payout_json, condition_null in rows:
         if condition_null:
             excluded_condition += 1
             continue
+        # 表にない番号 (壊れたデータ) は「不明」に寄せる。内訳の合計が N と合わなく
+        # なるのを防ぐため、行ごとに正規化しておく。
+        grade_key: int | None = (
+            int(grade_value) if grade_value is not None and int(grade_value) in GRADE_LABELS else None
+        )
         if int(schema_version) >= 4:
             try:
                 winning_values = json.loads(result_json)
@@ -697,7 +732,7 @@ def search_roi(
                     race_payout += amount
                     ticket_hits[ticket] += 1
                     ticket_payout[ticket] += amount
-            included.append((str(race_date), hit, race_payout))
+            included.append((str(race_date), hit, race_payout, grade_key))
         else:
             if result is None or payout is None:
                 excluded_result += 1
@@ -711,7 +746,7 @@ def search_roi(
                     race_payout += float(payout)
                     ticket_hits[ticket] += 1
                     ticket_payout[ticket] += float(payout)
-            included.append((str(race_date), hit, race_payout))
+            included.append((str(race_date), hit, race_payout, grade_key))
 
     ticket_count = bet.ticket_count
     # returns を「1 点あたりに均した払戻」にしておくと、平均がそのまま ROI% に
@@ -732,8 +767,9 @@ def search_roi(
     monthly_totals: dict[tuple[int, int], list[float]] = {}
     # 季節別も同じループで数える。別クエリを足すと DB を 2 度読むことになる。
     season_totals: dict[str, list[float]] = {}
+    grade_totals: dict[int | None, list[float]] = {}
     daily_profit: dict[str, float] = {}
-    for race_date, hit, payout in included:
+    for race_date, hit, payout, grade_key in included:
         year = int(race_date[:4])
         month = int(race_date[5:7])
         for totals in (
@@ -741,6 +777,7 @@ def search_roi(
             monthly_totals.setdefault((year, month), [0.0, 0.0, 0.0]),
             # month はこのループで既に取り出しているので、日付を解釈し直さない。
             season_totals.setdefault(_MONTH_SEASON[month], [0.0, 0.0, 0.0]),
+            grade_totals.setdefault(grade_key, [0.0, 0.0, 0.0]),
         ):
             totals[0] += 1
             totals[1] += int(hit)
@@ -800,6 +837,27 @@ def search_roi(
         for name in SEASON_ORDER
         if name in season_totals and season_totals[name][0] > 0
     ]
+    # グレード別の内訳。SG は全体の 0.5% しかなく、会場や季節を重ねると母数が
+    # 数十件に落ちるので、季節と同じ基準で各行に注意書きを付ける。欠損は「不明」
+    # として出し、行を足すと N に一致するようにする。
+    grade_breakdown = []
+    for key in (*GRADE_LABELS, None):
+        totals = grade_totals.get(key)
+        if not totals or totals[0] <= 0:
+            continue
+        grade_breakdown.append(
+            {
+                "grade": key,
+                "label": GRADE_LABELS.get(key, GRADE_UNKNOWN_LABEL),
+                "n": int(totals[0]),
+                "hits": int(totals[1]),
+                "hit_rate": round(totals[1] * 100.0 / totals[0], 1),
+                "roi": round(totals[2] / (totals[0] * ticket_count), 1),
+                "warning": (
+                    "n<30" if totals[0] < 30 else ("n<100" if totals[0] < 100 else None)
+                ),
+            }
+        )
     # 点ごとの内訳。各点は毎レース 100 円ずつなので、その点の ROI は
     # 「その点の払戻合計 ÷ レース数」。内訳 ROI の平均が合算 ROI に一致する。
     ticket_breakdown = [
@@ -822,6 +880,7 @@ def search_roi(
         "tickets": [str(ticket) for ticket in bet.expected],
         "ticket_breakdown": ticket_breakdown,
         "seasonal": seasonal,
+        "grade_breakdown": grade_breakdown,
         "roi_ci_low": round(ci_low, 1),
         "roi_ci_high": round(ci_high, 1),
         "excluded": {"result_missing": excluded_result, "condition_null": excluded_condition},

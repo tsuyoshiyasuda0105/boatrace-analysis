@@ -112,6 +112,17 @@
               <span class="unit">3-5月 / 6-8月 / 9-11月 / 12-2月</span>
             </div>
             <div class="row">
+              <span class="field-label">グレード</span>
+              <div class="wchips" id="gradeChips">
+                <button type="button" class="wchip" data-value="1" aria-pressed="false">👑 SG</button>
+                <button type="button" class="wchip" data-value="2" aria-pressed="false">G1</button>
+                <button type="button" class="wchip" data-value="3" aria-pressed="false">G2</button>
+                <button type="button" class="wchip" data-value="4" aria-pressed="false">G3</button>
+                <button type="button" class="wchip" data-value="5" aria-pressed="false">一般</button>
+              </div>
+              <span class="unit">グレード不明のレースは絞り込み時に除外</span>
+            </div>
+            <div class="row">
               <label for="windDirection">風向き <span class="chip live">⏱</span></label>
               <select id="windDirection" multiple size="3" aria-label="風向き（複数選択可）">
                 <option value="追い風">追い風</option>
@@ -626,6 +637,8 @@
       var weather = Array.from(document.querySelectorAll('#weatherChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
       var season = Array.from(document.querySelectorAll('#seasonChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
       if (season.length) result.season = season;
+      var grade = Array.from(document.querySelectorAll('#gradeChips .wchip.on')).map(function (chip) { return Number(chip.dataset.value); });
+      if (grade.length) result.grade = grade;
       if (weather.length) result.weather = weather;
       var windDirections = Array.from(byId('windDirection').selectedOptions).map(function (option) { return option.value; });
       if (windDirections.length) result.wind_dir = windDirections;
@@ -754,6 +767,7 @@
       }
       if (conditions.weather) race.push('天候: ' + conditions.weather.join('・'));
       if (conditions.season) race.push('季節: ' + conditions.season.join('・'));
+      if (conditions.grade) race.push('グレード: ' + conditions.grade.map(gradeLabel).join('・'));
       if (conditions.wind_dir) race.push(controlLabel('windDirection', '風向き') + ': ' + conditions.wind_dir.join('・'));
       if (conditions.wind_speed) race.push(rangeText('風速', conditions.wind_speed, 'm'));
       if (conditions.tide_phase !== undefined) race.push(controlLabel('tide', '潮') + ': ' + conditions.tide_phase);
@@ -836,6 +850,30 @@
         + '<tbody>' + body + '</tbody></table>';
     }
 
+    // グレード番号→表示名。サーバ側 GRADE_LABELS (src/search/roi_search.py) と同じ対応。
+    var GRADE_LABELS = {1: 'SG', 2: 'G1', 3: 'G2', 4: 'G3', 5: '一般'};
+    function gradeLabel(value) { return GRADE_LABELS[value] || String(value); }
+
+    function gradeTable(data) {
+      var rows = Array.isArray(data.grade_breakdown) ? data.grade_breakdown : [];
+      if (!rows.length) return '';
+      var body = rows.map(function (item) {
+        var flag = item.warning === 'n<30'
+          ? '<span class="season-flag critical" title="n<30: 偶然の可能性が高い">⚠</span>'
+          : (item.warning === 'n<100'
+            ? '<span class="season-flag warning" title="n<100: 上振れの可能性">△</span>'
+            : '');
+        return '<tr><td>' + escapeHtml(item.label) + flag + '</td><td>' + item.n + '</td><td>'
+          + item.hits + '</td><td>' + item.hit_rate.toFixed(1) + '%</td><td class="'
+          + (item.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + item.roi.toFixed(1) + '%</td></tr>';
+      }).join('');
+      // 見た目は季節別内訳と同じだが、クラスは分ける。同じクラスを付けると
+      // .seasontbl が 2 つの表に当たり、テストや後続の JS が取り違える。
+      return '<table class="gradetbl"><caption>グレード別内訳（2025年7月より前は大会名からの推定・不明は欠損）</caption>'
+        + '<thead><tr><th>グレード</th><th>N</th><th>的中</th><th>的中率</th><th>回収率</th></tr></thead>'
+        + '<tbody>' + body + '</tbody></table>';
+    }
+
     function renderResult(data, conditions) {
       var roiClass = data.roi >= 110 ? 'roi-good' : (data.roi >= 90 ? 'roi-mid' : 'roi-bad');
       var warnings = data.warnings.map(function (warning) {
@@ -892,6 +930,7 @@
         warnings +
         breakdown +
         seasonalTable(data) +
+        gradeTable(data) +
         '<div class="exclusions"><h2>除外の内訳</h2><dl><div><dt>結果・払戻欠損</dt><dd>' + data.excluded.result_missing + '件</dd></div><div class="condition-null"><dt>条件判定不能で除外した件数</dt><dd>' + data.excluded.condition_null + '件</dd></div></dl></div>' +
         '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年月</th><th>N</th><th>的中</th><th>回収率</th></tr></thead>' + years + '</table>';
       byId('miniKpi').hidden = false;

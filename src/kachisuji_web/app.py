@@ -93,6 +93,7 @@ def _user_validation_message(error: ValueError) -> str:
         "選手名には",
         "買い目は",
         "季節は",
+        "グレードは",
         "艇間比較は",
         "オッズ条件は",
         "オッズによる絞り込みは",

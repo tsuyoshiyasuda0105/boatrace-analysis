@@ -258,6 +258,7 @@ def test_search_returns_expected_step2_json_structure(client) -> None:
         "ticket_breakdown",
         # 季節 (春夏秋冬) 別の内訳。race_date から導出するので常に返る。
         "seasonal",
+        "grade_breakdown",
     }
     assert result["ticket_count"] == 1
     assert result["tickets"] == ["1"]

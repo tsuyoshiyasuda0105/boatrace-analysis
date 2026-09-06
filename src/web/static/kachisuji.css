@@ -273,11 +273,11 @@ button.compact-button { padding: 5px 10px; font-size: 12px; }
 }
 
 /* 季節 (2026-09-06) */
-.seasontbl { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 12.8px; }
-.seasontbl caption { padding-bottom: 5px; text-align: left; font-size: 13.5px; font-weight: 700; }
-.seasontbl th { padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--ink-3); text-align: right; font-size: 11px; letter-spacing: .06em; }
-.seasontbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
-.seasontbl th:first-child, .seasontbl td:first-child { text-align: left; }
+.seasontbl, .gradetbl { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 12.8px; }
+.seasontbl caption, .gradetbl caption { padding-bottom: 5px; text-align: left; font-size: 13.5px; font-weight: 700; }
+.seasontbl th, .gradetbl th { padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--ink-3); text-align: right; font-size: 11px; letter-spacing: .06em; }
+.seasontbl td, .gradetbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.seasontbl th:first-child, .seasontbl td:first-child, .gradetbl th:first-child, .gradetbl td:first-child { text-align: left; }
 .season-flag { margin-left: 6px; font-size: 11px; }
 .season-flag.critical { color: var(--bad, #c0392b); }
 .season-flag.warning { color: var(--ink-3); }
