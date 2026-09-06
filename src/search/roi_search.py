@@ -79,6 +79,12 @@ BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
 HISTORY_CUTOFF = "2023-05-01"
 RESTORED_ACCIDENT_CUTOFF = "2016-06-01"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
+# 1 レースあたりの点数上限。無制限にすると 1 リクエストで払戻表を何十点も
+# 引き当てることになり、本番 (Render) の共有 DB を長く占有する。
+MAX_BET_TICKETS = 20
+# 1 点あたりの購入額 (円)。ROI は「払戻合計 ÷ 投資合計」で、投資合計は
+# レース数 × 点数 × この額。1 点のときは従来の「100円1点」と完全に一致する。
+STAKE_PER_TICKET = 100.0
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6, 7, 8, 9, 10)
 RETIRED_ODDS_CONDITION_KEYS = frozenset({"odds", "t5_odds_favorite"})
@@ -93,7 +99,14 @@ class _Bet:
     kind: str
     result_column: str
     payout_column: str
-    expected: int | str
+    # 買い目は複数点を持てる。1 点でも必ずタプルに入れ、呼び出し側が単数・複数を
+    # 場合分けしなくて済むようにする。券種は全点で共通 (SQL が券種ごとの列を引く
+    # 作りのため、券種混在は扱わない)。
+    expected: tuple[int | str, ...]
+
+    @property
+    def ticket_count(self) -> int:
+        return len(self.expected)
 
 
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
@@ -142,28 +155,62 @@ def _sequence(value: Any, label: str) -> list[Any]:
     return list(value)
 
 
+def _parse_ticket_legs(raw: Mapping[str, Any], kind: str, label: str) -> int | str:
+    """1 点ぶんの着順指定を検証して、払戻テーブルの見出し文字列にする。"""
+    leg_names = ("first", "second", "third")[: BET_LEGS[kind]]
+    missing = sorted(key for key in leg_names if raw.get(key) is None)
+    if missing:
+        raise ValueError(f"missing bet key(s): {', '.join(missing)}")
+    surplus = sorted(
+        key
+        for key in ("first", "second", "third")
+        if key not in leg_names and raw.get(key) is not None
+    )
+    if surplus:
+        raise ValueError(f"unused bet key(s) for {kind}: {', '.join(surplus)}")
+    legs = [_integer(raw[key], f"{label}.{key}") for key in leg_names]
+    if any(leg < 1 or leg > 6 for leg in legs) or len(set(legs)) != len(legs):
+        raise ValueError("買い目は1〜6号艇から、着順ごとに異なる艇番を選んでください")
+    return legs[0] if kind == "tansho" else "-".join(map(str, legs))
+
+
 def _parse_bet(value: Any) -> _Bet:
     # The example ticket is the deterministic fallback when the optional bet
     # object is omitted.  Supplying a partial bet object is still an error.
     raw = DEFAULT_BET if value is None else _mapping(value, "bet")
-    allowed = frozenset({"type", "first", "second", "third"})
+    allowed = frozenset({"type", "first", "second", "third", "tickets"})
     _known_keys(raw, allowed, "bet")
     kind = raw.get("type")
     if kind not in BET_LEGS:
         raise ValueError("bet.type must be tansho, nirentan, or sanrentan")
-    leg_names = ("first", "second", "third")[: BET_LEGS[kind]]
-    required = {"type", *leg_names}
-    missing = sorted(key for key in required if raw.get(key) is None)
-    if missing:
-        raise ValueError(f"missing bet key(s): {', '.join(missing)}")
-    surplus = sorted(key for key in ("first", "second", "third") if key not in leg_names and raw.get(key) is not None)
-    if surplus:
-        raise ValueError(f"unused bet key(s) for {kind}: {', '.join(surplus)}")
-    legs = [_integer(raw[key], f"bet.{key}") for key in leg_names]
-    if any(leg < 1 or leg > 6 for leg in legs) or len(set(legs)) != len(legs):
-        raise ValueError("買い目は1〜6号艇から、着順ごとに異なる艇番を選んでください")
-    expected: int | str = legs[0] if kind == "tansho" else "-".join(map(str, legs))
-    return _Bet(kind, f"result_{kind}", f"payout_{kind}", expected)
+
+    tickets_raw = raw.get("tickets")
+    if tickets_raw is None:
+        # 単数形式 (type + first/second/third)。保存済みの手法や外部から来る
+        # 既存リクエストはこの形なので、そのまま受け続ける。
+        expected = (_parse_ticket_legs(raw, kind, "bet"),)
+        return _Bet(kind, f"result_{kind}", f"payout_{kind}", expected)
+
+    # 複数形式。単数キーとの併用は、どちらが正か曖昧になるので許さない。
+    conflicting = sorted(
+        key for key in ("first", "second", "third") if raw.get(key) is not None
+    )
+    if conflicting:
+        raise ValueError(
+            f"bet.tickets と同時に指定できないキー: {', '.join(conflicting)}"
+        )
+    entries = _sequence(tickets_raw, "bet.tickets")
+    if len(entries) > MAX_BET_TICKETS:
+        raise ValueError(f"買い目は最大{MAX_BET_TICKETS}点までです")
+    expected_list: list[int | str] = []
+    for index, entry in enumerate(entries):
+        label = f"bet.tickets[{index}]"
+        ticket_raw = _mapping(entry, label)
+        _known_keys(ticket_raw, frozenset({"first", "second", "third"}), label)
+        expected_list.append(_parse_ticket_legs(ticket_raw, kind, label))
+    if len(set(expected_list)) != len(expected_list):
+        raise ValueError("同じ買い目が重複しています")
+    return _Bet(kind, f"result_{kind}", f"payout_{kind}", tuple(expected_list))
 
 
 def _add_predicate(
@@ -556,6 +603,9 @@ def search_roi(
     excluded_condition = 0
     excluded_result = 0
     included: list[tuple[str, bool, float]] = []
+    # 点ごとの成績。合算だけ出すと「どの目が足を引っ張っているか」が見えない。
+    ticket_hits: dict[int | str, int] = {ticket: 0 for ticket in bet.expected}
+    ticket_payout: dict[int | str, float] = {ticket: 0.0 for ticket in bet.expected}
     for race_date, schema_version, result, payout, result_json, payout_json, condition_null in rows:
         if condition_null:
             excluded_condition += 1
@@ -578,19 +628,39 @@ def search_roi(
             except (TypeError, ValueError, json.JSONDecodeError):
                 excluded_result += 1
                 continue
-            expected = str(bet.expected)
-            hit = expected in winning_values
-            included.append(
-                (str(race_date), hit, payout_values[expected] if hit else 0.0)
-            )
+            race_payout = 0.0
+            hit = False
+            # 同着があると winning_values は複数入るので、指定した点のうち
+            # 当たったものを全部足す。
+            for ticket in bet.expected:
+                key = str(ticket)
+                if key in winning_values:
+                    hit = True
+                    amount = payout_values[key]
+                    race_payout += amount
+                    ticket_hits[ticket] += 1
+                    ticket_payout[ticket] += amount
+            included.append((str(race_date), hit, race_payout))
         else:
             if result is None or payout is None:
                 excluded_result += 1
                 continue
-            hit = result == bet.expected
-            included.append((str(race_date), hit, float(payout) if hit else 0.0))
+            # schema_version < 4 は代表 1 件しか持たないレガシー列。
+            race_payout = 0.0
+            hit = False
+            for ticket in bet.expected:
+                if result == ticket:
+                    hit = True
+                    race_payout += float(payout)
+                    ticket_hits[ticket] += 1
+                    ticket_payout[ticket] += float(payout)
+            included.append((str(race_date), hit, race_payout))
 
-    returns = [item[2] for item in included]
+    ticket_count = bet.ticket_count
+    # returns を「1 点あたりに均した払戻」にしておくと、平均がそのまま ROI% に
+    # なり、信頼区間の計算 (_bootstrap_ci / _normal_ci) を一切変えずに済む。
+    # 点数 1 のときは従来と同じ値。
+    returns = [item[2] / ticket_count for item in included]
     n = len(included)
     hits = sum(item[1] for item in included)
     roi = float(np.mean(returns)) if returns else 0.0
@@ -614,14 +684,17 @@ def search_roi(
             totals[0] += 1
             totals[1] += int(hit)
             totals[2] += payout
-        daily_profit[race_date] = daily_profit.get(race_date, 0.0) + payout - 100.0
+        # 1 レースの投資額は 100 円 × 点数。
+        stake = STAKE_PER_TICKET * ticket_count
+        daily_profit[race_date] = daily_profit.get(race_date, 0.0) + payout - stake
 
+    # ROI% = 払戻合計 ÷ (レース数 × 点数)。点数 1 なら従来の式と一致する。
     yearly = [
         {
             "year": year,
             "n": int(totals[0]),
             "hits": int(totals[1]),
-            "roi": round(totals[2] / totals[0], 1),
+            "roi": round(totals[2] / (totals[0] * ticket_count), 1),
         }
         for year, totals in sorted(yearly_totals.items())
     ]
@@ -631,7 +704,7 @@ def search_roi(
             "month": month,
             "n": int(totals[0]),
             "hits": int(totals[1]),
-            "roi": round(totals[2] / totals[0], 1),
+            "roi": round(totals[2] / (totals[0] * ticket_count), 1),
         }
         for (year, month), totals in sorted(monthly_totals.items())
     ]
@@ -644,11 +717,27 @@ def search_roi(
         min((item[0] for item in included), default=None),
         max((item[0] for item in included), default=None),
     ]
+    # 点ごとの内訳。各点は毎レース 100 円ずつなので、その点の ROI は
+    # 「その点の払戻合計 ÷ レース数」。内訳 ROI の平均が合算 ROI に一致する。
+    ticket_breakdown = [
+        {
+            "ticket": str(ticket),
+            "hits": ticket_hits[ticket],
+            "hit_rate": round(ticket_hits[ticket] * 100.0 / n, 1) if n else 0.0,
+            "roi": round(ticket_payout[ticket] / n, 1) if n else 0.0,
+        }
+        for ticket in bet.expected
+    ]
     result = {
         "n": n,
         "hits": hits,
+        # 的中率はレース単位。複数点のうち 1 点でも当たれば的中として数える。
         "hit_rate": round(hits * 100.0 / n, 1) if n else 0.0,
         "roi": round(roi, 1),
+        "ticket_count": ticket_count,
+        "stake_total": int(n * ticket_count * STAKE_PER_TICKET),
+        "tickets": [str(ticket) for ticket in bet.expected],
+        "ticket_breakdown": ticket_breakdown,
         "roi_ci_low": round(ci_low, 1),
         "roi_ci_high": round(ci_high, 1),
         "excluded": {"result_missing": excluded_result, "condition_null": excluded_condition},

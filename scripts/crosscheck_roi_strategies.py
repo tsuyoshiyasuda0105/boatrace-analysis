@@ -303,7 +303,8 @@ def _search_rows_with_ids(
             " ON ticket_odds.race_id = asof.race_id"
             " AND ticket_odds.combination = ? AND ticket_odds.snapshot = ?"
         )
-        query_params.extend((str(bet.expected), odds.snapshot))
+        # オッズ絞り込みは廃止済みの経路。複数点では代表として先頭の点を使う。
+        query_params.extend((str(bet.expected[0]), odds.snapshot))
         comparisons = []
         if odds.minimum is not None:
             comparisons.append("ticket_odds.odds >= ?")
@@ -332,18 +333,26 @@ def _search_rows_with_ids(
                     payouts = json.loads(payout_json)
                     if not isinstance(winners, list) or not winners or not isinstance(payouts, dict):
                         continue
-                    expected = str(bet.expected)
                     if any(not isinstance(value, str) or value not in payouts for value in winners):
                         continue
-                    hit = expected in winners
-                    pay = float(payouts[expected]) if hit else 0.0
+                    # 指定した点のうち当たったものを全部足す (同着で複数当たりうる)。
+                    hit = False
+                    pay = 0.0
+                    for ticket in bet.expected:
+                        if str(ticket) in winners:
+                            hit = True
+                            pay += float(payouts[str(ticket)])
                 except (TypeError, ValueError, json.JSONDecodeError):
                     continue
             else:
                 if result is None or payout is None:
                     continue
-                hit = result == bet.expected
-                pay = float(payout) if hit else 0.0
+                hit = False
+                pay = 0.0
+                for ticket in bet.expected:
+                    if result == ticket:
+                        hit = True
+                        pay += float(payout)
             included.append({"race_id": str(race_id), "date": str(race_date), "hit": bool(hit), "pay": pay})
     return included
 
@@ -353,7 +362,11 @@ def search_results(db_path: str | Path, conditions: Mapping[str, Any]) -> dict[s
     rows = _search_rows_with_ids(db_path, conditions)
     n = len(rows)
     hits = sum(row["hit"] for row in rows)
-    roi = round(sum(row["pay"] for row in rows) / n, 1) if n else 0.0
+    # ROI% = 払戻合計 ÷ (レース数 × 点数)。search_roi と同じ定義に揃える。
+    # 点数は入力の買い目の個数で、検算したい ROI そのものではないので、
+    # aggregate から受け取っても照合の独立性は失われない。
+    ticket_count = int(aggregate.get("ticket_count") or 1)
+    roi = round(sum(row["pay"] for row in rows) / (n * ticket_count), 1) if n else 0.0
     if (n, hits, roi) != (aggregate["n"], aggregate["hits"], aggregate["roi"]):
         raise RuntimeError("race-ID attachment query diverged from search_roi aggregate")
     return {**aggregate, "races": rows, "race_ids": sorted(row["race_id"] for row in rows)}

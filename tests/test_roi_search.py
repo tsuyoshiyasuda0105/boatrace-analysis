@@ -842,3 +842,123 @@ def test_cli_reads_utf8_json_and_outputs_one_json_value(fixture_db: Path, tmp_pa
     )
     assert json.loads(completed.stdout)["n"] == 3
     assert completed.stderr == ""
+
+
+# ---------------------------------------------------------------------------
+# 複数買い目 (2026-09-06 追加)
+# ---------------------------------------------------------------------------
+
+
+def _tickets(kind: str, *legs_list: tuple[int, ...]) -> dict[str, object]:
+    names = ("first", "second", "third")
+    return {
+        "type": kind,
+        "tickets": [dict(zip(names, legs)) for legs in legs_list],
+    }
+
+
+def test_single_ticket_via_tickets_matches_the_legacy_shape(fixture_db: Path) -> None:
+    """新形式で 1 点だけ指定したとき、従来形式と完全に同じ結果になること。
+
+    保存済みの手法は全て従来形式なので、ここがずれると過去の成績が動く。
+    """
+    legacy = search_roi(
+        fixture_db,
+        {"bet": {"type": "sanrentan", "first": 1, "second": 2, "third": 3}, "date_from": "2023-05-01"},
+        fast=True,
+    )
+    modern = search_roi(
+        fixture_db,
+        {"bet": _tickets("sanrentan", (1, 2, 3)), "date_from": "2023-05-01"},
+        fast=True,
+    )
+
+    for key in ("n", "hits", "hit_rate", "roi", "roi_ci_low", "roi_ci_high", "yearly", "monthly"):
+        assert legacy[key] == modern[key], key
+    assert modern["ticket_count"] == 1
+
+
+def test_combined_roi_is_the_average_of_each_ticket_roi(fixture_db: Path) -> None:
+    """合算 ROI が各点の ROI の平均になること。
+
+    1 点あたり 100 円で買うので、点を足すと投資額が比例して増える。
+    弱い点を足せば合算は下がり、強い点を足せば上がる、という関係がここで決まる。
+    """
+    a = search_roi(
+        fixture_db,
+        {"bet": {"type": "sanrentan", "first": 1, "second": 2, "third": 3}, "date_from": "2023-05-01"},
+        fast=True,
+    )
+    b = search_roi(
+        fixture_db,
+        {"bet": {"type": "sanrentan", "first": 2, "second": 1, "third": 3}, "date_from": "2023-05-01"},
+        fast=True,
+    )
+    both = search_roi(
+        fixture_db,
+        {"bet": _tickets("sanrentan", (1, 2, 3), (2, 1, 3)), "date_from": "2023-05-01"},
+        fast=True,
+    )
+
+    assert both["ticket_count"] == 2
+    # ROI は小数第1位で丸めるので、丸め済みの値どうしの平均とは最大 0.1 ずれる。
+    assert both["roi"] == pytest.approx((a["roi"] + b["roi"]) / 2, abs=0.11)
+    breakdown = {item["ticket"]: item for item in both["ticket_breakdown"]}
+    assert breakdown["1-2-3"]["roi"] == pytest.approx(a["roi"], abs=0.11)
+    assert breakdown["2-1-3"]["roi"] == pytest.approx(b["roi"], abs=0.11)
+    # 内訳の並びは指定した順を保つ (画面で入力順に見せるため)。
+    assert [item["ticket"] for item in both["ticket_breakdown"]] == ["1-2-3", "2-1-3"]
+
+
+def test_hit_rate_counts_a_race_once_even_if_several_tickets_win(tmp_path: Path) -> None:
+    """同着で 2 点とも当たっても、的中率はレース単位で 1 回と数えること。
+
+    払戻は両方ぶん受け取るので、払戻だけは合算される。
+    """
+    row = _row(
+        "dead-heat-multi",
+        "2025-12-11",
+        schema_version=4,
+        result_sanrentan_json=json.dumps(["1-2-3", "2-1-3"]),
+        payout_sanrentan_json=json.dumps({"1-2-3": 780, "2-1-3": 2430}),
+    )
+    db = _make_db(tmp_path / "dead-heat-multi.db", [row])
+
+    result = search_roi(db, {"bet": _tickets("sanrentan", (1, 2, 3), (2, 1, 3))}, fast=True)
+
+    assert result["n"] == 1
+    assert result["hits"] == 1          # レース単位なので 1
+    assert result["hit_rate"] == 100.0
+    # 払戻は両方ぶん: (780 + 2430) / 2点 = 1605
+    assert result["roi"] == pytest.approx(1605.0, abs=0.05)
+    assert result["stake_total"] == 200
+    breakdown = {item["ticket"]: item["hits"] for item in result["ticket_breakdown"]}
+    assert breakdown == {"1-2-3": 1, "2-1-3": 1}
+
+
+def test_stake_total_scales_with_ticket_count(fixture_db: Path) -> None:
+    one = search_roi(fixture_db, {"bet": _tickets("sanrentan", (1, 2, 3)), "date_from": "2023-05-01"}, fast=True)
+    two = search_roi(
+        fixture_db,
+        {"bet": _tickets("sanrentan", (1, 2, 3), (2, 1, 3)), "date_from": "2023-05-01"},
+        fast=True,
+    )
+
+    assert one["stake_total"] == one["n"] * 100
+    assert two["stake_total"] == two["n"] * 200
+
+
+@pytest.mark.parametrize(
+    ("bet", "message"),
+    [
+        (_tickets("sanrentan", (1, 2, 3), (1, 2, 3)), "重複"),
+        ({"type": "sanrentan", "first": 1, "second": 2, "third": 3, "tickets": []}, "同時に指定できない"),
+        ({"type": "sanrentan", "tickets": []}, "must be a non-empty array"),
+        ({"type": "sanrentan", "tickets": [{"first": 1, "second": 1, "third": 3}]}, "異なる艇番"),
+        (_tickets("sanrentan", *[(1, 2, n) for n in (3, 4, 5, 6)] * 6), "最大20点"),
+    ],
+)
+def test_invalid_ticket_lists_are_rejected(fixture_db: Path, bet: dict, message: str) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        search_roi(fixture_db, {"bet": bet}, fast=True)
+    assert message in str(excinfo.value)

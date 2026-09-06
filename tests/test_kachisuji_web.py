@@ -250,7 +250,15 @@ def test_search_returns_expected_step2_json_structure(client) -> None:
         "monthly",
         "warnings",
         "effective_date_range",
+        # 複数買い目対応で追加。合算 ROI だけだとどの目が効いているか分からない
+        # ため、点数・投資額・目ごとの内訳を返す。
+        "ticket_count",
+        "stake_total",
+        "tickets",
+        "ticket_breakdown",
     }
+    assert result["ticket_count"] == 1
+    assert result["tickets"] == ["1"]
     assert result["n"] == 2
     assert result["hits"] == 1
     assert result["excluded"] == {"result_missing": 1, "condition_null": 0}

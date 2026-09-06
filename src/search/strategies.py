@@ -367,8 +367,16 @@ def _get_strategy_from(path: str | Path, strategy_id: int) -> dict[str, Any] | N
     return _decode_strategy(row) if row is not None else None
 
 
-def _bet_label(kind: str, expected: int | str) -> str:
-    return f"{_BET_LABELS[kind]} {expected}"
+def _bet_label(kind: str, expected: Any) -> str:
+    """買い目の表示名。複数点は先頭を出して残りを点数で畳む。
+
+    当日マッチ一覧は 1 行に 1 レースなので、20 点ぶんを並べると行が壊れる。
+    """
+    tickets = list(expected) if isinstance(expected, (tuple, list)) else [expected]
+    head = f"{_BET_LABELS[kind]} {tickets[0]}"
+    if len(tickets) <= 1:
+        return head
+    return f"{head} ほか{len(tickets) - 1}点"
 
 
 def match_races(
