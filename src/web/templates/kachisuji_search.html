@@ -552,6 +552,13 @@
     });
     byId('betType').addEventListener('change', refreshBetUI);
     byId('btnAddTicket').addEventListener('click', addTicketRow);
+    // フォームのリセットは form コントロールしか戻さない。追加した買い目行は DOM に
+    // 足したものなので自分で消す (探索テストで発見: リセット後も 3 点のまま残った)。
+    byId('searchForm').addEventListener('reset', function () {
+      byId('extraTickets').innerHTML = '';
+      // コントロールの値が戻るのは reset イベントの後なので、次のティックで描き直す。
+      setTimeout(refreshBetUI, 0);
+    });
     refreshBetUI();
 
     function collectTickets() {

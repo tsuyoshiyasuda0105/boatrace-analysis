@@ -52,13 +52,16 @@ SEASON_ORDER = ("春", "夏", "秋", "冬")
 SEASON_MONTH_SQL = "CAST(substr(race_date, 6, 2) AS INTEGER)"
 
 
+# 月 → 季節の引き当て表。行ループは 55 万回まわるので、毎回 SEASON_MONTHS を
+# なめる代わりに 1 回の添字参照で済ませる (計測で +0.12s → ほぼ 0)。
+_MONTH_SEASON: dict[int, str] = {
+    month: name for name, months in SEASON_MONTHS.items() for month in months
+}
+
+
 def _season_of(race_date: str) -> str:
     """'YYYY-MM-DD' から季節名を返す。SQL 側の分類と必ず同じ規則にする。"""
-    month = int(race_date[5:7])
-    for name, months in SEASON_MONTHS.items():
-        if month in months:
-            return name
-    raise ValueError(f"month out of range: {race_date}")
+    return _MONTH_SEASON[int(race_date[5:7])]
 BOAT_KEYS = frozenset(
     {
         "class",
@@ -233,8 +236,20 @@ def _parse_bet(value: Any) -> _Bet:
         ticket_raw = _mapping(entry, label)
         _known_keys(ticket_raw, frozenset({"first", "second", "third"}), label)
         expected_list.append(_parse_ticket_legs(ticket_raw, kind, label))
-    if len(set(expected_list)) != len(expected_list):
-        raise ValueError("買い目は重複しています。同じ目は1回だけ指定してください")
+    seen: set[int | str] = set()
+    duplicated: list[str] = []
+    for ticket in expected_list:
+        if ticket in seen and str(ticket) not in duplicated:
+            duplicated.append(str(ticket))
+        seen.add(ticket)
+    if duplicated:
+        # どの目が衝突したかを出す。単勝・2連単に切り替えると隠れた着順が
+        # 落ちて同じ目になるが、画面には別々の行に見えるので、目を名指し
+        # しないと何が重複なのか分からない (探索テストで指摘)。
+        raise ValueError(
+            "買い目は重複しています: " + ", ".join(duplicated)
+            + "（同じ目は1回だけ指定してください。単勝・2連単では使わない着順は無視されます）"
+        )
     return _Bet(kind, f"result_{kind}", f"payout_{kind}", tuple(expected_list))
 
 
@@ -724,7 +739,8 @@ def search_roi(
         for totals in (
             yearly_totals.setdefault(year, [0.0, 0.0, 0.0]),
             monthly_totals.setdefault((year, month), [0.0, 0.0, 0.0]),
-            season_totals.setdefault(_season_of(race_date), [0.0, 0.0, 0.0]),
+            # month はこのループで既に取り出しているので、日付を解釈し直さない。
+            season_totals.setdefault(_MONTH_SEASON[month], [0.0, 0.0, 0.0]),
         ):
             totals[0] += 1
             totals[1] += int(hit)

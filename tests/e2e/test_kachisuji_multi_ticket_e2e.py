@@ -254,3 +254,38 @@ def test_s19_ticket_rows_do_not_overflow_mobile_viewport(browser, kachisuji_serv
         )
     finally:
         page.close()
+
+
+def test_s19_reset_removes_added_ticket_rows(page):
+    """リセットで追加した買い目行が消えること。
+
+    探索テストで発見 (2026-09-06): フォームの reset は form コントロールしか
+    戻さないため、季節チップは消えるのに追加行が 3 点のまま残っていた。
+    """
+    _add_ticket(page, 1, 2, 5)
+    _add_ticket(page, 1, 3, 4)
+    expect(page.locator("#ticketCountLabel")).to_have_text("3点 / 1レース300円")
+
+    page.locator("#btnReset").click()
+
+    expect(page.locator("#extraTickets .ticket-row")).to_have_count(0)
+    expect(page.locator("#ticketCountLabel")).to_have_text("1点 / 1レース100円")
+    # リセット後に足し直せること (イベントの取りこぼしがないこと)
+    _add_ticket(page, 1, 2, 6)
+    expect(page.locator("#ticketCountLabel")).to_have_text("2点 / 1レース200円")
+
+
+def test_s19_duplicate_message_names_the_colliding_ticket(page):
+    """重複エラーが、どの目が衝突したかを名指しすること。
+
+    三連単で 1-2-3 と 1-4-5 を入れて単勝に切り替えると、どちらも「1」になる。
+    画面上は別々の行に見えるので、目を名指ししないと何が重複か分からない。
+    """
+    _add_ticket(page, 1, 4, 5)
+    page.locator("#betType").select_option("tansho")
+    page.locator("#fast").check()
+    page.locator("#btnSearch").click()
+    alert = page.locator("#resultArea [role=alert]")
+    expect(alert).to_be_visible(timeout=30_000)
+    expect(alert).to_contain_text("重複しています: 1")
+    expect(alert).to_contain_text("使わない着順は無視")
