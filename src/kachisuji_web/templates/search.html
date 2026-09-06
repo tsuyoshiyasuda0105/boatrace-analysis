@@ -80,10 +80,12 @@
                 <option value="nirentan">2連単</option>
                 <option value="tansho">単勝</option>
               </select>
-              <span class="unit">1着</span><select id="pos1" aria-label="1着艇番"></select>
-              <span id="pos2wrap"><span class="unit">2着</span><select id="pos2" aria-label="2着艇番"></select></span>
-              <span id="pos3wrap"><span class="unit">3着</span><select id="pos3" aria-label="3着艇番"></select></span>
-              <span class="unit">号艇</span>
+              <span class="ticket-legs">
+                <span class="unit">1着</span><select id="pos1" aria-label="1着艇番"></select>
+                <span id="pos2wrap"><span class="unit">2着</span><select id="pos2" aria-label="2着艇番"></select></span>
+                <span id="pos3wrap"><span class="unit">3着</span><select id="pos3" aria-label="3着艇番"></select></span>
+                <span class="unit">号艇</span>
+              </span>
             </div>
             <div id="extraTickets"></div>
             <div class="row ticket-actions">
@@ -98,6 +100,16 @@
                 <button type="button" class="wchip" data-value="曇" aria-pressed="false">☁ 曇</button>
                 <button type="button" class="wchip" data-value="雨" aria-pressed="false">☔ 雨</button>
               </div>
+            </div>
+            <div class="row">
+              <span class="field-label">季節</span>
+              <div class="wchips" id="seasonChips">
+                <button type="button" class="wchip" data-value="春" aria-pressed="false">🌸 春</button>
+                <button type="button" class="wchip" data-value="夏" aria-pressed="false">☀ 夏</button>
+                <button type="button" class="wchip" data-value="秋" aria-pressed="false">🍁 秋</button>
+                <button type="button" class="wchip" data-value="冬" aria-pressed="false">❄ 冬</button>
+              </div>
+              <span class="unit">3-5月 / 6-8月 / 9-11月 / 12-2月</span>
             </div>
             <div class="row">
               <label for="windDirection">風向き <span class="chip live">⏱</span></label>
@@ -481,7 +493,7 @@
       var row = document.createElement('div');
       row.className = 'row ticket-row';
       row.setAttribute('data-ticket-seq', String(seq));
-      var html = '<span class="field-label"></span>';
+      var html = '<span class="field-label"></span><span class="ticket-legs">';
       [1, 2, 3].forEach(function (leg) {
         var label = leg === 1 ? '1着' : (leg === 2 ? '2着' : '3着');
         var id = 'pos' + leg + '_' + seq;
@@ -492,7 +504,7 @@
           ? select
           : '<span data-legwrap="' + leg + '">' + select + '</span>';
       });
-      html += '<span class="unit">号艇</span>'
+      html += '<span class="unit">号艇</span></span>'
         + '<button type="button" class="ticket-remove" aria-label="この買い目を削除">×</button>';
       row.innerHTML = html;
       byId('extraTickets').appendChild(row);
@@ -605,6 +617,8 @@
       if (byId('raceNoTo').value) raceNo.max = Number(byId('raceNoTo').value);
       if (Object.keys(raceNo).length) result.race_no = raceNo;
       var weather = Array.from(document.querySelectorAll('#weatherChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
+      var season = Array.from(document.querySelectorAll('#seasonChips .wchip.on')).map(function (chip) { return chip.dataset.value; });
+      if (season.length) result.season = season;
       if (weather.length) result.weather = weather;
       var windDirections = Array.from(byId('windDirection').selectedOptions).map(function (option) { return option.value; });
       if (windDirections.length) result.wind_dir = windDirections;
@@ -732,6 +746,7 @@
           + (labels.length > 1 ? '（' + labels.length + '点）' : ''));
       }
       if (conditions.weather) race.push('天候: ' + conditions.weather.join('・'));
+      if (conditions.season) race.push('季節: ' + conditions.season.join('・'));
       if (conditions.wind_dir) race.push(controlLabel('windDirection', '風向き') + ': ' + conditions.wind_dir.join('・'));
       if (conditions.wind_speed) race.push(rangeText('風速', conditions.wind_speed, 'm'));
       if (conditions.tide_phase !== undefined) race.push(controlLabel('tide', '潮') + ': ' + conditions.tide_phase);
@@ -794,6 +809,26 @@
         return '<p><strong>[' + escapeHtml(group[0]) + ']</strong> ' + group[1].map(escapeHtml).join(' ／ ') + '</p>';
       }).join('') + '</section>';
     }
+    // 季節別の内訳。全体と同じ基準 (n<30 / n<100) で母数の少ない行に印を付ける。
+    // 4 分割で母数が減るので、印なしで並べると偽の発見を信じやすい。
+    function seasonalTable(data) {
+      var rows = Array.isArray(data.seasonal) ? data.seasonal : [];
+      if (!rows.length) return '';
+      var body = rows.map(function (item) {
+        var flag = item.warning === 'n<30'
+          ? '<span class="season-flag critical" title="n<30: 偶然の可能性が高い">⚠</span>'
+          : (item.warning === 'n<100'
+            ? '<span class="season-flag warning" title="n<100: 上振れの可能性">△</span>'
+            : '');
+        return '<tr><td>' + escapeHtml(item.season) + flag + '</td><td>' + item.n + '</td><td>'
+          + item.hits + '</td><td>' + item.hit_rate.toFixed(1) + '%</td><td class="'
+          + (item.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + item.roi.toFixed(1) + '%</td></tr>';
+      }).join('');
+      return '<table class="seasontbl"><caption>季節別内訳（春3-5月 / 夏6-8月 / 秋9-11月 / 冬12-2月）</caption>'
+        + '<thead><tr><th>季節</th><th>N</th><th>的中</th><th>的中率</th><th>回収率</th></tr></thead>'
+        + '<tbody>' + body + '</tbody></table>';
+    }
+
     function renderResult(data, conditions) {
       var roiClass = data.roi >= 110 ? 'roi-good' : (data.roi >= 90 ? 'roi-mid' : 'roi-bad');
       var warnings = data.warnings.map(function (warning) {
@@ -849,6 +884,7 @@
         stakeKpi + '</div>' +
         warnings +
         breakdown +
+        seasonalTable(data) +
         '<div class="exclusions"><h2>除外の内訳</h2><dl><div><dt>結果・払戻欠損</dt><dd>' + data.excluded.result_missing + '件</dd></div><div class="condition-null"><dt>条件判定不能で除外した件数</dt><dd>' + data.excluded.condition_null + '件</dd></div></dl></div>' +
         '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年月</th><th>N</th><th>的中</th><th>回収率</th></tr></thead>' + years + '</table>';
       byId('miniKpi').hidden = false;

@@ -33,10 +33,32 @@ TOP_LEVEL_KEYS = frozenset(
         "race_no",
         "date_from",
         "date_to",
+        "season",
         "boats",
         "compare",
     }
 )
+# 季節は race_date から導出する。専用カラムを足すと 600MB〜2.5GB の特徴量 DB を
+# 作り直して本番へ配信し直す必要があるが、月は日付文字列から取れるので不要。
+# 区切りは気象庁と同じ (春 3-5 / 夏 6-8 / 秋 9-11 / 冬 12-2)。
+SEASON_MONTHS: dict[str, tuple[int, ...]] = {
+    "春": (3, 4, 5),
+    "夏": (6, 7, 8),
+    "秋": (9, 10, 11),
+    "冬": (12, 1, 2),
+}
+SEASON_ORDER = ("春", "夏", "秋", "冬")
+# race_date は 'YYYY-MM-DD' 固定長。SQLite でも Postgres でも substr が使える。
+SEASON_MONTH_SQL = "CAST(substr(race_date, 6, 2) AS INTEGER)"
+
+
+def _season_of(race_date: str) -> str:
+    """'YYYY-MM-DD' から季節名を返す。SQL 側の分類と必ず同じ規則にする。"""
+    month = int(race_date[5:7])
+    for name, months in SEASON_MONTHS.items():
+        if month in months:
+            return name
+    raise ValueError(f"month out of range: {race_date}")
 BOAT_KEYS = frozenset(
     {
         "class",
@@ -509,6 +531,23 @@ def _compile_conditions(
     if start is not None and end is not None and start > end:
         raise ValueError("date_from must not be after date_to")
 
+    season = conditions.get("season")
+    if season is not None:
+        values = _sequence(season, "season")
+        unknown = [item for item in values if item not in SEASON_MONTHS]
+        if unknown:
+            raise ValueError("季節は春・夏・秋・冬から選んでください")
+        if len(set(values)) != len(values):
+            raise ValueError("季節は重複しています。同じ季節は1回だけ指定してください")
+        # 4 つ全部なら絞り込みにならないので、SQL を足さない (無指定と同じ)。
+        if len(set(values)) < len(SEASON_MONTHS):
+            months = sorted({m for name in set(values) for m in SEASON_MONTHS[name]})
+            placeholders = ",".join("?" for _ in months)
+            # race_date は NULL になり得ないので、_add_predicate の
+            # 「NULL は判定不能」経路には乗せない (除外件数が誤って増える)。
+            filters.append(f"{SEASON_MONTH_SQL} IN ({placeholders})")
+            params.extend(months)
+
     where = " AND ".join(filters) if filters else "1=1"
     # Keep the final slot for internal callers that predate Step 12.  Retired
     # odds conditions are rejected above, so it is always empty.
@@ -676,6 +715,8 @@ def search_roi(
 
     yearly_totals: dict[int, list[float]] = {}
     monthly_totals: dict[tuple[int, int], list[float]] = {}
+    # 季節別も同じループで数える。別クエリを足すと DB を 2 度読むことになる。
+    season_totals: dict[str, list[float]] = {}
     daily_profit: dict[str, float] = {}
     for race_date, hit, payout in included:
         year = int(race_date[:4])
@@ -683,6 +724,7 @@ def search_roi(
         for totals in (
             yearly_totals.setdefault(year, [0.0, 0.0, 0.0]),
             monthly_totals.setdefault((year, month), [0.0, 0.0, 0.0]),
+            season_totals.setdefault(_season_of(race_date), [0.0, 0.0, 0.0]),
         ):
             totals[0] += 1
             totals[1] += int(hit)
@@ -720,6 +762,28 @@ def search_roi(
         min((item[0] for item in included), default=None),
         max((item[0] for item in included), default=None),
     ]
+    # 季節別の内訳。季節で 4 分割すると母数が 1/4 になり、「冬の江戸川で 180%」の
+    # ような偽の発見が出やすい。全体と同じ基準 (n<30 / n<100) で各行に注意書きを
+    # 付け、見た人が母数を確かめずに信じてしまわないようにする。
+    seasonal = [
+        {
+            "season": name,
+            "n": int(season_totals[name][0]),
+            "hits": int(season_totals[name][1]),
+            "hit_rate": round(
+                season_totals[name][1] * 100.0 / season_totals[name][0], 1
+            ),
+            "roi": round(
+                season_totals[name][2] / (season_totals[name][0] * ticket_count), 1
+            ),
+            "warning": (
+                "n<30" if season_totals[name][0] < 30
+                else ("n<100" if season_totals[name][0] < 100 else None)
+            ),
+        }
+        for name in SEASON_ORDER
+        if name in season_totals and season_totals[name][0] > 0
+    ]
     # 点ごとの内訳。各点は毎レース 100 円ずつなので、その点の ROI は
     # 「その点の払戻合計 ÷ レース数」。内訳 ROI の平均が合算 ROI に一致する。
     ticket_breakdown = [
@@ -741,6 +805,7 @@ def search_roi(
         "stake_total": int(n * ticket_count * STAKE_PER_TICKET),
         "tickets": [str(ticket) for ticket in bet.expected],
         "ticket_breakdown": ticket_breakdown,
+        "seasonal": seasonal,
         "roi_ci_low": round(ci_low, 1),
         "roi_ci_high": round(ci_high, 1),
         "excluded": {"result_missing": excluded_result, "condition_null": excluded_condition},

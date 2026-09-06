@@ -271,3 +271,17 @@ button.compact-button { padding: 5px 10px; font-size: 12px; }
   /* 空のスペーサーが 7.5em を占有し、360px 幅で 14px はみ出していた。 */
   .ticket-row > .field-label, .ticket-actions > .field-label { display: none; }
 }
+
+/* 季節 (2026-09-06) */
+.seasontbl { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 12.8px; }
+.seasontbl caption { padding-bottom: 5px; text-align: left; font-size: 13.5px; font-weight: 700; }
+.seasontbl th { padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--ink-3); text-align: right; font-size: 11px; letter-spacing: .06em; }
+.seasontbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.seasontbl th:first-child, .seasontbl td:first-child { text-align: left; }
+.season-flag { margin-left: 6px; font-size: 11px; }
+.season-flag.critical { color: var(--bad, #c0392b); }
+.season-flag.warning { color: var(--ink-3); }
+
+/* 買い目行の折り返し整理: 着順の組は1つの塊として折り返す (本番画面で
+   「2着 3着 号艇」が別行に割れていた) */
+.ticket-legs { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
