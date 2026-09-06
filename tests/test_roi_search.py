@@ -952,8 +952,8 @@ def test_stake_total_scales_with_ticket_count(fixture_db: Path) -> None:
     ("bet", "message"),
     [
         (_tickets("sanrentan", (1, 2, 3), (1, 2, 3)), "重複"),
-        ({"type": "sanrentan", "first": 1, "second": 2, "third": 3, "tickets": []}, "同時に指定できない"),
-        ({"type": "sanrentan", "tickets": []}, "must be a non-empty array"),
+        ({"type": "sanrentan", "first": 1, "second": 2, "third": 3, "tickets": []}, "同時に指定できません"),
+        ({"type": "sanrentan", "tickets": []}, "1点以上"),
         ({"type": "sanrentan", "tickets": [{"first": 1, "second": 1, "third": 3}]}, "異なる艇番"),
         (_tickets("sanrentan", *[(1, 2, n) for n in (3, 4, 5, 6)] * 6), "最大20点"),
     ],

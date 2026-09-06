@@ -197,8 +197,11 @@ def _parse_bet(value: Any) -> _Bet:
     )
     if conflicting:
         raise ValueError(
-            f"bet.tickets と同時に指定できないキー: {', '.join(conflicting)}"
+            "買い目は単数指定と複数指定を同時に指定できません: "
+            + ", ".join(conflicting)
         )
+    if isinstance(tickets_raw, (list, tuple)) and not tickets_raw:
+        raise ValueError("買い目は1点以上指定してください")
     entries = _sequence(tickets_raw, "bet.tickets")
     if len(entries) > MAX_BET_TICKETS:
         raise ValueError(f"買い目は最大{MAX_BET_TICKETS}点までです")
@@ -209,7 +212,7 @@ def _parse_bet(value: Any) -> _Bet:
         _known_keys(ticket_raw, frozenset({"first", "second", "third"}), label)
         expected_list.append(_parse_ticket_legs(ticket_raw, kind, label))
     if len(set(expected_list)) != len(expected_list):
-        raise ValueError("同じ買い目が重複しています")
+        raise ValueError("買い目は重複しています。同じ目は1回だけ指定してください")
     return _Bet(kind, f"result_{kind}", f"payout_{kind}", tuple(expected_list))
 
 

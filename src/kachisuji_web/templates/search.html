@@ -85,6 +85,12 @@
               <span id="pos3wrap"><span class="unit">3着</span><select id="pos3" aria-label="3着艇番"></select></span>
               <span class="unit">号艇</span>
             </div>
+            <div id="extraTickets"></div>
+            <div class="row ticket-actions">
+              <span class="field-label"></span>
+              <button type="button" id="btnAddTicket" class="ticket-add">＋ 買い目を追加</button>
+              <span class="unit" id="ticketCountLabel" aria-live="polite">1点 / 1レース100円</span>
+            </div>
             <div class="row">
               <span class="field-label">天候 <span class="chip live">⏱</span></span>
               <div class="wchips" id="weatherChips">
@@ -428,16 +434,101 @@
       refreshBoatSummaries();
     });
 
+    // 買い目は複数点を持てる。1 点目だけは既存の pos1/pos2/pos3 を使い続け、
+    // 2 点目以降を #extraTickets に足す。サーバは 1 点なら従来形式、複数なら
+    // {type, tickets:[...]} を受ける。
+    var MAX_TICKETS = 20;
+    var extraTicketSeq = 0;
+
+    function ticketRows() {
+      return [null].concat(Array.prototype.slice.call(
+        document.querySelectorAll('#extraTickets .ticket-row')
+      ));
+    }
+
+    function legSelects(row) {
+      if (row === null) return [byId('pos1'), byId('pos2'), byId('pos3')];
+      return [
+        row.querySelector('[data-leg="1"]'),
+        row.querySelector('[data-leg="2"]'),
+        row.querySelector('[data-leg="3"]')
+      ];
+    }
+
     function refreshBetUI() {
       var kind = byId('betType').value;
       byId('pos2wrap').hidden = kind === 'tansho';
       byId('pos3wrap').hidden = kind !== 'sanrentan';
+      Array.prototype.forEach.call(
+        document.querySelectorAll('#extraTickets .ticket-row'),
+        function (row) {
+          row.querySelector('[data-legwrap="2"]').hidden = kind === 'tansho';
+          row.querySelector('[data-legwrap="3"]').hidden = kind !== 'sanrentan';
+        }
+      );
+      var count = ticketRows().length;
+      byId('ticketCountLabel').textContent =
+        count + '点 / 1レース' + (count * 100) + '円';
+      byId('btnAddTicket').disabled = count >= MAX_TICKETS;
+      byId('btnAddTicket').title = count >= MAX_TICKETS
+        ? '買い目は最大' + MAX_TICKETS + '点までです' : '';
     }
+
+    function addTicketRow() {
+      if (ticketRows().length >= MAX_TICKETS) return null;
+      extraTicketSeq += 1;
+      var seq = extraTicketSeq;
+      var row = document.createElement('div');
+      row.className = 'row ticket-row';
+      row.setAttribute('data-ticket-seq', String(seq));
+      var html = '<span class="field-label"></span>';
+      [1, 2, 3].forEach(function (leg) {
+        var label = leg === 1 ? '1着' : (leg === 2 ? '2着' : '3着');
+        var id = 'pos' + leg + '_' + seq;
+        var select = '<span class="unit">' + label + '</span>'
+          + '<select id="' + id + '" data-leg="' + leg + '" aria-label="'
+          + label + '艇番（買い目' + (seq + 1) + '）"></select>';
+        html += leg === 1
+          ? select
+          : '<span data-legwrap="' + leg + '">' + select + '</span>';
+      });
+      html += '<span class="unit">号艇</span>'
+        + '<button type="button" class="ticket-remove" aria-label="この買い目を削除">×</button>';
+      row.innerHTML = html;
+      byId('extraTickets').appendChild(row);
+      legSelects(row).forEach(function (select, index) {
+        select.innerHTML = optionList(boatNumbers, index + 1);
+        select.value = String(index + 1);
+        select.addEventListener('change', function () { betConditionTouched = true; });
+      });
+      row.querySelector('.ticket-remove').addEventListener('click', function () {
+        row.remove();
+        betConditionTouched = true;
+        refreshBetUI();
+      });
+      betConditionTouched = true;
+      refreshBetUI();
+      return row;
+    }
+
     ['betType', 'pos1', 'pos2', 'pos3'].forEach(function (id) {
       byId(id).addEventListener('change', function () { betConditionTouched = true; });
     });
     byId('betType').addEventListener('change', refreshBetUI);
+    byId('btnAddTicket').addEventListener('click', addTicketRow);
     refreshBetUI();
+
+    function collectTickets() {
+      var kind = byId('betType').value;
+      var legCount = kind === 'tansho' ? 1 : (kind === 'nirentan' ? 2 : 3);
+      var names = ['first', 'second', 'third'];
+      return ticketRows().map(function (row) {
+        var selects = legSelects(row);
+        var ticket = {};
+        for (var i = 0; i < legCount; i += 1) ticket[names[i]] = Number(selects[i].value);
+        return ticket;
+      });
+    }
 
     function refreshVenueUI() {
       var count = byId('venue').selectedOptions.length;
@@ -500,9 +591,12 @@
     function collectConditions() {
       var result = {};
       if (betConditionTouched) {
-        result.bet = {type: byId('betType').value, first: Number(byId('pos1').value)};
-        if (result.bet.type !== 'tansho') result.bet.second = Number(byId('pos2').value);
-        if (result.bet.type === 'sanrentan') result.bet.third = Number(byId('pos3').value);
+        var tickets = collectTickets();
+        // 1 点のときは従来形式のまま送る。保存済み手法と同じ形なので、
+        // 過去に保存した条件と見比べたときに差が出ない。
+        result.bet = tickets.length === 1
+          ? Object.assign({type: byId('betType').value}, tickets[0])
+          : {type: byId('betType').value, tickets: tickets};
       }
       var venues = Array.from(byId('venue').selectedOptions).map(function (option) { return Number(option.value); });
       if (venues.length) result.venue = venues;
@@ -624,10 +718,18 @@
       }
       if (conditions.race_no) race.push(rangeText(controlLabel('raceNoFrom', 'レース番号'), conditions.race_no, 'R'));
       if (conditions.bet) {
-        var ticket = [conditions.bet.first];
-        if (conditions.bet.second !== undefined) ticket.push(conditions.bet.second);
-        if (conditions.bet.third !== undefined) ticket.push(conditions.bet.third);
-        race.push(controlLabel('betType', '買い目') + ': ' + optionText('betType', conditions.bet.type) + ' ' + ticket.join('-'));
+        var betTickets = Array.isArray(conditions.bet.tickets)
+          ? conditions.bet.tickets
+          : [conditions.bet];
+        var labels = betTickets.map(function (entry) {
+          var legs = [entry.first];
+          if (entry.second !== undefined) legs.push(entry.second);
+          if (entry.third !== undefined) legs.push(entry.third);
+          return legs.join('-');
+        });
+        race.push(controlLabel('betType', '買い目') + ': '
+          + optionText('betType', conditions.bet.type) + ' ' + labels.join(' / ')
+          + (labels.length > 1 ? '（' + labels.length + '点）' : ''));
       }
       if (conditions.weather) race.push('天候: ' + conditions.weather.join('・'));
       if (conditions.wind_dir) race.push(controlLabel('windDirection', '風向き') + ': ' + conditions.wind_dir.join('・'));
@@ -716,6 +818,26 @@
       }).join('') || '<tbody><tr><td colspan="4">対象データなし</td></tr></tbody>';
       var range = data.effective_date_range[0] ? escapeHtml(data.effective_date_range[0]) + ' 〜 ' + escapeHtml(data.effective_date_range[1]) : '対象データなし';
       var excludedTotal = data.excluded.result_missing + data.excluded.condition_null;
+      // 複数点のときだけ内訳を出す。1 点なら合算と同じ数字が並ぶだけで邪魔になる。
+      var breakdown = '';
+      var ticketCount = data.ticket_count || 1;
+      if (ticketCount > 1 && Array.isArray(data.ticket_breakdown)) {
+        var rows = data.ticket_breakdown.map(function (item) {
+          return '<tr><td>' + escapeHtml(item.ticket) + '</td><td>' + item.hits + '</td><td>'
+            + item.hit_rate.toFixed(1) + '%</td><td class="'
+            + (item.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + item.roi.toFixed(1) + '%</td></tr>';
+        }).join('');
+        breakdown =
+          '<table class="tickettbl"><caption>買い目ごとの内訳（各点100円ずつ）</caption>'
+          + '<thead><tr><th>買い目</th><th>的中</th><th>的中率</th><th>回収率</th></tr></thead>'
+          + '<tbody>' + rows + '</tbody></table>'
+          + '<p class="ticket-note">合算の回収率は各点の回収率の平均です。'
+          + 'いまの合算より低い買い目を足すと、的中率と引き換えに回収率が下がります。</p>';
+      }
+      var stakeKpi = ticketCount > 1
+        ? '<div class="kpi"><div class="v">' + ticketCount + '点</div><div class="l">買い目点数</div>'
+          + '<div class="ci">総投資 ' + (data.stake_total || 0).toLocaleString() + '円</div></div>'
+        : '';
       byId('resultArea').innerHTML =
         conditionSummaryHtml(conditions) +
         discoveryStatusHtml(data) +
@@ -723,8 +845,10 @@
         '<div class="kpi"><div class="v ' + roiClass + '">' + data.roi.toFixed(1) + '%</div><div class="l">回収率</div><div class="ci">95%CI ' + data.roi_ci_low.toFixed(1) + '〜' + data.roi_ci_high.toFixed(1) + '%</div></div>' +
         '<div class="kpi"><div class="v">' + data.hit_rate.toFixed(1) + '%</div><div class="l">的中率</div><div class="ci">' + data.hits + ' / ' + data.n + ' 本</div></div>' +
         '<div class="kpi"><div class="v">' + data.n + '</div><div class="l">合致レース数 N</div><div class="ci">' + range + '</div></div>' +
-        '<div class="kpi"><div class="v">' + excludedTotal + '</div><div class="l">除外件数</div><div class="ci">結果欠損 ' + data.excluded.result_missing + '件</div></div></div>' +
+        '<div class="kpi"><div class="v">' + excludedTotal + '</div><div class="l">除外件数</div><div class="ci">結果欠損 ' + data.excluded.result_missing + '件</div></div>' +
+        stakeKpi + '</div>' +
         warnings +
+        breakdown +
         '<div class="exclusions"><h2>除外の内訳</h2><dl><div><dt>結果・払戻欠損</dt><dd>' + data.excluded.result_missing + '件</dd></div><div class="condition-null"><dt>条件判定不能で除外した件数</dt><dd>' + data.excluded.condition_null + '件</dd></div></dl></div>' +
         '<table class="yeartbl"><caption>年別内訳</caption><thead><tr><th>年月</th><th>N</th><th>的中</th><th>回収率</th></tr></thead>' + years + '</table>';
       byId('miniKpi').hidden = false;

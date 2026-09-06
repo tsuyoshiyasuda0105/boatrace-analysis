@@ -240,3 +240,21 @@ button.is-loading::before { display: inline-block; width: 10px; height: 10px; ma
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
   .discovery-gold { animation: none !important; }
 }
+
+/* 複数買い目 (2026-09-06) */
+.ticket-row { margin-top: 6px; }
+.ticket-add { padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 12.5px; }
+.ticket-add:disabled { opacity: .5; cursor: not-allowed; }
+.ticket-remove { width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-3); font-size: 14px; line-height: 1; }
+.ticket-remove:hover { color: var(--ink-1); }
+.tickettbl { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 12.8px; }
+.tickettbl caption { padding-bottom: 5px; text-align: left; font-size: 13.5px; font-weight: 700; }
+.tickettbl th { padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--ink-3); text-align: right; font-size: 11px; letter-spacing: .06em; }
+.tickettbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.tickettbl th:first-child, .tickettbl td:first-child { text-align: left; }
+.ticket-note { margin: 6px 0 0; color: var(--ink-3); font-size: 11.5px; line-height: 1.6; }
+
+@media (max-width: 560px) {
+  /* 空のスペーサーが 7.5em を占有し、360px 幅で 14px はみ出していた。 */
+  .ticket-row > .field-label, .ticket-actions > .field-label { display: none; }
+}
