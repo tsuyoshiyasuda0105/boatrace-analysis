@@ -291,7 +291,13 @@
         '<div class="cond limited2">展示順位 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExFrom"><option value="">指定なし</option>' + optionList(boatNumbers, '') + '</select><span class="unit">〜</span><select id="b' + i + 'ExTo">' + optionList(boatNumbers, 3) + '</select></div>' +
         '<div class="cond limited2">展示タイム 会場平均比 <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span><select id="b' + i + 'ExDevDir"><option value="">指定なし</option><option value="faster_by">平均より速い</option><option value="slower_by">平均より遅い</option></select><input type="number" id="b' + i + 'ExDev" value="0.10" min="0" max="1" step="0.05"><span class="unit">秒以上</span></div>' +
         '<div class="cond limited2">展示ST <span class="chip live">⏱</span><span class="chip lim2">📅 2024/12〜</span>' + compareSelect('b' + i + 'ExStCmp') + '<input type="number" id="b' + i + 'ExSt" value="0.10" min="-0.1" max="0.5" step="0.01"><span class="unit">秒</span></div>' +
-        '<div class="cond limited"><strong>決まり手 勝率（進入コース時）</strong> <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span><select id="b' + i + 'Kimarite">' + kimOptions + '</select><input type="number" id="b' + i + 'KimariteRate" value="50" min="0" max="100" step="5"><span class="unit">%以上</span><span class="kimarite-help">1コースに入ったときの逃げ率など、そのコースに入ったときの決まり手成功率です。</span></div>' +
+        '<div class="cond limited"><strong>決まり手 勝率（進入コース時）</strong> <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span>' +
+          '<span class="kimarite-row" data-boat="' + i + '"><select id="b' + i + 'Kimarite">' + kimOptions + '</select>' +
+          '<select id="b' + i + 'KimariteDir"><option value="rate_min">以上</option><option value="rate_max">以下</option></select>' +
+          '<input type="number" id="b' + i + 'KimariteRate" value="50" min="0" max="100" step="1"><span class="unit">%</span></span>' +
+          '<span class="kimarite-extra" id="b' + i + 'KimariteExtra"></span>' +
+          '<button type="button" class="kimarite-add" id="b' + i + 'KimariteAdd" data-boat="' + i + '">＋ 決まり手を追加</button>' +
+          '<span class="kimarite-help">1コースに入ったときの逃げ率など、そのコースに入ったときの決まり手成功率です。同じ艇で複数指定すると全て満たすレースに絞られます。</span></div>' +
         '<div class="cond limited">事故率（審査期・本日判定用） <span class="chip day">📋</span><span class="chip current">📅 2026/7〜</span>' + compareSelect('b' + i + 'AccidentCmp') + '<input type="number" id="b' + i + 'Accident" value="0.30" min="0" max="5" step="0.05"></div>' +
         '<div class="cond restored-condition"><strong>事故率（審査期・検証用）</strong> <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜・推奨</span>' + compareSelect('b' + i + 'AccidentPeriodCmp') + '<input type="number" id="b' + i + 'AccidentPeriod" value="1.00" min="0" max="100" step="0.05"><span class="unit">%</span></div>' +
         '<div class="cond restored-condition">事故件数（審査期・検証用） <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span>' + compareSelect('b' + i + 'AccidentCountPeriodCmp') + '<input type="number" id="b' + i + 'AccidentCountPeriod" value="1" min="0" step="1"><span class="unit">件</span></div>' +
@@ -605,10 +611,73 @@
       if (exFrom) boat.ex_rank = {min: Number(exFrom), max: Number(byId('b' + i + 'ExTo').value)};
       var exDirection = byId('b' + i + 'ExDevDir').value;
       if (exDirection) boat.ex_dev = Object.fromEntries([[exDirection, Number(byId('b' + i + 'ExDev').value)]]);
-      var technique = byId('b' + i + 'Kimarite').value;
-      if (technique) boat.kimarite = {name: technique, rate_min: Number(byId('b' + i + 'KimariteRate').value)};
+      // 決まり手は 1 艇で複数指定できる。1 件だけのときは保存済み手法と同じ
+      // 単数形式で送り、過去に保存した条件と見比べたときに差が出ないようにする。
+      var kimEntries = [];
+      var firstTechnique = byId('b' + i + 'Kimarite').value;
+      if (firstTechnique) {
+        kimEntries.push(Object.fromEntries([
+          ['name', firstTechnique],
+          [byId('b' + i + 'KimariteDir').value, Number(byId('b' + i + 'KimariteRate').value)]
+        ]));
+      }
+      Array.prototype.forEach.call(
+        document.querySelectorAll('#b' + i + 'KimariteExtra .kimarite-row'),
+        function (row) {
+          var name = row.querySelector('.kimarite-name').value;
+          if (!name) return;
+          kimEntries.push(Object.fromEntries([
+            ['name', name],
+            [row.querySelector('.kimarite-dir').value, Number(row.querySelector('.kimarite-rate').value)]
+          ]));
+        }
+      );
+      if (kimEntries.length === 1) boat.kimarite = kimEntries[0];
+      else if (kimEntries.length > 1) boat.kimarite = kimEntries;
       return boat;
     }
+
+    // 決まり手の追加行。艇ごとに最大 6 種類 (KIMARITE_KEYS と同数) まで。
+    var KIMARITE_MAX = 6;
+    function kimariteRowCount(boat) {
+      return 1 + document.querySelectorAll('#b' + boat + 'KimariteExtra .kimarite-row').length;
+    }
+    function refreshKimariteAdd(boat) {
+      var button = byId('b' + boat + 'KimariteAdd');
+      if (button) button.disabled = kimariteRowCount(boat) >= KIMARITE_MAX;
+    }
+    function addKimariteRow(boat) {
+      if (kimariteRowCount(boat) >= KIMARITE_MAX) return;
+      var options = kimarite.map(function (item) {
+        return '<option value="' + item[0] + '">' + item[1] + '</option>';
+      }).join('');
+      var row = document.createElement('span');
+      row.className = 'kimarite-row';
+      row.innerHTML = '<select class="kimarite-name" aria-label="決まり手の種類">' + options + '</select>'
+        + '<select class="kimarite-dir" aria-label="下限か上限か"><option value="rate_min">以上</option><option value="rate_max">以下</option></select>'
+        + '<input type="number" class="kimarite-rate" value="50" min="0" max="100" step="1" aria-label="決まり手の勝率">'
+        + '<span class="unit">%</span>'
+        + '<button type="button" class="kimarite-remove" aria-label="この決まり手を削除">×</button>';
+      byId('b' + boat + 'KimariteExtra').appendChild(row);
+      row.querySelector('.kimarite-remove').addEventListener('click', function () {
+        row.remove();
+        refreshKimariteAdd(boat);
+        refreshBoatSummaries();
+      });
+      refreshKimariteAdd(boat);
+    }
+    byId('boats').addEventListener('click', function (event) {
+      var add = event.target.closest('.kimarite-add');
+      if (add) addKimariteRow(add.dataset.boat);
+    });
+    // リセットは form コントロールしか戻さない。足した行は自分で消す。
+    byId('searchForm').addEventListener('reset', function () {
+      document.querySelectorAll('.kimarite-extra').forEach(function (holder) { holder.innerHTML = ''; });
+      setTimeout(function () {
+        for (var b = 1; b <= 6; b += 1) refreshKimariteAdd(b);
+      }, 0);
+    });
+
     function refreshBoatSummaries() {
       boatNumbers.forEach(function (i) {
         var count = Object.keys(collectBoat(i)).length;
@@ -801,8 +870,14 @@
           if (key === 'class') boatItems.push(label + ': ' + value.join('・'));
           else if (key === 'racer_id') boatItems.push(label + ': ' + racerSummaryText(boatNumber, value));
           else if (key === 'kimarite') {
-            var technique = kimarite.find(function (item) { return item[0] === value.name; });
-            boatItems.push(label + ': ' + (technique ? technique[1] : value.name) + '・勝率' + numberText(value.rate_min) + '%以上');
+            (Array.isArray(value) ? value : [value]).forEach(function (entry) {
+              var technique = kimarite.find(function (item) { return item[0] === entry.name; });
+              var name = technique ? technique[1] : entry.name;
+              var parts = [];
+              if (entry.rate_min !== undefined) parts.push(numberText(entry.rate_min) + '%以上');
+              if (entry.rate_max !== undefined) parts.push(numberText(entry.rate_max) + '%以下');
+              boatItems.push(label + ': ' + name + '・勝率' + parts.join('かつ'));
+            });
           } else if (key === 'ex_dev') {
             if (value.faster_by !== undefined) boatItems.push(label + 'が会場平均より' + numberText(value.faster_by) + '秒以上速い');
             if (value.slower_by !== undefined) boatItems.push(label + 'が会場平均より' + numberText(value.slower_by) + '秒以上遅い');
@@ -1110,6 +1185,12 @@
       }).join('');
     }
 
+    // 数値欄が不正だと submit 自体が起きない。折りたたみの中だと吹き出しも出せず
+    // 「検索を押しても無反応」に見えるので、閉じているブロックを開いてから知らせる。
+    byId('searchForm').addEventListener('invalid', function (event) {
+      var block = event.target.closest('details');
+      if (block && !block.open) block.open = true;
+    }, true);
     byId('searchForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var button = byId('btnSearch'); button.disabled = true; button.classList.add('is-loading'); button.textContent = '検索中…';

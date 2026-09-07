@@ -479,18 +479,71 @@ def _compile_conditions(
                     _add_predicate(filters, params, null_columns, column, " AND ".join(comparisons), values)
             if boat.get("kimarite") is not None:
                 label = f"boats.{boat_key}.kimarite"
-                raw = _mapping(boat["kimarite"], label)
-                _known_keys(raw, frozenset({"name", "rate_min"}), label)
-                name = raw.get("name")
-                rate_min = raw.get("rate_min")
-                if name is None and rate_min is None:
-                    continue
-                if name not in KIMARITE_KEYS or rate_min is None:
-                    raise ValueError(f"{label} requires a valid name and rate_min")
-                column = prefix + f"kimarite_rate_{name}"
-                rate = _number(rate_min, f"{label}.rate_min")
-                _add_predicate(filters, params, null_columns, column, f"{column} >= ?", [rate])
-                history_condition = True
+                # 単数のオブジェクトと、複数指定の配列の両方を受ける。保存済みの
+                # 手法は全て単数形式なので、そのまま読めることを崩さない。
+                raw_entries = boat["kimarite"]
+                where = f"{boat_key}号艇"
+                if isinstance(raw_entries, (list, tuple)) and not raw_entries:
+                    raise ValueError(f"決まり手は{where}に1件以上指定してください")
+                entries = (
+                    _sequence(raw_entries, label)
+                    if isinstance(raw_entries, (list, tuple))
+                    else [raw_entries]
+                )
+                if len(entries) > len(KIMARITE_KEYS):
+                    raise ValueError(
+                        f"決まり手は1艇につき最大{len(KIMARITE_KEYS)}件までです"
+                    )
+                seen_names: set[str] = set()
+                for index, entry in enumerate(entries):
+                    item_label = (
+                        f"{label}[{index}]"
+                        if isinstance(raw_entries, (list, tuple))
+                        else label
+                    )
+                    if not isinstance(entry, Mapping):
+                        raise ValueError(f"決まり手は{where}の指定の形式が不正です")
+                    item = _mapping(entry, item_label)
+                    _known_keys(
+                        item, frozenset({"name", "rate_min", "rate_max"}), item_label
+                    )
+                    name = item.get("name")
+                    rate_min = item.get("rate_min")
+                    rate_max = item.get("rate_max")
+                    if name is None and rate_min is None and rate_max is None:
+                        continue
+                    if name not in KIMARITE_KEYS:
+                        raise ValueError(f"決まり手は{where}で正しい種類を選んでください")
+                    if rate_min is None and rate_max is None:
+                        # 上限だけの指定も許すので、「どちらも無い」ときだけ弾く。
+                        raise ValueError(
+                            f"決まり手は{where}に「以上」か「以下」の率を入れてください"
+                        )
+                    if name in seen_names:
+                        raise ValueError(
+                            f"決まり手は同じ種類を1艇につき1回だけ指定してください: {name}"
+                        )
+                    seen_names.add(name)
+                    column = prefix + f"kimarite_rate_{name}"
+                    comparisons: list[str] = []
+                    values: list[float] = []
+                    low = high = None
+                    if rate_min is not None:
+                        low = _number(rate_min, f"{item_label}.rate_min")
+                        comparisons.append(f"{column} >= ?")
+                        values.append(low)
+                    if rate_max is not None:
+                        high = _number(rate_max, f"{item_label}.rate_max")
+                        comparisons.append(f"{column} <= ?")
+                        values.append(high)
+                    if low is not None and high is not None and low > high:
+                        raise ValueError(
+                            f"決まり手は下限が上限を超えています: {where}"
+                        )
+                    _add_predicate(
+                        filters, params, null_columns, column, " AND ".join(comparisons), values
+                    )
+                    history_condition = True
 
     comparisons = conditions.get("compare")
     if comparisons is not None:
