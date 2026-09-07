@@ -752,3 +752,36 @@ def test_s7_rapid_double_search_sends_one_request(page):
     page.locator("#btnSearch").evaluate("button => { button.click(); button.click(); }")
     expect(page.locator(".kpis")).to_be_visible(timeout=30_000)
     assert len(requests) == 1
+
+
+def test_s5_missing_date_is_told_apart_from_no_match(page):
+    """「データが無い日」と「条件に合わなかった日」を画面で区別すること。
+
+    2026-09-08 に翌日分のデータが未到着のまま「合致レースはありません」と出て、
+    条件が悪いのだと誤解された。データが無い日はその旨を出す。
+    """
+    case = _confirmed_match_case()
+    # 前日確定の条件で、まず合致し得ない (1号艇の年齢 99〜100 歳)
+    impossible = valid_conditions(
+        venue=case["jcd"], boats={"1": {"age": {"min": 99, "max": 100}}}
+    )
+    response = post_json(page, "/api/strategies", {
+        "name": "no-match-vs-no-data", "conditions": impossible,
+        "backtest": {"roi": 100, "n": 1}})
+    assert response.status == 200, response.text()
+    strategy_id = response.json()["id"]
+    try:
+        page.reload(wait_until="networkidle")
+
+        page.locator("#matchDate").fill(_date_after_latest_race())
+        page.locator("#btnMatch").click()
+        expect(page.locator("#matchResults .match-group").first).to_be_visible(timeout=30_000)
+        expect(page.locator("#matchResults")).to_contain_text("まだ届いていません")
+        expect(page.locator("#matchResults")).not_to_contain_text("合致レースはありません")
+
+        page.locator("#matchDate").fill(case["race_date"])
+        page.locator("#btnMatch").click()
+        expect(page.locator("#matchResults")).to_contain_text("合致レースはありません", timeout=30_000)
+        expect(page.locator("#matchResults")).not_to_contain_text("まだ届いていません")
+    finally:
+        page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))

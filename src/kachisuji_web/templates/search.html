@@ -1179,7 +1179,11 @@
             : '✓ 合致確定';
           return '<div class="matchcard"><b>' + escapeHtml(race.jcd) + '場 ' + escapeHtml(race.race_no) + 'R</b>' +
             '<span>' + escapeHtml(race.bet) + '</span><span class="stat ' + (pending ? 'stat-pending' : 'stat-confirmed') + '">' + status + '</span></div>';
-        }).join('') || '<div class="matchcard"><span class="strategy-meta">この日の合致レースはありません。</span></div>';
+        }).join('') || (Number(group.counts.races_on_date) === 0
+          // データが無い日と、条件に合わなかった日は別物。前者を「合致なし」と
+          // 見せると、条件を疑って緩め続けてしまう (2026-09-08 の誤解)。
+          ? '<div class="matchcard"><span class="strategy-meta">この日のレースデータはまだ届いていません。当日分は前夜〜当朝に用意されます。</span></div>'
+          : '<div class="matchcard"><span class="strategy-meta">この日の合致レースはありません。</span></div>');
         return '<section class="match-group"><h3>★ ' + escapeHtml(group.strategy_name) +
           '（確定 ' + group.counts.matched + ' / 未確定 ' + group.counts.pending + '）</h3><div class="mylist">' + cards + '</div></section>';
       }).join('');
