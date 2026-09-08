@@ -46,23 +46,43 @@ def _completed_date(now: datetime | None = None) -> str:
     return (current.date() - timedelta(days=1)).isoformat()
 
 
-def _run_kachisuji_daily(completed_date: str) -> bool:
-    compact_date = completed_date.replace("-", "")
-    delta_path = ROOT / "data" / f"kachisuji_delta_{compact_date}.db"
+def _kachisuji_history_steps(completed_date: str) -> list[list[str]]:
+    """完成した日の履歴 (出走・事故・ST・選手名) を検索DBへ進める手順。
+
+    決まり手率や平均STは検索DB内の履歴テーブルから計算するのに、これを
+    毎晩進める処理が無く 2026-08-16 で止まっていた。K 成績ファイルを
+    その日ぶんだけ取り直してから (早朝に空ファイルを掴む事故があるため
+    --skip-existing は付けない)、日単位で置き換える。
+    """
+    return [
+        ["scripts/backfill_official.py", "--start", completed_date, "--end", completed_date,
+         "--local", "--targets", "k"],
+        ["scripts/restore_accident_history.py", "--from", completed_date, "--to", completed_date],
+        ["scripts/restore_start_timing.py", "--from", completed_date, "--to", completed_date],
+        ["scripts/sync_kachisuji_racers.py"],
+    ]
+
+
+def _kachisuji_delta_path(kind: str, day: str) -> Path:
+    """差分ファイル名。``backfill_`` で始めると本番側が既存行を置き換える。
+
+    day  = 完成した日 (結果つき)。前夜に forward で入れた同じ race_id を上書きする。
+    fwd  = これから走る日 (結果なし)。当日の合致レース表示に使う。
+    """
+    compact = day.replace("-", "")
+    return ROOT / "data" / f"backfill_{kind}_{compact}.db"
+
+
+def _refresh_and_upload(day: str, delta_path: Path, extra_args: list[str]) -> bool:
     if delta_path.exists():
         print(f"[kachisuji] reusing existing delta: {delta_path}", flush=True)
     else:
         refresh_ok = _run_local(
-            [
-                "scripts/refresh_kachisuji_daily.py",
-                "--date",
-                completed_date,
-                "--emit-delta",
-                str(delta_path),
-            ]
+            ["scripts/refresh_kachisuji_daily.py", "--date", day,
+             "--emit-delta", str(delta_path), *extra_args]
         )
         if not refresh_ok:
-            print("[kachisuji] refresh failed; upload skipped", flush=True)
+            print(f"[kachisuji] refresh failed for {day}; upload skipped", flush=True)
             return False
     # Storage 版 (upload_kachisuji_delta.py) は SERVICE キー未配布で不稼働だった。
     # DATABASE_URL だけで動く Postgres 輸送に切替 (2026-08-20)。
@@ -70,8 +90,29 @@ def _run_kachisuji_daily(completed_date: str) -> bool:
         ["scripts/upload_kachisuji_delta_pg.py", "--delta", str(delta_path)],
         allow_prod_sync=True,
     )
-    print(f"[kachisuji] {'ok' if upload_ok else 'upload failed'}", flush=True)
+    print(f"[kachisuji] {day} {'ok' if upload_ok else 'upload failed'}", flush=True)
     return upload_ok
+
+
+def _run_kachisuji_daily(completed_date: str, forward_date: str | None = None) -> bool:
+    """検索DBを進めて本番へ差分を送る。順番に意味がある。
+
+    1. 履歴テーブルを完成日ぶん進める (決まり手率・ST の材料)
+    2. 完成日を rebuild で作り直す (前夜の forward 行を結果つきに置き換える)
+    3. これから走る日を forward で作る (当日の合致レース表示用)
+    履歴が失敗しても 2, 3 は続ける (率が一日ぶん古いだけで照合は動く)。
+    """
+    for step in _kachisuji_history_steps(completed_date):
+        if not _run_local(step):
+            print(f"[kachisuji] history step failed (continuing): {' '.join(step)}", flush=True)
+    ok = _refresh_and_upload(
+        completed_date, _kachisuji_delta_path("day", completed_date), ["--rebuild"]
+    )
+    if forward_date and forward_date > completed_date:
+        ok &= _refresh_and_upload(
+            forward_date, _kachisuji_delta_path("fwd", forward_date), ["--forward"]
+        )
+    return ok
 
 
 def parse_args() -> argparse.Namespace:
@@ -163,7 +204,7 @@ def main() -> int:
     # This transport is intentionally isolated from the established nightly
     # outcome. A failed upload remains visible in logs and can be retried by
     # rerunning the task; the dated local delta is deliberately retained.
-    _run_kachisuji_daily(_completed_date())
+    _run_kachisuji_daily(_completed_date(), target_date)
     return 0
 
 

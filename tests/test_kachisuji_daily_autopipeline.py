@@ -239,18 +239,28 @@ def test_nightly_delta_failure_does_not_change_existing_success(monkeypatch, tmp
     )
 
     assert nightly.main() == 0
-    assert calls[-2][0][0:3] == [
-        "scripts/refresh_kachisuji_daily.py",
-        "--date",
-        "2026-08-18",
-    ]
-    assert calls[-1][0][0] == "scripts/upload_kachisuji_delta_pg.py"
-    assert calls[-1][1] is True
+    # 2026-09-08: 完成日は rebuild で作り直し、直後にその差分をアップロードする。
+    # アップロードが失敗しても夜間全体の成否 (exit 0) は変えない。
+    args_only = [call[0] for call in calls]
+    rebuild = next(
+        index for index, args in enumerate(args_only)
+        if args[0:3] == ["scripts/refresh_kachisuji_daily.py", "--date", "2026-08-18"]
+    )
+    assert "--rebuild" in args_only[rebuild]
+    assert args_only[rebuild + 1][0] == "scripts/upload_kachisuji_delta_pg.py"
+    assert Path(args_only[rebuild + 1][2]).name == "backfill_day_20260818.db"
+    assert calls[rebuild + 1][1] is True
+    # 当日 (2026-08-19) は forward で作る
+    assert any(
+        args[0:3] == ["scripts/refresh_kachisuji_daily.py", "--date", "2026-08-19"]
+        and "--forward" in args
+        for args in args_only
+    )
 
 
 def test_nightly_rerun_reuses_retained_delta(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(nightly, "ROOT", tmp_path)
-    delta = tmp_path / "data" / "kachisuji_delta_20260818.db"
+    delta = tmp_path / "data" / "backfill_day_20260818.db"
     delta.parent.mkdir()
     delta.write_bytes(b"retained")
     calls = []
@@ -261,7 +271,11 @@ def test_nightly_rerun_reuses_retained_delta(monkeypatch, tmp_path: Path):
     )
 
     assert nightly._run_kachisuji_daily("2026-08-18") is True
-    assert [call[0][0] for call in calls] == ["scripts/upload_kachisuji_delta_pg.py"]
+    # 履歴 4 手順は毎回走るが、差分が残っていれば作り直さずアップロードだけする
+    scripts = [call[0][0] for call in calls]
+    assert "scripts/refresh_kachisuji_daily.py" not in scripts
+    assert scripts[-1] == "scripts/upload_kachisuji_delta_pg.py"
+    assert Path(calls[-1][0][2]).name == "backfill_day_20260818.db"
 
 
 def test_completed_date_is_previous_day_in_jst():
