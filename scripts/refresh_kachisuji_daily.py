@@ -58,6 +58,21 @@ def _readonly_uri(path: Path) -> str:
     return path.resolve().as_uri() + "?mode=ro"
 
 
+def _rows_in_range(db: Path, date_from: str, date_to: str) -> int:
+    if not Path(db).is_file():
+        return 0
+    conn = sqlite3.connect(_readonly_uri(Path(db)), uri=True)
+    try:
+        return int(
+            conn.execute(
+                "SELECT COUNT(*) FROM asof_race_features WHERE race_date BETWEEN ? AND ?",
+                (date_from, date_to),
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+
 def _append_to_slim(
     search_db: Path, slim_db: Path, date_from: str, date_to: str, *, replace: bool = False
 ) -> dict[str, int]:
@@ -175,6 +190,7 @@ def main() -> int:
     mode = "forward" if args.forward else ("rebuild" if args.rebuild else "completed")
     print(f"[info] target range: {date_from} .. {date_to} mode={mode}")
 
+    before_rows = _rows_in_range(SEARCH_DB, date_from, date_to) if args.rebuild else 0
     source = connect(str(config.DB_PATH))
     try:
         source.execute("PRAGMA query_only=ON")
@@ -182,6 +198,18 @@ def main() -> int:
     finally:
         source.close()
     print("[build] " + " ".join(f"{k}={v}" for k, v in result.items()))
+    if args.rebuild:
+        after_rows = _rows_in_range(SEARCH_DB, date_from, date_to)
+        if after_rows < before_rows:
+            # 元データが一時的に欠けたまま作り直すと、良い行を消して少ない行で
+            # 置き換えてしまう。ここで止めれば slim と本番へは伝播しない
+            # (検索DBはいつでも作り直せる)。
+            print(
+                f"error: rebuild produced fewer rows ({before_rows} -> {after_rows}). "
+                "Source data looks incomplete; slim and delta were skipped.",
+                file=sys.stderr,
+            )
+            return 4
     if args.forward and result.get("inserted", 0) == 0 and result.get("selected", 0) == 0:
         # 番組表がまだ無い日を forward で作ろうとした。空の差分を本番へ送っても
         # 意味が無いので、ここで分かるように失敗させる。

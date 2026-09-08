@@ -122,3 +122,34 @@ def test_emit_delta_refuses_to_overwrite_an_existing_delta(tmp_path):
     import pytest
     with pytest.raises(FileExistsError):
         refresh._emit_delta(search, delta, "2026-09-08", "2026-09-08")
+
+
+def test_rebuild_that_loses_rows_is_refused_before_touching_slim(tmp_path, monkeypatch, capsys):
+    """元データが欠けたまま作り直したときは slim と差分に伝播させない。
+
+    rebuild は範囲を消してから作り直す。元データが一時的に欠けていると
+    「良い行を消して少ない行で置き換える」ことになるので、そこで止める。
+    """
+    import sys as _sys
+    from scripts import refresh_kachisuji_daily as r
+
+    search = tmp_path / "search.db"
+    _tiny_db(search, [("A", "2026-09-07", 1), ("B", "2026-09-07", 1)])
+    monkeypatch.setattr(r, "SEARCH_DB", search)
+    monkeypatch.setattr(r, "SLIM_DB", tmp_path / "slim.db")
+    monkeypatch.setattr(r, "connect", lambda _path: sqlite3.connect(":memory:"))
+
+    def shrinking_build(_source, output, date_from, date_to, rebuild=False):
+        c = sqlite3.connect(output)
+        c.execute("DELETE FROM asof_race_features WHERE race_date BETWEEN ? AND ?", (date_from, date_to))
+        c.execute("INSERT INTO asof_race_features VALUES ('A','2026-09-07',1)")
+        c.commit(); c.close()
+        return {"selected": 1, "inserted": 1, "skipped_existing": 0, "warnings": 0}
+
+    monkeypatch.setattr(r, "build_features", shrinking_build)
+    monkeypatch.setattr(_sys, "argv", ["x", "--date", "2026-09-07", "--rebuild",
+                                       "--emit-delta", str(tmp_path / "backfill_day_20260907.db")])
+    assert r.main() == 4
+    assert "fewer rows" in capsys.readouterr().err
+    assert not (tmp_path / "slim.db").exists(), "slim には触れない"
+    assert not (tmp_path / "backfill_day_20260907.db").exists(), "差分も作らない"
