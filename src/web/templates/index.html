@@ -26,6 +26,24 @@
       <small>メールアドレスだけ・1分</small>
     </div>
   </section>
+  <script>
+    // 流入元のタグを登録リンクへ引き継ぐ。動画→この画面→登録と進んだ人が
+    // 「サイト内から来た人」に化けてしまい、いちばん薦めている経路だけが
+    // 計測から漏れていた (2026-09-08)。ブラウザ側で完結するのでキャッシュに
+    // 焼き付かない。
+    (() => {
+      const cta = document.querySelector(".backtest-invite-cta");
+      if (!cta) return;
+      const from = new URLSearchParams(window.location.search);
+      const to = new URL(cta.href, window.location.origin);
+      for (const [key, value] of from) {
+        if (!/^utm_[a-z_]+$/.test(key)) continue;
+        if (to.searchParams.has(key)) continue;
+        to.searchParams.set(key, value);
+      }
+      cta.href = to.pathname + to.search;
+    })();
+  </script>
   {% endif %}
 
   {% if is_member() %}

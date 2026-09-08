@@ -442,3 +442,21 @@ def test_top_page_invites_guests_to_the_backtest_but_not_members(monkeypatch):
         member_html = client.get("/").get_data(as_text=True)
         assert 'aria-label="バックテストのご案内"' not in member_html, role
         assert "ref=top-backtest" not in member_html, role
+
+
+def test_top_invite_forwards_only_campaign_tags_to_signup(monkeypatch):
+    """流入元のタグを登録リンクへ引き継ぐ (2026-09-08)。
+
+    動画→この画面→登録と進んだ人が「サイト内から来た人」に化けると、
+    いちばん薦めている経路だけが計測から漏れる。utm_ 以外は転記しない。
+    """
+    app = _create_app(monkeypatch)
+    monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: _snapshot())
+    html = app.test_client().get("/").get_data(as_text=True)
+
+    assert 'querySelector(".backtest-invite-cta")' in html
+    assert '/^utm_[a-z_]+$/' in html, "転記するのは utm_ で始まるものだけ"
+    assert "to.searchParams.has(key)" in html, "ref=top-backtest を上書きしない"
+    # 引き継ぎはブラウザ側で行う。サーバが URL を焼き込むとキャッシュに残る。
+    assert "?ref=top-backtest" in html
+    assert "utm_source=" not in html
