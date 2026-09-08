@@ -415,3 +415,30 @@ def test_shared_cached_race_detail_hydrates_navigation_from_session_only(monkeyp
     guest_nav = guest.get("/api/session-navigation").get_json()
     assert member_nav["items"][0]["href"] == "/member/today-races"
     assert guest_nav == {"is_member": False}
+
+
+def test_top_page_invites_guests_to_the_backtest_but_not_members(monkeypatch):
+    """動画からの流入先である一覧に、バックテストへの入口を置く (2026-09-08)。
+
+    動画で見せているのは一覧ではなく検索画面で、その画面は会員限定。案内が
+    無いと「さっきの画面はどこ」で離脱する。会員は上部メニューから行けるので
+    出さない。
+    """
+    app = _create_app(monkeypatch)
+    snapshot = _snapshot()
+    monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: snapshot)
+    client = app.test_client()
+
+    guest_html = client.get("/").get_data(as_text=True)
+    assert 'aria-label="バックテストのご案内"' in guest_html
+    assert "10年・約55万レースを、自分の条件で検証できます" in guest_html
+    assert "/signup-supabase?ref=top-backtest" in guest_html
+    # 禁止表現を混ぜない (誇大訴求の線引きは動画と同じ)
+    for word in ("絶対", "必ず当たる", "稼げる", "保証します"):
+        assert word not in guest_html
+
+    for role in ("free_member", "beta_member", "paid_member"):
+        _set_role(client, role)
+        member_html = client.get("/").get_data(as_text=True)
+        assert 'aria-label="バックテストのご案内"' not in member_html, role
+        assert "ref=top-backtest" not in member_html, role

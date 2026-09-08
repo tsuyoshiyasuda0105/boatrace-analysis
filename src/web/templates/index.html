@@ -6,6 +6,28 @@
   <p class="notice-box" role="status">{{ stale_data_notice }}</p>
   {% endif %}
 
+  {% if not is_member() %}
+  {# 動画から来た人が最初に見る画面。動画で見せているのはこの一覧ではなく
+     バックテスト画面なので、そこへの入口をここに置く (2026-09-08)。 #}
+  <section class="backtest-invite" aria-label="バックテストのご案内">
+    <div class="backtest-invite-body">
+      <p class="backtest-invite-kicker">動画で使っている機能</p>
+      <h3>10年・約55万レースを、自分の条件で検証できます</h3>
+      <p class="backtest-invite-lead">
+        会場・級別・風・決まり手・季節などを組み合わせると、
+        過去の<strong>回収率・的中率・レース数</strong>がその場で出ます。
+        母数が少ない条件には警告が付くので、たまたま良く見えた数字に気づけます。
+      </p>
+    </div>
+    <div class="backtest-invite-actions">
+      <a class="backtest-invite-cta" href="{{ url_for('signup_supabase') }}?ref=top-backtest">
+        無料で試す
+      </a>
+      <small>メールアドレスだけ・1分</small>
+    </div>
+  </section>
+  {% endif %}
+
   {% if is_member() %}
   <!-- 会員向けマーク凡例 (折りたたみ) -->
   <details class="badge-legend" hidden>
