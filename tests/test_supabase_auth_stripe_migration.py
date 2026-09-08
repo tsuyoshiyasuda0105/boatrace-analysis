@@ -62,7 +62,10 @@ def test_security_policy_allows_supabase_auth_fetch():
     app_source = (ROOT / "src" / "web" / "app.py").read_text(encoding="utf-8")
     assert 'getattr(config, "SUPABASE_URL", "")' in app_source
     assert "urlparse(config.SUPABASE_URL)" in app_source
-    assert """f"connect-src 'self'{supabase_connect_src}; """ in app_source
+    # connect-src の直後に Supabase URL が差し込まれることだけを検証する。
+    # 続く他ホスト（Cloudflare Web Analytics など）を追加しても壊れないよう、
+    # `; ` までは要求せず前方一致にする。
+    assert """f"connect-src 'self'{supabase_connect_src}""" in app_source
 
 
 def test_legacy_password_login_is_gone_entirely():

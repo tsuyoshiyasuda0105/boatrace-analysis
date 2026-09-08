@@ -107,12 +107,41 @@ def test_drafts_contain_no_prohibited_marketing_expressions():
     """「必ず当たる」「確実」等の誤認を招く表現を使わないこと。
 
     「絶対」は「絶対にしない」等の禁止条項で使うので単語一致では見ない。
+    「投資助言」も「投資助言サービスではない」と自己否定する法定文言で使うため、
+    「〜ではない／〜ではありません」で終わる文の中の登場は許容する。
     """
     prohibited = ("必ず当たる", "投資助言", "元本保証")
+    negation_endings = ("ではない", "ではありません")
+
+    def _appears_only_in_negation(text: str, word: str) -> bool:
+        # word を含む一文ずつ切り出し、すべてが自己否定の言い回しで終わっているか確認。
+        # 一文は句点で区切る（規約は日本語なので "。" 区切りで足りる）。
+        sentences = [s for s in text.split("。") if word in s]
+        return bool(sentences) and all(
+            s.rstrip().endswith(negation_endings) for s in sentences
+        )
+
     for draft in DRAFT_ROOT.glob("*.md"):
         source = draft.read_text(encoding="utf-8")
         for word in prohibited:
-            assert word not in source, f"{draft.name} に禁止表現 {word!r}"
+            if word not in source:
+                continue
+            assert _appears_only_in_negation(source, word), (
+                f"{draft.name} に禁止表現 {word!r}（自己否定文以外で出現）"
+            )
+
+
+def test_prohibited_expression_check_still_catches_marketing_use(tmp_path, monkeypatch):
+    """否定文脈の許容が「投資助言サービスをご提供します」のような宣伝文まで
+    通してしまわないことを確かめる回帰テスト。"""
+    fake = tmp_path / "MARKETING.md"
+    fake.write_text("必ず当たる予想を提供します。\n", encoding="utf-8")
+
+    from tests import test_kachisuji_legal_pages as tested
+
+    monkeypatch.setattr(tested, "DRAFT_ROOT", tmp_path)
+    with pytest.raises(AssertionError, match="必ず当たる"):
+        tested.test_drafts_contain_no_prohibited_marketing_expressions()
 
 
 def test_terms_capture_the_required_paid_service_conditions():
