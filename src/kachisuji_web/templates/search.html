@@ -20,6 +20,14 @@
     .stat { padding: 2px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700; }
     .stat-confirmed { background: var(--good-soft); color: var(--good); }
     .stat-pending { background: var(--warn-soft); color: var(--warn); }
+    /* 確定と展示待ちの見出し。混ぜて並べると、いま買えるレースが埋もれる。 */
+    .match-band { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+                  margin: 10px 0 5px; font-size: 11.5px; font-weight: 800; color: var(--good); }
+    .match-band-pending { color: var(--warn); }
+    .match-band span { font-weight: 400; font-size: 11px; color: var(--ink-3); }
+    .match-band:first-child { margin-top: 0; }
+    .match-band-pending + .matchcard, .match-band-pending ~ .matchcard {
+      border-left-color: var(--warn); }
     .strategy-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .strategy-tools input[type="date"] { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--ink); font: inherit; }
     .section-message { min-height: 1.5em; margin: 6px 0; color: var(--ink-3); font-size: 12px; }
@@ -1164,6 +1172,27 @@
       button.setAttribute('aria-label', button.getAttribute('aria-label').replace(expanded ? '閉じる' : '開く', expanded ? '開く' : '閉じる'));
       rows.hidden = expanded;
     });
+    // 当日にならないと決まらない項目。内部名のままだと何を待てばよいか
+    // 分からないので、画面の言葉に直す (2026-09-09)。
+    var sameDayLabels = {
+      weather: '天候', wind_dir: '風向き', wind_speed: '風速',
+      ex_time: '展示タイム', ex_rank: '展示タイム順位',
+      ex_dev: '展示タイム(会場平均比)', ex_st: '展示ST'
+    };
+    function pendingLabel(column) {
+      if (sameDayLabels[column]) return sameDayLabels[column];
+      var boat = /^b([1-6])_(.+)$/.exec(column);
+      if (boat && sameDayLabels[boat[2]]) return boat[1] + '号艇の' + sameDayLabels[boat[2]];
+      return column;
+    }
+    function pendingReason(columns) {
+      var names = (columns || []).map(pendingLabel);
+      if (!names.length) return '未確定の項目があります';
+      if (names.length > 3) {
+        return names.slice(0, 3).join(' / ') + ' ほか' + (names.length - 3) + '件 待ち';
+      }
+      return names.join(' / ') + ' 待ち';
+    }
     function renderMatches(groups) {
       var area = byId('matchResults');
       if (!groups.length) {
@@ -1171,15 +1200,25 @@
         return;
       }
       area.innerHTML = groups.map(function (group) {
-        var races = group.matched.concat(group.pending);
-        var cards = races.map(function (race) {
-          var pending = race.status === 'pending';
+        function card(race, pending) {
           var status = pending
-            ? '🌅 未確定項目あり（' + escapeHtml(race.undetermined_columns.join(', ')) + '）'
+            ? '⏳ ' + escapeHtml(pendingReason(race.undetermined_columns))
             : '✓ 合致確定';
           return '<div class="matchcard"><b>' + escapeHtml(race.jcd) + '場 ' + escapeHtml(race.race_no) + 'R</b>' +
             '<span>' + escapeHtml(race.bet) + '</span><span class="stat ' + (pending ? 'stat-pending' : 'stat-confirmed') + '">' + status + '</span></div>';
-        }).join('') || (Number(group.counts.races_on_date) === 0
+        }
+        // 確定と展示待ちを混ぜると、いま買えるレースが埋もれる。分けて出す。
+        var blocks = [];
+        if (group.matched.length) {
+          blocks.push('<p class="match-band">✓ 合致確定（' + group.matched.length + '）</p>'
+            + group.matched.map(function (r) { return card(r, false); }).join(''));
+        }
+        if (group.pending.length) {
+          blocks.push('<p class="match-band match-band-pending">⏳ 展示待ち（' + group.pending.length + '）'
+            + '<span>展示・天候が出ると確定します（レース40分前ごろ）</span></p>'
+            + group.pending.map(function (r) { return card(r, true); }).join(''));
+        }
+        var cards = blocks.join('') || (Number(group.counts.races_on_date) === 0
           // データが無い日と、条件に合わなかった日は別物。前者を「合致なし」と
           // 見せると、条件を疑って緩め続けてしまう (2026-09-08 の誤解)。
           ? '<div class="matchcard"><span class="strategy-meta">この日のレースデータはまだ届いていません。当日分は前夜〜当朝に用意されます。</span></div>'

@@ -785,3 +785,43 @@ def test_s5_missing_date_is_told_apart_from_no_match(page):
         expect(page.locator("#matchResults")).not_to_contain_text("まだ届いていません")
     finally:
         page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+
+
+def test_s5_pending_items_are_named_in_japanese_and_split_from_confirmed(page):
+    """展示待ちの中身を読める形にする (2026-09-09)。
+
+    以前は b1_ex_dev のような内部名が並ぶだけで、何を待てばよいか分からず、
+    確定した行と混ざって「いま買えるレース」が埋もれていた。
+    """
+    case = _pending_weather_case()
+    conditions = valid_conditions(
+        venue=case["jcd"],
+        weather=["晴"],
+        boats={"1": {"age": {"min": case["b1_age"], "max": case["b1_age"]}}},
+    )
+    response = post_json(page, "/api/strategies", {
+        "name": "pending-readable", "conditions": conditions,
+        "backtest": {"roi": 100, "n": 1}})
+    assert response.status == 200, response.text()
+    strategy_id = response.json()["id"]
+    try:
+        page.reload(wait_until="networkidle")
+        page.locator("#matchDate").fill(case["race_date"])
+        page.locator("#btnMatch").click()
+        expect(page.locator("#matchResults .match-group").first).to_be_visible(timeout=30_000)
+
+        expect(page.locator("#matchResults .match-band-pending").first).to_be_visible()
+        assert "展示・天候が出ると確定します" in page.locator(
+            "#matchResults .match-band-pending").first.inner_text()
+
+        # 判定は待ち項目のバッジだけを見る。手法名には "weather" のような
+        # 文字が入りうるので、カード全体を見ると他のテストの名前を拾う。
+        chips = page.locator("#matchResults .stat-pending")
+        assert chips.count() > 0
+        texts = [chips.nth(i).inner_text() for i in range(chips.count())]
+        assert any("天候" in t for t in texts), texts
+        assert all("待ち" in t for t in texts), texts
+        for raw in ("weather", "b1_ex_dev", "wind_speed", "ex_st"):
+            assert not any(raw in t for t in texts), (raw, texts)
+    finally:
+        page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
