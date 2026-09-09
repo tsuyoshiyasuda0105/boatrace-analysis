@@ -736,10 +736,18 @@ def register_auth_routes(app):
                         "class_name": "nav-btn-health",
                     }
                 )
+            # ロゴの行き先もメニューと同じ判定にする。無料会員に本日のROI候補を
+            # 見せないのに、ロゴだけそこへ送っていた (2026-09-09)。
+            can_see_today = current_role() != "free_member"
             payload.update(
                 {
-                    "home_url": today_races_url,
-                    "home_title": "本日のROI候補一覧",
+                    "home_url": (
+                        today_races_url if can_see_today
+                        else url_for("races")
+                    ),
+                    "home_title": (
+                        "本日のROI候補一覧" if can_see_today else "レース一覧"
+                    ),
                     "items": items,
                     "role_label": f"{current_role()} / {current_auth_provider()}",
                     "is_admin": is_admin(),

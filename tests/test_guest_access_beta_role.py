@@ -326,7 +326,9 @@ def test_session_navigation_restores_member_race_link_without_guest_leak(monkeyp
     assert [item["label"] for item in free_payload["items"]] == [
         "バックテスト", "プラン申込",
     ]
-    assert free_payload["home_url"] == "/member/today-races"
+    # 無料会員には本日のROI候補を出さないので、ロゴの行き先も一覧にする。
+    # 以前はここが /member/today-races で、押すと見せない画面が開いていた。
+    assert free_payload["home_url"] == "/races"
 
     paid = app.test_client()
     _set_role(paid, "paid_member")
@@ -460,3 +462,33 @@ def test_top_invite_forwards_only_campaign_tags_to_signup(monkeypatch):
     # 引き継ぎはブラウザ側で行う。サーバが URL を焼き込むとキャッシュに残る。
     assert "?ref=top-backtest" in html
     assert "utm_source=" not in html
+
+
+def test_logo_sends_free_members_to_the_public_race_list(monkeypatch):
+    """ロゴの行き先を会員メニューと揃える (2026-09-09)。
+
+    本日のROI候補は無料会員に出していないのに、ロゴだけそこへ送っていた。
+    押すと見せない画面が開いてしまう。
+    """
+    app = _create_app(monkeypatch)
+    monkeypatch.setattr(web_app, "_read_top_page_snapshot", lambda *_args: _snapshot())
+    client = app.test_client()
+
+    _set_role(client, "free_member")
+    html = client.get("/").get_data(as_text=True)
+    assert "/member/today-races" not in html, "無料会員にはロゴからもメニューからも出さない"
+
+    for role in ("beta_member", "paid_member"):
+        _set_role(client, role)
+        html = client.get("/").get_data(as_text=True)
+        assert "/member/today-races" in html, role
+
+    nav = client.get("/api/session-navigation")
+    assert nav.status_code == 200
+    assert "/member/today-races" in nav.get_json()["home_url"]
+
+    _set_role(client, "free_member")
+    payload = client.get("/api/session-navigation").get_json()
+    assert payload["is_member"] is True
+    assert "/member/today-races" not in payload["home_url"], "ロゴの行き先も揃える"
+    assert not any("/member/today-races" in item["href"] for item in payload["items"])

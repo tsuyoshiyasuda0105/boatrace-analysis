@@ -16,7 +16,11 @@
   <header class="site-header">
     <div class="container">
       <h1>
-        <a href="{% if is_member() and not cache_neutral_auth %}{{ url_for('member_today_races', date=today_iso_global) }}{% else %}{{ url_for('races', date=today_iso_global) }}{% endif %}" title="{% if is_member() and not cache_neutral_auth %}本日のROI候補一覧{% else %}レース一覧{% endif %}">競艇｜バックテストLAB</a>
+        {# 本日のROI候補は無料会員には出さない。会員メニュー側は除外しているのに
+           ロゴだけ素通しで、無料会員がロゴを押すと見せない画面に飛んでいた
+           (2026-09-09)。判定は会員メニューと必ず揃える。 #}
+        {% set can_see_today = is_member() and not cache_neutral_auth and current_role() != 'free_member' %}
+        <a href="{% if can_see_today %}{{ url_for('member_today_races', date=today_iso_global) }}{% else %}{{ url_for('races', date=today_iso_global) }}{% endif %}" title="{% if can_see_today %}本日のROI候補一覧{% else %}レース一覧{% endif %}">競艇｜バックテストLAB</a>
       </h1>
 
       <form method="get" action="{{ date_form_action|default(url_for('races')) }}" class="date-form">
