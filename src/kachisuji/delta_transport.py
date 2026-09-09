@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import re
 import sqlite3
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,9 @@ from pathlib import Path
 from typing import Any
 
 TABLES = ("asof_race_features", "racers")
+# デルタから受け取ってよい列名の形。ALTER TABLE は識別子をパラメータに
+# できないので、文字列として組み立てる前にここで必ず狭める。
+_COLUMN_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 TRANSPORT_TABLE = "kachisuji_delta_files"
 _DELTA_NAME_OK = __import__("re").compile(r"^\d{8}\.db$")
 # 一度きりの補正デルタ。名前を保存したまま輸送し、適用側で
@@ -255,16 +259,56 @@ def read_applied_names(slim_db: Path) -> set[str]:
         connection.close()
 
 
+def _adopt_new_columns(
+    connection: sqlite3.Connection,
+    table: str,
+    main_names: list[str],
+    delta_names: list[str],
+) -> list[str]:
+    """デルタ側にだけある列を slim 側へ足す。足した列名を返す。
+
+    PC 側で特徴量に列が増えると、本番の slim DB には無いので列名の並びが
+    合わず、デルタが丸ごと拒否される。すると本番の更新が黙って止まる
+    (2026-09-10 に進入変更率を足して気づいた)。
+
+    足してよいのは「末尾に付け足すだけで並びが一致する」場合に限る。
+    途中に差し込まれていたら本当の食い違いなので、そのまま拒否する。
+    ALTER TABLE ADD COLUMN は末尾にしか足せないため、この条件は
+    「足したあと必ず一致する」ことと同じ意味になる。
+    """
+    missing = [name for name in delta_names if name not in main_names]
+    if not missing or main_names + missing != delta_names:
+        return []
+    # 列名はデルタファイル (外部から届くバイト列) 由来なので、そのまま
+    # DDL へ入れない。特徴量の列名として有り得る形だけを通す。
+    bad = [name for name in missing if not _COLUMN_NAME.fullmatch(name)]
+    if bad:
+        raise ValueError(f"unsafe column name in delta: {bad}")
+    for name in missing:
+        # 型は取らず NULL 許容で足す。値はデルタ側の行がそのまま運ぶ。
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {name}")
+    return missing
+
+
 def _validate_schema(
     connection: sqlite3.Connection, delta_connection: sqlite3.Connection
-) -> None:
+) -> list[str]:
+    added: list[str] = []
     for table in TABLES:
         main_cols = connection.execute(f"PRAGMA main.table_info({table})").fetchall()
         delta_cols = delta_connection.execute(f"PRAGMA table_info({table})").fetchall()
         if not main_cols or not delta_cols:
             raise ValueError(f"missing required table: {table}")
-        if [r[1] for r in main_cols] != [r[1] for r in delta_cols]:
-            raise ValueError(f"schema mismatch for table: {table}")
+        main_names = [r[1] for r in main_cols]
+        delta_names = [r[1] for r in delta_cols]
+        if main_names != delta_names:
+            added += _adopt_new_columns(connection, table, main_names, delta_names)
+            main_names = [
+                r[1] for r in connection.execute(f"PRAGMA main.table_info({table})")
+            ]
+            if main_names != delta_names:
+                raise ValueError(f"schema mismatch for table: {table}")
+    return added
 
 
 def _delta_wants_replace(name: str) -> bool:
@@ -282,7 +326,9 @@ def _delta_wants_replace(name: str) -> bool:
 def _apply_one(connection: sqlite3.Connection, delta_path: Path, name: str) -> tuple[int, int]:
     delta_connection = sqlite3.connect(_readonly_uri(delta_path), uri=True)
     try:
-        _validate_schema(connection, delta_connection)
+        added_columns = _validate_schema(connection, delta_connection)
+        if added_columns:
+            print(f"[delta] added columns: {', '.join(added_columns)}", flush=True)
         verb = "INSERT OR REPLACE" if _delta_wants_replace(name) else "INSERT OR IGNORE"
         before = {
             t: int(connection.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])

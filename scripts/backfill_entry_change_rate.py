@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
+import time
 from array import array
 from bisect import bisect_left, bisect_right
 from pathlib import Path
@@ -88,65 +89,74 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--limit", type=int, default=0, help="この行数だけ書いて止める (速度計測用)")
     a = ap.parse_args()
 
     print("履歴を読み込み中…", flush=True)
     history = load_history(a.db)
     events = sum(len(d) for d, _ in history.values())
-    print(f"  選手 {len(history):,} 人 / 出走 {events:,} 件")
+    print(f"  選手 {len(history):,} 人 / 出走 {events:,} 件", flush=True)
 
-    read = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True)
-    todo = read.execute(
-        "SELECT COUNT(*) FROM asof_race_features WHERE schema_version < 11"
-    ).fetchone()[0]
-    print(f"  対象 {todo:,} 行（schema_version < 11）")
-    if not todo:
-        print("  すでに全行が v11 です。")
-        return 0
-
-    # SQL は組み立てずに書き下す。列名は 6 艇で固定なので動的にする理由が
-    # なく、f-string で SQL を作らないほうが後から読む人が安心できる。
-    cursor = read.execute(
+    # 読み切ってから書く。カーソルを開いたまま同じ DB へ書くと、読み手の
+    # 共有ロックと書き手の排他ロックが取り合いになり、ほとんど進まない
+    # (2026-09-10: 2 時間で 0 行)。先に全部メモリへ載せてから書く。
+    print("対象行を読み込み中…", flush=True)
+    read = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True, timeout=60)
+    targets = read.execute(
         "SELECT race_id, asof_date, b1_racer_id, b2_racer_id, b3_racer_id, "
         "b4_racer_id, b5_racer_id, b6_racer_id FROM asof_race_features "
         "WHERE schema_version < 11"
-    )
+    ).fetchall()
+    read.close()
+    print(f"  対象 {len(targets):,} 行", flush=True)
+    if not targets:
+        print("  すでに全行が v11 です。")
+        return 0
 
-    write = None if a.dry_run else sqlite3.connect(a.db)
+    print("計算中…", flush=True)
+    cache: dict[str, int] = {}
+    updates: list[tuple] = []
+    filled = 0
+    for race_id, asof, *racers in targets:
+        start_key = cache.get(asof)
+        if start_key is None:
+            start_key = cache[asof] = _window_start(asof)
+        values = [rate_for(history, racer, asof, start_key) for racer in racers]
+        filled += sum(value is not None for value in values)
+        updates.append((*values, race_id))
+    targets.clear()
+    history.clear()
+    print(f"  値が入った艇 {filled:,} 個"
+          f"（{filled / (len(updates) * 6) * 100:.1f}%）", flush=True)
+
+    if a.dry_run:
+        print("  --dry-run のため書き込みませんでした。")
+        return 0
+    if a.limit:
+        updates = updates[: a.limit]
+        print(f"  --limit のため {len(updates):,} 行だけ書きます。", flush=True)
+
     sql = (
         "UPDATE asof_race_features SET "
         "b1_entry_change_rate=?, b2_entry_change_rate=?, b3_entry_change_rate=?, "
         "b4_entry_change_rate=?, b5_entry_change_rate=?, b6_entry_change_rate=?, "
         "schema_version=11 WHERE race_id=?"
     )
-    done = filled = 0
-    cache: dict[str, int] = {}
-    batch: list[tuple] = []
-    for row in cursor:
-        race_id, asof = row[0], row[1]
-        start_key = cache.get(asof)
-        if start_key is None:
-            start_key = cache[asof] = _window_start(asof)
-        values = [rate_for(history, row[2 + i], asof, start_key) for i in range(6)]
-        filled += sum(v is not None for v in values)
-        batch.append((*values, race_id))
-        done += 1
-        if write is not None and len(batch) >= BATCH:
-            write.executemany(sql, batch)
-            write.commit()
-            batch.clear()
-            print(f"  {done:,} / {todo:,} 行", flush=True)
-    if write is not None and batch:
-        write.executemany(sql, batch)
+    write = sqlite3.connect(a.db, timeout=120)
+    write.execute("PRAGMA synchronous=NORMAL")
+    started = time.time()
+    for offset in range(0, len(updates), BATCH):
+        chunk = updates[offset : offset + BATCH]
+        write.executemany(sql, chunk)
         write.commit()
-    read.close()
-    if write is not None:
-        write.close()
-
-    print(f"\n  {done:,} 行 / 値が入った艇 {filled:,} 個"
-          f"（{filled / (done * 6) * 100:.1f}%）")
-    if a.dry_run:
-        print("  --dry-run のため書き込みませんでした。")
+        done = offset + len(chunk)
+        rate = done / max(time.time() - started, 0.001)
+        left = (len(updates) - done) / rate if rate else 0
+        print(f"  {done:,} / {len(updates):,} 行  "
+              f"({rate:,.0f} 行/秒, 残り {left / 60:.1f} 分)", flush=True)
+    write.close()
+    print()
+    print(f"  {len(updates):,} 行を書きました。")
     return 0
 
 
