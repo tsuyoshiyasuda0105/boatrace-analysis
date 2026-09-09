@@ -36,11 +36,14 @@ from src.features.accident_history import (
 )
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
 KIMARITE_MIN_ENTRIES = 5
+# 進入変更 (前づけ) 率を出すのに必要な最低出走数。少ない出走で 1 回動いた
+# だけの選手を「前づけ屋」と呼ばないための下限。
+ENTRY_CHANGE_MIN_STARTS = 50
 KIMARITE_LABELS = {
     "逃げ": "nige",
     "差し": "sashi",
@@ -140,7 +143,20 @@ RESULT_COLUMNS: list[tuple[str, str]] = [
     ("result_tansho_json", "TEXT"),
     ("payout_tansho_json", "TEXT"),
 ]
-ALL_COLUMNS = BASE_COLUMNS + _boat_columns() + RESULT_COLUMNS
+# 進入変更率: 枠と違うコースから出た割合 (%)。前日までの 365 日。
+#
+# 後から足した列は、必ず ALL_COLUMNS の末尾に置く。既存 DB は
+# ``ALTER TABLE ADD COLUMN`` で末尾に足されるので、真ん中に宣言すると
+# 「新しく作った DB」と「移行した DB」で列の並びがずれる。本番への配信
+# (src/kachisuji/delta_transport.py) は列名を並び順で突き合わせるため、
+# ずれた時点でデルタが丸ごと拒否される。
+ENTRY_CHANGE_COLUMNS: list[tuple[str, str]] = [
+    (f"b{boat}_entry_change_rate", "REAL") for boat in BOATS
+]
+
+ALL_COLUMNS = (
+    BASE_COLUMNS + _boat_columns() + RESULT_COLUMNS + ENTRY_CHANGE_COLUMNS
+)
 
 
 def create_output_schema(conn: sqlite3.Connection) -> None:
@@ -367,6 +383,28 @@ class CourseKimariteHistory:
 
     course_dates: dict[int, tuple[str, ...]]
     course_wins_prefix: dict[int, dict[str, tuple[int, ...]]]
+    # コースで割らない、その選手の全出走。進入変更率はここから出す。
+    all_dates: tuple[str, ...] = ()
+    change_prefix: tuple[int, ...] = (0,)
+
+    def entry_change_rate(
+        self,
+        window_start: str,
+        asof_date: str,
+        min_starts: int = ENTRY_CHANGE_MIN_STARTS,
+    ) -> float | None:
+        """枠と違うコースから出た割合 (%)。
+
+        分母はその期間の全出走。出走が ``min_starts`` に満たなければ NULL。
+        """
+
+        left = bisect_left(self.all_dates, window_start)
+        right = bisect_right(self.all_dates, asof_date)
+        starts = right - left
+        if starts < min_starts:
+            return None
+        changes = self.change_prefix[right] - self.change_prefix[left]
+        return changes * 100.0 / starts
 
     def rates(
         self,
@@ -549,6 +587,8 @@ def _load_course_kimarite_histories(
         course_wins = {
             course: {key: [0] for key in KIMARITE_KEYS} for course in BOATS
         }
+        all_dates: list[str] = []
+        changes: list[int] = [0]
 
         def finish_active() -> None:
             if active_racer is None:
@@ -566,6 +606,8 @@ def _load_course_kimarite_histories(
                     for course, prefixes in course_wins.items()
                     if course_dates[course]
                 },
+                tuple(all_dates),
+                tuple(changes),
             )
 
         for event in cursor:
@@ -577,8 +619,16 @@ def _load_course_kimarite_histories(
                 course_wins = {
                     course: {key: [0] for key in KIMARITE_KEYS} for course in BOATS
                 }
+                all_dates = []
+                changes = [0]
             course = int(event["course_number"])
             course_dates[course].append(_iso(event["race_date"]))
+            # 枠番と実際の進入コースが違えば「動いた」1 回。枠番が読めない
+            # 行は動いたかどうか判断できないので、分母にも入れない。
+            boat_number = event["boat_number"]
+            if boat_number is not None:
+                all_dates.append(_iso(event["race_date"]))
+                changes.append(changes[-1] + int(int(boat_number) != course))
             winner_key = winners.get(
                 (str(event["race_id"]), int(event["boat_number"]), racer_id)
             )
@@ -607,6 +657,19 @@ def _course_kimarite_rates(
         return {key: None for key in KIMARITE_KEYS}
     window_start = (date.fromisoformat(asof_date) - timedelta(days=364)).isoformat()
     return histories[int(racer_id)].rates(assumed_course, window_start, asof_date)
+
+
+def _entry_change_rate(
+    histories: Mapping[int, CourseKimariteHistory],
+    racer_id: Any,
+    asof_date: str,
+) -> float | None:
+    """前日までの 365 日で、枠と違うコースから出た割合 (%)。"""
+
+    if racer_id is None or int(racer_id) not in histories:
+        return None
+    window_start = (date.fromisoformat(asof_date) - timedelta(days=364)).isoformat()
+    return histories[int(racer_id)].entry_change_rate(window_start, asof_date)
 
 
 ACCIDENT_SOURCE_KIND = "reconstructed"
@@ -1123,6 +1186,9 @@ def _build_row(
                     f"b{boat}_kimarite_rate_{key}": kimarite_rates[key]
                     for key in KIMARITE_KEYS
                 },
+                f"b{boat}_entry_change_rate": _entry_change_rate(
+                    course_kimarite_histories, entry.get("racer_number"), asof_date
+                ),
                 f"b{boat}_accident_rate": accident_rate,
                 f"b{boat}_accident_rate_365d": rates["accident"],
                 f"b{boat}_accident_points": accident_points,
@@ -1451,6 +1517,15 @@ def verify_features(
                     else rates[key]
                 )
                 if not _equal_rate(row[column], expected_rate):
+                    mismatches.append(f"{row['race_id']}:{column}")
+            # 進入変更率は v11 で足した列。v10 以前の行は「まだ計算して
+            # いない」ので、間違いとして数えない。
+            if schema_version >= 11:
+                column = f"b{boat}_entry_change_rate"
+                expected_change = _entry_change_rate(
+                    course_kimarite_histories, racer_id, row["asof_date"]
+                )
+                if not _equal_rate(row[column], expected_change):
                     mismatches.append(f"{row['race_id']}:{column}")
             column = f"b{boat}_accident_rate_365d"
             if column in row.keys() and not _equal_rate(row[column], rates["accident"]):

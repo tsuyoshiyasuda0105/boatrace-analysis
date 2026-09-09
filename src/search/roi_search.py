@@ -37,6 +37,7 @@ TOP_LEVEL_KEYS = frozenset(
         "grade",
         "boats",
         "compare",
+        "entry_change_risk",
     }
 )
 # 季節は race_date から導出する。専用カラムを足すと 600MB〜2.5GB の特徴量 DB を
@@ -88,6 +89,7 @@ BOAT_KEYS = frozenset(
         "accident_rate_365d",
         "accident_rate_period",
         "accident_count_period",
+        "entry_change_rate",
     }
 )
 RANGE_KEYS = frozenset({"min", "max"})
@@ -109,6 +111,19 @@ KIMARITE_KEYS = frozenset({"nige", "sashi", "makuri", "makurizashi", "nuki", "me
 BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
 HISTORY_CUTOFF = "2023-05-01"
 RESTORED_ACCIDENT_CUTOFF = "2016-06-01"
+# レース単位の「進入変更リスク」= 2〜6 号艇のうち前づけ率が最も高い選手の率。
+# 1 号艇は前づけされる側なので分子に入れない。
+#
+# SQLite の MAX() は 1 つでも NULL があれば NULL を返す。ここではそれが欲しい
+# 挙動で、「5 人全員の前づけ率が分かって初めてレースの荒さを言える」という
+# 意味になる。1 人でも出走が少なくて判定できない選手がいれば、そのレースは
+# 「判定できず」として ``condition_null`` に出す。
+#
+# 分かっている選手だけで判定する案も試したが、当日照合 (match_races) は列名
+# しか扱えないため、バックテストと当日で結果が食い違ってしまう。数を稼ぐより
+# 二つの画面が同じ答えを出すほうを取った。
+ENTRY_CHANGE_RISK_COLUMNS = tuple(f"b{boat}_entry_change_rate" for boat in range(2, 7))
+ENTRY_CHANGE_RISK_SQL = "MAX(" + ",".join(ENTRY_CHANGE_RISK_COLUMNS) + ")"
 DEFAULT_BET = {"type": "sanrentan", "first": 1, "second": 2, "third": 3}
 # 1 レースあたりの点数上限。無制限にすると 1 リクエストで払戻表を何十点も
 # 引き当てることになり、本番 (Render) の共有 DB を長く占有する。
@@ -117,7 +132,7 @@ MAX_BET_TICKETS = 20
 # レース数 × 点数 × この額。1 点のときは従来の「100円1点」と完全に一致する。
 STAKE_PER_TICKET = 100.0
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
-READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6, 7, 8, 9, 10)
+READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6, 7, 8, 9, 10, 11)
 RETIRED_ODDS_CONDITION_KEYS = frozenset({"odds", "t5_odds_favorite"})
 ODDS_FILTER_REMOVED_MESSAGE = (
     "オッズによる絞り込みは廃止されました。"
@@ -317,6 +332,9 @@ def _compile_conditions(
     filters: list[str] = [f"schema_version IN ({','.join('?' for _ in READABLE_SCHEMA_VERSIONS)})"]
     params: list[Any] = list(READABLE_SCHEMA_VERSIONS)
     null_columns: set[str] = set()
+    # 進入変更率を使ったかどうか。レース条件と艇ごとの両方で立ちうるので、
+    # どちらの処理よりも前で初期化しておく。
+    entry_change_condition = False
 
     scalar_columns = {
         "venue": "jcd",
@@ -371,6 +389,28 @@ def _compile_conditions(
         placeholders = ",".join("?" for _ in values)
         _add_predicate(filters, params, null_columns, "wind_dir", f"wind_dir IN ({placeholders})", values)
 
+    if conditions.get("entry_change_risk") is not None:
+        label = "entry_change_risk"
+        raw = _mapping(conditions[label], label)
+        _known_keys(raw, RANGE_KEYS, label)
+        comparisons: list[str] = []
+        bounds: list[float] = []
+        if raw.get("min") is not None:
+            comparisons.append(f"{ENTRY_CHANGE_RISK_SQL} >= ?")
+            bounds.append(_number(raw["min"], f"{label}.min"))
+        if raw.get("max") is not None:
+            comparisons.append(f"{ENTRY_CHANGE_RISK_SQL} <= ?")
+            bounds.append(_number(raw["max"], f"{label}.max"))
+        if comparisons:
+            if len(bounds) == 2 and bounds[0] > bounds[1]:
+                raise ValueError(f"{label}.min must not exceed max")
+            # 欠測の報告と当日照合のため、式ではなく元の列名を登録する。
+            filters.append(
+                f"(({' AND '.join(comparisons)}) OR {ENTRY_CHANGE_RISK_SQL} IS NULL)"
+            )
+            params.extend(bounds)
+            null_columns.update(ENTRY_CHANGE_RISK_COLUMNS)
+            entry_change_condition = True
     if conditions.get("wind_speed") is not None:
         _add_range(filters, params, null_columns, "wind_speed", conditions["wind_speed"], "wind_speed")
 
@@ -435,6 +475,7 @@ def _compile_conditions(
                 "accident_rate_365d",
                 "accident_rate_period",
                 "accident_count_period",
+                "entry_change_rate",
             ):
                 if boat.get(key) is not None:
                     active = _add_range(
@@ -452,6 +493,9 @@ def _compile_conditions(
                     restored_accident_condition = restored_accident_condition or (
                         key in {"accident_rate_period", "accident_count_period"}
                         and active
+                    )
+                    entry_change_condition = entry_change_condition or (
+                        key == "entry_change_rate" and active
                     )
                     restored_avg_st_condition = restored_avg_st_condition or (
                         key == "avg_st" and active
@@ -590,7 +634,7 @@ def _compile_conditions(
     required_cutoffs: list[str] = []
     if history_condition:
         required_cutoffs.append(HISTORY_CUTOFF)
-    if restored_accident_condition or restored_avg_st_condition:
+    if restored_accident_condition or restored_avg_st_condition or entry_change_condition:
         required_cutoffs.append(RESTORED_ACCIDENT_CUTOFF)
     if required_cutoffs:
         cutoff = max(required_cutoffs)

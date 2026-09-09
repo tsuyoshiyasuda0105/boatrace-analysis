@@ -44,7 +44,7 @@
     <div class="legendbar">
       <span><span class="chip day">📋 前日確定</span> 番組表・前日までの集計・潮汐計算</span>
       <span><span class="chip live">⏱ 直前確定</span> 天候・風・展示</span>
-      <span><span class="chip restored">📅 2016/6〜</span> 復元事故率・直近180日平均ST</span>
+      <span><span class="chip restored">📅 2016/6〜</span> 復元事故率・直近180日平均ST・前づけ率</span>
       <span><span class="chip lim">📅 2023/5〜</span> 決まり手・過去1年事故率</span>
       <span><span class="chip lim2">📅 2024/12〜</span> 展示順位・展示タイム・展示ST</span>
     </div>
@@ -147,6 +147,17 @@
                 <option value="4,5">中風（4〜5m）</option>
                 <option value="6,">強風（6m以上）</option>
               </select>
+            </div>
+            <div class="row">
+              <label for="entryRisk">進入変更リスク <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span></label>
+              <select id="entryRisk">
+                <option value="">指定なし</option>
+                <option value=",10">きれいな進入（10%以下）</option>
+                <option value=",20">ふつう以下（20%以下）</option>
+                <option value=",30">やや荒れも含む（30%以下）</option>
+                <option value="40,">荒れそうなレースだけ（40%以上）</option>
+              </select>
+              <span class="unit" id="entryRiskHelp">2〜6号艇のうち、前づけ率がいちばん高い選手の率。前日までの365日で判定します。</span>
             </div>
             <div class="row">
               <label for="tide">潮 <span class="chip day">📋</span></label>
@@ -310,6 +321,8 @@
         '<div class="cond restored-condition"><strong>事故率（審査期・検証用）</strong> <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜・推奨</span>' + compareSelect('b' + i + 'AccidentPeriodCmp') + '<input type="number" id="b' + i + 'AccidentPeriod" value="1.00" min="0" max="100" step="0.05"><span class="unit">%</span></div>' +
         '<div class="cond restored-condition">事故件数（審査期・検証用） <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span>' + compareSelect('b' + i + 'AccidentCountPeriodCmp') + '<input type="number" id="b' + i + 'AccidentCountPeriod" value="1" min="0" step="1"><span class="unit">件</span></div>' +
         '<div class="cond limited">事故点（審査期） <span class="chip day">📋</span>' + compareSelect('b' + i + 'AccidentPointsCmp') + '<input type="number" id="b' + i + 'AccidentPoints" value="2" min="0" step="1"><span class="unit">点</span></div>' +
+        '<div class="cond restored-condition"><strong>前づけ率</strong> <span class="chip day">📋</span><span class="chip restored">📅 2016/6〜</span>' + compareSelect('b' + i + 'EntryChangeCmp') + '<input type="number" id="b' + i + 'EntryChange" value="10" min="0" max="100" step="1"><span class="unit">%</span>' +
+          '<span class="kimarite-help">この艇の選手が、枠と違うコースから出た割合です。前日までの365日、出走50回未満の選手は判定しません。</span></div>' +
         '<div class="cond limited">事故率（過去1年・参考） <span class="chip day">📋</span><span class="chip lim">📅 2023/5〜</span>' + compareSelect('b' + i + 'Accident365Cmp') + '<input type="number" id="b' + i + 'Accident365" value="0.30" min="0" max="100" step="0.05"><span class="unit">%</span></div>' +
         '</div></details>';
     }
@@ -614,6 +627,7 @@
       addRange(boat, 'accident_rate_period', 'b' + i + 'AccidentPeriodCmp', 'b' + i + 'AccidentPeriod');
       addRange(boat, 'accident_count_period', 'b' + i + 'AccidentCountPeriodCmp', 'b' + i + 'AccidentCountPeriod');
       addRange(boat, 'accident_points', 'b' + i + 'AccidentPointsCmp', 'b' + i + 'AccidentPoints');
+      addRange(boat, 'entry_change_rate', 'b' + i + 'EntryChangeCmp', 'b' + i + 'EntryChange');
       addRange(boat, 'accident_rate_365d', 'b' + i + 'Accident365Cmp', 'b' + i + 'Accident365');
       var exFrom = byId('b' + i + 'ExFrom').value;
       if (exFrom) boat.ex_rank = {min: Number(exFrom), max: Number(byId('b' + i + 'ExTo').value)};
@@ -719,6 +733,13 @@
       if (weather.length) result.weather = weather;
       var windDirections = Array.from(byId('windDirection').selectedOptions).map(function (option) { return option.value; });
       if (windDirections.length) result.wind_dir = windDirections;
+      var entryRisk = byId('entryRisk').value;
+      if (entryRisk) {
+        var riskBounds = entryRisk.split(',');
+        result.entry_change_risk = {};
+        if (riskBounds[0]) result.entry_change_risk.min = Number(riskBounds[0]);
+        if (riskBounds[1]) result.entry_change_risk.max = Number(riskBounds[1]);
+      }
       var wind = byId('windStrength').value;
       if (wind) {
         var bounds = wind.split(','); result.wind_speed = {};
@@ -847,6 +868,7 @@
       if (conditions.grade) race.push('グレード: ' + conditions.grade.map(gradeLabel).join('・'));
       if (conditions.wind_dir) race.push(controlLabel('windDirection', '風向き') + ': ' + conditions.wind_dir.join('・'));
       if (conditions.wind_speed) race.push(rangeText('風速', conditions.wind_speed, 'm'));
+      if (conditions.entry_change_risk) race.push(rangeText('進入変更リスク', conditions.entry_change_risk, '%'));
       if (conditions.tide_phase !== undefined) race.push(controlLabel('tide', '潮') + ': ' + conditions.tide_phase);
       if (race.length) groups.push(['レース', race]);
 
@@ -864,7 +886,7 @@
         ex_dev: ['ExDev', '秒'], ex_st: ['ExSt', '秒'], kimarite: ['Kimarite', ''],
         accident_rate: ['Accident', '%'], accident_rate_period: ['AccidentPeriod', '%'],
         accident_count_period: ['AccidentCountPeriod', '件'], accident_points: ['AccidentPoints', '点'],
-        accident_rate_365d: ['Accident365', '%']
+        accident_rate_365d: ['Accident365', '%'], entry_change_rate: ['EntryChange', '%']
       };
       var boatRows = [];
       Object.keys(conditions.boats || {}).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (boatNumber) {

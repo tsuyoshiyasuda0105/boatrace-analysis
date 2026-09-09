@@ -13,6 +13,7 @@ from src.features.accident_history import (
 )
 from src.features.asof_builder import (
     ALL_COLUMNS,
+    SCHEMA_VERSION,
     _class_mix,
     build_features,
     coverage_rows,
@@ -486,7 +487,7 @@ def test_program_and_preview_values_are_copied_and_metrics_are_correct(tmp_path)
     assert row["b1_local_rate2"] == pytest.approx(41.0)
     assert row["b1_age"] == 25
     assert row["b2_age"] == 24
-    assert row["schema_version"] == 10
+    assert row["schema_version"] == SCHEMA_VERSION
     assert row["b1_motor_rate2"] == pytest.approx(31.0)
     assert row["b1_ex_time"] == pytest.approx(6.70)
     assert row["b1_ex_st"] == pytest.approx(-0.02)
@@ -894,3 +895,45 @@ def test_exhibition_derivation_requires_all_six_and_coverage_reports(tmp_path):
     assert coverage["race_id"]["coverage_pct"] == 100.0
     assert coverage["b1_ex_time"]["oldest_date"] == "2025-06-02"
     assert coverage["wind_dir"]["coverage_pct"] == 100.0  # course-relative frame always classifies valid wind
+
+
+def test_a_new_database_and_a_migrated_one_end_up_with_the_same_column_order(
+    tmp_path: Path,
+) -> None:
+    """後から足した列は、どちらの経路でも同じ位置に来ること。
+
+    既存 DB は ALTER TABLE で末尾に足される。ALL_COLUMNS の真ん中に新しい列
+    を宣言すると、作り直した DB と移行した DB で並びがずれる。本番配信
+    (delta_transport._validate_schema) は列名を並び順で突き合わせるので、
+    ずれた時点でデルタが丸ごと拒否される (2026-09-10 に作り込みかけた)。
+    """
+    import src.features.asof_builder as builder
+
+    fresh = sqlite3.connect(tmp_path / "fresh.db")
+    create_output_schema(fresh)
+    fresh_columns = [row[1] for row in fresh.execute("PRAGMA table_info(asof_race_features)")]
+
+    # 進入変更率が無かった頃の DB を作り、いまのコードで移行する
+    original = builder.ALL_COLUMNS
+    older = sqlite3.connect(tmp_path / "older.db")
+    try:
+        builder.ALL_COLUMNS = [
+            column for column in original if "entry_change" not in column[0]
+        ]
+        create_output_schema(older)
+    finally:
+        builder.ALL_COLUMNS = original
+    create_output_schema(older)
+    migrated = [row[1] for row in older.execute("PRAGMA table_info(asof_race_features)")]
+
+    assert fresh_columns == migrated
+
+
+def test_columns_added_after_the_first_release_sit_at_the_end(tmp_path: Path) -> None:
+    """新しい列は ALL_COLUMNS の末尾。真ん中に差し込まない。"""
+    connection = sqlite3.connect(tmp_path / "order.db")
+    create_output_schema(connection)
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(asof_race_features)")]
+    entry_change = [name for name in columns if name.endswith("_entry_change_rate")]
+    assert entry_change == [f"b{boat}_entry_change_rate" for boat in range(1, 7)]
+    assert columns[-len(entry_change):] == entry_change
