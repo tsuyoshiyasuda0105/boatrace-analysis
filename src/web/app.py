@@ -8028,6 +8028,8 @@ def create_app(
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             f"connect-src 'self'{supabase_connect_src} https://cloudflareinsights.com; "
+            # 使い方ページの解説動画。youtube-nocookie は再生するまで Cookie を置かない版。
+            "frame-src https://www.youtube-nocookie.com; "
             "frame-ancestors 'none'; "
             "form-action 'self'; "
             "base-uri 'self';"
@@ -8124,6 +8126,7 @@ def create_app(
     register_auth_routes(app)
     register_billing_routes(app)
     app.register_blueprint(__import__("src.web.legal_bp", fromlist=["bp"]).bp)
+    app.register_blueprint(__import__("src.web.guide_bp", fromlist=["bp"]).bp)
     app.register_blueprint(__import__("src.web.signup_bp", fromlist=["bp"]).bp)
     app.register_blueprint(kachisuji_bp)
     if start_prediction_bp is not None:

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}使い方 | 競艇｜バックテストLAB{% endblock %}
+{% block head_extra %}
+<style>
+  .guide-page { max-width: 940px; margin: 2rem auto 3rem; padding: 0 1rem; }
+  .guide-head h1 { margin: 0 0 .4rem; }
+  .guide-head p { margin: 0 0 .3rem; color: #b9c2cf; line-height: 1.8; }
+  .guide-note { margin: 1.4rem 0 2rem; padding: .9rem 1rem; border-left: 3px solid #d4af5f;
+                background: rgba(212,175,95,.07); color: #d8d3c8; line-height: 1.8; border-radius: 0 4px 4px 0; }
+
+  .guide-list { display: grid; gap: 2rem; margin: 0; padding: 0; list-style: none; counter-reset: guide; }
+  .guide-item { min-width: 0; }
+  .guide-item h2 { display: flex; align-items: baseline; gap: .6rem; margin: 0 0 .35rem; font-size: 1.05rem; }
+  .guide-item h2::before { counter-increment: guide; content: counter(guide);
+                           flex: 0 0 auto; width: 1.7em; height: 1.7em; display: inline-flex;
+                           align-items: center; justify-content: center; border-radius: 50%;
+                           background: rgba(212,175,95,.14); color: #d4af5f;
+                           font-size: .78rem; font-weight: 700; }
+  .guide-len { margin-left: auto; flex: 0 0 auto; color: #8b93a1; font-size: .78rem; font-weight: 400; white-space: nowrap; }
+  .guide-lead { margin: 0 0 .7rem; color: #b9c2cf; line-height: 1.8; font-size: .93rem; }
+
+  /* 16:9 を保ったまま横幅に追従させる */
+  .guide-frame { position: relative; width: 100%; padding-top: 56.25%;
+                 background: #000; border: 1px solid #303541; border-radius: 8px; overflow: hidden; }
+  .guide-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+  .guide-foot { margin-top: 2.5rem; padding-top: 1.2rem; border-top: 1px solid #303541;
+                color: #8b93a1; font-size: .86rem; line-height: 1.8; }
+  .guide-foot a { color: #a9caed; }
+
+  @media (max-width: 560px) {
+    .guide-page { margin-top: 1.2rem; }
+    .guide-item h2 { flex-wrap: wrap; font-size: 1rem; }
+    .guide-len { margin-left: 0; width: 100%; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="guide-page">
+  <div class="guide-head">
+    <h1>使い方</h1>
+    <p>上から順に見ていくと、ひと通り使えるようになります。全部で15分ほどです。</p>
+  </div>
+
+  <p class="guide-note">
+    このアプリは、舟券を推奨するものではありません。過去のデータを条件で絞って、
+    その条件で買い続けていたら結果がどうだったかを確かめるための道具です。
+    表示される数字は過去の集計結果であり、今後を保証するものではありません。
+  </p>
+
+  <ol class="guide-list">
+    {% for v in videos %}
+    <li class="guide-item">
+      <h2>{{ v.title }}<span class="guide-len">{{ v.length }}</span></h2>
+      <p class="guide-lead">{{ v.lead }}</p>
+      <div class="guide-frame">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/{{ v.id }}?rel=0"
+          title="{{ v.title }}"
+          loading="lazy"
+          allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen></iframe>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+
+  <p class="guide-foot">
+    実際に触ってみるなら <a href="{{ url_for('kachisuji.index') }}">バックテスト画面</a> から。
+    登録なしで使える範囲があります。
+  </p>
+</div>
+{% endblock %}
