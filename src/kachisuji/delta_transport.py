@@ -39,6 +39,9 @@ _DELTA_NAME_OK = __import__("re").compile(r"^\d{8}\.db$")
 # _delta_wants_replace が既存行を上書きできるようにする (通常の \d{8}.db は
 # 追加専用のまま)。安全な文字だけ許可してパス経路の混入を防ぐ。
 _BACKFILL_NAME_OK = __import__("re").compile(r"^backfill_[A-Za-z0-9_]+\.db$")
+# 値だけを運ぶ「継ぎ当て」。既存行の一部の列を書き換えるだけで、行は増やさない。
+_PATCH_NAME_OK = __import__("re").compile(r"^patch_[A-Za-z0-9_]+\.db$")
+PATCH_TABLE = "asof_column_patch"
 MIN_FREE_BYTES = 100 * 1024 * 1024
 
 
@@ -139,8 +142,8 @@ def canonical_delta_name(path: Path) -> str:
     name = path.name
     if _DELTA_NAME_OK.fullmatch(name):
         return name
-    if _BACKFILL_NAME_OK.fullmatch(name):
-        # backfill_YYYYMMDD.db 等は名前を保持 (適用側で REPLACE 判定に使う)。
+    if _BACKFILL_NAME_OK.fullmatch(name) or _PATCH_NAME_OK.fullmatch(name):
+        # backfill_*.db / patch_*.db は名前を保持 (適用側の判定に使う)。
         return name
     m = __import__("re").fullmatch(r"kachisuji_delta_(\d{8})\.db", name)
     if m:
@@ -311,6 +314,64 @@ def _validate_schema(
     return added
 
 
+def _delta_is_patch(name: str) -> bool:
+    """名前が "patch_" で始まるものだけ「値の継ぎ当て」として扱う。
+
+    丸ごと運ぶデルタは 1 行 1KB 強あり、後から足した列の値を過去全行へ
+    届けるには 638MB 動かすことになる。継ぎ当ては race_id と対象の列だけを
+    運ぶので 56MB で済む (2026-09-10: 進入変更率 569,082 行)。
+
+    行は作らない。slim に無い race_id は黙って無視する。列を足すことは
+    あるが、値を消すことはしない。
+    """
+    return name.lower().startswith("patch_")
+
+
+def _apply_patch(
+    connection: sqlite3.Connection, delta_connection: sqlite3.Connection
+) -> tuple[int, list[str]]:
+    """継ぎ当てを当てる。(書き換えた行数, 足した列名) を返す。"""
+    columns = [
+        str(row[1])
+        for row in delta_connection.execute(f"PRAGMA table_info({PATCH_TABLE})")
+    ]
+    if not columns:
+        raise ValueError(f"missing required table: {PATCH_TABLE}")
+    if columns[0] != "race_id":
+        raise ValueError(f"{PATCH_TABLE} must start with race_id")
+    targets = columns[1:]
+    if not targets:
+        raise ValueError(f"{PATCH_TABLE} has no columns to write")
+    # 列名は外部から届くファイル由来。DDL にも UPDATE にも入れる前に狭める。
+    bad = [name for name in targets if not _COLUMN_NAME.fullmatch(name)]
+    if bad:
+        raise ValueError(f"unsafe column name in patch: {bad}")
+    if len(set(targets)) != len(targets):
+        raise ValueError(f"{PATCH_TABLE} repeats a column")
+
+    table = "asof_race_features"
+    existing = {
+        str(row[1]) for row in connection.execute(f"PRAGMA main.table_info({table})")
+    }
+    if "race_id" not in existing:
+        raise ValueError(f"missing required table: {table}")
+    added = [name for name in targets if name not in existing]
+    for name in added:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {name}")
+
+    assignments = ", ".join(f"{name}=?" for name in targets)
+    cursor = connection.executemany(
+        f"UPDATE {table} SET {assignments} WHERE race_id=?",
+        (
+            (*row[1:], row[0])
+            for row in delta_connection.execute(
+                f"SELECT race_id, {', '.join(targets)} FROM {PATCH_TABLE}"
+            )
+        ),
+    )
+    return int(cursor.rowcount or 0), added
+
+
 def _delta_wants_replace(name: str) -> bool:
     """名前が "backfill" で始まるデルタだけ既存行の上書きを許す。
 
@@ -326,6 +387,17 @@ def _delta_wants_replace(name: str) -> bool:
 def _apply_one(connection: sqlite3.Connection, delta_path: Path, name: str) -> tuple[int, int]:
     delta_connection = sqlite3.connect(_readonly_uri(delta_path), uri=True)
     try:
+        if _delta_is_patch(name):
+            updated, added_columns = _apply_patch(connection, delta_connection)
+            if added_columns:
+                print(f"[patch] added columns: {', '.join(added_columns)}", flush=True)
+            print(f"[patch] {name}: updated {updated:,} rows", flush=True)
+            connection.execute(
+                "INSERT OR IGNORE INTO applied_deltas(name, applied_at) VALUES (?, ?)",
+                (name, datetime.now(timezone.utc).isoformat()),
+            )
+            # 行は増えない。呼び出し側の集計と噛み合うよう 0 を返す。
+            return (0, 0)
         added_columns = _validate_schema(connection, delta_connection)
         if added_columns:
             print(f"[delta] added columns: {', '.join(added_columns)}", flush=True)

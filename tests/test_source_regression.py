@@ -50,6 +50,12 @@ def test_kachisuji_apply_paths_never_full_copy_the_slim_database():
 
 
 _AUDITED_FSTRING_SQL_EXPRESSIONS = {
+    # delta_transport._apply_patch: PATCH_TABLE はモジュール定数、targets は
+    # 直前に _COLUMN_NAME で英小文字・数字・_ に限定した列名のみ。値は
+    # すべてパラメータ渡し。
+    "PATCH_TABLE",
+    "', '.join(targets)",
+    "', '.join(columns)",
     # delta_transport._adopt_new_columns: table は固定タプル TABLES の要素、
     # name はデルタ由来だが直前に _COLUMN_NAME で英小文字・数字・_ に限定。
     "name",
@@ -122,11 +128,13 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # パラメータ渡し・racer_number は int() 強制。既存の進入変更タグと同じ作法で監査済。
     # 2026-09-10: 進入変更率で特徴量に列が増え、本番 slim DB へ届ける途中で
     # デルタが拒否される問題を直した。delta_transport で f-string SQL が
-    # 2 件増えて 175 に (_adopt_new_columns の ALTER TABLE と、列を足した
-    # あとに並びを確かめ直す PRAGMA)。補間は table (固定タプル TABLES の
+    # 2 件増え、さらに値だけを運ぶ継ぎ当て (_apply_patch) で 4 件増えて
+    # 179 に。さらに継ぎ当てを作る scripts/emit_column_patch.py で 1 件増えて
+    # 180 に。継ぎ当ての列名は作る側・当てる側の両方で英小文字・数字・_ に
+    # 狭めてから SQL へ入れている。補間は table (固定タプル TABLES の
     # ループ変数) と name (デルタ由来だが _COLUMN_NAME で
     # [a-z][a-z0-9_]{0,63} に限定済み) のみ。
-    assert len(calls) == 175, (
+    assert len(calls) == 180, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )
