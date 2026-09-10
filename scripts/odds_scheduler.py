@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.collectors.odds import collect_one_race
+from src import odds_fetch_status
 from src.db.connection import connect as db_connect
 
 
@@ -236,11 +237,18 @@ def run_one_pass(verbose: bool = False) -> dict:
         print(f"[{now_jst.strftime('%H:%M:%S')}] due snapshots: {len(due)}")
 
     summary = {"now": now_jst.isoformat(), "n_due": len(due), "n_done": 0,
-               "n_paper_signals": 0, "items": []}
+               "n_failed": 0, "n_paper_signals": 0, "items": []}
+    # 狙ったレースの結果を、成功も失敗もここに貯めて最後にまとめて残す。
+    # レースごとに DB へ繋ぐと本番の接続枠 (15) を食う。
+    status_rows: list[tuple[str, str, str, str, int]] = []
     for race_id, label in due:
         try:
             r = collect_one_race(race_id, snapshot_label=label)
             summary["items"].append(r)
+            state, detail, count = odds_fetch_status.outcome(r)
+            status_rows.append((race_id, label, state, detail, count))
+            if state != odds_fetch_status.STATE_OK:
+                summary["n_failed"] += 1
             if r.get("odds_inserted", 0) > 0:
                 summary["n_done"] += 1
             if verbose:
@@ -255,8 +263,13 @@ def run_one_pass(verbose: bool = False) -> dict:
                     if verbose:
                         print(f"    paper_trade record FAILED: {e}")
         except Exception as e:
-            if verbose:
-                print(f"  {race_id} [{label}] ERROR: {e}")
+            # ここは以前、verbose のときしか何も残らなかった。本番の cron は
+            # verbose が立たないので、失敗が完全に消えていた (2026-09-10 修正)。
+            state, detail, _ = odds_fetch_status.outcome(None, e)
+            status_rows.append((race_id, label, state, detail, 0))
+            summary["n_failed"] += 1
+            print(f"  {race_id} [{label}] ERROR: {e}", flush=True)
+    summary["n_recorded"] = odds_fetch_status.record(status_rows)
     return summary
 
 
@@ -420,7 +433,8 @@ def main():
         daemon_loop(interval_sec=args.interval, verbose=args.verbose)
     else:
         s = run_one_pass(verbose=args.verbose)
-        print(f"due={s['n_due']} done={s['n_done']}")
+        print(f"due={s['n_due']} done={s['n_done']} "
+              f"failed={s.get('n_failed', 0)} recorded={s.get('n_recorded', 0)}")
 
 
 if __name__ == "__main__":

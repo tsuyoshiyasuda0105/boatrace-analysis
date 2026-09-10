@@ -50,6 +50,9 @@ def test_kachisuji_apply_paths_never_full_copy_the_slim_database():
 
 
 _AUDITED_FSTRING_SQL_EXPRESSIONS = {
+    # src/odds_fetch_status.py: TABLE はモジュール定数 ("odds_fetch_status")。
+    # 値はすべてパラメータ渡し。
+    "TABLE",
     # delta_transport._apply_patch: PATCH_TABLE はモジュール定数、targets は
     # 直前に _COLUMN_NAME で英小文字・数字・_ に限定した列名のみ。値は
     # すべてパラメータ渡し。
@@ -131,11 +134,12 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # 2 件増え、さらに値だけを運ぶ継ぎ当て (_apply_patch) で 4 件増えて
     # 179 に。さらに継ぎ当てを作る scripts/emit_column_patch.py で 1 件増えて
     # 180 に。さらに手動適用の道具 (scripts/trigger_kachisuji_apply.py) の
-    # 一覧表示で 1 件増えて 181 に (補間は TRANSPORT_TABLE のみ)。継ぎ当ての列名は作る側・当てる側の両方で英小文字・数字・_ に
+    # 一覧表示で 1 件増えて 181 に (補間は TRANSPORT_TABLE のみ)。さらに
+    # オッズ取得状態の読み出し 2 件で 183 に (補間は TABLE 定数のみ)。継ぎ当ての列名は作る側・当てる側の両方で英小文字・数字・_ に
     # 狭めてから SQL へ入れている。補間は table (固定タプル TABLES の
     # ループ変数) と name (デルタ由来だが _COLUMN_NAME で
     # [a-z][a-z0-9_]{0,63} に限定済み) のみ。
-    assert len(calls) == 181, (
+    assert len(calls) == 183, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )
