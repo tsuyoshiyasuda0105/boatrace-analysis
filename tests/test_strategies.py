@@ -225,6 +225,21 @@ def test_performance_uses_jst_next_day_and_overall_ignores_saved_dates(
     assert result["races_until_verdict"] == 27
 
 
+def test_performance_carries_the_saved_conditions(tmp_path: Path, strategy_db: Path) -> None:
+    """カードで「この手法の条件」を見せるため、成績と一緒に条件も返す。"""
+    search_db = _performance_search_db(tmp_path)
+    conditions = {"bet": BET, "venue": [12], "boats": {"1": {"class": ["A1"]}}}
+    strategy_id = save_strategy("条件つき", conditions, db_path=strategy_db)
+
+    single = get_strategy_performance(strategy_id, search_db, strategy_db)
+    listed = list_strategy_performances(search_db, strategy_db)
+
+    assert single is not None
+    assert single["conditions"]["boats"] == {"1": {"class": ["A1"]}}
+    assert single["conditions"]["venue"] == [12]
+    assert listed[0]["conditions"] == single["conditions"]
+
+
 @pytest.mark.parametrize(
     ("n", "roi", "expected"),
     [

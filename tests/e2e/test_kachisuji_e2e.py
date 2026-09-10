@@ -112,7 +112,8 @@ def mock_search_result(page, **overrides):
     return payloads
 
 
-def mock_performance(page, strategy_id: int, *, forward_n: int, verdict: str = "pending"):
+def mock_performance(page, strategy_id: int, *, forward_n: int, verdict: str = "pending",
+                     conditions: dict | None = None):
     labels = {"promote": "昇格", "watch": "継続", "demote": "降格", "pending": "判定待ち"}
     result = {
         "strategy_id": strategy_id,
@@ -127,6 +128,9 @@ def mock_performance(page, strategy_id: int, *, forward_n: int, verdict: str = "
         "races_until_verdict": max(0, 30 - forward_n),
         "forward_curve": [],
     }
+    # 条件を渡さなければ、条件の無い古い形の成績データとして返す。
+    if conditions is not None:
+        result["conditions"] = conditions
 
     def handle(route):
         route.fulfill(status=200, json=result)
@@ -825,3 +829,92 @@ def test_s5_pending_items_are_named_in_japanese_and_split_from_confirmed(page):
             assert not any(raw in t for t in texts), (raw, texts)
     finally:
         page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+
+
+# ===== マイ手法のカードに「この手法の条件」を出す (2026-09-10) =====
+# フォワードの成績だけ並んでも、何を条件にした手法か思い出せない。
+
+
+def test_s19_strategy_card_shows_its_conditions_before_and_after_loading(page):
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": "conditions-view", "conditions": valid_conditions(venue=3),
+         "backtest": {"roi": 101.2, "n": 12}},
+    )
+    assert response.status == 200, response.text()
+    strategy_id = response.json()["id"]
+    page.reload(wait_until="networkidle")
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    panel = card.locator(".strategy-conditions")
+    expect(panel.locator("summary")).to_contain_text("この手法の条件")
+    expect(panel).not_to_have_attribute("open", "")
+    panel.locator("summary").click()
+    expect(panel).to_contain_text("買い目")
+    expect(panel).to_contain_text("会場")
+    expect(panel).to_contain_text("探索期間")
+
+    card.locator(".load-performance").click()
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    expect(card.locator(".performance-grid")).to_contain_text("探索時", timeout=30_000)
+    loaded = card.locator(".strategy-conditions")
+    expect(loaded.locator("summary")).to_contain_text("この手法の条件")
+    loaded.locator("summary").click()
+    expect(loaded).to_contain_text("買い目")
+    expect(loaded).to_contain_text("探索期間")
+
+    deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+    assert deleted.status == 200
+
+
+def test_s19_an_old_performance_payload_without_conditions_still_renders(page):
+    """条件の入っていない成績データでも、カードの成績はそのまま出る。"""
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": "old-payload", "conditions": valid_conditions(venue=5),
+         "backtest": {"roi": 100, "n": 1}},
+    )
+    strategy_id = response.json()["id"]
+    mock_performance(page, strategy_id, forward_n=5)
+    page.reload(wait_until="networkidle")
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    card.locator(".load-performance").click()
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    expect(card.locator(".performance-grid")).to_contain_text("探索時")
+    expect(card.locator(".strategy-conditions")).to_have_count(0)
+
+    deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+    assert deleted.status == 200
+
+
+def test_s19_condition_text_is_escaped_and_does_not_execute(page):
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": "escape-conditions", "conditions": valid_conditions(venue=6),
+         "backtest": {"roi": 100, "n": 1}},
+    )
+    strategy_id = response.json()["id"]
+    hostile = '<img src=x onerror="window.__conditionXss=1">'
+    mock_performance(
+        page, strategy_id, forward_n=5,
+        conditions={"bet": {"type": "sanrentan", "first": 1, "second": 2, "third": 3},
+                    "tide_phase": hostile},
+    )
+    page.reload(wait_until="networkidle")
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    card.locator(".load-performance").click()
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    panel = card.locator(".strategy-conditions")
+    panel.locator("summary").click()
+    expect(panel).to_contain_text("<img src=x")
+    assert page.evaluate("window.__conditionXss") is None
+    expect(panel.locator("img")).to_have_count(0)
+
+    deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+    assert deleted.status == 200
+

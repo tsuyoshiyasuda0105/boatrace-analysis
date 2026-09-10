@@ -306,6 +306,9 @@ def _strategy_performance(
         "name": strategy["name"],
         "created_at": strategy["created_at"],
         "days_since_saved": max(0, (now_jst.date() - created_jst.date()).days),
+        # カードに「この手法の条件」を出すため。成績だけ並んでいても、何を
+        # 条件にした手法か思い出せない (2026-09-10 要望)。
+        "conditions": strategy["conditions"],
         "backtest": strategy["backtest"],
         "overall": _performance_summary(overall_result),
         "forward": _performance_summary(forward_result),

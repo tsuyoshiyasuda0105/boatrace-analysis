@@ -279,3 +279,18 @@ button.is-loading::before { display: inline-block; width: 10px; height: 10px; ma
 .kimarite-add { padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 11.5px; }
 .kimarite-add:disabled { opacity: .5; cursor: not-allowed; }
 .kimarite-remove { width: 22px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: var(--ink-3); font-size: 12px; line-height: 1; }
+
+/* マイ手法のカード: この手法の条件（折りたたみ）。成績だけでは何の手法か思い出せないため。 */
+.strategy-conditions { margin: 8px 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.strategy-conditions > summary { padding: 7px 12px; color: var(--ink-2); font-size: 12.5px; font-weight: 700; cursor: pointer; list-style: none; }
+.strategy-conditions > summary::-webkit-details-marker { display: none; }
+.strategy-conditions > summary::before { content: '▸'; display: inline-block; margin-right: 6px; transition: transform .15s; }
+.strategy-conditions[open] > summary::before { transform: rotate(90deg); }
+.strategy-conditions > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.strategy-conditions dl { display: grid; gap: 6px; margin: 0; padding: 2px 12px 10px; }
+.strategy-condition-row { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.strategy-condition-row dt { color: var(--ink-3); font-size: 11.5px; font-weight: 700; }
+.strategy-condition-row dd { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; color: var(--ink); font-size: 12.5px; line-height: 1.5; }
+.strategy-condition-row dd span { overflow-wrap: anywhere; }
+@media (max-width: 480px) { .strategy-condition-row { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+@media (prefers-reduced-motion: reduce) { .strategy-conditions > summary::before { transition: none; } }

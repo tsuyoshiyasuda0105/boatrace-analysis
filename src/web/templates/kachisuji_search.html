@@ -866,11 +866,9 @@
       }
       return number;
     }
-    function conditionSummaryHtml(conditions) {
-      var count = countConfiguredConditions(conditions);
-      if (!count) {
-        return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件: 指定なし（全レース）</h2></section>';
-      }
+    // 条件を [見出し, 文の並び] の組にする。検索結果の上と、マイ手法のカードで共用。
+    // periodLabel: 期間の見出し。カードでは「探索期間」と呼び分ける。
+    function conditionGroups(conditions, periodLabel) {
       var groups = [];
       var race = [];
       if (conditions.venue !== undefined) {
@@ -959,8 +957,15 @@
       if (conditions.date_from && conditions.date_to) period = conditions.date_from + ' 〜 ' + conditions.date_to;
       else if (conditions.date_from) period = conditions.date_from + ' 以降';
       else if (conditions.date_to) period = conditions.date_to + ' 以前';
-      groups.push(['期間', [period]]);
-      return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件（' + count + '項目）</h2>' + groups.map(function (group) {
+      groups.push([periodLabel || '期間', [period]]);
+      return groups;
+    }
+    function conditionSummaryHtml(conditions) {
+      var count = countConfiguredConditions(conditions);
+      if (!count) {
+        return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件: 指定なし（全レース）</h2></section>';
+      }
+      return '<section class="condition-summary" aria-label="今回の検索条件"><h2>検索条件（' + count + '項目）</h2>' + conditionGroups(conditions).map(function (group) {
         return '<p><strong>[' + escapeHtml(group[0]) + ']</strong> ' + group[1].map(escapeHtml).join(' ／ ') + '</p>';
       }).join('') + '</section>';
     }
@@ -1175,6 +1180,25 @@
         '<span style="width:' + progress.toFixed(1) + '%"></span></div>' +
         '<div class="growth-remaining">🌱 判定まで あと' + remaining + 'レース</div></div>';
     }
+    // マイ手法のカードに出す「この手法の条件」。フォワードの成績だけ並んでも、
+    // 何を条件にした手法か思い出せない (2026-09-10 要望)。探索時の期間は
+    // 「探索期間」と呼ぶ。フォワードは保存日の翌日からなので別物。
+    function strategyConditionsHtml(conditions) {
+      if (!conditions || typeof conditions !== 'object') return '';
+      var count = countConfiguredConditions(conditions);
+      var body;
+      try {
+        body = conditionGroups(conditions, '探索期間').map(function (group) {
+          return '<div class="strategy-condition-row"><dt>' + escapeHtml(group[0]) + '</dt><dd>' +
+            group[1].map(function (line) { return '<span>' + escapeHtml(line) + '</span>'; }).join('') + '</dd></div>';
+        }).join('');
+      } catch (error) {
+        // 1 件の条件が読めなくても、カードの成績は出す。
+        body = '<div class="strategy-condition-row"><dd><span>条件を表示できませんでした</span></dd></div>';
+      }
+      return '<details class="strategy-conditions"><summary>この手法の条件' +
+        (count ? '（' + count + '項目）' : '（指定なし・全レース）') + '</summary><dl>' + body + '</dl></details>';
+    }
     function performanceCard(item) {
         var icon = {promote: '🟢', watch: '⚪', demote: '🔴', pending: '🟡'}[item.verdict] || '';
         return '<article class="mycard strategy-performance" data-strategy-id="' + Number(item.strategy_id) + '">' +
@@ -1182,6 +1206,7 @@
           '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + '</div></div>' +
           '<button type="button" class="delete-strategy" data-id="' + Number(item.strategy_id) + '">削除</button></div>' +
           '<div class="strategy-elapsed">保存から' + Number(item.days_since_saved) + '日 / フォワード' + Math.max(0, Number(item.forward && item.forward.n) || 0) + 'レース消化</div>' +
+          strategyConditionsHtml(item.conditions) +
           '<div class="performance-grid" aria-label="3成績"><div class="performance-row"><span>探索時</span>' + metricText(item.backtest) + '</div>' +
           '<div class="performance-row"><span>全期間</span>' + metricText(item.overall) + '</div>' +
           '<div class="performance-row performance-forward"><span>フォワード</span>' + metricText(item.forward) + '</div></div>' +
@@ -1201,6 +1226,7 @@
           '<div class="strategy-card-head"><div><div class="nm">★ ' + escapeHtml(item.name) + '</div>' +
           '<div class="strategy-meta">保存日 ' + formatSavedDate(item.created_at) + '</div></div>' +
           '<button type="button" class="delete-strategy" data-id="' + Number(item.id) + '">削除</button></div>' +
+          strategyConditionsHtml(item.conditions) +
           '<button type="button" class="load-performance" data-id="' + Number(item.id) + '">成績を見る</button></article>';
       }).join('');
     }
