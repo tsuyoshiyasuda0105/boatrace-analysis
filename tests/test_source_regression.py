@@ -130,11 +130,12 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # デルタが拒否される問題を直した。delta_transport で f-string SQL が
     # 2 件増え、さらに値だけを運ぶ継ぎ当て (_apply_patch) で 4 件増えて
     # 179 に。さらに継ぎ当てを作る scripts/emit_column_patch.py で 1 件増えて
-    # 180 に。継ぎ当ての列名は作る側・当てる側の両方で英小文字・数字・_ に
+    # 180 に。さらに手動適用の道具 (scripts/trigger_kachisuji_apply.py) の
+    # 一覧表示で 1 件増えて 181 に (補間は TRANSPORT_TABLE のみ)。継ぎ当ての列名は作る側・当てる側の両方で英小文字・数字・_ に
     # 狭めてから SQL へ入れている。補間は table (固定タプル TABLES の
     # ループ変数) と name (デルタ由来だが _COLUMN_NAME で
     # [a-z][a-z0-9_]{0,63} に限定済み) のみ。
-    assert len(calls) == 180, (
+    assert len(calls) == 181, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )
