@@ -243,3 +243,34 @@ def test_a_pass_that_aimed_at_nothing_records_nothing(monkeypatch):
     assert summary["n_due"] == 0
     assert summary["n_failed"] == 0
     assert calls == [[]]
+
+
+def test_every_connection_avoids_the_shared_pool(monkeypatch):
+    """監視のために本番を重くしない。必ず直結で繋ぐ。
+
+    2026-09-10 に、この確認をプール経由で走らせて枠 (15) が満杯になった。
+    """
+    from src import odds_fetch_status
+
+    seen: list[bool] = []
+
+    class Fake:
+        _kind = ""
+
+        def executescript(self, sql): pass
+        def executemany(self, sql, rows): pass
+        def execute(self, sql, params=None): return self
+        def fetchall(self): return []
+        def commit(self): pass
+        def close(self): pass
+
+    def fake_connect(db_path=None, direct=False):
+        seen.append(direct)
+        return Fake()
+
+    monkeypatch.setattr(odds_fetch_status, "db_connect", fake_connect)
+    odds_fetch_status.record([("r1", "T-5min", status.STATE_OK, "", 1)])
+    odds_fetch_status.summarize()
+    odds_fetch_status.recent_failures()
+
+    assert seen == [True, True, True]

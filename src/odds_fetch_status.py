@@ -15,6 +15,10 @@
 書き込みは 1 パスにつき 1 接続だけ。本番の接続枠は 15 で余裕が無いので、
 レースごとに繋がない。記録に失敗しても取得は続ける (記録のために本業を
 止めない)。
+
+接続は必ず **直結** (`direct=True`)。web の共有プールを経由すると、混雑時に
+枠を奪い合って閲覧者を待たせる。監視のために本番を重くしては本末転倒。
+実際 2026-09-10 に、この確認をプール経由で走らせて枠が満杯になった。
 """
 from __future__ import annotations
 
@@ -123,7 +127,7 @@ def record(rows: Sequence[tuple[str, str, str, str, int]], *, db_path=None,
     own = conn is None
     try:
         if own:
-            conn = db_connect(db_path)
+            conn = db_connect(db_path, direct=True)
         ensure_table(conn)
         conn.executemany(_UPSERT, payload)
         conn.commit()
@@ -149,7 +153,7 @@ def recent_failures(hours: int = 24, *, db_path=None, conn=None) -> list[dict[st
     own = conn is None
     try:
         if own:
-            conn = db_connect(db_path)
+            conn = db_connect(db_path, direct=True)
         ensure_table(conn)
         rows = conn.execute(
             f"SELECT race_id, snapshot_label, state, detail, attempts, checked_at "
@@ -186,7 +190,7 @@ def summarize(hours: int = 24, *, db_path=None, conn=None) -> dict[str, int]:
     own = conn is None
     try:
         if own:
-            conn = db_connect(db_path)
+            conn = db_connect(db_path, direct=True)
         ensure_table(conn)
         rows = conn.execute(
             f"SELECT state, COUNT(*) FROM {TABLE} WHERE checked_at >= ? GROUP BY state",
