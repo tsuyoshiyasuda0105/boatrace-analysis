@@ -110,6 +110,18 @@ EX_DEV_KEYS = frozenset({"faster_by", "slower_by"})
 KIMARITE_KEYS = frozenset({"nige", "sashi", "makuri", "makurizashi", "nuki", "megumare"})
 BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
 HISTORY_CUTOFF = "2023-05-01"
+# 審査期の事故率・事故点 (本日判定用)。本番の ROI と同じ審査期スナップショットを
+# 引くが、スナップショットが作られ始めたのは 2026-07-26 から。それより前の行は
+# 「スナップショットが無いので 0」(bN_accident_source='missing_zero') で埋まって
+# いて、事故率 0.5% 以下で絞っても 1 件も減らなかった (2026-09-10 に実測)。
+# 日付は各行の出どころが missing_zero から period へ切り替わった日 (0%→100%)。
+PERIOD_ACCIDENT_CUTOFF = "2026-07-26"
+# 下限に引っかかったとき、画面でどのデータの話かを伝えるための名前。
+_CUTOFF_LABELS = {
+    "2026-07-26": "事故率（審査期・本日判定用）・事故点（審査期）",
+    "2023-05-01": "決まり手・事故率（過去1年）",
+    "2016-06-01": "復元事故率・平均ST・進入変更リスク",
+}
 RESTORED_ACCIDENT_CUTOFF = "2016-06-01"
 # レース単位の「進入変更リスク」= 2〜6 号艇のうち前づけ率が最も高い選手の率。
 # 1 号艇は前づけされる側なので分子に入れない。
@@ -438,6 +450,7 @@ def _compile_conditions(
             _add_predicate(filters, params, null_columns, "race_no", " AND ".join(comparisons), values)
 
     history_condition = False
+    period_accident_condition = False
     restored_accident_condition = False
     restored_avg_st_condition = False
     boats = conditions.get("boats")
@@ -487,8 +500,10 @@ def _compile_conditions(
                         f"boats.{boat_key}.{key}",
                     )
                     history_condition = history_condition or (
-                        key in {"accident_rate", "accident_points", "accident_rate_365d"}
-                        and active
+                        key == "accident_rate_365d" and active
+                    )
+                    period_accident_condition = period_accident_condition or (
+                        key in {"accident_rate", "accident_points"} and active
                     )
                     restored_accident_condition = restored_accident_condition or (
                         key in {"accident_rate_period", "accident_count_period"}
@@ -634,12 +649,16 @@ def _compile_conditions(
     required_cutoffs: list[str] = []
     if history_condition:
         required_cutoffs.append(HISTORY_CUTOFF)
+    if period_accident_condition:
+        required_cutoffs.append(PERIOD_ACCIDENT_CUTOFF)
     if restored_accident_condition or restored_avg_st_condition or entry_change_condition:
         required_cutoffs.append(RESTORED_ACCIDENT_CUTOFF)
+    raised_by_cutoff: str | None = None
     if required_cutoffs:
         cutoff = max(required_cutoffs)
         if start is None or start < cutoff:
             start = cutoff
+            raised_by_cutoff = cutoff
     if start is not None:
         filters.append("race_date >= ?")
         params.append(start)
@@ -647,6 +666,16 @@ def _compile_conditions(
         filters.append("race_date <= ?")
         params.append(end)
     if start is not None and end is not None and start > end:
+        if raised_by_cutoff is not None:
+            # 利用者の期間は正しいのに、データの始まりが期間の終わりより後ろ。
+            # 「入力が誤り」と見せず、何のデータが何日からあるかを伝える。
+            # 「検索条件は」で始めると画面側がそのまま表示する。
+            label = _CUTOFF_LABELS.get(raised_by_cutoff, "この条件")
+            raise ValueError(
+                f"検索条件は、指定の期間では使えません。{label}のデータは "
+                f"{raised_by_cutoff} 以降しかありません。"
+                f"期間の終わりを {raised_by_cutoff} 以降にしてください"
+            )
         raise ValueError("date_from must not be after date_to")
 
     season = conditions.get("season")

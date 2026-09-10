@@ -257,7 +257,9 @@ def test_condition_null_is_excluded_only_when_condition_references_column(fixtur
         {"ex_dev": {"faster_by": 0.1}},
         {"ex_st": {"max": 0.1}},
         {"kimarite": {"name": "nige", "rate_min": 60}},
-        {"accident_rate": {"min": 0.5}},
+        # 審査期の事故率 (本日判定用) は 2026-07-26 からしか本物が無く、この
+        # 共通フィクスチャ (2023〜2024 年) では使えない。絞り込みの効き目は
+        # tests/test_roi_search_period_accident.py で確かめている。
     ],
 )
 def test_boat_operators(fixture_db: Path, boat_condition: dict[str, object]) -> None:
@@ -716,12 +718,13 @@ def test_invalid_venue_values_are_rejected(fixture_db: Path, venue: object) -> N
 
 
 def test_period_accident_365d_and_wind_filters_are_distinct(tmp_path: Path) -> None:
+    # 審査期の事故率・事故点は 2026-07-26 から本物がある。日付をそこへ置く。
     db = _make_db(
         tmp_path / "step11-filters.db",
         [
-            _row("match", "2025-01-01", schema_version=3, b1_accident_rate=0.6, b1_accident_points=3, b1_accident_rate_365d=12.5, t5_odds_favorite=5.0, wind_dir="追い風"),
-            _row("boundary", "2025-01-02", schema_version=3, b1_accident_rate=0.5, b1_accident_points=2, b1_accident_rate_365d=10.0, t5_odds_favorite=15.0, wind_dir="向かい風"),
-            _row("null", "2025-01-03", schema_version=3, b1_accident_rate=None, b1_accident_points=None, b1_accident_rate_365d=None, t5_odds_favorite=None, wind_dir=None),
+            _row("match", "2026-08-01", schema_version=3, b1_accident_rate=0.6, b1_accident_points=3, b1_accident_rate_365d=12.5, t5_odds_favorite=5.0, wind_dir="追い風"),
+            _row("boundary", "2026-08-02", schema_version=3, b1_accident_rate=0.5, b1_accident_points=2, b1_accident_rate_365d=10.0, t5_odds_favorite=15.0, wind_dir="向かい風"),
+            _row("null", "2026-08-03", schema_version=3, b1_accident_rate=None, b1_accident_points=None, b1_accident_rate_365d=None, t5_odds_favorite=None, wind_dir=None),
         ],
     )
     conditions = {
