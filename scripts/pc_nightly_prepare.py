@@ -4,7 +4,7 @@ import argparse
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -46,7 +46,9 @@ def _completed_date(now: datetime | None = None) -> str:
     return (current.date() - timedelta(days=1)).isoformat()
 
 
-def _kachisuji_history_steps(completed_date: str) -> list[list[str]]:
+def _kachisuji_history_steps(
+    completed_date: str, *, include_racers: bool = True
+) -> list[list[str]]:
     """完成した日の履歴 (出走・事故・ST・選手名) を検索DBへ進める手順。
 
     決まり手率や平均STは検索DB内の履歴テーブルから計算するのに、これを
@@ -54,13 +56,92 @@ def _kachisuji_history_steps(completed_date: str) -> list[list[str]]:
     その日ぶんだけ取り直してから (早朝に空ファイルを掴む事故があるため
     --skip-existing は付けない)、日単位で置き換える。
     """
-    return [
+    steps = [
         ["scripts/backfill_official.py", "--start", completed_date, "--end", completed_date,
          "--local", "--targets", "k"],
         ["scripts/restore_accident_history.py", "--from", completed_date, "--to", completed_date],
         ["scripts/restore_start_timing.py", "--from", completed_date, "--to", completed_date],
-        ["scripts/sync_kachisuji_racers.py"],
     ]
+    # 選手名の同期は日付に関係ない。穴埋めで日数ぶん繰り返す意味がないので、
+    # 完成日の手順にだけ付ける。
+    if include_racers:
+        steps.append(["scripts/sync_kachisuji_racers.py"])
+    return steps
+
+
+# さかのぼって埋める日数と、一晩に埋める上限。上限は夜間バッチが長引いて
+# 朝の取り込みに食い込まないようにするため。埋め残しは翌晩に持ち越す。
+HISTORY_LOOKBACK_DAYS = 14
+HISTORY_CATCHUP_LIMIT = 5
+
+
+def _dates_with_races(db: Path, date_from: str, date_to: str) -> set[str]:
+    import sqlite3
+
+    if not db.is_file():
+        return set()
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+    try:
+        return {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT race_date FROM races WHERE race_date BETWEEN ? AND ?",
+                (date_from, date_to),
+            )
+        }
+    finally:
+        conn.close()
+
+
+def _dates_with_history(db: Path, date_from: str, date_to: str) -> set[str]:
+    import sqlite3
+
+    if not db.is_file():
+        return set()
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+    try:
+        return {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT race_date FROM start_timing_events "
+                "WHERE race_date BETWEEN ? AND ?",
+                (date_from, date_to),
+            )
+        }
+    except sqlite3.OperationalError:
+        # 履歴テーブルがまだ無い DB。復元スクリプトが作るので、
+        # 「全部が穴」として扱えばそのまま埋まる。夜間を落とさない。
+        return set()
+    finally:
+        conn.close()
+
+
+def history_gap_days(
+    completed_date: str,
+    *,
+    source_db: Path | None = None,
+    search_db: Path | None = None,
+    lookback: int = HISTORY_LOOKBACK_DAYS,
+    limit: int = HISTORY_CATCHUP_LIMIT,
+) -> list[str]:
+    """履歴が入っていない日を古い順に返す (完成日そのものは含めない)。
+
+    夜間は「昨日」ぶんしか進めないので、01:00 の時点で K 成績ファイルが
+    まだ公開されていないと、その日の履歴は誰も取りに戻らず永久に欠ける。
+    2026-07-22〜09-07 に 30 日ぶん欠け、平均ST・決まり手率・事故率が薄い
+    履歴で計算されていた (2026-09-10 に手作業で復旧)。
+
+    レースがあったのに履歴が無い日を毎晩さかのぼって拾う。
+    """
+    end = date.fromisoformat(completed_date) - timedelta(days=1)
+    start = date.fromisoformat(completed_date) - timedelta(days=lookback)
+    if start > end:
+        return []
+    source = source_db or (ROOT / "data" / "boatrace.db")
+    search = search_db or (ROOT / "data" / "kachisuji_search.db")
+    raced = _dates_with_races(source, start.isoformat(), end.isoformat())
+    have = _dates_with_history(search, start.isoformat(), end.isoformat())
+    return sorted(raced - have)[:limit]
 
 
 def _kachisuji_delta_path(kind: str, day: str) -> Path:
@@ -102,6 +183,14 @@ def _run_kachisuji_daily(completed_date: str, forward_date: str | None = None) -
     3. これから走る日を forward で作る (当日の合致レース表示用)
     履歴が失敗しても 2, 3 は続ける (率が一日ぶん古いだけで照合は動く)。
     """
+    # 取りこぼした日を先に埋めてから完成日を進める。古い日から順に入れないと
+    # 365 日窓の集計が歯抜けのまま完成日を計算してしまう。
+    for gap_day in history_gap_days(completed_date):
+        print(f"[kachisuji] filling missing history: {gap_day}", flush=True)
+        for step in _kachisuji_history_steps(gap_day, include_racers=False):
+            if not _run_local(step):
+                print(f"[kachisuji] catch-up step failed (continuing): {' '.join(step)}",
+                      flush=True)
     for step in _kachisuji_history_steps(completed_date):
         if not _run_local(step):
             print(f"[kachisuji] history step failed (continuing): {' '.join(step)}", flush=True)
