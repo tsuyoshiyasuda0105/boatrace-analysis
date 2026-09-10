@@ -116,6 +116,41 @@ def _dates_with_history(db: Path, date_from: str, date_to: str) -> set[str]:
         conn.close()
 
 
+def _dates_missing_results(db: Path, dates: set[str]) -> set[str]:
+    """レースがあったのに、着順に決まり手が1件も無い日を返す。
+
+    着順の行そのものは別経路 (Open API) でも作られるので、行があるだけでは
+    K 成績ファイルが取り込まれたとは言えない。決まり手と備考 (事故) は
+    K からしか入らない。2025-07〜2026-04 の10か月は、進入データはあるのに
+    決まり手が0件で、1号艇の逃げ率が本来の52%から9%まで落ちていた
+    (2026-09-10 発覚)。進入データの有無だけを見る穴探しでは見つからない。
+    """
+    import sqlite3
+
+    if not dates or not db.is_file():
+        return set()
+    lo = min(dates).replace("-", "")
+    hi = max(dates).replace("-", "") + "~"
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+    try:
+        have = {
+            f"{key[:4]}-{key[4:6]}-{key[6:8]}"
+            for key, wins in conn.execute(
+                "SELECT substr(race_id, 1, 8), "
+                "SUM(kimarite IS NOT NULL AND kimarite <> '') "
+                "FROM race_results WHERE race_id BETWEEN ? AND ? GROUP BY 1",
+                (lo, hi),
+            )
+            if wins
+        }
+    except sqlite3.OperationalError:
+        # 着順の表が無い DB では判断できない。穴扱いにはしない。
+        return set()
+    finally:
+        conn.close()
+    return dates - have
+
+
 def history_gap_days(
     completed_date: str,
     *,
@@ -141,7 +176,8 @@ def history_gap_days(
     search = search_db or (ROOT / "data" / "kachisuji_search.db")
     raced = _dates_with_races(source, start.isoformat(), end.isoformat())
     have = _dates_with_history(search, start.isoformat(), end.isoformat())
-    return sorted(raced - have)[:limit]
+    no_results = _dates_missing_results(source, raced)
+    return sorted((raced - have) | no_results)[:limit]
 
 
 def _kachisuji_delta_path(kind: str, day: str) -> Path:

@@ -236,3 +236,70 @@ def test_the_racer_name_sync_runs_once_not_once_per_gap_day(monkeypatch):
 
     sync = [args for args in runs if args[:1] == ["scripts/sync_kachisuji_racers.py"]]
     assert len(sync) == 1
+
+
+# ===== 着順に決まり手が入っていない日も穴として拾う =====
+#
+# 2025-07〜2026-04 は進入データはあるのに、着順の決まり手と備考 (事故) が
+# 10か月まるごと空だった。1号艇の逃げ率が 52% → 9% まで落ちていた。
+# 進入データの有無だけを見ていると見つからない。
+
+
+def _add_results(source, rows):
+    """(race_id, kimarite) を着順の表に入れる。"""
+    conn = sqlite3.connect(source)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS race_results "
+            "(race_id TEXT, boat_number INTEGER, kimarite TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO race_results VALUES (?, 1, ?)", rows
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_day_with_start_timings_but_no_kimarite_is_a_gap(tmp_path):
+    """実際に起きた形。進入はあるのに決まり手が無い = K が入っていない。"""
+    source, search = _dbs(tmp_path, ["2026-09-08", "2026-09-09"], ["2026-09-08", "2026-09-09"])
+    _add_results(source, [("20260908-01-01", "逃げ"), ("20260909-01-01", None)])
+    assert nightly.history_gap_days(
+        "2026-09-10", source_db=source, search_db=search
+    ) == ["2026-09-09"]
+
+
+def test_a_day_whose_results_never_arrived_is_a_gap(tmp_path):
+    source, search = _dbs(tmp_path, ["2026-09-08", "2026-09-09"], ["2026-09-08", "2026-09-09"])
+    _add_results(source, [("20260908-01-01", "逃げ")])
+    assert nightly.history_gap_days(
+        "2026-09-10", source_db=source, search_db=search
+    ) == ["2026-09-09"]
+
+
+def test_an_empty_string_kimarite_counts_as_missing(tmp_path):
+    source, search = _dbs(tmp_path, ["2026-09-09"], ["2026-09-09"])
+    _add_results(source, [("20260909-01-01", "")])
+    assert nightly.history_gap_days(
+        "2026-09-10", source_db=source, search_db=search
+    ) == ["2026-09-09"]
+
+
+def test_both_kinds_of_gap_are_merged_without_duplicates(tmp_path):
+    source, search = _dbs(
+        tmp_path, ["2026-09-07", "2026-09-08", "2026-09-09"], ["2026-09-08", "2026-09-09"]
+    )
+    _add_results(source, [("20260907-01-01", None), ("20260908-01-01", "差し"),
+                          ("20260909-01-01", None)])
+    assert nightly.history_gap_days(
+        "2026-09-10", source_db=source, search_db=search
+    ) == ["2026-09-07", "2026-09-09"]
+
+
+def test_a_source_without_the_results_table_only_uses_the_timing_check(tmp_path):
+    """着順の表が無ければ判断できない。そのぶんは穴扱いにしない。"""
+    source, search = _dbs(tmp_path, ["2026-09-08", "2026-09-09"], ["2026-09-08"])
+    assert nightly.history_gap_days(
+        "2026-09-10", source_db=source, search_db=search
+    ) == ["2026-09-09"]
