@@ -235,3 +235,43 @@ def test_the_patch_name_survives_the_transport(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError):
         canonical_delta_name(Path("patch bad name.db"))
+
+
+def test_the_patch_tool_keeps_each_column_s_own_type(tmp_path):
+    """数値以外の列を運んでも型が崩れないこと。
+
+    以前は全列を REAL として作っていた。着順 "1-2-3" は運良く文字のまま
+    残るが、単勝の "1" のような数字だけの文字列や潮の名前は型がずれうる。
+    """
+    import subprocess
+    import sys
+
+    source = tmp_path / "search.db"
+    with sqlite3.connect(source) as conn:
+        conn.execute(
+            "CREATE TABLE asof_race_features (race_id TEXT PRIMARY KEY, race_date TEXT, "
+            "result_sanrentan TEXT, payout_sanrentan INTEGER, tide_phase TEXT, "
+            "b1_entry_change_rate REAL)"
+        )
+        conn.execute(
+            "INSERT INTO asof_race_features VALUES "
+            "('a','2026-09-01','1-2-3',1230,'満潮前後',3.5)"
+        )
+    out = tmp_path / "patch_types.db"
+    done = subprocess.run(
+        [sys.executable, "scripts/emit_column_patch.py", "--source", str(source),
+         "--columns", "result_sanrentan,payout_sanrentan,tide_phase,b1_entry_change_rate",
+         "--out", str(out)],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert done.returncode == 0, done.stderr
+    with sqlite3.connect(out) as conn:
+        types = {r[1]: r[2] for r in conn.execute(f"PRAGMA table_info({PATCH_TABLE})")}
+        row = conn.execute(
+            f"SELECT result_sanrentan, payout_sanrentan, tide_phase, "
+            f"typeof(payout_sanrentan) FROM {PATCH_TABLE}"
+        ).fetchone()
+    assert types == {"race_id": "TEXT", "result_sanrentan": "TEXT",
+                     "payout_sanrentan": "INTEGER", "tide_phase": "TEXT",
+                     "b1_entry_change_rate": "REAL"}
+    assert row == ("1-2-3", 1230, "満潮前後", "integer")

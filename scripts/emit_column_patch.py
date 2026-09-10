@@ -61,8 +61,11 @@ def main() -> int:
     columns = _columns(a.columns)
 
     source = sqlite3.connect(f"file:{a.source}?mode=ro", uri=True, timeout=60)
+    # 型は元の表から写す。すべて REAL にすると、着順 "1-2-3" や潮 "満潮前後"
+    # のような文字列の列を運んだときに型が崩れる (2026-09-10 に気づいた)。
     have = {
-        str(row[1]) for row in source.execute("PRAGMA table_info(asof_race_features)")
+        str(row[1]): (str(row[2]) or "")
+        for row in source.execute("PRAGMA table_info(asof_race_features)")
     }
     missing = [name for name in columns if name not in have]
     if missing:
@@ -80,7 +83,7 @@ def main() -> int:
     out = sqlite3.connect(a.out)
     out.execute(
         f"CREATE TABLE {PATCH_TABLE} (race_id TEXT PRIMARY KEY, "
-        + ", ".join(f"{name} REAL" for name in columns)
+        + ", ".join(f"{name} {have[name]}".rstrip() for name in columns)
         + ")"
     )
     placeholders = ",".join("?" for _ in range(len(columns) + 1))
