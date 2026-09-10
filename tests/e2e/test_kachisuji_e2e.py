@@ -113,7 +113,7 @@ def mock_search_result(page, **overrides):
 
 
 def mock_performance(page, strategy_id: int, *, forward_n: int, verdict: str = "pending",
-                     conditions: dict | None = None):
+                     conditions: dict | None = None, metrics: dict | None = None):
     labels = {"promote": "昇格", "watch": "継続", "demote": "降格", "pending": "判定待ち"}
     result = {
         "strategy_id": strategy_id,
@@ -131,6 +131,9 @@ def mock_performance(page, strategy_id: int, *, forward_n: int, verdict: str = "
     # 条件を渡さなければ、条件の無い古い形の成績データとして返す。
     if conditions is not None:
         result["conditions"] = conditions
+    # 探索時・全期間・フォワードの数字を差し替える (的中率の表示を確かめる用)。
+    if metrics:
+        result.update(metrics)
 
     def handle(route):
         route.fulfill(status=200, json=result)
@@ -914,6 +917,75 @@ def test_s19_condition_text_is_escaped_and_does_not_execute(page):
     expect(panel).to_contain_text("<img src=x")
     assert page.evaluate("window.__conditionXss") is None
     expect(panel.locator("img")).to_have_count(0)
+
+    deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+    assert deleted.status == 200
+
+
+# ===== 成績の行に的中率を出す (2026-09-10) =====
+
+
+def _row(card, label):
+    return card.locator(".performance-row").filter(has_text=label)
+
+
+def test_s20_strategy_card_shows_hit_rate_next_to_roi(page):
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": "hit-rate", "conditions": valid_conditions(venue=7),
+         "backtest": {"roi": 100, "n": 1}},
+    )
+    strategy_id = response.json()["id"]
+    mock_performance(
+        page, strategy_id, forward_n=0,
+        metrics={
+            "backtest": {"roi": 220.2, "n": 57, "hits": 10, "hit_rate": 17.5},
+            "overall": {"roi": 85.5, "n": 649, "hits": 70},
+            "forward": {"roi": 0.0, "n": 0, "hits": 0},
+        },
+    )
+    page.reload(wait_until="networkidle")
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    card.locator(".load-performance").click()
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    head = card.locator(".performance-head")
+    expect(head).to_contain_text("的中率")
+    expect(head).to_contain_text("回収率")
+    expect(_row(card, "探索時").locator(".hit")).to_have_text("17.5%")
+    expect(_row(card, "探索時").locator("strong")).to_have_text("220.2%")
+    # 全期間は的中率を持たないので 70 / 649 本から出す
+    expect(_row(card, "全期間").locator(".hit")).to_have_text("10.8%")
+    expect(_row(card, "全期間").locator(".hit")).to_have_attribute("title", "的中 70 / 649 本")
+    # N=0 では 0.0% ではなく「—」
+    expect(_row(card, "フォワード").locator(".hit")).to_have_text("—")
+
+    deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
+    assert deleted.status == 200
+
+
+def test_s20_an_old_saved_backtest_without_hits_shows_a_dash(page):
+    """回収率と N しか保存していない古い手法は、探索時の的中率を「—」にする。"""
+    response = post_json(
+        page,
+        "/api/strategies",
+        {"name": "old-backtest", "conditions": valid_conditions(venue=8),
+         "backtest": {"roi": 100, "n": 1}},
+    )
+    strategy_id = response.json()["id"]
+    mock_performance(
+        page, strategy_id, forward_n=12,
+        metrics={"backtest": {"roi": 101.2, "n": 50},
+                 "forward": {"roi": 102.0, "n": 12, "hits": 3}},
+    )
+    page.reload(wait_until="networkidle")
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    card.locator(".load-performance").click()
+
+    card = page.locator(f'.strategy-performance[data-strategy-id="{strategy_id}"]')
+    expect(_row(card, "探索時").locator(".hit")).to_have_text("—")
+    expect(_row(card, "フォワード").locator(".hit")).to_have_text("25.0%")
 
     deleted = page.request.delete(urljoin(page.url, f"/api/strategies/{strategy_id}"))
     assert deleted.status == 200

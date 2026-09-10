@@ -963,6 +963,12 @@
     // グレード番号→表示名。サーバ側 GRADE_LABELS (src/search/roi_search.py) と同じ対応。
     var GRADE_LABELS = {1: 'SG', 2: 'G1', 3: 'G2', 4: 'G3', 5: '一般'};
     function gradeLabel(value) { return GRADE_LABELS[value] || String(value); }
+    // 会場番号→会場名。レース照合の「24場」では分かりにくい (2026-09-10 要望)。
+    // 並びは画面の会場選択と同じ公式の場コード順。表に無い番号だけ「◯場」で出す。
+    var VENUE_NAMES = {1: '桐生', 2: '戸田', 3: '江戸川', 4: '平和島', 5: '多摩川', 6: '浜名湖', 7: '蒲郡', 8: '常滑',
+      9: '津', 10: '三国', 11: 'びわこ', 12: '住之江', 13: '尼崎', 14: '鳴門', 15: '丸亀', 16: '児島',
+      17: '宮島', 18: '徳山', 19: '下関', 20: '若松', 21: '芦屋', 22: '福岡', 23: '唐津', 24: '大村'};
+    function venueName(jcd) { return VENUE_NAMES[Number(jcd)] || (String(jcd) + '場'); }
 
     function gradeTable(data) {
       var rows = Array.isArray(data.grade_breakdown) ? data.grade_breakdown : [];
@@ -1104,9 +1110,25 @@
       if (!response.ok) throw new Error(data.error || '処理に失敗しました');
       return data;
     }
+    // 的中率 (買い目が当たった割合)。回収率だけだと、たまの高配当なのか
+    // よく当たるのかが分からない。N=0 と、的中数を持たない古い保存データは「—」。
+    function hitRateText(metric) {
+      var n = Number(metric && metric.n);
+      if (!Number.isFinite(n) || n <= 0) return '—';
+      var rate = Number(metric.hit_rate);
+      if (metric.hit_rate === undefined || metric.hit_rate === null || !Number.isFinite(rate)) {
+        var hits = Number(metric.hits);
+        if (metric.hits === undefined || metric.hits === null || !Number.isFinite(hits)) return '—';
+        rate = hits / n * 100;
+      }
+      return rate.toFixed(1) + '%';
+    }
     function metricText(metric) {
-      if (!metric || !Number.isFinite(Number(metric.roi)) || !Number.isFinite(Number(metric.n))) return '<strong>—</strong><span>N —</span>';
-      return '<strong>' + Number(metric.roi).toFixed(1) + '%</strong><span>N ' + Number(metric.n) + '</span>';
+      if (!metric || !Number.isFinite(Number(metric.roi)) || !Number.isFinite(Number(metric.n))) return '<span class="hit">—</span><strong>—</strong><span>N —</span>';
+      var hits = Number(metric.hits);
+      var title = (metric.hits !== undefined && metric.hits !== null && Number.isFinite(hits))
+        ? ' title="的中 ' + hits + ' / ' + Number(metric.n) + ' 本"' : '';
+      return '<span class="hit"' + title + '>' + hitRateText(metric) + '</span><strong>' + Number(metric.roi).toFixed(1) + '%</strong><span>N ' + Number(metric.n) + '</span>';
     }
     function sparkline(curve, name) {
       var points = Array.isArray(curve) ? curve : [];
@@ -1178,7 +1200,8 @@
           '<button type="button" class="delete-strategy" data-id="' + Number(item.strategy_id) + '">削除</button></div>' +
           '<div class="strategy-elapsed">保存から' + Number(item.days_since_saved) + '日 / フォワード' + Math.max(0, Number(item.forward && item.forward.n) || 0) + 'レース消化</div>' +
           strategyConditionsHtml(item.conditions) +
-          '<div class="performance-grid" aria-label="3成績"><div class="performance-row"><span>探索時</span>' + metricText(item.backtest) + '</div>' +
+          '<div class="performance-grid" aria-label="3成績"><div class="performance-row performance-head"><span></span><span>的中率</span><span>回収率</span><span>N</span></div>' +
+          '<div class="performance-row"><span>探索時</span>' + metricText(item.backtest) + '</div>' +
           '<div class="performance-row"><span>全期間</span>' + metricText(item.overall) + '</div>' +
           '<div class="performance-row performance-forward"><span>フォワード</span>' + metricText(item.forward) + '</div></div>' +
           strategyGrowthHtml(item) +
@@ -1252,7 +1275,7 @@
           var status = pending
             ? '⏳ ' + escapeHtml(pendingReason(race.undetermined_columns))
             : '✓ 合致確定';
-          return '<div class="matchcard"><b>' + escapeHtml(race.jcd) + '場 ' + escapeHtml(race.race_no) + 'R</b>' +
+          return '<div class="matchcard"><b>' + escapeHtml(venueName(race.jcd)) + ' ' + escapeHtml(race.race_no) + 'R</b>' +
             '<span>' + escapeHtml(race.bet) + '</span><span class="stat ' + (pending ? 'stat-pending' : 'stat-confirmed') + '">' + status + '</span></div>';
         }
         // 確定と展示待ちを混ぜると、いま買えるレースが埋もれる。分けて出す。

@@ -263,7 +263,7 @@ def _created_at_in_jst(value: str) -> datetime:
 def _performance_summary(result: Mapping[str, Any]) -> dict[str, Any]:
     return {
         key: result[key]
-        for key in ("roi", "n", "hits", "roi_ci_low", "roi_ci_high")
+        for key in ("roi", "n", "hits", "hit_rate", "roi_ci_low", "roi_ci_high")
     }
 
 

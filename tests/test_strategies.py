@@ -209,13 +209,18 @@ def test_performance_uses_jst_next_day_and_overall_ignores_saved_dates(
     assert result["backtest"] == {"roi": 500.0, "n": 1}
     assert result["overall"]["n"] == 5
     assert result["overall"]["roi"] == 160.0
-    assert result["forward"] == {
+    forward = dict(result["forward"])
+    hit_rate = forward.pop("hit_rate")
+    assert forward == {
         "roi": 100.0,
         "n": 3,
         "hits": 1,
         "roi_ci_low": 0.0,
         "roi_ci_high": 296.0,
     }
+    # カードの的中率。1 / 3 本。
+    assert hit_rate == pytest.approx(100 / 3, abs=0.1)
+    assert "hit_rate" in result["overall"]
     assert result["forward_curve"] == [
         {"date": "2026-08-16", "cumulative": 100},
         {"date": "2026-08-17", "cumulative": 0},

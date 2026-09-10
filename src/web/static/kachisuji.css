@@ -178,7 +178,12 @@ button.compact-button { padding: 5px 10px; font-size: 12px; }
 .mycard.strategy-performance { display: block; padding: 13px 14px 11px; border-left: 3px solid var(--accent); }
 .strategy-card-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
 .performance-grid { display: grid; gap: 3px; margin-top: 10px; }
-.performance-row { display: grid; grid-template-columns: minmax(6em, 1fr) auto auto; gap: 14px; align-items: baseline; padding: 3px 8px; border-radius: 5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.performance-row { display: grid; grid-template-columns: minmax(5em, 1fr) 4.6em 6.4em 3.8em; gap: 14px; align-items: baseline; padding: 3px 8px; border-radius: 5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+/* 的中率の列。行ごとに別の grid なので、列幅を固定して縦位置をそろえる。 */
+.performance-row .hit { color: var(--ink-2); font-size: 12.5px; text-align: right; white-space: nowrap; }
+.performance-row strong { white-space: nowrap; }
+.performance-head { padding-top: 0; padding-bottom: 0; }
+.performance-head > span { color: var(--ink-3); font-size: 10.5px; font-weight: 700; text-align: right; }
 .performance-row > span:first-child { font-size: 11.5px; font-weight: 700; }
 .performance-row strong { min-width: 5.3em; color: var(--ink); text-align: right; }
 .performance-row > span:last-child { min-width: 3.5em; color: var(--ink-3); text-align: right; font-size: 11.5px; }
