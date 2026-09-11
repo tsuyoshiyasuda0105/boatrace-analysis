@@ -187,26 +187,43 @@ def upload_delta_file(path: Path, conn=None) -> dict[str, Any]:
 
 
 def fetch_pending_payloads(applied: set[str], conn=None) -> list[tuple[str, bytes]]:
+    """未適用のデルタだけを、ファイル単位で読み出す。
+
+    以前は全ペイロードを 1 回の ``SELECT`` でまとめて読み、Python 側で
+    適用済みを外していた。すると一度きりの大きなデルタ (2026-09-10 の
+    進入変更パッチ 55.6MB・事故修復 90MB 近く) を毎回まるごと読み直し、
+    合計が本番 Postgres の statement timeout を超えて、その日の小さな
+    差分ごと適用が落ちていた (2026-09-11 特定。6:31 の自動適用が数日
+    無音で失敗していた原因)。名前だけ先に読み、まだ適用していないものの
+    ペイロードだけを 1 件ずつ取り出す。
+    """
     own = conn is None
     if own:
         conn = _default_conn()
     try:
         ensure_transport_table(conn)
-        rows = conn.execute(
-            f"SELECT name, payload, sha256 FROM {TRANSPORT_TABLE} ORDER BY name"
-        ).fetchall()
+        names = [
+            str(row[0])
+            for row in conn.execute(f"SELECT name FROM {TRANSPORT_TABLE} ORDER BY name")
+        ]
+        result: list[tuple[str, bytes]] = []
+        for name in names:
+            if name in applied:
+                continue
+            row = conn.execute(
+                f"SELECT payload, sha256 FROM {TRANSPORT_TABLE} WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if row is None:  # 直前に prune された等
+                continue
+            payload, digest = row
+            data = bytes(payload)  # psycopg は memoryview を返す
+            if hashlib.sha256(data).hexdigest() != str(digest):
+                raise ValueError(f"transport payload corrupted for {name}")
+            result.append((name, data))
     finally:
         if own:
             conn.close()
-    result: list[tuple[str, bytes]] = []
-    for name, payload, digest in rows:
-        name = str(name)
-        if name in applied:
-            continue
-        data = bytes(payload)  # psycopg は memoryview を返す
-        if hashlib.sha256(data).hexdigest() != str(digest):
-            raise ValueError(f"transport payload corrupted for {name}")
-        result.append((name, data))
     return result
 
 

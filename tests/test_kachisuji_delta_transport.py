@@ -52,6 +52,39 @@ def test_upload_fetch_roundtrip_and_idempotency(tmp_path):
     conn.close()
 
 
+def test_applied_payloads_are_never_read(tmp_path):
+    """適用済みのデルタは payload を一切読まないこと。
+
+    以前は全 payload を 1 回の SELECT で読んでから適用済みを捨てていた。
+    そのため一度きりの巨大デルタ (進入変更パッチ・事故修復) を毎回まるごと
+    読み直し、本番 Postgres の statement timeout を超えて適用が落ちていた
+    (2026-09-11)。適用済みの payload には触れず、未適用だけを 1 件ずつ読む。
+    """
+    conn = sqlite3.connect(tmp_path / "transport.db")
+    for tag, rid in (("20260908.db", "20260908-01-01"), ("20260909.db", "20260909-01-01")):
+        delta = tmp_path / f"kachisuji_delta_{tag[:8]}.db"
+        _make_delta(delta, f"2026-09-{tag[6:8]}", [rid])
+        dt.upload_delta_file(delta, conn=conn)
+
+    reads: list[str] = []
+
+    class Spy:
+        def execute(self, sql, params=()):
+            if "select payload" in sql.lower():
+                reads.append(str(params[0]) if params else "*")
+            return conn.execute(sql, params)
+
+        def __getattr__(self, name):
+            return getattr(conn, name)
+
+    pending = dt.fetch_pending_payloads({"20260908.db"}, conn=Spy())
+
+    assert [name for name, _ in pending] == ["20260909.db"]
+    # 適用済み 20260908.db の payload は読まれていない。
+    assert reads == ["20260909.db"]
+    conn.close()
+
+
 def test_upload_rejects_conflicting_content(tmp_path):
     conn = sqlite3.connect(tmp_path / "transport.db")
     a = tmp_path / "kachisuji_delta_20260819.db"

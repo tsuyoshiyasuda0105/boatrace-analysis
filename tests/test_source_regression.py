@@ -139,7 +139,11 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # 狭めてから SQL へ入れている。補間は table (固定タプル TABLES の
     # ループ変数) と name (デルタ由来だが _COLUMN_NAME で
     # [a-z][a-z0-9_]{0,63} に限定済み) のみ。
-    assert len(calls) == 183, (
+    # 2026-09-11: 適用が輸送テーブルの全ペイロードを毎回読み statement
+    # timeout で落ちていた真因を直し、fetch_pending_payloads を「名前を先に
+    # 読み未適用だけ 1 件ずつ取る」方式にした。f-string SELECT が実質 1 件
+    # 増えて 184 に (補間は TRANSPORT_TABLE 定数のみ・外部入力なし)。
+    assert len(calls) == 184, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )
