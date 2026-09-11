@@ -143,7 +143,10 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # timeout で落ちていた真因を直し、fetch_pending_payloads を「名前を先に
     # 読み未適用だけ 1 件ずつ取る」方式にした。f-string SELECT が実質 1 件
     # 増えて 184 に (補間は TRANSPORT_TABLE 定数のみ・外部入力なし)。
-    assert len(calls) == 184, (
+    # 2026-09-12: 「4まくり」気づきタグ用に _boat4_makuri_rates_by_race
+    # (src/web/app.py) を追加し 185 に。補間は既監査の placeholders
+    # (= ",".join("?" for _ in unique_ids)、値はすべてバインドパラメータ) のみ。
+    assert len(calls) == 185, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )

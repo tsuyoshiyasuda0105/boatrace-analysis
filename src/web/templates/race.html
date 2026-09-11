@@ -496,7 +496,7 @@
                       <b>{{ '%.1f' | format(p.national_course_top3_rate) if p.national_course_top3_rate is defined and p.national_course_top3_rate is not none else '-' }}%</b>
                     </span>
                   </span>
-                  {% if p.accident_display_level is defined or p.escape_tag is defined %}
+                  {% if p.accident_display_level is defined or p.escape_tag is defined or p.makuri_watch_tag is defined or p.slow_start_tag is defined %}
                     <div class="racer-tag-list">
                   {% endif %}
                   {% if p.accident_display_level is defined %}
@@ -519,7 +519,19 @@
                       逃げ
                     </span>
                   {% endif %}
-                  {% if p.accident_display_level is defined or p.escape_tag is defined %}
+                  {% if p.makuri_watch_tag is defined %}
+                    <span class="racer-watch-tag racer-watch-tag--makuri"
+                          title="4号艇の全国4コースまくり率 {{ '%.1f' | format(p.makuri_watch_tag.rate) }}% ({{ p.makuri_watch_tag.wins }}/{{ p.makuri_watch_tag.starts }})・荒れ注意の目安（買い目の推奨ではありません）">
+                      4まくり注意
+                    </span>
+                  {% endif %}
+                  {% if p.slow_start_tag is defined %}
+                    <span class="racer-watch-tag racer-watch-tag--slow-start"
+                          title="3号艇の事前平均ST {{ '%.3f' | format(p.slow_start_tag.avg_start_timing) }}・荒れ注意の目安（買い目の推奨ではありません）">
+                      3スロー注意
+                    </span>
+                  {% endif %}
+                  {% if p.accident_display_level is defined or p.escape_tag is defined or p.makuri_watch_tag is defined or p.slow_start_tag is defined %}
                     </div>
                   {% endif %}
                 </span>

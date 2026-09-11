@@ -119,7 +119,7 @@ def test_prefetched_tag_build_is_byte_identical_to_individual_build(monkeypatch)
         "race_date": "2026-08-16",
         "stadium_number": 1,
     }
-    entries = [(1, 1001, 45.5), (2, 1002, None)]
+    entries = [(1, 1001, 45.5, 0.15), (2, 1002, None, 0.17)]
     accidents = {
         1001: {
             "rate": 0.75,
@@ -179,6 +179,7 @@ def test_prefetched_tag_build_is_byte_identical_to_individual_build(monkeypatch)
     monkeypatch.setattr(web_app, "_ace_motor_threshold", lambda *_args: 40.0)
     monkeypatch.setattr(web_app, "_boat1_monthly_escape_profile", lambda *_args: escape)
     monkeypatch.setattr(web_app, "_load_entry_change_snapshot_stats", lambda *_args: entry_change)
+    monkeypatch.setattr(web_app, "_boat4_makuri_rate_for_race", lambda *_args: None)
 
     legacy = web_app._build_race_detail_tag_snapshot(race_id)
     optimized_conn = EntryConnection()
@@ -229,7 +230,8 @@ def test_escape_tag_uses_monthly_frozen_boat1_profile():
 
     # boats[n] に nigashi_tag が増えたので版数を上げた (2026-09-01)。
     # 上げ忘れると既存キャッシュが優先され、新タグが画面に出ない。
-    assert 'RACE_DETAIL_TAG_CACHE_VERSION = "v7"' in source
+    # 2026-09-12: makuri_watch_tag / slow_start_tag 追加でさらに v8 へ。
+    assert 'RACE_DETAIL_TAG_CACHE_VERSION = "v8"' in source
     assert "def _boat1_monthly_escape_profile" in source
     assert "def _monthly_snapshot_window" in source
     assert "WHERE race_id = ? AND boat_number = 1" in source

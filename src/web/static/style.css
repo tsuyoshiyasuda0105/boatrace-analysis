@@ -2832,6 +2832,29 @@ main h2 {
   color: #ccfbf1;
 }
 
+/* 気づきタグ (荒れ注意の目安)。買い目の推奨ではないため、ゴールド系
+   ("お金を入れるレース" を示す L4 バッジ) とは意図的に配色を分ける。 */
+.racer-watch-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 1px 6px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 5px;
+  background: rgba(120, 53, 15, 0.28);
+  color: #fde68a;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  word-break: break-word;
+}
+.racer-watch-tag--slow-start {
+  border-color: rgba(148, 163, 184, 0.55);
+  background: rgba(30, 41, 59, 0.5);
+  color: #e2e8f0;
+}
+
 .racer-detail-btn,
 .racer-name-static {
   display: inline-flex;
@@ -5029,7 +5052,9 @@ main h2 {
 .kimarite-watch-badge,
 .escape-watch-badge,
 .nigashi-watch-badge,
-.entry-change-watch-badge {
+.entry-change-watch-badge,
+.makuri-watch-badge,
+.slow-start-watch-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5058,7 +5083,9 @@ main h2 {
 .race-item a .kimarite-watch-badge,
 .race-item a .escape-watch-badge,
 .race-item a .nigashi-watch-badge,
-.race-item a .entry-change-watch-badge {
+.race-item a .entry-change-watch-badge,
+.race-item a .makuri-watch-badge,
+.race-item a .slow-start-watch-badge {
   position: static;
   z-index: 4;
   max-width: 100%;
@@ -5113,18 +5140,38 @@ main h2 {
   box-shadow: 0 0 10px rgba(251, 191, 36, 0.34);
 }
 
+/* 「気づきタグ」(荒れ注意の目安。買い目の推奨ではない)。
+   L4/ace-motor 等の "お金を入れるレース" ゴールド系とは配色を分ける。 */
+.makuri-watch-badge {
+  border: 1px solid rgba(249, 115, 22, 0.92);
+  background: linear-gradient(135deg, rgba(124, 45, 18, 0.96), rgba(249, 115, 22, 0.8));
+  color: #ffedd5;
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.32);
+}
+
+.slow-start-watch-badge {
+  border: 1px solid rgba(148, 163, 184, 0.85);
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.96), rgba(100, 116, 139, 0.72));
+  color: #e2e8f0;
+  box-shadow: 0 0 10px rgba(148, 163, 184, 0.28);
+}
+
 .race-item.done .accident-watch-badge,
 .race-item.done .ace-motor-watch-badge,
 .race-item.done .kimarite-watch-badge,
 .race-item.done .escape-watch-badge,
 .race-item.done .nigashi-watch-badge,
 .race-item.done .entry-change-watch-badge,
+.race-item.done .makuri-watch-badge,
+.race-item.done .slow-start-watch-badge,
 .race-item.is-closed .accident-watch-badge,
 .race-item.is-closed .ace-motor-watch-badge,
 .race-item.is-closed .kimarite-watch-badge,
 .race-item.is-closed .escape-watch-badge,
 .race-item.is-closed .nigashi-watch-badge,
-.race-item.is-closed .entry-change-watch-badge {
+.race-item.is-closed .entry-change-watch-badge,
+.race-item.is-closed .makuri-watch-badge,
+.race-item.is-closed .slow-start-watch-badge {
   opacity: 1;
   filter: none;
 }

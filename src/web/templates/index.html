@@ -375,7 +375,7 @@
       (() => {
         const marketSignalsEnabled = false;
         const payload = {{ initial_market_signals|default({})|tojson }};
-        const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge';
+        const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge, .makuri-watch-badge, .slow-start-watch-badge';
         const raceItems = Array.from(document.querySelectorAll('.race-item[data-race-id]'));
         const raceItemMap = new Map(raceItems.map((item) => [item.dataset.raceId, item]));
         const diagnostics = {
@@ -466,6 +466,10 @@
             if (nigashi) addBadge(row, 'nigashi-watch-badge', '壁', nigashi.label || '2号艇 壁');
             const entryChange = badges?.entry_change;
             if (entryChange) addBadge(row, 'entry-change-watch-badge', '!', entryChange.label || '進入注意');
+            const makuriWatch = badges?.makuri_watch;
+            if (makuriWatch) addBadge(row, 'makuri-watch-badge', '4まくり', makuriWatch.label || '4号艇まくり注意（荒れ注意の目安・買い目の推奨ではありません）');
+            const slowStart = badges?.slow_start;
+            if (slowStart) addBadge(row, 'slow-start-watch-badge', '3スロー', slowStart.label || '3号艇スロー注意（荒れ注意の目安・買い目の推奨ではありません）');
             if (!row.children.length) row.remove();
           });
         };
@@ -549,7 +553,7 @@
         let renderTodaysPicks = () => {};
         let raceBadgesCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.race_badges) || {};
         const SHOW_STRATEGY_RACE_CHIPS = false;
-        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge';
+        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge, .makuri-watch-badge, .slow-start-watch-badge';
         const STRATEGY_BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetails = () => {
           // Race detail pages now load heavy motor/history/affinity data lazily
@@ -691,6 +695,8 @@
             const ace = badges?.ace_motor || {};
             const escape = badges?.escape || {};
             const entryChange = badges?.entry_change || {};
+            const makuriWatch = badges?.makuri_watch || {};
+            const slowStart = badges?.slow_start || {};
             rows.push([
               raceId,
               'badges',
@@ -702,6 +708,10 @@
               Array.isArray(escape.boats) ? escape.boats.join(',') : '',
               entryChange.max_rate ?? '',
               Array.isArray(entryChange.boats) ? entryChange.boats.join(',') : '',
+              makuriWatch.max_rate ?? '',
+              Array.isArray(makuriWatch.boats) ? makuriWatch.boats.join(',') : '',
+              slowStart.avg_start_timing ?? '',
+              Array.isArray(slowStart.boats) ? slowStart.boats.join(',') : '',
             ].join(':'));
           });
           rows.sort();
@@ -893,6 +903,22 @@
               badge.className = 'entry-change-watch-badge';
               badge.textContent = '!';
               badge.title = entryChange.label || '進入注意';
+              ensureBadgeRow().appendChild(badge);
+            }
+            const makuriWatch = badges?.makuri_watch;
+            if (makuriWatch) {
+              const badge = document.createElement('span');
+              badge.className = 'makuri-watch-badge';
+              badge.textContent = '4まくり';
+              badge.title = makuriWatch.label || '4号艇まくり注意（荒れ注意の目安・買い目の推奨ではありません）';
+              ensureBadgeRow().appendChild(badge);
+            }
+            const slowStart = badges?.slow_start;
+            if (slowStart) {
+              const badge = document.createElement('span');
+              badge.className = 'slow-start-watch-badge';
+              badge.textContent = '3スロー';
+              badge.title = slowStart.label || '3号艇スロー注意（荒れ注意の目安・買い目の推奨ではありません）';
               ensureBadgeRow().appendChild(badge);
             }
           });

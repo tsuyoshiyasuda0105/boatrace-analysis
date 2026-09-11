@@ -598,11 +598,132 @@ ENTRY_CHANGE_INNER_MIN_RATE = 0.10
 # 以前は「事故・逃げ・進入変更が揃っていれば再計算しない」と種別を数え上げて
 # 判定していたため、4 種別目 (壁) を足したときに古いキャッシュが再計算されず
 # 新バッジが画面に出なかった (2026-09-03)。版数一致で判定すれば同じ事故は起きない。
-RACE_BADGE_SCHEMA_VERSION = "v2"
+RACE_BADGE_SCHEMA_VERSION = "v3"
 
 COURSE_ROLE_MIN_STARTS = 20
 ESCAPE_WIN_RATE_MIN = 0.70
 NIGASHI_RATE_MIN = 0.65
+
+# 「気づきタグ」(荒れ注意の目安。買い目の推奨ではない) のしきい値。
+# 4号艇まくり率・3号艇平均STとも前日までに分かる情報のみで判定する。
+# まくり率タグは決まり手スキルタグ (kimarite_skill / _attach_kimarite_skill_tags)
+# とは独立した集計。あちらは予測行 (preds) にだけ付き、レース一覧バッジの元に
+# なる detail-tag スナップショットには乗らない設計のため、ここでは同じ定義
+# (course_number=4 で1着 かつ kimarite='まくり') を自前で集計し直す。
+MAKURI_WATCH_MIN_STARTS = 10
+MAKURI_WATCH_MIN_WINS = 3
+MAKURI_WATCH_RATE_MIN = 11.5
+SLOW_START_AVG_ST_MIN = 0.191
+
+
+def _makuri_watch_tag_payload(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
+    """4号艇の course4 まくり率が高いレースへ「注意」タグを付ける。
+
+    買い目の印ではなく荒れ注意の目安。率は保存済みの浮動小数ではなく、
+    分母分子の整数から出す (_course_role_rate と同じ考え方)。
+    """
+    if not isinstance(stats, dict):
+        return None
+    starts = int(stats.get("starts") or 0)
+    wins = int(stats.get("wins") or 0)
+    if starts < MAKURI_WATCH_MIN_STARTS or wins < MAKURI_WATCH_MIN_WINS:
+        return None
+    rate = wins / starts * 100.0
+    if rate < MAKURI_WATCH_RATE_MIN:
+        return None
+    return {
+        "label": "4まくり注意",
+        "rate": round(rate, 1),
+        "wins": wins,
+        "starts": starts,
+    }
+
+
+def _slow_start_tag_payload(avg_start_timing: Any) -> Optional[dict[str, Any]]:
+    """3号艇の事前平均ST (avg_start_timing) が遅いレースへ「注意」タグを付ける。
+
+    買い目の印ではなく荒れ注意の目安。値が大きいほど出足が遅い。
+    """
+    value = _safe_float(avg_start_timing)
+    if value is None or value < SLOW_START_AVG_ST_MIN:
+        return None
+    return {
+        "label": "3スロー注意",
+        "avg_start_timing": round(float(value), 3),
+    }
+
+
+def _boat4_makuri_rate_for_race(race_id: str, race_date: str) -> Optional[dict[str, Any]]:
+    """4号艇選手の全国4コースまくり成績を前日までのデータだけで算出する (単発)。
+
+    バッチ経路 (_boat4_makuri_rates_by_race) が使えないとき専用のフォールバック。
+    """
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            WITH current_boat4 AS (
+                SELECT racer_number
+                  FROM race_entries
+                 WHERE race_id = ? AND boat_number = 4
+            )
+            SELECT COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = 'まくり' THEN 1 ELSE 0 END) AS wins
+              FROM current_boat4 c
+              JOIN race_entries e ON e.racer_number = c.racer_number
+              JOIN races r ON r.race_id = e.race_id AND r.race_date < ?
+              JOIN race_results rr ON rr.race_id = e.race_id
+                                   AND rr.boat_number = e.boat_number
+                                   AND rr.course_number = 4
+            """,
+            (race_id, race_date),
+        ).fetchone()
+    if not row:
+        return None
+    starts = int(row[0] or 0)
+    if starts <= 0:
+        return None
+    return {"starts": starts, "wins": int(row[1] or 0)}
+
+
+def _boat4_makuri_rates_by_race(
+    race_ids: list[str],
+    race_date: str,
+    conn: Any,
+) -> dict[str, dict[str, Any]]:
+    """4号艇まくり成績を対象レース分まとめて読む (N+1 回避)。"""
+    unique_ids = [str(rid) for rid in dict.fromkeys(race_ids) if rid]
+    if not unique_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_ids)
+    try:
+        rows = conn.execute(
+            f"""
+            WITH current_boat4 AS (
+                SELECT race_id AS current_race_id, racer_number
+                  FROM race_entries
+                 WHERE race_id IN ({placeholders}) AND boat_number = 4
+            )
+            SELECT c.current_race_id,
+                   COUNT(*) AS starts,
+                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = 'まくり' THEN 1 ELSE 0 END) AS wins
+              FROM current_boat4 c
+              JOIN race_entries e ON e.racer_number = c.racer_number
+              JOIN races r ON r.race_id = e.race_id AND r.race_date < ?
+              JOIN race_results rr ON rr.race_id = e.race_id
+                                   AND rr.boat_number = e.boat_number
+                                   AND rr.course_number = 4
+             GROUP BY c.current_race_id
+            """,
+            (*unique_ids, race_date),
+        ).fetchall()
+    except Exception:
+        logger.warning("batch makuri-watch prefetch failed: %s", race_date, exc_info=True)
+        return {}
+    return {
+        str(rid): {"starts": int(starts or 0), "wins": int(wins or 0)}
+        for rid, starts, wins in rows
+        if int(starts or 0) > 0
+    }
 
 
 def _load_course_role_snapshot_stats(
@@ -1296,6 +1417,33 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                     ),
                 }
 
+            makuri_watch_tag = None
+            slow_start_tag = None
+            boat4_tag_raw = boats.get("4") if isinstance(boats.get("4"), dict) else None
+            if boat4_tag_raw:
+                makuri_watch_tag = boat4_tag_raw.get("makuri_watch_tag")
+            boat3_tag_raw = boats.get("3") if isinstance(boats.get("3"), dict) else None
+            if boat3_tag_raw:
+                slow_start_tag = boat3_tag_raw.get("slow_start_tag")
+            if isinstance(makuri_watch_tag, dict):
+                rate = _safe_float(makuri_watch_tag.get("rate"))
+                badge_info["makuri_watch"] = {
+                    "items": [{"boat": 4, **makuri_watch_tag}],
+                    "boats": [4],
+                    "max_rate": rate,
+                    "label": f"4号:{makuri_watch_tag.get('label') or '4まくり注意'}"
+                    + (f" {rate:.1f}%" if rate is not None else ""),
+                }
+            if isinstance(slow_start_tag, dict):
+                avg_st = _safe_float(slow_start_tag.get("avg_start_timing"))
+                badge_info["slow_start"] = {
+                    "items": [{"boat": 3, **slow_start_tag}],
+                    "boats": [3],
+                    "avg_start_timing": avg_st,
+                    "label": f"3号:{slow_start_tag.get('label') or '3スロー注意'}"
+                    + (f" {avg_st:.2f}" if avg_st is not None else ""),
+                }
+
         if badge_info:
             race_badges[rid] = badge_info
     payload["race_badges"] = _normalize_race_badge_labels(race_badges)
@@ -1406,6 +1554,32 @@ def _normalize_race_badge_labels(race_badges: Any) -> dict[str, dict[str, Any]]:
                 kimarite = dict(kimarite)
                 kimarite["label"] = " / ".join(labels)
                 next_badges["kimarite"] = kimarite
+
+        makuri_watch = next_badges.get("makuri_watch")
+        if isinstance(makuri_watch, dict):
+            items = [item for item in (makuri_watch.get("items") or []) if isinstance(item, dict)]
+            primary = items[0] if items else {}
+            boat = primary.get("boat") or 4
+            rate = _safe_float(primary.get("rate") or makuri_watch.get("max_rate"))
+            label_text = str(primary.get("label") or "4まくり注意").strip() or "4まくり注意"
+            makuri_watch = dict(makuri_watch)
+            makuri_watch["label"] = (
+                f"{boat}号:{label_text} {rate:.1f}%" if rate is not None else f"{boat}号:{label_text}"
+            )
+            next_badges["makuri_watch"] = makuri_watch
+
+        slow_start = next_badges.get("slow_start")
+        if isinstance(slow_start, dict):
+            items = [item for item in (slow_start.get("items") or []) if isinstance(item, dict)]
+            primary = items[0] if items else {}
+            boat = primary.get("boat") or 3
+            avg_st = _safe_float(primary.get("avg_start_timing") or slow_start.get("avg_start_timing"))
+            label_text = str(primary.get("label") or "3スロー注意").strip() or "3スロー注意"
+            slow_start = dict(slow_start)
+            slow_start["label"] = (
+                f"{boat}号:{label_text} {avg_st:.2f}" if avg_st is not None else f"{boat}号:{label_text}"
+            )
+            next_badges["slow_start"] = slow_start
 
         normalized[str(race_id)] = next_badges
     return normalized
@@ -1521,7 +1695,10 @@ def _lightweight_top_page_market_payload(
 # ゲストのレース一覧に出してよい "表示タグ" のキー (記述的な統計のみ)。
 # market(EV+)/l4 等の会員限定 "判断" キーは意図的に除外する。
 _GUEST_SAFE_BADGE_KEYS = frozenset(
-    {"accident", "escape", "nigashi", "ace_motor", "entry_change", "kimarite"}
+    {
+        "accident", "escape", "nigashi", "ace_motor", "entry_change", "kimarite",
+        "makuri_watch", "slow_start",
+    }
 )
 
 
@@ -1533,8 +1710,8 @@ def _guest_safe_top_page_market_payload(
 
     _lightweight_top_page_market_payload と違い、race_badges の各レースについて
     _GUEST_SAFE_BADGE_KEYS に含まれるキー (逃げ/事故/エースモーター/進入変更/
-    決まり手) だけを通し、market(EV+) 等の会員限定キーは落とす。signals は
-    そもそも取り出さない。
+    決まり手/4まくり注意/3スロー注意) だけを通し、market(EV+) 等の会員限定
+    キーは落とす。signals はそもそも取り出さない。
     """
     base = _lightweight_top_page_market_payload(payload, target_date)
     safe_badges: dict[str, Any] = {}
@@ -6159,7 +6336,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v7"
+RACE_DETAIL_TAG_CACHE_VERSION = "v8"
 RACE_DETAIL_PAGE_CACHE_VERSION = "v18"
 
 
@@ -6219,7 +6396,8 @@ def _prefetch_race_detail_common(
 
     entry_rows = conn.execute(
         f"""
-        SELECT race_id, boat_number, racer_number, assigned_motor_top_2_percent
+        SELECT race_id, boat_number, racer_number, assigned_motor_top_2_percent,
+               avg_start_timing
           FROM race_entries
          WHERE race_id IN ({placeholders})
          ORDER BY race_id, boat_number
@@ -6227,9 +6405,9 @@ def _prefetch_race_detail_common(
         tuple(unique_ids),
     ).fetchall()
     entries_by_race: dict[str, list[tuple[Any, ...]]] = {}
-    for rid, boat_number, racer_number, motor_rate in entry_rows:
+    for rid, boat_number, racer_number, motor_rate, avg_start_timing in entry_rows:
         entries_by_race.setdefault(str(rid), []).append(
-            (boat_number, racer_number, motor_rate)
+            (boat_number, racer_number, motor_rate, avg_start_timing)
         )
     return {"race_info": info_by_race, "tag_entries": entries_by_race}
 
@@ -6325,6 +6503,7 @@ def _prefetch_race_detail_tag_inputs(
             for rid, starts, wins in escape_rows
             if int(starts or 0) > 0
         }
+    makuri_by_race = _boat4_makuri_rates_by_race(unique_ids, race_date, conn)
     prefetched.update(
         {
             "accident_by_racer": accident_by_racer,
@@ -6332,6 +6511,7 @@ def _prefetch_race_detail_tag_inputs(
             "escape_by_race": escape_by_race,
             "entry_change_by_racer": entry_change_by_racer,
             "course_role_by_racer": course_role_by_racer,
+            "makuri_by_race": makuri_by_race,
         }
     )
     return prefetched
@@ -6523,7 +6703,8 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         with db_connect() as conn:
             entries = conn.execute(
                 """
-                SELECT boat_number, racer_number, assigned_motor_top_2_percent
+                SELECT boat_number, racer_number, assigned_motor_top_2_percent,
+                       avg_start_timing
                   FROM race_entries
                  WHERE race_id = ?
                  ORDER BY boat_number
@@ -6583,8 +6764,20 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
             [int(row[1]) for row in entries if row[1] is not None],
         )
 
+    makuri_by_race = prewarm_context.get("makuri_by_race")
+    if makuri_by_race is None:
+        try:
+            makuri_by_race = (
+                {}
+                if prewarm_context
+                else {race_id: _boat4_makuri_rate_for_race(race_id, race_date)}
+            )
+        except Exception:
+            makuri_by_race = {}
+            logger.warning("makuri watch tag snapshot failed for %s", race_id, exc_info=True)
+
     boats: dict[str, dict[str, Any]] = {}
-    for boat_number, racer_number, motor_rate_raw in entries:
+    for boat_number, racer_number, motor_rate_raw, avg_start_timing_raw in entries:
         boat: dict[str, Any] = {"escape_context_tag": None}
         accident = accident_by_racer.get(int(racer_number)) if racer_number is not None else None
         if accident:
@@ -6640,6 +6833,15 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         entry_change_tag = _entry_change_tag_payload(entry_change_stats)
         if entry_change_tag:
             boat["entry_change_tag"] = entry_change_tag
+        if int(boat_number) == 4:
+            makuri_stats = makuri_by_race.get(race_id) if makuri_by_race else None
+            makuri_watch_tag = _makuri_watch_tag_payload(makuri_stats)
+            if makuri_watch_tag:
+                boat["makuri_watch_tag"] = makuri_watch_tag
+        if int(boat_number) == 3:
+            slow_start_tag = _slow_start_tag_payload(avg_start_timing_raw)
+            if slow_start_tag:
+                boat["slow_start_tag"] = slow_start_tag
         boats[str(int(boat_number))] = boat
 
     return {
@@ -17453,6 +17655,33 @@ def create_app(
                         "label": " / ".join(
                             f"{x['boat']}号:{x['label']}" for x in kimarite_items[:3]
                         ),
+                    }
+
+                makuri_watch_tag = None
+                slow_start_tag = None
+                boat4_tag_raw = boats.get("4") if isinstance(boats.get("4"), dict) else None
+                if boat4_tag_raw:
+                    makuri_watch_tag = boat4_tag_raw.get("makuri_watch_tag")
+                boat3_tag_raw = boats.get("3") if isinstance(boats.get("3"), dict) else None
+                if boat3_tag_raw:
+                    slow_start_tag = boat3_tag_raw.get("slow_start_tag")
+                if isinstance(makuri_watch_tag, dict):
+                    rate = _safe_float(makuri_watch_tag.get("rate"))
+                    badge_info["makuri_watch"] = {
+                        "items": [{"boat": 4, **makuri_watch_tag}],
+                        "boats": [4],
+                        "max_rate": rate,
+                        "label": f"4号:{makuri_watch_tag.get('label') or '4まくり注意'}"
+                        + (f" {rate:.1f}%" if rate is not None else ""),
+                    }
+                if isinstance(slow_start_tag, dict):
+                    avg_st = _safe_float(slow_start_tag.get("avg_start_timing"))
+                    badge_info["slow_start"] = {
+                        "items": [{"boat": 3, **slow_start_tag}],
+                        "boats": [3],
+                        "avg_start_timing": avg_st,
+                        "label": f"3号:{slow_start_tag.get('label') or '3スロー注意'}"
+                        + (f" {avg_st:.2f}" if avg_st is not None else ""),
                     }
 
             if badge_info:
