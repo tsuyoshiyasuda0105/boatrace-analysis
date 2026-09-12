@@ -408,3 +408,93 @@ def test_style_css_defines_neutral_colors_for_watch_badges():
     assert ".makuri-watch-badge" in css
     assert ".slow-start-watch-badge" in css
     assert ".racer-watch-tag" in css
+
+
+# ---------------------------------------------------------------------------
+# バッチ集計 (_boat4_makuri_rates_by_race) — 実 DB。
+# 2026-09-12: IN (100件超の placeholders) 版が本番 Postgres で statement
+# timeout になり握りつぶして {} を返し、prewarm が「4まくり」を 1 件も
+# 作れなかった。race_date で束ねる形に直した。ここでは集計の正しさと、
+# 対象 race_id だけ返すこと・当日以降を数えないことを固定する。
+# ---------------------------------------------------------------------------
+
+
+def _makuri_batch_db():
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE races (race_id TEXT PRIMARY KEY, race_date TEXT);
+        CREATE TABLE race_entries (race_id TEXT, boat_number INT, racer_number INT);
+        CREATE TABLE race_results (
+            race_id TEXT, boat_number INT, finishing_position INT,
+            course_number INT, kimarite TEXT
+        );
+        """
+    )
+    # 当日 (2026-09-11): a と b は 4 号艇に別選手。c は対象外の同日レース。
+    conn.executemany(
+        "INSERT INTO races VALUES (?, ?)",
+        [("a", "2026-09-11"), ("b", "2026-09-11"), ("c", "2026-09-11")],
+    )
+    conn.executemany(
+        "INSERT INTO race_entries VALUES (?, ?, ?)",
+        [("a", 4, 100), ("b", 4, 200), ("c", 4, 300)],
+    )
+    # 選手 100 の履歴: 4 コース 4 走・まくり 2 勝 (逃げは数えない)。
+    hist = [
+        ("h1", "2026-09-01", 100), ("h2", "2026-09-02", 100),
+        ("h3", "2026-09-03", 100), ("h4", "2026-09-04", 100),
+        # 当日 (2026-09-11) の履歴は数えてはいけない (リーク防止)。
+        ("h5", "2026-09-11", 100),
+        # 選手 200: 4 コース 2 走・まくり 1 勝。
+        ("h6", "2026-09-05", 200), ("h7", "2026-09-06", 200),
+        # 選手 300: 4 コース 1 走 (対象外なので出力に出ない)。
+        ("h8", "2026-09-07", 300),
+    ]
+    conn.executemany("INSERT INTO races VALUES (?, ?)", [(r, d) for r, d, _ in hist])
+    conn.executemany(
+        "INSERT INTO race_entries VALUES (?, 4, ?)", [(r, n) for r, _, n in hist]
+    )
+    conn.executemany(
+        "INSERT INTO race_results VALUES (?, 4, ?, 4, ?)",
+        [
+            ("h1", 1, "まくり"), ("h2", 1, "まくり"),
+            ("h3", 1, "逃げ"), ("h4", 2, "まくり"),
+            ("h5", 1, "まくり"),  # 当日 — 数えない
+            ("h6", 1, "まくり"), ("h7", 3, "差し"),
+            ("h8", 1, "まくり"),
+        ],
+    )
+    conn.commit()
+    return conn
+
+
+def test_batch_aggregates_by_date_and_filters_to_wanted_races():
+    conn = _makuri_batch_db()
+    try:
+        got = web_app._boat4_makuri_rates_by_race(["a", "b"], "2026-09-11", conn)
+    finally:
+        conn.close()
+    # a: 選手100 は当日を除くと 4 走 2 まくり勝ち。b: 選手200 は 2 走 1 勝。
+    assert got == {"a": {"starts": 4, "wins": 2}, "b": {"starts": 2, "wins": 1}}
+    # c は wanted に無いので出力されない。
+    assert "c" not in got
+
+
+def test_batch_returns_empty_without_raising_on_broken_db():
+    class _Broken:
+        def execute(self, *_a, **_k):
+            raise RuntimeError("boom")
+
+    assert web_app._boat4_makuri_rates_by_race(["a"], "2026-09-11", _Broken()) == {}
+
+
+def test_batch_no_longer_builds_an_in_clause_over_race_ids():
+    """再発防止: race_id を IN (...) で束ねない (それが timeout の原因だった)。"""
+    import inspect
+
+    src = inspect.getsource(web_app._boat4_makuri_rates_by_race)
+    assert "IN ({placeholders})" not in src
+    assert "race_date = ?" in src

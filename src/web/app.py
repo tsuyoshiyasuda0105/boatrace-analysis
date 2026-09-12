@@ -690,18 +690,25 @@ def _boat4_makuri_rates_by_race(
     race_date: str,
     conn: Any,
 ) -> dict[str, dict[str, Any]]:
-    """4号艇まくり成績を対象レース分まとめて読む (N+1 回避)。"""
-    unique_ids = [str(rid) for rid in dict.fromkeys(race_ids) if rid]
-    if not unique_ids:
+    """4号艇まくり成績を対象レース分まとめて読む (N+1 回避)。
+
+    レース ID を 100 件超の ``IN (...)`` で絞ると本番 Postgres が
+    statement timeout で落ち、握りつぶして {} を返していた (2026-09-12 特定。
+    prewarm が「4まくり」タグを 1 件も作れず、後段の市場シグナル再計算が
+    1 レースずつ拾う偶然頼みになっていた)。同じ日の 4 号艇を ``race_date``
+    で束ねると時間内に収まる (本番実測 約8秒)。多く取れた分は呼び出し側が
+    使う race_id だけ拾う。"""
+    wanted = {str(rid) for rid in race_ids if rid}
+    if not wanted:
         return {}
-    placeholders = ",".join("?" for _ in unique_ids)
     try:
         rows = conn.execute(
-            f"""
+            """
             WITH current_boat4 AS (
-                SELECT race_id AS current_race_id, racer_number
-                  FROM race_entries
-                 WHERE race_id IN ({placeholders}) AND boat_number = 4
+                SELECT e.race_id AS current_race_id, e.racer_number
+                  FROM race_entries e
+                  JOIN races r0 ON r0.race_id = e.race_id AND r0.race_date = ?
+                 WHERE e.boat_number = 4
             )
             SELECT c.current_race_id,
                    COUNT(*) AS starts,
@@ -714,7 +721,7 @@ def _boat4_makuri_rates_by_race(
                                    AND rr.course_number = 4
              GROUP BY c.current_race_id
             """,
-            (*unique_ids, race_date),
+            (race_date, race_date),
         ).fetchall()
     except Exception:
         logger.warning("batch makuri-watch prefetch failed: %s", race_date, exc_info=True)
@@ -722,7 +729,7 @@ def _boat4_makuri_rates_by_race(
     return {
         str(rid): {"starts": int(starts or 0), "wins": int(wins or 0)}
         for rid, starts, wins in rows
-        if int(starts or 0) > 0
+        if str(rid) in wanted and int(starts or 0) > 0
     }
 
 
