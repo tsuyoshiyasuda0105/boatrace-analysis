@@ -179,7 +179,6 @@ def test_prefetched_tag_build_is_byte_identical_to_individual_build(monkeypatch)
     monkeypatch.setattr(web_app, "_ace_motor_threshold", lambda *_args: 40.0)
     monkeypatch.setattr(web_app, "_boat1_monthly_escape_profile", lambda *_args: escape)
     monkeypatch.setattr(web_app, "_load_entry_change_snapshot_stats", lambda *_args: entry_change)
-    monkeypatch.setattr(web_app, "_boat4_makuri_rate_for_race", lambda *_args: None)
 
     legacy = web_app._build_race_detail_tag_snapshot(race_id)
     optimized_conn = EntryConnection()

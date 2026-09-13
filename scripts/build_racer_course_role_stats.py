@@ -55,6 +55,8 @@ def ensure_schema(conn) -> None:
           updated_at            TEXT NOT NULL,
           course1_sashinuke_count INTEGER NOT NULL DEFAULT 0,
           course1_sashinuke_rate  DOUBLE PRECISION,
+          course4_starts        INTEGER NOT NULL DEFAULT 0,
+          course4_makuri_wins   INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (snapshot_date, racer_number)
         );
         """
@@ -64,6 +66,9 @@ def ensure_schema(conn) -> None:
     # 既存行は 0 / NULL になり、再集計されるまでタグは付かない (誤って付かない側)。
     ensure_column(conn, "course1_sashinuke_count", "course1_sashinuke_count INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "course1_sashinuke_rate", "course1_sashinuke_rate DOUBLE PRECISION")
+    # 「4まくり注意」タグ (2026-09-13 に朝の事前計算へ移した) 用。
+    ensure_column(conn, "course4_starts", "course4_starts INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "course4_makuri_wins", "course4_makuri_wins INTEGER NOT NULL DEFAULT 0")
     conn.commit()
 
 
@@ -169,6 +174,48 @@ def _history_rows(
     ).fetchall()
 
 
+def _course4_rows(
+    conn,
+    snapshot_date: str,
+    window_start: str,
+) -> Iterable[tuple[int, int, int]]:
+    # 4まくり注意タグ用。以前レース詳細タグの生成時にその場で数えていた定義を
+    # そのまま移した: 4コース (course_number=4) の出走数と、そのうち
+    # 1着かつ決まり手「まくり」の数。窓は MAKURI_WINDOW_DAYS。
+    return conn.execute(
+        """
+        WITH target AS (
+          SELECT DISTINCT e.racer_number
+            FROM races r
+            JOIN race_entries e ON e.race_id = r.race_id
+           WHERE r.race_date = ?
+             AND e.racer_number IS NOT NULL
+        )
+        SELECT e.racer_number,
+               COUNT(*) AS starts,
+               SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = 'まくり' THEN 1 ELSE 0 END) AS makuri_wins
+          FROM target t
+          JOIN race_entries e ON e.racer_number = t.racer_number
+          JOIN races r
+            ON r.race_id = e.race_id
+           AND r.race_date >= ?
+           AND r.race_date < ?
+          JOIN race_results rr
+            ON rr.race_id = e.race_id
+           AND rr.boat_number = e.boat_number
+           AND rr.course_number = 4
+         GROUP BY e.racer_number
+        """,
+        (snapshot_date, window_start, snapshot_date),
+    ).fetchall()
+
+
+# 4まくり注意の集計窓。以前の「前日までの全期間」と、本番の現データ (2024年〜)
+# では同じ結果になる 3 年に固定し、日がたっても読む量が増えないようにした
+# (2026-09-13 本番で 9/13 の対象 16 レースが全期間版と完全一致・約1.5秒)。
+MAKURI_WINDOW_DAYS = 1095
+
+
 def build_rows(conn, snapshot_date: str, window_days: int = 365) -> list[tuple]:
     snapshot = date.fromisoformat(snapshot_date)
     if window_days <= 0:
@@ -203,10 +250,17 @@ def build_rows(conn, snapshot_date: str, window_days: int = 365) -> list[tuple]:
             rec["course2_starts"] += 1
             rec["nigashi"] += int(course1_won)
 
+    makuri_window_start = (snapshot - timedelta(days=MAKURI_WINDOW_DAYS)).isoformat()
+    course4 = {
+        int(racer_number): (int(starts or 0), int(makuri_wins or 0))
+        for racer_number, starts, makuri_wins in _course4_rows(conn, snapshot_date, makuri_window_start)
+    }
+
     updated_at = datetime.now(JST).isoformat(timespec="seconds")
     rows: list[tuple] = []
     for racer_number in racer_numbers:
         rec = agg[int(racer_number)]
+        course4_starts, course4_makuri_wins = course4.get(int(racer_number), (0, 0))
         course1_starts = rec["course1_starts"]
         course2_starts = rec["course2_starts"]
         rows.append(
@@ -223,6 +277,8 @@ def build_rows(conn, snapshot_date: str, window_days: int = 365) -> list[tuple]:
                 updated_at,
                 rec["sashinuke"],
                 rec["sashinuke"] / course1_starts if course1_starts else None,
+                course4_starts,
+                course4_makuri_wins,
             )
         )
     return rows
@@ -246,8 +302,10 @@ def upsert_rows(conn, rows: list[tuple]) -> int:
           course2_nigashi_rate,
           updated_at,
           course1_sashinuke_count,
-          course1_sashinuke_rate
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          course1_sashinuke_rate,
+          course4_starts,
+          course4_makuri_wins
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(snapshot_date, racer_number) DO UPDATE SET
           window_days = excluded.window_days,
           course1_starts = excluded.course1_starts,
@@ -258,7 +316,9 @@ def upsert_rows(conn, rows: list[tuple]) -> int:
           course2_nigashi_rate = excluded.course2_nigashi_rate,
           updated_at = excluded.updated_at,
           course1_sashinuke_count = excluded.course1_sashinuke_count,
-          course1_sashinuke_rate = excluded.course1_sashinuke_rate
+          course1_sashinuke_rate = excluded.course1_sashinuke_rate,
+          course4_starts = excluded.course4_starts,
+          course4_makuri_wins = excluded.course4_makuri_wins
         """,
         rows,
     )

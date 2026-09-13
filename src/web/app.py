@@ -607,9 +607,11 @@ NIGASHI_RATE_MIN = 0.65
 # 「気づきタグ」(荒れ注意の目安。買い目の推奨ではない) のしきい値。
 # 4号艇まくり率・3号艇平均STとも前日までに分かる情報のみで判定する。
 # まくり率タグは決まり手スキルタグ (kimarite_skill / _attach_kimarite_skill_tags)
-# とは独立した集計。あちらは予測行 (preds) にだけ付き、レース一覧バッジの元に
-# なる detail-tag スナップショットには乗らない設計のため、ここでは同じ定義
-# (course_number=4 で1着 かつ kimarite='まくり') を自前で集計し直す。
+# とは独立した集計 (course_number=4 で1着 かつ kimarite='まくり')。
+# 2026-09-13 から、逃げ・壁・差され注意と同じくコース役割スナップショット
+# (朝に事前計算・前日までの直近3年) の course4_starts / course4_makuri_wins を
+# 読むだけにした。以前はタグ生成時にその場で全期間を数えており、本番で約8秒と
+# statement timeout ぎりぎりだった。
 MAKURI_WATCH_MIN_STARTS = 10
 MAKURI_WATCH_MIN_WINS = 3
 MAKURI_WATCH_RATE_MIN = 11.5
@@ -662,86 +664,6 @@ def _slow_start_tag_payload(avg_start_timing: Any) -> Optional[dict[str, Any]]:
     }
 
 
-def _boat4_makuri_rate_for_race(race_id: str, race_date: str) -> Optional[dict[str, Any]]:
-    """4号艇選手の全国4コースまくり成績を前日までのデータだけで算出する (単発)。
-
-    バッチ経路 (_boat4_makuri_rates_by_race) が使えないとき専用のフォールバック。
-    """
-    with db_connect() as conn:
-        row = conn.execute(
-            """
-            WITH current_boat4 AS (
-                SELECT racer_number
-                  FROM race_entries
-                 WHERE race_id = ? AND boat_number = 4
-            )
-            SELECT COUNT(*) AS starts,
-                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = 'まくり' THEN 1 ELSE 0 END) AS wins
-              FROM current_boat4 c
-              JOIN race_entries e ON e.racer_number = c.racer_number
-              JOIN races r ON r.race_id = e.race_id AND r.race_date < ?
-              JOIN race_results rr ON rr.race_id = e.race_id
-                                   AND rr.boat_number = e.boat_number
-                                   AND rr.course_number = 4
-            """,
-            (race_id, race_date),
-        ).fetchone()
-    if not row:
-        return None
-    starts = int(row[0] or 0)
-    if starts <= 0:
-        return None
-    return {"starts": starts, "wins": int(row[1] or 0)}
-
-
-def _boat4_makuri_rates_by_race(
-    race_ids: list[str],
-    race_date: str,
-    conn: Any,
-) -> dict[str, dict[str, Any]]:
-    """4号艇まくり成績を対象レース分まとめて読む (N+1 回避)。
-
-    レース ID を 100 件超の ``IN (...)`` で絞ると本番 Postgres が
-    statement timeout で落ち、握りつぶして {} を返していた (2026-09-12 特定。
-    prewarm が「4まくり」タグを 1 件も作れず、後段の市場シグナル再計算が
-    1 レースずつ拾う偶然頼みになっていた)。同じ日の 4 号艇を ``race_date``
-    で束ねると時間内に収まる (本番実測 約8秒)。多く取れた分は呼び出し側が
-    使う race_id だけ拾う。"""
-    wanted = {str(rid) for rid in race_ids if rid}
-    if not wanted:
-        return {}
-    try:
-        rows = conn.execute(
-            """
-            WITH current_boat4 AS (
-                SELECT e.race_id AS current_race_id, e.racer_number
-                  FROM race_entries e
-                  JOIN races r0 ON r0.race_id = e.race_id AND r0.race_date = ?
-                 WHERE e.boat_number = 4
-            )
-            SELECT c.current_race_id,
-                   COUNT(*) AS starts,
-                   SUM(CASE WHEN rr.finishing_position = 1 AND rr.kimarite = 'まくり' THEN 1 ELSE 0 END) AS wins
-              FROM current_boat4 c
-              JOIN race_entries e ON e.racer_number = c.racer_number
-              JOIN races r ON r.race_id = e.race_id AND r.race_date < ?
-              JOIN race_results rr ON rr.race_id = e.race_id
-                                   AND rr.boat_number = e.boat_number
-                                   AND rr.course_number = 4
-             GROUP BY c.current_race_id
-            """,
-            (race_date, race_date),
-        ).fetchall()
-    except Exception:
-        logger.warning("batch makuri-watch prefetch failed: %s", race_date, exc_info=True)
-        return {}
-    return {
-        str(rid): {"starts": int(starts or 0), "wins": int(wins or 0)}
-        for rid, starts, wins in rows
-        if str(rid) in wanted and int(starts or 0) > 0
-    }
-
-
 def _load_course_role_snapshot_stats(
     snapshot_date: str,
     racer_numbers: list[int],
@@ -765,7 +687,9 @@ def _load_course_role_snapshot_stats(
                        course2_nigashi_count,
                        course2_nigashi_rate,
                        course1_sashinuke_count,
-                       course1_sashinuke_rate
+                       course1_sashinuke_rate,
+                       course4_starts,
+                       course4_makuri_wins
                   FROM racer_course_role_snapshots
                  WHERE snapshot_date = ?
                    AND racer_number IN ({placeholders})
@@ -823,6 +747,9 @@ def _load_course_role_snapshot_stats(
         if len(row) >= 9:
             out[racer]["course1_sashinuke_count"] = int(row[7] or 0)
             out[racer]["course1_sashinuke_rate"] = _safe_float(row[8])
+        if len(row) >= 11:
+            out[racer]["course4_starts"] = int(row[9] or 0)
+            out[racer]["course4_makuri_wins"] = int(row[10] or 0)
     return out
 
 
@@ -895,6 +822,22 @@ def _course_role_sashinuke_tag(stats: dict[str, Any] | None) -> Optional[dict[st
         "sashi": hits,
         "starts": starts,
     }
+
+
+def _course_role_makuri_tag(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
+    """4号艇選手の4コースまくり率が高いとき「4まくり注意」を返す。
+
+    列が無い (夜間集計が新しい列をまだ作っていない) 行ではタグを付けない。
+    しきい値の判定は _makuri_watch_tag_payload と共通。
+    """
+    if not isinstance(stats, dict) or "course4_starts" not in stats:
+        return None
+    return _makuri_watch_tag_payload(
+        {
+            "starts": int(stats.get("course4_starts") or 0),
+            "wins": int(stats.get("course4_makuri_wins") or 0),
+        }
+    )
 
 
 def _load_legacy_escape_by_race(target_date: str) -> dict[str, dict[str, Any]]:
@@ -1261,6 +1204,15 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                         "boats": [boat_no],
                         "max_rate": sashinuke_tag["rate"],
                         "label": f"1号:差され注意 {sashinuke_tag['rate']:.1f}%",
+                    }
+            elif boat_no == 4:
+                makuri_tag = _course_role_makuri_tag(stats)
+                if makuri_tag:
+                    badge_info["makuri_watch"] = {
+                        "items": [{"boat": boat_no, **makuri_tag}],
+                        "boats": [boat_no],
+                        "max_rate": makuri_tag["rate"],
+                        "label": f"4号:{makuri_tag['label']} {makuri_tag['rate']:.1f}%",
                     }
             elif boat_no == 2:
                 nigashi_tag = _course_role_nigashi_tag(stats)
@@ -6605,7 +6557,6 @@ def _prefetch_race_detail_tag_inputs(
             for rid, starts, wins in escape_rows
             if int(starts or 0) > 0
         }
-    makuri_by_race = _boat4_makuri_rates_by_race(unique_ids, race_date, conn)
     prefetched.update(
         {
             "accident_by_racer": accident_by_racer,
@@ -6613,7 +6564,6 @@ def _prefetch_race_detail_tag_inputs(
             "escape_by_race": escape_by_race,
             "entry_change_by_racer": entry_change_by_racer,
             "course_role_by_racer": course_role_by_racer,
-            "makuri_by_race": makuri_by_race,
         }
     )
     return prefetched
@@ -6866,18 +6816,6 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
             [int(row[1]) for row in entries if row[1] is not None],
         )
 
-    makuri_by_race = prewarm_context.get("makuri_by_race")
-    if makuri_by_race is None:
-        try:
-            makuri_by_race = (
-                {}
-                if prewarm_context
-                else {race_id: _boat4_makuri_rate_for_race(race_id, race_date)}
-            )
-        except Exception:
-            makuri_by_race = {}
-            logger.warning("makuri watch tag snapshot failed for %s", race_id, exc_info=True)
-
     boats: dict[str, dict[str, Any]] = {}
     for boat_number, racer_number, motor_rate_raw, avg_start_timing_raw in entries:
         boat: dict[str, Any] = {"escape_context_tag": None}
@@ -6939,9 +6877,8 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
         entry_change_tag = _entry_change_tag_payload(entry_change_stats)
         if entry_change_tag:
             boat["entry_change_tag"] = entry_change_tag
-        if int(boat_number) == 4:
-            makuri_stats = makuri_by_race.get(race_id) if makuri_by_race else None
-            makuri_watch_tag = _makuri_watch_tag_payload(makuri_stats)
+        if int(boat_number) == 4 and course_role_by_racer:
+            makuri_watch_tag = _course_role_makuri_tag(course_role_stats)
             if makuri_watch_tag:
                 boat["makuri_watch_tag"] = makuri_watch_tag
         if int(boat_number) == 3:

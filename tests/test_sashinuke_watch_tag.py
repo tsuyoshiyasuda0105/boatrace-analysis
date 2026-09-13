@@ -150,7 +150,7 @@ def test_loader_falls_back_to_old_columns_so_escape_and_wall_survive(monkeypatch
 # ---------------------------------------------------------------------------
 
 
-def _build_snapshot(monkeypatch, *, entries, course_roles, entry_change=None, makuri=None):
+def _build_snapshot(monkeypatch, *, entries, course_roles, entry_change=None):
     info = {"race_id": RACE_ID, "race_date": RACE_DATE, "stadium_number": 1}
     monkeypatch.setattr(web_app, "_race_basic_info", lambda _rid: info)
     monkeypatch.setattr(web_app, "_accident_watch_map", lambda *_args: {})
@@ -160,7 +160,6 @@ def _build_snapshot(monkeypatch, *, entries, course_roles, entry_change=None, ma
     monkeypatch.setattr(
         web_app, "_load_entry_change_snapshot_stats", lambda *_args, **_kwargs: entry_change or {}
     )
-    monkeypatch.setattr(web_app, "_boat4_makuri_rate_for_race", lambda *_args: makuri)
 
     class _EntriesConn:
         def execute(self, *_args, **_kwargs):
@@ -224,9 +223,11 @@ def test_tag_coexists_with_escape_makuri_slow_start_and_entry_change(monkeypatch
     snapshot = _build_snapshot(
         monkeypatch,
         entries=FOUR_BOATS,
-        course_roles={1001: stats},
+        course_roles={
+            1001: stats,
+            1004: {**_stats(0, 0), "course4_starts": 40, "course4_makuri_wins": 6},
+        },
         entry_change=entry_change,
-        makuri={"starts": 40, "wins": 6},
     )
 
     boat1 = snapshot["boats"]["1"]

@@ -140,6 +140,50 @@ def test_course1_sashinuke_is_zero_and_rate_null_without_course1_starts(conn) ->
     assert row[10:12] == (0, None)
 
 
+def test_course4_counts_starts_and_makuri_wins_only(conn) -> None:
+    # 4コース 4 走: まくり1着 ×2 / まくり差し1着 / 2着。まくり勝ちは 2/4。
+    races = (
+        ("c4-1", 1, "まくり"),
+        ("c4-2", 1, "まくり"),
+        ("c4-3", 1, "まくり差し"),
+        ("c4-4", 2, "差し"),
+    )
+    for index, (race_id, finish, kimarite) in enumerate(races, start=1):
+        _add_race(
+            conn,
+            race_id,
+            f"2026-08-{index:02d}",
+            4,
+            target_finish=finish,
+            course1_wins=False,
+            winner_kimarite=kimarite,
+        )
+
+    row = _row(conn)
+    assert row[12:14] == (4, 2)
+
+
+def test_course4_excludes_snapshot_date_and_uses_three_year_window(conn) -> None:
+    # 窓の内側ぎりぎり (3年前の当日) は数え、その前日と当日は数えない。
+    assert mod.MAKURI_WINDOW_DAYS == 1095
+    _add_race(conn, "c4-edge-in", "2023-09-02", 4, target_finish=1, course1_wins=False, winner_kimarite="まくり")
+    _add_race(conn, "c4-edge-out", "2023-09-01", 4, target_finish=1, course1_wins=False, winner_kimarite="まくり")
+    _add_race(conn, "c4-same-day", SNAPSHOT_DATE, 4, target_finish=1, course1_wins=False, winner_kimarite="まくり")
+
+    row = _row(conn)
+    assert row[12:14] == (1, 1)
+
+
+def test_course4_window_is_wider_than_course1_window(conn) -> None:
+    # 2年前の4コース成績は 4まくり (3年窓) には入り、逃げ (1年窓) の対象には入らない。
+    _add_race(conn, "c4-old", "2024-09-01", 4, target_finish=1, course1_wins=False, winner_kimarite="まくり")
+    _add_race(conn, "c1-old", "2024-09-01", 1, target_finish=1, course1_wins=True, winner_kimarite="逃げ")
+
+    row = _row(conn)
+    assert row[3] == 0
+    assert row[12:14] == (1, 1)
+
+
 def test_sashinuke_columns_are_added_to_an_existing_table(conn) -> None:
     """本番の既存テーブル (列追加前) にも列が足されて書き込めること。"""
     conn.executescript(
@@ -159,9 +203,10 @@ def test_sashinuke_columns_are_added_to_an_existing_table(conn) -> None:
     mod.upsert_rows(conn, mod.build_rows(conn, SNAPSHOT_DATE))
 
     saved = conn.execute(
-        "SELECT course1_sashinuke_count, course1_sashinuke_rate FROM racer_course_role_snapshots"
+        "SELECT course1_sashinuke_count, course1_sashinuke_rate, course4_starts, course4_makuri_wins"
+        " FROM racer_course_role_snapshots"
     ).fetchone()
-    assert tuple(saved) == (1, 1.0)
+    assert tuple(saved) == (1, 1.0, 0, 0)
 
 
 def test_race_older_than_window_is_excluded(conn) -> None:
