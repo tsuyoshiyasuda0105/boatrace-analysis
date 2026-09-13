@@ -146,7 +146,13 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # 2026-09-12: 「4まくり」タグ用 _boat4_makuri_rates_by_race を追加し一旦 185 に
     # したが、その IN (placeholders) 版が本番で statement timeout を起こしたため
     # race_date で束ねる形へ直し f-string 補間を廃止。184 に戻る (補間なし)。
-    assert len(calls) == 184, (
+    # 2026-09-13: 「差され注意」タグを事前計算方式で追加し 187 に。
+    # +1 は _load_course_role_snapshot_stats の旧列読み直し (補間は placeholders
+    # のみ・値はパラメータ渡し)。+2 は scripts/build_racer_course_role_stats.py の
+    # ensure_column (PRAGMA table_info / ALTER TABLE ADD COLUMN)。補間は
+    # table_name (関数内の固定文字列) と ddl (呼び出し側の固定リテラル) のみで、
+    # 外部入力は届かない。
+    assert len(calls) == 187, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )

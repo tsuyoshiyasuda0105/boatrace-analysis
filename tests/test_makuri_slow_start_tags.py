@@ -370,11 +370,13 @@ def test_thresholds_are_the_agreed_strong_values():
 
 
 def test_race_detail_tag_cache_version_bumped_for_new_watch_tags():
-    assert web_app.RACE_DETAIL_TAG_CACHE_VERSION == "v8"
+    # v9: 2026-09-13 に「差され注意」タグ追加でさらに 1 つ進んだ。
+    assert web_app.RACE_DETAIL_TAG_CACHE_VERSION == "v9"
 
 
 def test_race_badge_schema_version_bumped_for_new_watch_badges():
-    assert web_app.RACE_BADGE_SCHEMA_VERSION == "v3"
+    # v4: 2026-09-13 に「差され注意」バッジ追加でさらに 1 つ進んだ。
+    assert web_app.RACE_BADGE_SCHEMA_VERSION == "v4"
 
 
 def test_watch_tag_labels_are_neutral_not_a_buy_signal():

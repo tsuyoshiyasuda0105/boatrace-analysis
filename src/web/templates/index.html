@@ -375,7 +375,7 @@
       (() => {
         const marketSignalsEnabled = false;
         const payload = {{ initial_market_signals|default({})|tojson }};
-        const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge, .makuri-watch-badge, .slow-start-watch-badge';
+        const badgeSelector = '.accident-watch-badge, .ace-motor-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge, .makuri-watch-badge, .slow-start-watch-badge, .sashinuke-watch-badge';
         const raceItems = Array.from(document.querySelectorAll('.race-item[data-race-id]'));
         const raceItemMap = new Map(raceItems.map((item) => [item.dataset.raceId, item]));
         const diagnostics = {
@@ -470,6 +470,8 @@
             if (makuriWatch) addBadge(row, 'makuri-watch-badge', '4まくり', makuriWatch.label || '4号艇まくり注意（荒れ注意の目安・買い目の推奨ではありません）');
             const slowStart = badges?.slow_start;
             if (slowStart) addBadge(row, 'slow-start-watch-badge', '3スロー', slowStart.label || '3号艇スロー注意（荒れ注意の目安・買い目の推奨ではありません）');
+            const sashinukeWatch = badges?.sashinuke_watch;
+            if (sashinukeWatch) addBadge(row, 'sashinuke-watch-badge', '差され', sashinukeWatch.label || '1号艇 差され注意（1コースの差し負け率が高い・本命でも危険の目安・買い目の推奨ではありません）');
             if (!row.children.length) row.remove();
           });
         };
@@ -553,7 +555,7 @@
         let renderTodaysPicks = () => {};
         let raceBadgesCache = (initialMarketSignalsPayload && initialMarketSignalsPayload.race_badges) || {};
         const SHOW_STRATEGY_RACE_CHIPS = false;
-        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge, .makuri-watch-badge, .slow-start-watch-badge';
+        const LIGHT_BADGE_SELECTOR = '.accident-watch-badge, .ace-motor-watch-badge, .kimarite-watch-badge, .escape-watch-badge, .nigashi-watch-badge, .entry-change-watch-badge, .makuri-watch-badge, .slow-start-watch-badge, .sashinuke-watch-badge';
         const STRATEGY_BADGE_SELECTOR = '.l4-badge, .nuki-filter-badge, .f1-prime-badge, .tetsuban-badge, .ex-bonus-badge, .obs-badge, .portfolio-strong-badge';
         const warmRaceDetails = () => {
           // Race detail pages now load heavy motor/history/affinity data lazily
@@ -697,6 +699,7 @@
             const entryChange = badges?.entry_change || {};
             const makuriWatch = badges?.makuri_watch || {};
             const slowStart = badges?.slow_start || {};
+            const sashinukeWatch = badges?.sashinuke_watch || {};
             rows.push([
               raceId,
               'badges',
@@ -712,6 +715,8 @@
               Array.isArray(makuriWatch.boats) ? makuriWatch.boats.join(',') : '',
               slowStart.avg_start_timing ?? '',
               Array.isArray(slowStart.boats) ? slowStart.boats.join(',') : '',
+              sashinukeWatch.max_rate ?? '',
+              Array.isArray(sashinukeWatch.boats) ? sashinukeWatch.boats.join(',') : '',
             ].join(':'));
           });
           rows.sort();
@@ -919,6 +924,14 @@
               badge.className = 'slow-start-watch-badge';
               badge.textContent = '3スロー';
               badge.title = slowStart.label || '3号艇スロー注意（荒れ注意の目安・買い目の推奨ではありません）';
+              ensureBadgeRow().appendChild(badge);
+            }
+            const sashinukeWatch = badges?.sashinuke_watch;
+            if (sashinukeWatch) {
+              const badge = document.createElement('span');
+              badge.className = 'sashinuke-watch-badge';
+              badge.textContent = '差され';
+              badge.title = sashinukeWatch.label || '1号艇 差され注意（1コースの差し負け率が高い・本命でも危険の目安・買い目の推奨ではありません）';
               ensureBadgeRow().appendChild(badge);
             }
           });

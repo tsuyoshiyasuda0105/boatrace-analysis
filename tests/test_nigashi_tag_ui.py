@@ -214,7 +214,8 @@ def test_course_role_loader_batches_all_racers_in_one_query(monkeypatch):
 
 
 def test_both_badge_cache_versions_are_bumped():
-    assert web_app.RACE_DETAIL_TAG_CACHE_VERSION == "v8"
+    # v9: 2026-09-13 に「差され注意」タグ追加でさらに 1 つ進んだ。
+    assert web_app.RACE_DETAIL_TAG_CACHE_VERSION == "v9"
     assert web_app.TOP_PAGE_SNAPSHOT_VERSION == "v4"
 
 

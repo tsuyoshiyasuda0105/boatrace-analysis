@@ -598,7 +598,7 @@ ENTRY_CHANGE_INNER_MIN_RATE = 0.10
 # 以前は「事故・逃げ・進入変更が揃っていれば再計算しない」と種別を数え上げて
 # 判定していたため、4 種別目 (壁) を足したときに古いキャッシュが再計算されず
 # 新バッジが画面に出なかった (2026-09-03)。版数一致で判定すれば同じ事故は起きない。
-RACE_BADGE_SCHEMA_VERSION = "v3"
+RACE_BADGE_SCHEMA_VERSION = "v4"
 
 COURSE_ROLE_MIN_STARTS = 20
 ESCAPE_WIN_RATE_MIN = 0.70
@@ -614,6 +614,15 @@ MAKURI_WATCH_MIN_STARTS = 10
 MAKURI_WATCH_MIN_WINS = 3
 MAKURI_WATCH_RATE_MIN = 11.5
 SLOW_START_AVG_ST_MIN = 0.191
+
+# 「差され注意」タグ (2026-09-13): 1号艇選手の1コース差し負け率が高いレース
+# への注意喚起。買い目の印ではなく「本命(1号艇)が手堅く見えても危ない」の
+# 目安。率はコース役割スナップショット (前日までの直近365日・夜間に事前計算)
+# から読む。当日にレース単位で集計すると本番の statement timeout 8 秒に
+# 当たって不安定だったため、逃げ・壁と同じ事前計算方式にした。
+# 検証 (2025年以降・その時点で分かる直近365日・1コース20走以上):
+# 差し負け率 25%以上の1号艇は1着率 35.0% (全体 54.9%)、該当は全レースの約7%。
+SASHINUKE_WATCH_RATE_MIN = 0.25
 
 
 def _makuri_watch_tag_payload(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
@@ -754,7 +763,9 @@ def _load_course_role_snapshot_stats(
                        course1_win_rate,
                        course2_starts,
                        course2_nigashi_count,
-                       course2_nigashi_rate
+                       course2_nigashi_rate,
+                       course1_sashinuke_count,
+                       course1_sashinuke_rate
                   FROM racer_course_role_snapshots
                  WHERE snapshot_date = ?
                    AND racer_number IN ({placeholders})
@@ -762,8 +773,34 @@ def _load_course_role_snapshot_stats(
                 (snapshot_date, *wanted),
             ).fetchall()
     except Exception:
-        logger.warning("course role snapshot load failed: %s", snapshot_date, exc_info=True)
-        return {}
+        # 差し負け列は 2026-09-13 に後から足した。夜間集計が一度走って列が
+        # 作られるまでは本番表に無いので、旧列だけで読み直す。ここで {} を
+        # 返すと逃げ・壁タグまで巻き添えで消える。
+        logger.warning(
+            "course role snapshot load with sashinuke columns failed, retrying without: %s",
+            snapshot_date,
+            exc_info=True,
+        )
+        try:
+            with db_connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT racer_number,
+                           course1_starts,
+                           course1_wins,
+                           course1_win_rate,
+                           course2_starts,
+                           course2_nigashi_count,
+                           course2_nigashi_rate
+                      FROM racer_course_role_snapshots
+                     WHERE snapshot_date = ?
+                       AND racer_number IN ({placeholders})
+                    """,
+                    (snapshot_date, *wanted),
+                ).fetchall()
+        except Exception:
+            logger.warning("course role snapshot load failed: %s", snapshot_date, exc_info=True)
+            return {}
     out: dict[int, dict[str, Any]] = {}
     for row in rows:
         if len(row) < 7:
@@ -783,6 +820,9 @@ def _load_course_role_snapshot_stats(
             "course2_nigashi_count": int(row[5] or 0),
             "course2_nigashi_rate": _safe_float(row[6]),
         }
+        if len(row) >= 9:
+            out[racer]["course1_sashinuke_count"] = int(row[7] or 0)
+            out[racer]["course1_sashinuke_rate"] = _safe_float(row[8])
     return out
 
 
@@ -832,6 +872,27 @@ def _course_role_nigashi_tag(stats: dict[str, Any] | None) -> Optional[dict[str,
         "label": "壁",
         "rate": round(rate * 100.0, 1),
         "wins": hits,
+        "starts": starts,
+    }
+
+
+def _course_role_sashinuke_tag(stats: dict[str, Any] | None) -> Optional[dict[str, Any]]:
+    """1号艇選手の1コース差し負け率が高いとき「差され注意」を返す。
+
+    差し負け = 1コースで走って1着を逃し、そのレースの勝者の決まり手が「差し」。
+    列が無い (夜間集計が新しい列をまだ作っていない) 行ではタグを付けない。
+    """
+    if not isinstance(stats, dict) or "course1_sashinuke_count" not in stats:
+        return None
+    starts = int(stats.get("course1_starts") or 0)
+    hits = int(stats.get("course1_sashinuke_count") or 0)
+    rate = _course_role_rate(hits, starts, stats.get("course1_sashinuke_rate"))
+    if starts < COURSE_ROLE_MIN_STARTS or rate is None or rate < SASHINUKE_WATCH_RATE_MIN:
+        return None
+    return {
+        "label": "差され注意",
+        "rate": round(rate * 100.0, 1),
+        "sashi": hits,
         "starts": starts,
     }
 
@@ -1193,6 +1254,14 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                 escape_tag = _course_role_escape_tag(stats)
                 if escape_tag:
                     escape_by_race[rid] = {"boat": boat_no, **escape_tag}
+                sashinuke_tag = _course_role_sashinuke_tag(stats)
+                if sashinuke_tag:
+                    badge_info["sashinuke_watch"] = {
+                        "items": [{"boat": boat_no, **sashinuke_tag}],
+                        "boats": [boat_no],
+                        "max_rate": sashinuke_tag["rate"],
+                        "label": f"1号:差され注意 {sashinuke_tag['rate']:.1f}%",
+                    }
             elif boat_no == 2:
                 nigashi_tag = _course_role_nigashi_tag(stats)
                 if nigashi_tag:
@@ -1426,12 +1495,16 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
 
             makuri_watch_tag = None
             slow_start_tag = None
+            sashinuke_watch_tag = None
             boat4_tag_raw = boats.get("4") if isinstance(boats.get("4"), dict) else None
             if boat4_tag_raw:
                 makuri_watch_tag = boat4_tag_raw.get("makuri_watch_tag")
             boat3_tag_raw = boats.get("3") if isinstance(boats.get("3"), dict) else None
             if boat3_tag_raw:
                 slow_start_tag = boat3_tag_raw.get("slow_start_tag")
+            boat1_tag_raw = boats.get("1") if isinstance(boats.get("1"), dict) else None
+            if boat1_tag_raw:
+                sashinuke_watch_tag = boat1_tag_raw.get("sashinuke_watch_tag")
             if isinstance(makuri_watch_tag, dict):
                 rate = _safe_float(makuri_watch_tag.get("rate"))
                 badge_info["makuri_watch"] = {
@@ -1449,6 +1522,15 @@ def _hydrate_market_race_badges(payload: Any, target_date: str) -> Any:
                     "avg_start_timing": avg_st,
                     "label": f"3号:{slow_start_tag.get('label') or '3スロー注意'}"
                     + (f" {avg_st:.2f}" if avg_st is not None else ""),
+                }
+            if isinstance(sashinuke_watch_tag, dict):
+                rate = _safe_float(sashinuke_watch_tag.get("rate"))
+                badge_info["sashinuke_watch"] = {
+                    "items": [{"boat": 1, **sashinuke_watch_tag}],
+                    "boats": [1],
+                    "max_rate": rate,
+                    "label": f"1号:{sashinuke_watch_tag.get('label') or '差され注意'}"
+                    + (f" {rate:.1f}%" if rate is not None else ""),
                 }
 
         if badge_info:
@@ -1588,6 +1670,19 @@ def _normalize_race_badge_labels(race_badges: Any) -> dict[str, dict[str, Any]]:
             )
             next_badges["slow_start"] = slow_start
 
+        sashinuke_watch = next_badges.get("sashinuke_watch")
+        if isinstance(sashinuke_watch, dict):
+            items = [item for item in (sashinuke_watch.get("items") or []) if isinstance(item, dict)]
+            primary = items[0] if items else {}
+            boat = primary.get("boat") or 1
+            rate = _safe_float(primary.get("rate") or sashinuke_watch.get("max_rate"))
+            label_text = str(primary.get("label") or "差され注意").strip() or "差され注意"
+            sashinuke_watch = dict(sashinuke_watch)
+            sashinuke_watch["label"] = (
+                f"{boat}号:{label_text} {rate:.1f}%" if rate is not None else f"{boat}号:{label_text}"
+            )
+            next_badges["sashinuke_watch"] = sashinuke_watch
+
         normalized[str(race_id)] = next_badges
     return normalized
 
@@ -1704,7 +1799,7 @@ def _lightweight_top_page_market_payload(
 _GUEST_SAFE_BADGE_KEYS = frozenset(
     {
         "accident", "escape", "nigashi", "ace_motor", "entry_change", "kimarite",
-        "makuri_watch", "slow_start",
+        "makuri_watch", "slow_start", "sashinuke_watch",
     }
 )
 
@@ -6343,7 +6438,7 @@ def _current_race_position_rows(race_id: str) -> list[dict[str, Any]]:
     return out
 
 
-RACE_DETAIL_TAG_CACHE_VERSION = "v8"
+RACE_DETAIL_TAG_CACHE_VERSION = "v9"
 RACE_DETAIL_PAGE_CACHE_VERSION = "v18"
 
 
@@ -6832,6 +6927,10 @@ def _build_race_detail_tag_snapshot(race_id: str) -> dict[str, Any]:
                     "preferred_course": int(boat1_escape.get("preferred_course") or 1),
                 }
                 boat["escape_tag"]["label"] = "逃げ"
+        if int(boat_number) == 1 and course_role_by_racer:
+            sashinuke_watch_tag = _course_role_sashinuke_tag(course_role_stats)
+            if sashinuke_watch_tag:
+                boat["sashinuke_watch_tag"] = sashinuke_watch_tag
         if int(boat_number) == 2 and course_role_by_racer:
             nigashi_tag = _course_role_nigashi_tag(course_role_stats)
             if nigashi_tag:
@@ -17666,12 +17765,16 @@ def create_app(
 
                 makuri_watch_tag = None
                 slow_start_tag = None
+                sashinuke_watch_tag = None
                 boat4_tag_raw = boats.get("4") if isinstance(boats.get("4"), dict) else None
                 if boat4_tag_raw:
                     makuri_watch_tag = boat4_tag_raw.get("makuri_watch_tag")
                 boat3_tag_raw = boats.get("3") if isinstance(boats.get("3"), dict) else None
                 if boat3_tag_raw:
                     slow_start_tag = boat3_tag_raw.get("slow_start_tag")
+                boat1_tag_raw = boats.get("1") if isinstance(boats.get("1"), dict) else None
+                if boat1_tag_raw:
+                    sashinuke_watch_tag = boat1_tag_raw.get("sashinuke_watch_tag")
                 if isinstance(makuri_watch_tag, dict):
                     rate = _safe_float(makuri_watch_tag.get("rate"))
                     badge_info["makuri_watch"] = {
@@ -17689,6 +17792,15 @@ def create_app(
                         "avg_start_timing": avg_st,
                         "label": f"3号:{slow_start_tag.get('label') or '3スロー注意'}"
                         + (f" {avg_st:.2f}" if avg_st is not None else ""),
+                    }
+                if isinstance(sashinuke_watch_tag, dict):
+                    rate = _safe_float(sashinuke_watch_tag.get("rate"))
+                    badge_info["sashinuke_watch"] = {
+                        "items": [{"boat": 1, **sashinuke_watch_tag}],
+                        "boats": [1],
+                        "max_rate": rate,
+                        "label": f"1号:{sashinuke_watch_tag.get('label') or '差され注意'}"
+                        + (f" {rate:.1f}%" if rate is not None else ""),
                     }
 
             if badge_info:

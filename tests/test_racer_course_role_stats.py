@@ -29,7 +29,8 @@ def conn(tmp_path: Path):
           race_id TEXT NOT NULL,
           boat_number INTEGER NOT NULL,
           finishing_position INTEGER,
-          course_number INTEGER
+          course_number INTEGER,
+          kimarite TEXT
         );
         """
     )
@@ -51,6 +52,7 @@ def _add_race(
     target_finish: int | None,
     course1_wins: bool,
     target_boat: int | None = None,
+    winner_kimarite: str | None = None,
 ) -> None:
     target_boat = course if target_boat is None else target_boat
     assert target_boat is not None
@@ -58,15 +60,17 @@ def _add_race(
     conn.execute("INSERT INTO races VALUES (?, ?)", (race_id, race_date))
     entries = [(race_id, target_boat, RACER), (race_id, other_boat, 9000 + other_boat)]
     other_finish = 1 if course1_wins and other_boat == 1 else 3
+    target_kimarite = winner_kimarite if target_finish == 1 else None
+    other_kimarite = winner_kimarite if other_finish == 1 else None
     results = [
-        (race_id, target_boat, target_finish, course),
-        (race_id, other_boat, other_finish, other_boat),
+        (race_id, target_boat, target_finish, course, target_kimarite),
+        (race_id, other_boat, other_finish, other_boat, other_kimarite),
     ]
     if not course1_wins and target_finish != 1:
         entries.append((race_id, 3, 9003))
-        results.append((race_id, 3, 1, 3))
+        results.append((race_id, 3, 1, 3, winner_kimarite))
     conn.executemany("INSERT INTO race_entries VALUES (?, ?, ?)", entries)
-    conn.executemany("INSERT INTO race_results VALUES (?, ?, ?, ?)", results)
+    conn.executemany("INSERT INTO race_results VALUES (?, ?, ?, ?, ?)", results)
     conn.commit()
 
 
@@ -105,6 +109,61 @@ def test_course2_nigashi_rate_is_correct(conn) -> None:
     assert row[6:9] == (4, 3, 0.75)
 
 
+def test_course1_sashinuke_counts_only_losses_to_sashi(conn) -> None:
+    # 1着 (勝者=自分の逃げ) / 差しで負け ×2 / まくりで負け。差し負けは 2/4。
+    races = (
+        ("sn-1", 1, True, "逃げ"),
+        ("sn-2", 2, False, "差し"),
+        ("sn-3", 3, False, "まくり"),
+        ("sn-4", 2, False, "差し"),
+    )
+    for index, (race_id, finish, won, kimarite) in enumerate(races, start=1):
+        _add_race(
+            conn,
+            race_id,
+            f"2026-08-{index:02d}",
+            1,
+            target_finish=finish,
+            course1_wins=won,
+            winner_kimarite=kimarite,
+        )
+
+    row = _row(conn)
+    assert row[3] == 4
+    assert row[10:12] == (2, 0.5)
+
+
+def test_course1_sashinuke_is_zero_and_rate_null_without_course1_starts(conn) -> None:
+    _add_race(conn, "c2-sashi", "2026-08-01", 2, target_finish=2, course1_wins=False, winner_kimarite="差し")
+
+    row = _row(conn)
+    assert row[10:12] == (0, None)
+
+
+def test_sashinuke_columns_are_added_to_an_existing_table(conn) -> None:
+    """本番の既存テーブル (列追加前) にも列が足されて書き込めること。"""
+    conn.executescript(
+        """
+        CREATE TABLE racer_course_role_snapshots (
+          snapshot_date TEXT NOT NULL, racer_number INTEGER NOT NULL,
+          window_days INTEGER NOT NULL, course1_starts INTEGER NOT NULL,
+          course1_wins INTEGER NOT NULL, course1_win_rate DOUBLE PRECISION,
+          course2_starts INTEGER NOT NULL, course2_nigashi_count INTEGER NOT NULL,
+          course2_nigashi_rate DOUBLE PRECISION, updated_at TEXT NOT NULL,
+          PRIMARY KEY (snapshot_date, racer_number)
+        );
+        """
+    )
+    _add_race(conn, "old-table", "2026-08-01", 1, target_finish=2, course1_wins=False, winner_kimarite="差し")
+
+    mod.upsert_rows(conn, mod.build_rows(conn, SNAPSHOT_DATE))
+
+    saved = conn.execute(
+        "SELECT course1_sashinuke_count, course1_sashinuke_rate FROM racer_course_role_snapshots"
+    ).fetchone()
+    assert tuple(saved) == (1, 1.0)
+
+
 def test_race_older_than_window_is_excluded(conn) -> None:
     _add_race(conn, "old", "2025-08-31", 1, target_finish=1, course1_wins=True)
 
@@ -130,7 +189,7 @@ def test_rate_is_null_when_course_has_no_starts(conn) -> None:
 def test_duplicate_winners_do_not_duplicate_nigashi_count(conn) -> None:
     _add_race(conn, "duplicate-win", "2026-08-01", 2, target_finish=2, course1_wins=True)
     conn.execute("INSERT INTO race_entries VALUES ('duplicate-win', 3, 9003)")
-    conn.execute("INSERT INTO race_results VALUES ('duplicate-win', 3, 1, 3)")
+    conn.execute("INSERT INTO race_results VALUES ('duplicate-win', 3, 1, 3, NULL)")
     conn.commit()
 
     row = _row(conn)

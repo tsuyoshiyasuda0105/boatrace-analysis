@@ -53,11 +53,39 @@ def ensure_schema(conn) -> None:
           course2_nigashi_count INTEGER NOT NULL,
           course2_nigashi_rate  DOUBLE PRECISION,
           updated_at            TEXT NOT NULL,
+          course1_sashinuke_count INTEGER NOT NULL DEFAULT 0,
+          course1_sashinuke_rate  DOUBLE PRECISION,
           PRIMARY KEY (snapshot_date, racer_number)
         );
         """
     )
+    # 「差され注意」タグ (2026-09-13) 用に後から足した列。本番の既存テーブルには
+    # CREATE TABLE IF NOT EXISTS では入らないので、無ければ足す。
+    # 既存行は 0 / NULL になり、再集計されるまでタグは付かない (誤って付かない側)。
+    ensure_column(conn, "course1_sashinuke_count", "course1_sashinuke_count INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "course1_sashinuke_rate", "course1_sashinuke_rate DOUBLE PRECISION")
     conn.commit()
+
+
+def ensure_column(conn, column_name: str, ddl: str) -> None:
+    table_name = "racer_course_role_snapshots"
+    if getattr(conn, "_kind", "sqlite") == "postgres":
+        columns = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT column_name
+                  FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = ?
+                """,
+                (table_name,),
+            )
+        }
+    else:
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+    if column_name not in columns:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {ddl}")
 
 
 def _target_racers(conn, snapshot_date: str) -> list[int]:
@@ -79,7 +107,7 @@ def _history_rows(
     conn,
     snapshot_date: str,
     window_start: str,
-) -> Iterable[tuple[int, int, int, int]]:
+) -> Iterable[tuple[int, int, int, int, int]]:
     # 当日出走選手のコース1・2履歴を一度のクエリで取得する。
     return conn.execute(
         """
@@ -105,7 +133,9 @@ def _history_rows(
                      WHEN COALESCE(NULLIF(rr.course_number, 0), rr.boat_number) = 1
                      THEN 1 ELSE 0
                    END
-                 ) AS course1_won
+                 ) AS course1_won,
+                 -- 勝者の決まり手が「差し」。1コース艇が負けた回だけ数える (差し負け)。
+                 MAX(CASE WHEN rr.kimarite = '差し' THEN 1 ELSE 0 END) AS sashi_won
             FROM race_results rr
             JOIN relevant h ON h.race_id = rr.race_id
            WHERE rr.finishing_position = 1
@@ -128,7 +158,8 @@ def _history_rows(
         SELECT p.racer_number,
                p.course_number,
                p.racer_won,
-               COALESCE(w.course1_won, 0)
+               COALESCE(w.course1_won, 0),
+               COALESCE(w.sashi_won, 0)
           FROM participant p
           LEFT JOIN win w ON w.race_id = p.race_id
          WHERE p.finished = 1
@@ -149,9 +180,15 @@ def build_rows(conn, snapshot_date: str, window_days: int = 365) -> list[tuple]:
 
     window_start = (snapshot - timedelta(days=window_days)).isoformat()
     agg: dict[int, dict[str, int]] = defaultdict(
-        lambda: {"course1_starts": 0, "course1_wins": 0, "course2_starts": 0, "nigashi": 0}
+        lambda: {
+            "course1_starts": 0,
+            "course1_wins": 0,
+            "sashinuke": 0,
+            "course2_starts": 0,
+            "nigashi": 0,
+        }
     )
-    for racer_number, course_number, racer_won, course1_won in _history_rows(
+    for racer_number, course_number, racer_won, course1_won, sashi_won in _history_rows(
         conn,
         snapshot_date,
         window_start,
@@ -160,6 +197,8 @@ def build_rows(conn, snapshot_date: str, window_days: int = 365) -> list[tuple]:
         if int(course_number) == 1:
             rec["course1_starts"] += 1
             rec["course1_wins"] += int(racer_won)
+            if not int(racer_won) and int(sashi_won):
+                rec["sashinuke"] += 1
         elif int(course_number) == 2:
             rec["course2_starts"] += 1
             rec["nigashi"] += int(course1_won)
@@ -182,6 +221,8 @@ def build_rows(conn, snapshot_date: str, window_days: int = 365) -> list[tuple]:
                 rec["nigashi"],
                 rec["nigashi"] / course2_starts if course2_starts else None,
                 updated_at,
+                rec["sashinuke"],
+                rec["sashinuke"] / course1_starts if course1_starts else None,
             )
         )
     return rows
@@ -203,8 +244,10 @@ def upsert_rows(conn, rows: list[tuple]) -> int:
           course2_starts,
           course2_nigashi_count,
           course2_nigashi_rate,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          updated_at,
+          course1_sashinuke_count,
+          course1_sashinuke_rate
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(snapshot_date, racer_number) DO UPDATE SET
           window_days = excluded.window_days,
           course1_starts = excluded.course1_starts,
@@ -213,7 +256,9 @@ def upsert_rows(conn, rows: list[tuple]) -> int:
           course2_starts = excluded.course2_starts,
           course2_nigashi_count = excluded.course2_nigashi_count,
           course2_nigashi_rate = excluded.course2_nigashi_rate,
-          updated_at = excluded.updated_at
+          updated_at = excluded.updated_at,
+          course1_sashinuke_count = excluded.course1_sashinuke_count,
+          course1_sashinuke_rate = excluded.course1_sashinuke_rate
         """,
         rows,
     )

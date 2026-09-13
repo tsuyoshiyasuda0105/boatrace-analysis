@@ -496,7 +496,7 @@
                       <b>{{ '%.1f' | format(p.national_course_top3_rate) if p.national_course_top3_rate is defined and p.national_course_top3_rate is not none else '-' }}%</b>
                     </span>
                   </span>
-                  {% if p.accident_display_level is defined or p.escape_tag is defined or p.makuri_watch_tag is defined or p.slow_start_tag is defined %}
+                  {% if p.accident_display_level is defined or p.escape_tag is defined or p.makuri_watch_tag is defined or p.slow_start_tag is defined or p.sashinuke_watch_tag is defined %}
                     <div class="racer-tag-list">
                   {% endif %}
                   {% if p.accident_display_level is defined %}
@@ -531,7 +531,13 @@
                       3スロー注意
                     </span>
                   {% endif %}
-                  {% if p.accident_display_level is defined or p.escape_tag is defined or p.makuri_watch_tag is defined or p.slow_start_tag is defined %}
+                  {% if p.sashinuke_watch_tag is defined %}
+                    <span class="racer-watch-tag racer-watch-tag--sashinuke"
+                          title="1号艇 差され注意（1コースの差し負け率 {{ '%.1f' | format(p.sashinuke_watch_tag.rate) }}%・本命でも危険の目安・買い目の推奨ではありません）">
+                      差され注意
+                    </span>
+                  {% endif %}
+                  {% if p.accident_display_level is defined or p.escape_tag is defined or p.makuri_watch_tag is defined or p.slow_start_tag is defined or p.sashinuke_watch_tag is defined %}
                     </div>
                   {% endif %}
                 </span>
