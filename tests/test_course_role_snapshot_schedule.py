@@ -81,6 +81,68 @@ def test_course_role_snapshot_builds_when_races_exist(monkeypatch):
     assert ran and ran[0][0] == "scripts/build_racer_course_role_stats.py"
 
 
+def _stub_detail_phase(monkeypatch, order, *, course_role):
+    monkeypatch.setattr(maintenance.regular, "run_course_role_snapshot", course_role)
+    monkeypatch.setattr(
+        maintenance.regular,
+        "run_entry_change_snapshot",
+        lambda target: order.append(("entry_change", target)) or True,
+    )
+
+    def fake_subprocess(args, *, timeout):
+        order.append(args[0])
+        return True, {}
+
+    monkeypatch.setattr(maintenance, "_run_detail_subprocess", fake_subprocess)
+    monkeypatch.setattr(
+        maintenance.regular,
+        "race_detail_page_cache_coverage",
+        lambda today: {"races": 1, "covered": 1},
+    )
+
+
+def test_detail_phase_builds_today_course_role_snapshot_before_tags(monkeypatch):
+    """当日の詳細タグより先にコース役割スナップショットを作ること。
+
+    2026-09-13: 当日ぶんは integrity フェーズ (06:31 頃) まで作られず、
+    05:46 頃のタグ生成が空のスナップショットを読んで、壁・差され注意が
+    付かない詳細ページが毎朝焼かれていた。
+    """
+    order = []
+    _stub_detail_phase(
+        monkeypatch,
+        order,
+        course_role=lambda target: order.append(("course_role", target)) or True,
+    )
+
+    ok, detail = maintenance.run_detail_phase(_now())
+
+    tags_at = order.index("scripts/prewarm_race_detail_tags.py")
+    assert order.index(("course_role", "2026-08-16")) < tags_at
+    assert order.index(("entry_change", "2026-08-16")) < tags_at, "進入注意も同じ理由でタグより先"
+    assert ok is True
+    assert detail["course_role_ok"] is True
+    assert detail["entry_change_ok"] is True
+
+
+def test_detail_phase_continues_when_course_role_snapshot_fails(monkeypatch):
+    order = []
+
+    def boom(target):
+        raise RuntimeError("builder down")
+
+    _stub_detail_phase(monkeypatch, order, course_role=boom)
+
+    ok, detail = maintenance.run_detail_phase(_now())
+
+    assert "scripts/prewarm_race_detail_tags.py" in order
+    assert "scripts/prewarm_race_detail_pages.py" in order
+    assert ("entry_change", "2026-08-16") in order, "片方が落ちてももう片方は作る"
+    assert ok is True
+    assert detail["course_role_ok"] is False
+    assert detail["entry_change_ok"] is True
+
+
 def test_maintenance_integrity_phase_runs_course_role_snapshots(monkeypatch):
     """メンテ窓 (integrity フェーズ) から必ず呼ばれること。"""
     called = {"entry": False, "course": False}

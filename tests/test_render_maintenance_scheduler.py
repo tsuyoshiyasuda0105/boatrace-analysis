@@ -233,8 +233,16 @@ def test_accident_phase_keeps_previous_day_after_live_results_begin(monkeypatch)
     assert targets == ["2026-08-12", "2026-08-12"]
 
 
+def _stub_player_snapshots(monkeypatch):
+    # 詳細フェーズは先に当日の選手スナップショット (コース役割・進入変更) を作る。
+    # ここでは子プロセス列 (タグ→ページ→整合性) だけを検証するので成功扱いにする。
+    monkeypatch.setattr(scheduler.regular, "run_course_role_snapshot", lambda _date: True)
+    monkeypatch.setattr(scheduler.regular, "run_entry_change_snapshot", lambda _date: True)
+
+
 def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch):
     calls = []
+    _stub_player_snapshots(monkeypatch)
 
     def fake_run_py(args, **_kwargs):
         calls.append(tuple(args))
@@ -254,7 +262,8 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
 
     assert ok is True
     assert {key: value for key, value in detail.items() if key != "subprocesses"} == {
-        "date": "2026-08-13", "tags_ok": False, "pages_ok": True,
+        "date": "2026-08-13", "course_role_ok": True, "entry_change_ok": True,
+        "tags_ok": False, "pages_ok": True,
         "integrity_ok": True, "partial": False, "remaining": 0,
     }
     assert detail["subprocesses"]["tags"] == {
@@ -278,6 +287,7 @@ def test_detail_phase_finishes_pages_and_accepts_new_motor_warnings(monkeypatch)
 
 def test_detail_phase_accepts_budgeted_partial_and_still_runs_pages(monkeypatch):
     calls = []
+    _stub_player_snapshots(monkeypatch)
 
     def fake_run_py(args, **_kwargs):
         calls.append(tuple(args))
@@ -315,6 +325,7 @@ def test_detail_phase_failure_diagnostics_are_recorded_as_task_json(monkeypatch)
         ]
     )
     recorded = []
+    _stub_player_snapshots(monkeypatch)
     monkeypatch.setattr(
         scheduler.regular,
         "run_py_detailed",

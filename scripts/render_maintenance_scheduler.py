@@ -251,6 +251,25 @@ def _run_detail_subprocess(args: list[str], *, timeout: int) -> tuple[bool, dict
 
 def run_detail_phase(now: datetime) -> tuple[bool, dict]:
     today = now.date().isoformat()
+    # 詳細タグは選手スナップショットを読む (逃げ・壁・差され注意 = コース役割、
+    # 進入注意 = 進入変更)。当日ぶんは前日朝の「翌日」生成ではレース 0 件で
+    # 空振りし、integrity フェーズ (06:31 頃) まで作られない。そのまま 05:46 頃に
+    # タグを焼くと壁・差され注意・進入注意が付かず、逃げは月次の予備計算になる
+    # (2026-09-13 に発見)。タグより先に当日ぶんを作る。optional data なので
+    # 失敗しても続行する。
+    snapshot_ok: dict[str, bool] = {}
+    for label, builder in (
+        ("course_role", regular.run_course_role_snapshot),
+        ("entry_change", regular.run_entry_change_snapshot),
+    ):
+        try:
+            snapshot_ok[label] = bool(builder(today))
+        except Exception as exc:  # noqa: BLE001 - optional data cannot block detail prewarm
+            snapshot_ok[label] = False
+            print(
+                f"[maintenance-detail] {label} snapshot skipped nonfatally: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
     tags_ok, tags_diagnostic = _run_detail_subprocess(
         [
             "scripts/prewarm_race_detail_tags.py",
@@ -299,6 +318,8 @@ def run_detail_phase(now: datetime) -> tuple[bool, dict]:
     ok = bool(pages_ok and (integrity_ok or partial))
     return ok, {
         "date": today,
+        "course_role_ok": snapshot_ok["course_role"],
+        "entry_change_ok": snapshot_ok["entry_change"],
         "tags_ok": bool(tags_ok),
         "pages_ok": bool(pages_ok),
         "integrity_ok": bool(integrity_ok),
