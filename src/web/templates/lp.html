@@ -141,8 +141,28 @@
     .steps p { margin: 0; color: var(--dim); font-size: .92rem; }
 
     /* ---- マンガ ---- */
-    .manga { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 880px; margin: 0 0 18px; }
-    .manga img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); background: #fff; }
+    /* 2ページを重ねて数秒ごとにフェードで切り替える（GIFの代わり・文字がにじまない） */
+    .manga { position: relative; width: min(440px, 100%); aspect-ratio: 3 / 4; margin: 0 auto 12px; }
+    .manga img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
+                 border-radius: 12px; border: 1px solid var(--line); background: #fff;
+                 opacity: 0; animation: mangaCycle 9s infinite; }
+    .manga img:nth-child(1) { opacity: 1; }
+    .manga img:nth-child(2) { animation-delay: -4.5s; }
+    @keyframes mangaCycle { 0%,44% { opacity: 1; } 50%,94% { opacity: 0; } 100% { opacity: 1; } }
+    .manga-dots { display: flex; justify-content: center; gap: 8px; margin: 0 0 6px; }
+    .manga-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(237,240,246,.18);
+                    animation: mangaDot 9s infinite; }
+    .manga-dots i:nth-child(2) { animation-delay: -4.5s; }
+    @keyframes mangaDot { 0%,44% { background: var(--yellow); } 50%,94% { background: rgba(237,240,246,.18); } 100% { background: var(--yellow); } }
+    /* 動きを減らす設定の人には、2ページを並べて静止表示する */
+    @media (prefers-reduced-motion: reduce) {
+      .manga { position: static; width: auto; aspect-ratio: auto; display: grid; gap: 16px; margin: 0 0 18px; }
+      .manga img { position: static; opacity: 1 !important; height: auto; animation: none; }
+      .manga-dots { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) and (min-width: 560px) {
+      .manga { grid-template-columns: 1fr 1fr; max-width: 880px; margin-inline: auto; }
+    }
 
     /* ---- 体験（説を選ぶ） ---- */
     .try { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
@@ -210,7 +230,7 @@
     @media (max-width: 820px) {
       .hero, .split, .truth { grid-template-columns: 1fr; gap: 32px; }
       .hero { padding: 16px 0 56px; }
-      .steps, .media, .price, .manga { grid-template-columns: 1fr; }
+      .steps, .media, .price { grid-template-columns: 1fr; }
       .try { grid-template-columns: 1fr; }
       .try-picks { display: flex; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
       .pick { flex: 0 0 auto; white-space: nowrap; }
@@ -277,7 +297,8 @@
                width="768" height="1024" loading="lazy"
                alt="マンガ2ページ目。画面に「3連単1-2-3を全レースで買うと 的中7% 回収81%」。ミナト「一番よく出る目なのに、お金は減るんですか…？」ひかる「回収率が100%を超える条件も見つかるんだ。ただ続くかは追いかけて確かめるんだよ」。ミナト「わたしの説も確かめたいです！」">
         </div>
-        <p class="fine">※数字は過去の集計です。今後の的中や利益を保証するものではありません。</p>
+        <div class="manga-dots" aria-hidden="true"><i></i><i></i></div>
+        <p class="fine">ページは数秒ごとに自動でめくれます。※数字は過去の集計です。今後の的中や利益を保証するものではありません。</p>
       </section>
 
       <section id="try" aria-labelledby="try-h">
