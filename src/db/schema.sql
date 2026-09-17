@@ -302,6 +302,20 @@ CREATE TABLE IF NOT EXISTS odds_trifecta (
 CREATE INDEX IF NOT EXISTS idx_odds_combo_snap
   ON odds_trifecta(combination, snapshot_label, race_id);
 
+CREATE TABLE IF NOT EXISTS odds_exacta (
+  -- 二連単オッズ (30通り)。締切5分前 (T-5min) を三連単と同時に取る。
+  race_id        TEXT NOT NULL,
+  combination    TEXT NOT NULL,        -- '1-2' 形式
+  odds           REAL NOT NULL,
+  is_final       INTEGER NOT NULL,
+  recorded_at    TEXT NOT NULL,
+  snapshot_label TEXT,
+  PRIMARY KEY (race_id, combination, recorded_at),
+  FOREIGN KEY (race_id) REFERENCES races(race_id)
+);
+CREATE INDEX IF NOT EXISTS idx_odds_exacta_race
+  ON odds_exacta(race_id, snapshot_label);
+
 -- ============================================================
 -- 予測 / バックテスト
 -- ============================================================

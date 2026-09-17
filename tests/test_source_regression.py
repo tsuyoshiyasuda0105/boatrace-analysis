@@ -152,7 +152,10 @@ def test_fstring_sql_uses_only_fully_audited_internal_fragments():
     # ensure_column (PRAGMA table_info / ALTER TABLE ADD COLUMN)。補間は
     # table_name (関数内の固定文字列) と ddl (呼び出し側の固定リテラル) のみで、
     # 外部入力は届かない。
-    assert len(calls) == 187, (
+    # 2026-09-18: 二連単の前向き記録 (forward_exacta_picks) に載ったレースをオッズ取得
+    # 対象へ足す _forward_exacta_pick_race_ids (scripts/odds_scheduler.py) で 188 に。
+    # 補間は placeholders (件数ぶんの "?") だけで、値はパラメータ渡し。
+    assert len(calls) == 188, (
         "f-string SQL の件数が全数監査時から変わりました。追加・変更箇所を監査し、"
         "安全な内部断片だけであることを確認してからガードを更新してください。"
     )

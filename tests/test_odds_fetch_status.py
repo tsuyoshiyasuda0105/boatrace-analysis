@@ -216,6 +216,9 @@ def test_the_pass_records_every_race_it_aimed_at(monkeypatch, tmp_path):
     assert summary["n_due"] == 3
     assert summary["n_done"] == 1
     assert summary["n_failed"] == 2
+    # 2026-09-18 から締切5分前は二連単も同じレースで 1 行残す (label "T-5min/exacta")。
+    # この検査は三連単側の行だけを見る。
+    captured = [row for row in captured if row[1] == "T-5min"]
     assert {row[0] for row in captured} == {"ok1", "bad1", "boom"}
     states = {row[0]: row[2] for row in captured}
     assert states == {

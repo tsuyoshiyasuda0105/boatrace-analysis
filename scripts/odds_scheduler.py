@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -30,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.collectors.odds import collect_one_race
+from src.collectors.odds import collect_one_race, collect_one_race_exacta
 from src import odds_fetch_status
 from src.db.connection import connect as db_connect
 
@@ -121,7 +122,35 @@ def _get_l4_candidate_race_ids(target_dates: list[str]) -> set[str]:
     ]
     with db_connect() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()
+        picked = _forward_exacta_pick_race_ids(conn, target_dates)
+    return {r[0] for r in rows} | picked
+
+
+def _forward_exacta_pick_race_ids(conn, target_dates: list[str]) -> set[str]:
+    """二連単の前向き記録 (forward_exacta_picks) に載ったレースも取得対象にする。
+
+    表は PC の夜間処理が作る。まだ無い環境 (新規ローカル等) では空集合。
+    """
+    if not target_dates or not exacta_enabled():
+        return set()
+    placeholders = ",".join("?" for _ in target_dates)
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT race_id FROM forward_exacta_picks WHERE race_date IN ({placeholders})",
+            tuple(target_dates),
+        ).fetchall()
+    except Exception:  # noqa: BLE001 - 表が無いだけなら候補無しで進める
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return set()
     return {r[0] for r in rows}
+
+
+def exacta_enabled() -> bool:
+    """二連単オッズも取るか。BOATRACE_ODDS_EXACTA=0 で止められる (既定は取る)。"""
+    return os.getenv("BOATRACE_ODDS_EXACTA", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _is_big_race(race: dict) -> bool:
@@ -253,6 +282,22 @@ def run_one_pass(verbose: bool = False) -> dict:
                 summary["n_done"] += 1
             if verbose:
                 print(f"  {race_id} [{label}] inserted={r.get('odds_inserted', 0)}")
+
+            # 三連単が取れた締切5分前は、同じレースの二連単も 1 ページ取る。
+            # 失敗しても三連単側の成否には混ぜず、別 label で記録だけ残す。
+            if label == "T-5min" and r.get("odds_inserted", 0) > 0 and exacta_enabled():
+                try:
+                    rx = collect_one_race_exacta(race_id, snapshot_label=label)
+                    xstate, xdetail, xcount = odds_fetch_status.outcome(rx)
+                    status_rows.append((race_id, f"{label}/exacta", xstate, xdetail, xcount))
+                    if xcount > 0:
+                        summary["n_exacta"] = summary.get("n_exacta", 0) + 1
+                    if verbose:
+                        print(f"  {race_id} [{label}/exacta] inserted={xcount}")
+                except Exception as e:  # noqa: BLE001
+                    xstate, xdetail, _ = odds_fetch_status.outcome(None, e)
+                    status_rows.append((race_id, f"{label}/exacta", xstate, xdetail, 0))
+                    print(f"  {race_id} [{label}/exacta] ERROR: {e}", flush=True)
 
             # T-5min スナップショット取得直後にペーパートレード記録
             if label == "T-5min" and r.get("odds_inserted", 0) > 0:

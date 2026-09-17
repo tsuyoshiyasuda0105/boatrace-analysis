@@ -61,6 +61,8 @@ BEFOREINFO_URL = "https://www.boatrace.jp/owpc/pc/race/beforeinfo?jcd={jcd:02d}&
 
 # 公式サイト 三連単オッズ (Layer 3)
 ODDS_TRIFECTA_URL = "https://www.boatrace.jp/owpc/pc/race/odds3t?jcd={jcd:02d}&hd={date}&rno={rno}"
+# 公式サイト 二連単/二連複オッズ (同じページに両方載る。二連単だけ使う)
+ODDS_EXACTA_URL = "https://www.boatrace.jp/owpc/pc/race/odds2tf?jcd={jcd:02d}&hd={date}&rno={rno}"
 
 # ============================================================
 # スクレイピング設定

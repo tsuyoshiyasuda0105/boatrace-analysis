@@ -148,3 +148,52 @@ def parse_trifecta_odds(html: str) -> dict[str, float]:
             odds_map[f"{first_no}-{second_no}-{third_no}"] = o
 
     return odds_map
+
+
+def parse_exacta_odds(html: str) -> dict[str, float]:
+    """二連単オッズ (odds2tf ページ) を {'1-2': 6.4, ...} (30通り) にする。
+
+    ページには「2連単オッズ」と「2連複オッズ」の2表が同じ形で並ぶ。
+    どちらもヘッダ行に 1〜6 の艇番と選手名が交互に並び、その下に
+    [2着艇, オッズ] の組が 1着艇ごとのブロック (2列) で 5 行入る。
+    二連複の表は左上が三角形に空くので「空セルが無い方」を二連単とみなす。
+    """
+    soup = BeautifulSoup(_strip_xml_prolog(html), "lxml")
+    odds_map: dict[str, float] = {}
+
+    for tbl in soup.find_all("table"):
+        rows = tbl.find_all("tr")
+        if len(rows) < 6:
+            continue
+        head_cells = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+        digits = [c for c in head_cells if c in {"1", "2", "3", "4", "5", "6"}]
+        if len(set(digits)) != 6:
+            continue
+        grid = _expand_rowspan(tbl)
+        data_rows = grid[1:6]
+        if len(data_rows) < 5:
+            continue
+        found: dict[str, float] = {}
+        for block in range(6):
+            first_no = block + 1
+            col_off = block * 2
+            for row in data_rows:
+                if len(row) < col_off + 2:
+                    continue
+                try:
+                    second_no = int(row[col_off].strip())
+                except (ValueError, AttributeError):
+                    continue
+                if not (1 <= second_no <= 6) or second_no == first_no:
+                    continue
+                o = _to_odds(row[col_off + 1])
+                if o is None:
+                    continue
+                found[f"{first_no}-{second_no}"] = o
+        # 二連複は 15 通りしか埋まらない。二連単は 30 通りそろう。
+        if len(found) > len(odds_map):
+            odds_map = found
+        if len(odds_map) == 30:
+            break
+
+    return odds_map

@@ -881,6 +881,8 @@ _TABLE_PRIMARY_KEYS = {
     "race_results": ["race_id", "boat_number"],
     "race_payouts": ["race_id", "bet_type", "combination"],
     "odds_trifecta": ["race_id", "combination", "recorded_at"],
+    "odds_exacta": ["race_id", "combination", "recorded_at"],
+    "forward_exacta_picks": ["race_id", "strategy"],
     "predictions": ["race_id", "boat_number", "model_version"],
     "value_bets": ["race_id", "bet_type", "combination", "model_version"],
     "l4_daily_summary": ["date"],

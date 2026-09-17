@@ -16,7 +16,7 @@ from typing import Optional
 import config
 from src.collectors._http import fetch_html
 from src.db.connection import connect as db_connect
-from src.parsers.odds import parse_trifecta_odds
+from src.parsers.odds import parse_exacta_odds, parse_trifecta_odds
 
 logger = logging.getLogger(__name__)
 
@@ -175,3 +175,111 @@ def collect_for_date(
         return summary
     finally:
         conn.close()
+
+
+# ============================================================
+# 二連単オッズ (odds_exacta)
+# ============================================================
+# 三連単と同じ (race_id, combination, recorded_at) を主キーにし、同じ label の
+# 取り直しは INSERT OR REPLACE で上書きされる。表は本番 Postgres にも無いので、
+# 初回書き込み時に作る (paper_trades / odds_fetch_status と同じ流儀)。
+
+def ensure_odds_exacta_table(conn) -> None:
+    if getattr(conn, "_kind", "") == "postgres":
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS odds_exacta (
+                race_id        TEXT NOT NULL,
+                combination    TEXT NOT NULL,
+                odds           REAL NOT NULL,
+                is_final       INTEGER NOT NULL,
+                recorded_at    TEXT NOT NULL,
+                snapshot_label TEXT,
+                PRIMARY KEY (race_id, combination, recorded_at)
+            );
+            CREATE INDEX IF NOT EXISTS idx_odds_exacta_race
+                ON odds_exacta(race_id, snapshot_label);
+            ALTER TABLE odds_exacta ENABLE ROW LEVEL SECURITY;
+            """
+        )
+        return
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS odds_exacta (
+            race_id        TEXT NOT NULL,
+            combination    TEXT NOT NULL,
+            odds           REAL NOT NULL,
+            is_final       INTEGER NOT NULL,
+            recorded_at    TEXT NOT NULL,
+            snapshot_label TEXT,
+            PRIMARY KEY (race_id, combination, recorded_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_odds_exacta_race
+            ON odds_exacta(race_id, snapshot_label);
+        """
+    )
+
+
+def _upsert_exacta_odds(
+    conn,
+    race_id: str,
+    odds_map: dict[str, float],
+    recorded_at: str,
+    is_final: int,
+    snapshot_label: str,
+) -> int:
+    if not odds_map:
+        return 0
+    rows = [
+        (race_id, comb, float(odds), is_final, recorded_at, snapshot_label)
+        for comb, odds in odds_map.items()
+    ]
+    conn.executemany(
+        """
+        INSERT OR REPLACE INTO odds_exacta
+            (race_id, combination, odds, is_final, recorded_at, snapshot_label)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    return len(rows)
+
+
+def collect_one_race_exacta(
+    race_id: str,
+    snapshot_label: str,
+    db_path: Optional[str] = None,
+    html: Optional[str] = None,
+) -> dict:
+    """単一レースの二連単オッズを 1 回スナップショット取得。
+
+    戻り値は collect_one_race と同じ形 (odds_fetch_status.outcome に渡せる)。
+    ``html`` を渡すと取得を省略する (テスト用)。
+    """
+    config.ensure_dirs()
+    conn = db_connect(db_path)
+    recorded_at = datetime.utcnow().isoformat(timespec="seconds")
+    summary = {"race_id": race_id, "snapshot_label": snapshot_label, "odds_inserted": 0,
+               "bet_type": "exacta"}
+    try:
+        date_str, jcd_str, rno_str = race_id.split("-")
+        if html is None:
+            url = config.ODDS_EXACTA_URL.format(jcd=int(jcd_str), date=date_str, rno=int(rno_str))
+            html = fetch_html(url)
+        if not html:
+            summary["error"] = "no html"
+            return summary
+        odds_map = parse_exacta_odds(html)
+        if len(odds_map) < 30:
+            summary["error"] = f"exacta parsed {len(odds_map)}/30"
+            if not odds_map:
+                return summary
+        ensure_odds_exacta_table(conn)
+        is_final = 1 if _is_finalized(conn, race_id) else 0
+        summary["odds_inserted"] = _upsert_exacta_odds(
+            conn, race_id, odds_map, recorded_at, is_final, snapshot_label
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return summary
