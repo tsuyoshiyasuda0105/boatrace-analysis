@@ -894,7 +894,7 @@ def register_auth_routes(app):
                         _set_supabase_session(auth_session.user_id, auth_session.email, "free_member")
                         return redirect(url_for("member_today_races"))
                 return _render_supabase_signup(
-                    message="確認メールを送信しました。メール内のリンクから登録を完了してください。"
+                    message="確認メールを送信しました。メール内のリンクから登録を完了してください。届かないときは迷惑メールフォルダを確認し、数分待ってからもう一度お試しください。"
                 )
             except Exception as e:
                 _record_attempt(ip, False)

@@ -140,22 +140,34 @@
     .steps h3 { margin: 0 0 6px; font-size: 1.1rem; }
     .steps p { margin: 0; color: var(--dim); font-size: .92rem; }
 
-    /* ---- 実例 ---- */
-    .cases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-    .case { display: flex; flex-direction: column; padding: 24px; background: var(--panel); border-radius: 14px; border: 1px solid var(--line); }
-    .case .claim { margin: 0 0 16px; font-size: 1.05rem; font-weight: 800; line-height: 1.6; }
-    .case .claim::before { content: "よく聞く説"; display: block; color: var(--mute); font-size: .72rem; font-weight: 700; letter-spacing: .1em; }
-    .cond { margin: -6px 0 14px; color: var(--dim); font-size: .85rem; }
-    .rows { margin: 0 0 18px; display: grid; gap: 8px; }
-    .rows div { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px dashed var(--line); font-size: .9rem; }
-    .rows dt { color: var(--dim); }
-    .rows dd { margin: 0; font-weight: 800; text-align: right; }
+    /* ---- 体験（説を選ぶ） ---- */
+    .try { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
+    .try-picks { display: grid; gap: 8px; }
+    .pick {
+      text-align: left; padding: 14px 16px; border-radius: 12px; cursor: pointer;
+      border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+      font: inherit; font-weight: 700; font-size: .95rem; line-height: 1.4;
+    }
+    .pick:hover { background: var(--panel-2); }
+    .pick[aria-selected="true"] { border-color: var(--yellow); background: var(--panel-2); box-shadow: inset 4px 0 0 var(--yellow); }
+    .try-result { padding: 28px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); min-height: 340px; }
+    .tr-claim { margin: 0 0 4px; font-size: 1.25rem; font-weight: 900; }
+    .tr-cond { margin: 0 0 20px; color: var(--dim); font-size: .85rem; }
+    .tr-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 16px; }
+    .stat { padding: 14px; border-radius: 12px; background: var(--ground); }
+    .stat b { display: block; font-size: 1.7rem; font-weight: 900; line-height: 1.1; }
+    .stat b.good { color: var(--good); } .stat b.bad { color: var(--bad); } .stat b.warn { color: var(--yellow); }
+    .stat span { display: block; color: var(--dim); font-size: .78rem; margin-top: 6px; line-height: 1.4; }
+    .tr-note { margin: 14px 0 0; color: var(--dim); font-size: .92rem; }
+    .try-next { margin-top: 32px; padding-top: 28px; border-top: 1px dashed var(--line); }
+    .try-next .closing { margin-bottom: 16px; }
+
+    /* ---- 実例（札） ---- */
     .verdict { margin-top: auto; display: flex; flex-wrap: wrap; gap: 6px; }
     .chip { padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 700; }
     .chip-good { color: var(--good); background: rgba(79,209,139,.12); }
     .chip-bad { color: var(--bad); background: rgba(255,122,134,.12); }
     .chip-warn { color: var(--yellow); background: rgba(246,198,36,.12); }
-    .case .note { margin: 12px 0 0; color: var(--mute); font-size: .78rem; line-height: 1.6; }
 
     /* ---- 今日のレース ---- */
     .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
@@ -194,7 +206,12 @@
     @media (max-width: 820px) {
       .hero, .split, .truth { grid-template-columns: 1fr; gap: 32px; }
       .hero { padding: 16px 0 56px; }
-      .steps, .cases, .media, .price { grid-template-columns: 1fr; }
+      .steps, .media, .price { grid-template-columns: 1fr; }
+      .try { grid-template-columns: 1fr; }
+      .try-picks { display: flex; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
+      .pick { flex: 0 0 auto; white-space: nowrap; }
+      .pick[aria-selected="true"] { box-shadow: inset 0 -4px 0 var(--yellow); }
+      .tr-stats { grid-template-columns: 1fr 1fr; }
       .vs-row { grid-template-columns: 1fr; gap: 4px; }
       .vs-arrow { justify-self: center; transform: rotate(90deg); }
       .vs-head { display: none; }
@@ -232,10 +249,10 @@
           <p class="lead">
             条件を選んで「検索」を押すだけ。2016年からの約55万レースで、その条件で買い続けていたら<strong>当たったのか・お金は増えたのか</strong>が数字で出ます。</p>
           <div class="cta-row">
-            <a class="btn btn-main" href="{{ url_for('signup_supabase') }}">無料で検証をはじめる</a>
+            <a class="btn btn-main" href="#try">まず1つ、確かめてみる</a>
             <a class="btn btn-sub" href="{{ url_for('races') }}">登録なしで今日のレースを見る</a>
           </div>
-          <p class="fine">いまは期間限定の無料ベータです。登録はメールアドレスだけ・1分。自動で課金されることはありません。20歳以上の方が対象です。</p>
+          <p class="fine">登録なしで、このページの中で試せます。気に入ったら、そのとき登録（メールアドレスだけ・1分）。</p>
         </div>
         <figure class="phone" style="margin:0">
           <img src="{{ url_for('static', filename='lp/result.webp') }}?v={{ static_version }}"
@@ -244,6 +261,39 @@
           <figcaption class="phone-cap">実際の検索結果の画面（全レース・3連単1-2-3）</figcaption>
         </figure>
       </div>
+
+      <section id="try" aria-labelledby="try-h">
+        <p class="sec-label">登録なしで体験</p>
+        <h2 id="try-h">気になる説を、1つ選んでください。</h2>
+        <p class="sec-lead">アプリで実際に検証した結果が、その場で出ます。全部で5つあります。</p>
+        <div class="try">
+          <div class="try-picks" role="tablist" aria-label="よく聞く説">
+            <button type="button" role="tab" class="pick" data-key="nige" aria-selected="true">「1-2-3は鉄板」</button>
+            <button type="button" role="tab" class="pick" data-key="omura" aria-selected="false">「大村は満潮でイン逃げ」</button>
+            <button type="button" role="tab" class="pick" data-key="makuri" aria-selected="false">「まくり屋の4号艇は狙い目」</button>
+            <button type="button" role="tab" class="pick" data-key="entry" aria-selected="false">「前づけが多いと荒れる」</button>
+            <button type="button" role="tab" class="pick" data-key="kanchou" aria-selected="false">「干潮の逃げ屋は1-2-3」</button>
+          </div>
+          <div class="try-result" role="tabpanel" aria-live="polite" id="try-result">
+            <p class="tr-claim">「1-2-3は鉄板」</p>
+            <p class="tr-cond">全レース・2016年6月から／3連単 1-2-3 を1点</p>
+            <div class="tr-stats">
+              <div class="stat"><b class="bad">81.4%</b><span>回収率</span></div>
+              <div class="stat"><b>7.0%</b><span>的中率</span></div>
+              <div class="stat"><b>553,814</b><span>当てはまったレース</span></div>
+            </div>
+            <div class="verdict"><span class="chip chip-good">当たる</span><span class="chip chip-bad">100円が81円になる</span></div>
+            <p class="tr-note">14回に1回は当たります。でも払い戻しは買った分の81%。競艇は売上の約25%が先に引かれる仕組みなので、「なんとなく」の買い方はだいたいこの数字に落ち着きます。</p>
+          </div>
+        </div>
+        <div class="try-next">
+          <p class="closing">自分の気になる説も、同じように確かめられます。</p>
+          <div class="cta-row">
+            <a class="btn btn-main" href="{{ url_for('signup_supabase') }}">自分の説を確かめる（無料登録）</a>
+          </div>
+          <p class="fine">メールアドレスだけ・1分。いまは期間限定の無料ベータで、自動で課金されることはありません。20歳以上の方が対象です。</p>
+        </div>
+      </section>
 
       <section aria-labelledby="feel-h">
         <p class="sec-label">予想に乗る前に</p>
@@ -311,55 +361,6 @@
         </ol>
       </section>
 
-      <section aria-labelledby="cases-h">
-        <p class="sec-label">検証してみた</p>
-        <h2 id="cases-h">「当たる」と「儲かる」は、別の話。</h2>
-        <p class="sec-lead">
-          実際にこのアプリで確かめた例です。勝率が上がる条件は見つかっても、オッズにもう織り込まれていて、お金は増えないことがほとんど。そこまで数字で見えるのが検証の価値です。</p>
-        <div class="cases">
-          <article class="case">
-            <p class="claim">大村は満潮だとイン逃げが決まりやすい</p>
-            <dl class="rows">
-              <div><dt>1号艇の逃げ率（満潮付近）</dt><dd>66.4%</dd></div>
-              <div><dt>同（干潮付近）</dt><dd>59.0%</dd></div>
-              <div><dt>単勝 回収率（満潮）</dt><dd>93%</dd></div>
-              <div><dt>単勝 回収率（干潮）</dt><dd>92%</dd></div>
-            </dl>
-            <div class="verdict">
-              <span class="chip chip-good">勝ち方は変わる</span>
-              <span class="chip chip-bad">回収は100%届かず</span>
-            </div>
-            <p class="note">大村・2020年以降、各約2,200レース。</p>
-          </article>
-          <article class="case">
-            <p class="claim">まくりが得意な4号艇は、3号艇のスタートが遅いと狙い目</p>
-            <dl class="rows">
-              <div><dt>4号艇の1着率</dt><dd>ふだんの約2倍</dd></div>
-              <div><dt>単勝の回収率</dt><dd>100%を超えず</dd></div>
-              <div><dt>3連単4艇ボックス</dt><dd>プラスにならず</dd></div>
-            </dl>
-            <div class="verdict">
-              <span class="chip chip-good">よく当たる</span>
-              <span class="chip chip-bad">儲けにはならない</span>
-            </div>
-            <p class="note">レースを選ぶ目安としては使える、という結論でした。</p>
-          </article>
-          <article class="case">
-            <p class="claim">潮が引いているときの逃げ屋は、1-2-3で決まる</p>
-            <p class="cond">丸亀・江戸川 × 干潮 × 逃げの多い1号艇</p>
-            <dl class="rows">
-              <div><dt>3連単1-2-3 的中率</dt><dd>11.5%</dd></div>
-              <div><dt>回収率</dt><dd>117.4%</dd></div>
-            </dl>
-            <div class="verdict">
-              <span class="chip chip-good">100%を超えた</span>
-              <span class="chip chip-warn">3つ重なった時だけ・約530レース</span>
-            </div>
-            <p class="note">1つでも条件を外すと64〜91%に下がります。件数が少なく、今後を保証するものではありません。</p>
-          </article>
-        </div>
-      </section>
-
       <section aria-labelledby="today-h">
         <div class="split">
           <div>
@@ -421,7 +422,7 @@
           </div>
         </div>
         <div class="cta-row">
-          <a class="btn btn-main" href="{{ url_for('signup_supabase') }}">無料で検証をはじめる</a>
+          <a class="btn btn-main" href="{{ url_for('signup_supabase') }}">無料で登録して、自分の説を確かめる</a>
         </div>
         <p class="fine">ご登録は20歳以上の方に限ります。</p>
       </section>
@@ -440,7 +441,55 @@
   </div>
 
   <div class="dock">
-    <a class="btn btn-main" href="{{ url_for('signup_supabase') }}">無料で検証をはじめる</a>
+    <a class="btn btn-main" id="dock-btn" href="#try" data-signup="{{ url_for('signup_supabase') }}">まず1つ、確かめてみる</a>
   </div>
+  <script>
+  (function () {
+    var DATA = {
+      nige: {claim: "「1-2-3は鉄板」", cond: "全レース・2016年6月から／3連単 1-2-3 を1点",
+        stats: [{v: "81.4%", l: "回収率", t: "bad"}, {v: "7.0%", l: "的中率"}, {v: "553,814", l: "当てはまったレース"}],
+        chips: [{t: "当たる", tone: "good"}, {t: "100円が81円になる", tone: "bad"}],
+        note: "14回に1回は当たります。でも払い戻しは買った分の81%。競艇は売上の約25%が先に引かれる仕組みなので、「なんとなく」の買い方はだいたいこの数字に落ち着きます。"},
+      omura: {claim: "「大村は満潮でイン逃げが決まる」", cond: "大村・2020年から／潮が高い時間帯と低い時間帯で比べる",
+        stats: [{v: "66.4%", l: "1号艇の逃げ率（満潮付近）", t: "good"}, {v: "59.0%", l: "1号艇の逃げ率（干潮付近）"}, {v: "93% / 92%", l: "1号艇 単勝の回収率（満潮／干潮）", t: "bad"}],
+        chips: [{t: "勝ち方は本当に変わる", tone: "good"}, {t: "回収率は変わらない", tone: "bad"}],
+        note: "説は本当です。満潮だと1号艇がそのまま逃げ切りやすい。ただしオッズにも織り込まれていて、単勝の回収率は満潮でも干潮でもほぼ同じでした。「知っていれば儲かる」話ではありません。各約2,200レース。"},
+      makuri: {claim: "「まくり屋の4号艇は、3号艇が遅いと狙い目」", cond: "4号艇のまくり率が高く、3号艇の平均スタートが遅いレース／単勝と3連単",
+        stats: [{v: "19.6%", l: "4号艇の1着率（ふだんは10.3%）", t: "good"}, {v: "約1.9倍", l: "ふだんとの差"}, {v: "70〜100%", l: "4号艇 単勝の回収率", t: "bad"}],
+        chips: [{t: "よく当たる", tone: "good"}, {t: "儲けにはならない", tone: "bad"}],
+        note: "4号艇が来る確率はほぼ2倍。説は正しい。でも単勝の回収率はいちばん良い条件でも100%前後、3連単の4艇ボックスでも62〜80%でした。「来るのに儲からない」典型で、買うより「レースを選ぶ目安」に向いています。"},
+      entry: {claim: "「前づけが多いレースは荒れる」", cond: "2〜6号艇の進入変更リスク（前日までの1年）で分ける／3連単 1-2-3",
+        stats: [{v: "86.0%", l: "回収率・リスク10%以下（25,396レース）", t: "good"}, {v: "79.7%", l: "回収率・全体（146,983レース）"}, {v: "63.6%", l: "回収率・リスク40%以上（6,489レース）", t: "bad"}],
+        chips: [{t: "本当に荒れる", tone: "good"}, {t: "避けると+6ポイント", tone: "warn"}],
+        note: "本当です。前づけが多そうなレースを避けるだけで、1-2-3の回収率は+6ポイント。24会場中18会場、4年連続でプラスでした。ただし100%には届きませんし、単勝には効きません（オッズに織り込み済み）。"},
+      kanchou: {claim: "「潮が引いた丸亀の逃げ屋は、1-2-3で決まる」", cond: "丸亀・江戸川 × 干潮前後 × 1号艇の決まり手「逃げ」60%以上／3連単 1-2-3 を1点",
+        stats: [{v: "117.4%", l: "回収率", t: "good"}, {v: "11.5%", l: "的中率"}, {v: "約530", l: "当てはまったレース（少なめ）", t: "warn"}],
+        chips: [{t: "100%を超えた", tone: "good"}, {t: "3つ重なった時だけ", tone: "warn"}, {t: "件数が少ない", tone: "warn"}],
+        note: "数少ない100%超え。ただし会場・潮・逃げの3つが重なった時だけで、1つ外すと64〜91%に落ちます。約530レースと少ないので、運で上下する幅も大きい。今後を保証するものではありません。"}
+    };
+    var picks = document.querySelectorAll(".pick");
+    var out = document.getElementById("try-result");
+    var dock = document.getElementById("dock-btn");
+    function esc(x) { return String(x).replace(/[&<>"]/g, function (c) { return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]; }); }
+    function render(key) {
+      var d = DATA[key]; if (!d || !out) return;
+      var h = '<p class="tr-claim">' + esc(d.claim) + '</p><p class="tr-cond">' + esc(d.cond) + '</p><div class="tr-stats">';
+      d.stats.forEach(function (x) { h += '<div class="stat"><b class="' + (x.t || "") + '">' + esc(x.v) + "</b><span>" + esc(x.l) + "</span></div>"; });
+      h += '</div><div class="verdict">';
+      d.chips.forEach(function (c) { h += '<span class="chip chip-' + c.tone + '">' + esc(c.t) + "</span>"; });
+      h += '</div><p class="tr-note">' + esc(d.note) + "</p>";
+      out.innerHTML = h;
+      picks.forEach(function (b) { b.setAttribute("aria-selected", b.getAttribute("data-key") === key ? "true" : "false"); });
+    }
+    picks.forEach(function (b) {
+      b.addEventListener("click", function () {
+        render(b.getAttribute("data-key"));
+        // 1つ試した人には、下の固定ボタンを登録へ切り替える
+        if (dock && dock.getAttribute("data-signup")) { dock.textContent = "自分の説を確かめる（無料登録）"; dock.setAttribute("href", dock.getAttribute("data-signup")); }
+        if (window.innerWidth < 820) { out.scrollIntoView({block: "nearest", behavior: "smooth"}); }
+      });
+    });
+  })();
+  </script>
 </body>
 </html>

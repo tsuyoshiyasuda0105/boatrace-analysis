@@ -47,6 +47,17 @@ def test_links_to_signup_and_to_races_without_signup(html):
     assert 'href="/guide"' in html
 
 
+def test_first_button_tries_on_the_page_instead_of_asking_to_sign_up(html):
+    """リッキーさんの指摘 (2026-09-17): いきなり登録フォームへ送る動線は悪い。
+    主ボタンはページ内の体験へ、登録は体験の後ろに置く。"""
+    assert 'class="btn btn-main" href="#try"' in html
+    assert 'id="try"' in html
+    for key in ("nige", "omura", "makuri", "entry", "kanchou"):
+        assert f'data-key="{key}"' in html, f"説 {key} のボタンが無い"
+    # 何も押さなくても最初の説の結果が出ている（JS 無しでも空にならない）
+    assert "553,814" in html and "81.4%" in html
+
+
 def test_states_beta_terms_before_people_sign_up(html):
     """後から有料化しても筋が通るよう、募集の時点で明示しておく約束。"""
     assert "期間限定" in html
