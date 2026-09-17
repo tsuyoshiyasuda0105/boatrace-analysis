@@ -91,3 +91,13 @@ def test_invites_people_to_check_a_tip_before_riding_it(html):
     assert "根拠を確かめてから" in html
     assert "良い予想は、確かめるともっと強くなります" in html
     assert "予想屋" not in html and "騙" not in html
+
+
+def test_shows_the_manga_that_explains_the_app_in_thirty_seconds(html):
+    """リッキーさん依頼 (2026-09-18): マンガをLPで使う。画像は自サイト配信（CSP）。"""
+    for name in ("manga_p1.webp", "manga_p2.webp"):
+        assert (STATIC / "lp" / name).is_file()
+        assert f"/static/lp/{name}" in html
+    assert 'id="manga"' in html
+    # 絵の中身を読めない人にも同じ情報が届くこと
+    assert "マンガ1ページ目。" in html and "マンガ2ページ目。" in html
