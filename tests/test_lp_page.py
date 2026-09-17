@@ -72,3 +72,8 @@ def test_does_not_load_outside_fonts_or_styles(html):
     """CSP の style-src/font-src は自サイトのみ。Google Fonts 等は無言で落ちる。"""
     assert "fonts.googleapis.com" not in html
     assert "<link rel=\"stylesheet\" href=\"http" not in html
+
+
+def test_asks_whether_to_trust_other_peoples_feel(html):
+    """リッキーさんの依頼 (2026-09-17):「他の人の感覚を信じていいのか」を伝える段。"""
+    assert "感覚" in html and "信じていいですか" in html
