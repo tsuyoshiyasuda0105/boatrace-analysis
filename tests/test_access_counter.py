@@ -177,3 +177,56 @@ def test_healthz_exposes_counter_status(app):
     body = app.test_client().get("/healthz").get_json()
     assert "access_counter" in body
     assert {"recorded", "pending", "last_error", "installed"} <= set(body["access_counter"])
+
+
+# ---- 書き込み係が止まっていても自分で起き直す (2026-09-17 本番: timer_alive=false・ticks=0) ----
+
+def test_dead_writer_is_restarted_on_next_page_view():
+    import os as _os
+
+    c = AccessCounter(flush_interval=3600)
+    c._started = True            # 親プロセスで開始済みの印だけが残った状態
+    c._timer = None
+    c._timer_pid = _os.getpid() + 999
+    assert c.status()["timer_alive"] is False
+    try:
+        c.record("/", "GET", 200, "Mozilla/5.0 (Windows NT 10.0)")
+        s = c.status()
+        assert s["timer_alive"] is True and s["timer_pid"] == _os.getpid()
+    finally:
+        if c._timer:
+            c._timer.cancel()
+
+
+def test_writer_is_not_started_twice():
+    c = AccessCounter(flush_interval=3600)
+    c.start()
+    try:
+        first = c._timer
+        for _ in range(5):
+            c.record("/", "GET", 200, "Mozilla/5.0 (Windows NT 10.0)")
+        assert c._timer is first
+    finally:
+        if c._timer:
+            c._timer.cancel()
+
+
+def test_tick_flushes_and_keeps_running(monkeypatch):
+    c = AccessCounter(flush_interval=3600)
+    calls = []
+    monkeypatch.setattr(c, "flush", lambda: calls.append(1) or 0)
+    c._started = True
+    try:
+        c._tick()
+        assert calls == [1] and c.status()["ticks"] == 1 and c.status()["timer_alive"] is True
+    finally:
+        if c._timer:
+            c._timer.cancel()
+
+
+def test_child_after_fork_starts_clean():
+    c = AccessCounter(flush_interval=3600)
+    c.record("/", "GET", 200, "Mozilla/5.0 (Windows NT 10.0)")
+    c._after_fork_in_child()
+    s = c.status()
+    assert s["pending"] == 0 and s["timer_pid"] is None

@@ -58,6 +58,8 @@ class AccessCounter:
         self._lock = threading.Lock()
         self._flush_interval = flush_interval
         self._timer: threading.Timer | None = None
+        self._timer_pid: int | None = None
+        self._start_lock = threading.Lock()
         self._started = False
         # 本番で「数えているのに書けていない」を外から見分けるための記録
         # (2026-09-17 デプロイ後に台帳が空のままで、原因が見えなかった)。
@@ -92,6 +94,7 @@ class AccessCounter:
         with self._lock:
             self._counts[today] += 1
             self._recorded += 1
+        self._ensure_running()
 
     def status(self) -> dict:
         """いまの状態 (DB へは触らない)。"""
@@ -100,7 +103,8 @@ class AccessCounter:
         return {
             "pid": os.getpid(),
             "started": self._started,
-            "timer_alive": bool(self._timer and self._timer.is_alive()),
+            "timer_alive": self._timer_is_running(),
+            "timer_pid": self._timer_pid,
             "ticks": self._ticks,
             "recorded": self._recorded,
             "pending": pending,
@@ -149,16 +153,49 @@ class AccessCounter:
     # ---- 定期実行 ----
 
     def start(self) -> None:
-        if self._started or self._flush_interval <= 0:
+        if self._flush_interval <= 0:
             return
         self._started = True
-        self._schedule()
+        self._ensure_running()
+
+    def _timer_is_running(self) -> bool:
+        timer = self._timer
+        return (
+            timer is not None
+            and self._timer_pid == os.getpid()
+            and timer.is_alive()
+        )
+
+    def _ensure_running(self) -> None:
+        """書き込み係が今のプロセスで生きていなければ起こす。
+
+        2026-09-17 本番で、ワーカーが「開始済み」の印だけを持ち、スレッド本体が
+        無い状態 (timer_alive=false・ticks=0) になり、台帳に一度も書かれなかった。
+        スレッドは fork で引き継がれないため、アプリの読み込みがワーカー複製より
+        前に行われると起きる。起動のタイミングに頼らず、数えるついでに確かめる
+        (DB には触らない・スレッドを 1 本起こすだけ)。
+        """
+        if not self._started or self._flush_interval <= 0 or self._timer_is_running():
+            return
+        with self._start_lock:
+            if self._timer_is_running():
+                return
+            self._schedule()
+
+    def _after_fork_in_child(self) -> None:
+        """複製直後の子プロセス: 親の数・ロック・スレッドの記録を引き継がない。"""
+        self._counts = defaultdict(int)
+        self._lock = threading.Lock()
+        self._start_lock = threading.Lock()
+        self._timer = None
+        self._timer_pid = None
 
     def _schedule(self) -> None:
         timer = threading.Timer(self._flush_interval, self._tick)
         timer.daemon = True  # 終了を妨げない
         timer.start()
         self._timer = timer
+        self._timer_pid = os.getpid()
 
     def _tick(self) -> None:
         self._ticks += 1
@@ -173,6 +210,9 @@ class AccessCounter:
 
 counter = AccessCounter()
 _install_state = {"installed": False, "disabled_by_env": False}
+
+if hasattr(os, "register_at_fork"):  # Windows には無い
+    os.register_at_fork(after_in_child=counter._after_fork_in_child)
 
 
 def status() -> dict:
