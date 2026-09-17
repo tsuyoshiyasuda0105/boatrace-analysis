@@ -11,7 +11,7 @@ except Exception:
     pass
 import config  # noqa: E402  (.env を読み込む)
 
-BEACON = os.environ.get("BOATRACE_CF_BEACON", "2b6f7957877e46b8869ac37704072de2").strip()  # 本物のsite tag(2026-08-31確定)
+BEACON = os.environ.get("BOATRACE_CF_BEACON", "a642b567b5764a96b500479e5238beae").strip()  # Cloudflare画面のsite token(2026-09-17確認)
 GQL = "https://api.cloudflare.com/client/v4/graphql"
 
 

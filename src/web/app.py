@@ -8580,7 +8580,7 @@ def create_app(
     # render_template を通さず jinja_env.get_template().render() で直接描画し、
     # その場合 context_processor が動かず未ログインのページ (＝一番計測したい層)
     # にビーコンが載らなくなるため。グローバルなら全描画経路で確実に注入される。
-    _CF_BEACON_DEFAULT = "2b6f7957877e46b8869ac37704072de2"
+    _CF_BEACON_DEFAULT = "a642b567b5764a96b500479e5238beae"  # Cloudflare画面のsite token(2026-09-17確認・204で受理)
     app.jinja_env.globals["cf_beacon_token"] = (
         os.environ.get("BOATRACE_CF_BEACON") or _CF_BEACON_DEFAULT
     ).strip()
@@ -8728,6 +8728,12 @@ def create_app(
             "revision": deploy_revision(),
             "checks": {},
         }
+        try:  # サーバー側アクセス計測の状態 (DB へは触らない・2026-09-17)
+            status_info["access_counter"] = __import__(
+                "src.web.access_counter", fromlist=["status"]
+            ).status()
+        except Exception:  # noqa: BLE001
+            pass
         http_status = 200
         if request.args.get("full") != "1":
             status_info["checks"]["app"] = "ok"

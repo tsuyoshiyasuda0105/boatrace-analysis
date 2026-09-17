@@ -143,3 +143,37 @@ def test_page_still_renders_when_counting_explodes(app, monkeypatch):
 
     monkeypatch.setattr(access_counter.counter, "record", boom)
     assert app.test_client().get("/guide").status_code == 200
+
+
+# ---- 外から状態を見られること (2026-09-17: 本番で台帳が空のまま原因が見えなかった) ----
+
+def test_status_reports_recorded_and_pending():
+    c = AccessCounter(flush_interval=0)
+    c.record("/", "GET", 200, "Mozilla/5.0 (Windows NT 10.0)")
+    c.record("/", "GET", 200, "Googlebot/2.1")
+    s = c.status()
+    assert s["recorded"] == 1 and s["pending"] == 1
+    assert s["last_error"] is None and s["started"] is False
+
+
+def test_failed_flush_is_visible_without_credentials(monkeypatch):
+    import src.db.connection as dbc
+
+    def boom(*a, **k):
+        raise RuntimeError("could not connect to postgresql://user:secret@db.example:5432/app")
+
+    monkeypatch.setattr(dbc, "connect", boom)
+    c = AccessCounter(flush_interval=0)
+    c.record("/", "GET", 200, "Mozilla/5.0 (Windows NT 10.0)")
+    assert c.flush() == 0
+    s = c.status()
+    assert s["pending"] == 1                      # 次回に持ち越し
+    assert "RuntimeError" in s["last_error"]
+    assert "secret" not in s["last_error"] and "***@" in s["last_error"]
+    assert s["last_error_at"]
+
+
+def test_healthz_exposes_counter_status(app):
+    body = app.test_client().get("/healthz").get_json()
+    assert "access_counter" in body
+    assert {"recorded", "pending", "last_error", "installed"} <= set(body["access_counter"])
