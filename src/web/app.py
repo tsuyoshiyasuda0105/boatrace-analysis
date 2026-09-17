@@ -8372,6 +8372,7 @@ def create_app(
     register_billing_routes(app)
     app.register_blueprint(__import__("src.web.legal_bp", fromlist=["bp"]).bp)
     app.register_blueprint(__import__("src.web.guide_bp", fromlist=["bp"]).bp)
+    app.register_blueprint(__import__("src.web.lp_bp", fromlist=["bp"]).bp)
     # Cloudflare のビーコンは Render ドメインだと CORS で弾かれて取りこぼすので、
     # アプリ自身でもページ表示を数える。リクエスト中は DB に触らない実装。
     __import__("src.web.access_counter", fromlist=["install"]).install(app)
