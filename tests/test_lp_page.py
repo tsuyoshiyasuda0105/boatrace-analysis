@@ -74,6 +74,9 @@ def test_does_not_load_outside_fonts_or_styles(html):
     assert "<link rel=\"stylesheet\" href=\"http" not in html
 
 
-def test_asks_whether_to_trust_other_peoples_feel(html):
-    """リッキーさんの依頼 (2026-09-17):「他の人の感覚を信じていいのか」を伝える段。"""
-    assert "感覚" in html and "信じていいですか" in html
+def test_invites_people_to_check_a_tip_before_riding_it(html):
+    """リッキーさんの依頼 (2026-09-17): 予想に乗っている人・疑っている人の両方に向け、
+    予想する側を敵に回さない言い方で「確かめてから乗る」を伝える段。"""
+    assert "根拠を確かめてから" in html
+    assert "良い予想は、確かめるともっと強くなります" in html
+    assert "予想屋" not in html and "騙" not in html
