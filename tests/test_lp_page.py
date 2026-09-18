@@ -59,9 +59,10 @@ def test_first_button_tries_on_the_page_instead_of_asking_to_sign_up(html):
 
 
 def test_states_beta_terms_before_people_sign_up(html):
-    """後から有料化しても筋が通るよう、募集の時点で明示しておく約束。"""
+    """後から有料化しても筋が通るよう、募集の時点で明示しておく約束。
+    金額は検討中なので出さない（2026-09-18 リッキーさん指示）。"""
     assert "期間限定" in html
-    assert "1,380円" in html
+    assert "1,380円" not in html and "1380" not in html
     assert "自動で" in html and "ことはありません" in html
     assert "20歳以上" in html
 
