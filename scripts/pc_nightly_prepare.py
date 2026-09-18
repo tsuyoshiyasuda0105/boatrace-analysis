@@ -330,6 +330,16 @@ def main() -> int:
     # outcome. A failed upload remains visible in logs and can be retried by
     # rerunning the task; the dated local delta is deliberately retained.
     _run_kachisuji_daily(_completed_date(), target_date)
+
+    # 二連単の前向き記録 (forward test)。前日の結果を確定し、対象日の本命候補を
+    # 本番へ載せる。odds cron はこの表に載ったレースの二連単オッズも締切5分前に
+    # 取る。読みはローカル固定パス、書きは本番なので allow_prod_sync=True で呼ぶ。
+    # slim の対象日 forward 行が要るので _run_kachisuji_daily の後に置く。失敗しても
+    # 夜間の主目的は既に終わっているので戻り値は 0 のまま (記録は翌晩リトライ)。
+    _run_local(
+        ["scripts/forward_exacta_picks.py", "--settle", "--date", target_date],
+        allow_prod_sync=True,
+    )
     return 0
 
 

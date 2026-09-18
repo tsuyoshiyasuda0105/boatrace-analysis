@@ -303,3 +303,21 @@ def test_a_source_without_the_results_table_only_uses_the_timing_check(tmp_path)
     assert nightly.history_gap_days(
         "2026-09-10", source_db=source, search_db=search
     ) == ["2026-09-09"]
+
+
+def test_pc_nightly_records_forward_exacta_after_kachisuji(monkeypatch):
+    """夜間の最後に二連単の前向き記録 (確定+当日候補) を本番向けに走らせる。"""
+    calls = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: calls.append((args, allow_prod_sync)) or True,
+    )
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-09-19", "--skip-sync"])
+
+    assert nightly.main() == 0
+
+    fx = [(args, allow) for args, allow in calls if args[:1] == ["scripts/forward_exacta_picks.py"]]
+    assert fx == [(["scripts/forward_exacta_picks.py", "--settle", "--date", "2026-09-19"], True)]
+    # 本番へ書くので allow_prod_sync=True で呼ぶこと (ローカル固定パスから読む)
+    assert fx[0][1] is True
