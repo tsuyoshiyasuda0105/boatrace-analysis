@@ -19,6 +19,7 @@ from src.search.strategies import (
     get_strategy_performance,
     list_strategy_performances,
     list_strategies,
+    match_all_strategies,
     match_races,
     save_strategy,
 )
@@ -544,3 +545,59 @@ def test_cli_matches_all_and_one_strategy(search_db: Path, strategy_db: Path) ->
 
     assert json.loads(all_result.stdout)[0]["strategy_id"] == strategy_id
     assert json.loads(one_result.stdout)["strategy_id"] == strategy_id
+
+
+def _force_bet_type(strategy_db: Path, strategy_id: int, kind: str) -> None:
+    """このバージョンが知らない券種で保存された手法を作る (新しい版から戻した状況)。"""
+    with sqlite3.connect(strategy_db) as connection:
+        raw = connection.execute(
+            "SELECT conditions_json FROM strategies WHERE id = ?", (strategy_id,)
+        ).fetchone()[0]
+        conditions = json.loads(raw)
+        conditions["bet"] = {"type": kind, "first": 1, "second": 2, "third": 3}
+        connection.execute(
+            "UPDATE strategies SET conditions_json = ? WHERE id = ?",
+            (json.dumps(conditions, ensure_ascii=False), strategy_id),
+        )
+
+
+def test_unknown_bet_type_strategy_does_not_break_other_strategies(
+    search_db: Path, strategy_db: Path
+) -> None:
+    good = save_strategy("会場", {"venue": 14, "bet": BET}, db_path=strategy_db)
+    future = save_strategy("未来の券種", {"venue": 14, "bet": BET}, db_path=strategy_db)
+    _force_bet_type(strategy_db, future, "trio")
+
+    matched = match_all_strategies("2026-08-16", search_db, strategy_db)
+    listed = list_strategy_performances(search_db, strategy_db)
+
+    assert [item["strategy_id"] for item in matched] == [good]
+    assert [item["strategy_id"] for item in listed] == [good]
+
+    app = create_app(search_db, strategy_db)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    response = client.get("/api/matches?date=2026-08-16")
+    assert response.status_code == 200
+    assert [item["strategy_id"] for item in response.get_json()] == [good]
+    # 手法そのものは消さない (一覧には残り、利用者が削除・編集できる)
+    assert {item["id"] for item in client.get("/api/strategies").get_json()} == {good, future}
+
+
+def test_schema_version_12_rows_stay_visible_to_matching(
+    search_db: Path, strategy_db: Path
+) -> None:
+    """特徴量が版12を書き始めても、当日照合の対象から外れない。"""
+    row = _row("from-v12", 5, schema_version=12)
+    columns = list(row)
+    with sqlite3.connect(search_db) as connection:
+        connection.execute(
+            f"INSERT INTO asof_race_features ({','.join(columns)}) "
+            f"VALUES ({','.join('?' for _ in columns)})",
+            [row[column] for column in columns],
+        )
+
+    result = match_races({"bet": BET}, "2026-08-16", search_db, strategy_db)
+
+    assert result["counts"]["races_on_date"] == 5
+    assert "from-v12" in {item["race_id"] for item in result["matched"]}

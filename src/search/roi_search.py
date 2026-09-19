@@ -144,7 +144,10 @@ MAX_BET_TICKETS = 20
 # レース数 × 点数 × この額。1 点のときは従来の「100円1点」と完全に一致する。
 STAKE_PER_TICKET = 100.0
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
-READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6, 7, 8, 9, 10, 11)
+# 12 は 3連複・2連複の払戻列を足す版。列を足すだけで既存列の意味は変えない。
+# 特徴量側が 12 を書き始めるより先に、読む側がここで 12 を受け入れておく。
+# 逆の順だと、12 の行が既存の単勝・2連単・3連単の検索からも黙って外れる。
+READABLE_SCHEMA_VERSIONS = (*SUPPORTED_SCHEMA_VERSIONS, 4, 5, 6, 7, 8, 9, 10, 11, 12)
 RETIRED_ODDS_CONDITION_KEYS = frozenset({"odds", "t5_odds_favorite"})
 ODDS_FILTER_REMOVED_MESSAGE = (
     "オッズによる絞り込みは廃止されました。"

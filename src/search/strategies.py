@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -13,11 +14,14 @@ from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from src.search.roi_search import (
+    BET_LEGS,
     READABLE_SCHEMA_VERSIONS,
     RETIRED_ODDS_CONDITION_KEYS,
     _compile_conditions,
     search_roi,
 )
+
+logger = logging.getLogger(__name__)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -358,7 +362,26 @@ def list_strategy_performances(
             now=current,
         )
         for strategy in list_strategies(db_path=strategies_db)
+        if _bet_kind_is_known(strategy["conditions"], strategy["id"])
     ]
+
+
+def _bet_kind_is_known(conditions: Mapping[str, Any], strategy_id: Any) -> bool:
+    """保存済み手法の券種を、このバージョンのコードが扱えるか。
+
+    新しい券種 (3連複・2連複など) を足したあとで古いコードへ戻すと、その券種で
+    保存された手法は照合できない。一覧や一括照合がそこで例外を投げると、ほかの
+    利用者の手法まで巻き添えで表示されなくなるので、その手法だけを外して記録を残す。
+    オッズ条件の旧手法はここでは外さない (従来どおり編集を促すエラーを返す)。
+    """
+    bet = conditions.get("bet") if isinstance(conditions, Mapping) else None
+    if not isinstance(bet, Mapping):
+        return True  # 買い目の指定なし = 既定の3連単
+    kind = bet.get("type")
+    if kind in BET_LEGS:
+        return True
+    logger.warning("strategy %s skipped: unsupported bet type %r", strategy_id, kind)
+    return False
 
 
 def _get_strategy_from(path: str | Path, strategy_id: int) -> dict[str, Any] | None:
@@ -376,7 +399,7 @@ def _bet_label(kind: str, expected: Any) -> str:
     当日マッチ一覧は 1 行に 1 レースなので、20 点ぶんを並べると行が壊れる。
     """
     tickets = list(expected) if isinstance(expected, (tuple, list)) else [expected]
-    head = f"{_BET_LABELS[kind]} {tickets[0]}"
+    head = f"{_BET_LABELS.get(kind, kind)} {tickets[0]}"
     if len(tickets) <= 1:
         return head
     return f"{head} ほか{len(tickets) - 1}点"
@@ -484,13 +507,15 @@ def match_all_strategies(
     """Match every active strategy from one strategy database."""
 
     with _write_connect(strategies_db) as connection:
-        ids = [
-            int(row[0])
-            for row in connection.execute(
-                "SELECT id FROM strategies WHERE owner = ? AND is_active = 1 ORDER BY id",
-                (owner,),
-            )
-        ]
+        rows = connection.execute(
+            "SELECT * FROM strategies WHERE owner = ? AND is_active = 1 ORDER BY id",
+            (owner,),
+        ).fetchall()
+    ids = [
+        int(strategy["id"])
+        for strategy in (_decode_strategy(row) for row in rows)
+        if _bet_kind_is_known(strategy["conditions"], strategy["id"])
+    ]
     return [match_races(item, target_date, search_db, strategies_db) for item in ids]
 
 
