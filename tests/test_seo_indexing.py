@@ -54,3 +54,13 @@ def test_sitemap_lists_the_landing_page(app):
         assert f"{path}</loc>" in body
     # 会員・APIはサイトマップに載せない
     assert "/member/" not in body and "/api/" not in body
+
+
+def test_google_site_verification_tag_present_on_root_and_landing():
+    """Search Console(URLプレフィックス)の所有者確認タグ。トップと/startの両方に必要。
+    誤って消すと確認が外れるので、テンプレート実体で固定する (2026-09-19)。"""
+    from pathlib import Path
+    tpl = Path(web_app.__file__).parent / "templates"
+    token = "W14rt0oC-03PoRNKZyNUBpgrdFabycfpCXzdG6RUKbQ"
+    for name in ("base.html", "lp.html"):
+        assert token in (tpl / name).read_text(encoding="utf-8"), f"{name} に確認タグが無い"

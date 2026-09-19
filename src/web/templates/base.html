@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {# Google Search Console の所有者確認（URLプレフィックス方式）。トップURLで確認されるため全ページに置く。 #}
+  <meta name="google-site-verification" content="W14rt0oC-03PoRNKZyNUBpgrdFabycfpCXzdG6RUKbQ">
   <title>{% block title %}競艇｜バックテストLAB{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ static_version }}">
   {% block head_extra %}{% endblock %}
