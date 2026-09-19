@@ -15,6 +15,7 @@ from src.features.asof_builder import (
     ALL_COLUMNS,
     SCHEMA_VERSION,
     _class_mix,
+    _normalize_combination,
     build_features,
     coverage_rows,
     create_output_schema,
@@ -243,6 +244,8 @@ def _complete_fixture() -> sqlite3.Connection:
             ("target", "trifecta", "1-2-3", 1230, 1),
             ("target", "exacta", "1-2", 450, 1),
             ("target", "win", "1", 120, 1),
+            ("target", "trio", "1=2=3", 310, 1),
+            ("target", "quinella", "1-2", 220, 1),
         ],
     )
     conn.executemany(
@@ -605,6 +608,15 @@ def test_class_gender_conditions_and_three_payout_types(tmp_path):
     assert row["payout_nirentan_json"] == '{"1-2":450}'
     assert row["result_sanrentan_json"] == '["1-2-3"]'
     assert row["payout_sanrentan_json"] == '{"1-2-3":1230}'
+    assert row["result_sanrenpuku"] == "1-2-3"
+    assert row["payout_sanrenpuku"] == 310
+    assert row["result_sanrenpuku_json"] == '["1-2-3"]'
+    assert row["payout_sanrenpuku_json"] == '{"1-2-3":310}'
+    assert row["result_nirenpuku"] == "1-2"
+    assert row["payout_nirenpuku"] == 220
+    assert row["result_nirenpuku_json"] == '["1-2"]'
+    assert row["payout_nirenpuku_json"] == '{"1-2":220}'
+    assert row["schema_version"] == SCHEMA_VERSION == 12
     assert row["weather"] == "晴"
     assert row["wind_dir"] == "追い風"  # is-wind 9 in the course-relative frame
     assert row["wind_dir_raw"] == 9
@@ -674,6 +686,8 @@ def test_dead_heat_preserves_all_winning_combinations_and_payouts(tmp_path):
             ("target", "exacta", "2-1", 520, 2),
             ("target", "trifecta", "1-2-3", 780, 1),
             ("target", "trifecta", "2-1-3", 2430, 2),
+            ("target", "trio", "1=2=3", 290, 1),
+            ("target", "quinella", "1=2", 150, 1),
         ],
     )
     output = tmp_path / "dead-heat.db"
@@ -691,6 +705,11 @@ def test_dead_heat_preserves_all_winning_combinations_and_payouts(tmp_path):
         "1-2-3": 780,
         "2-1-3": 2430,
     }
+    # 着順を問わない券種では 1-2-3 と 2-1-3 は同じ 1 点
+    assert json.loads(row["result_sanrenpuku_json"]) == ["1-2-3"]
+    assert json.loads(row["payout_sanrenpuku_json"]) == {"1-2-3": 290}
+    assert json.loads(row["result_nirenpuku_json"]) == ["1-2"]
+    assert json.loads(row["payout_nirenpuku_json"]) == {"1-2": 150}
 
 
 def test_missing_or_duplicate_matching_payout_nulls_only_that_bet_type(tmp_path):
@@ -913,12 +932,15 @@ def test_a_new_database_and_a_migrated_one_end_up_with_the_same_column_order(
     create_output_schema(fresh)
     fresh_columns = [row[1] for row in fresh.execute("PRAGMA table_info(asof_race_features)")]
 
-    # 進入変更率が無かった頃の DB を作り、いまのコードで移行する
+    # 進入変更率が無かった頃の DB を作り、いまのコードで移行する。
+    # その頃は、進入変更率より後に足した列 (3連複・2連複) もまだ無い。
     original = builder.ALL_COLUMNS
     older = sqlite3.connect(tmp_path / "older.db")
     try:
         builder.ALL_COLUMNS = [
-            column for column in original if "entry_change" not in column[0]
+            column
+            for column in original
+            if "entry_change" not in column[0] and "renpuku" not in column[0]
         ]
         create_output_schema(older)
     finally:
@@ -930,10 +952,145 @@ def test_a_new_database_and_a_migrated_one_end_up_with_the_same_column_order(
 
 
 def test_columns_added_after_the_first_release_sit_at_the_end(tmp_path: Path) -> None:
-    """新しい列は ALL_COLUMNS の末尾。真ん中に差し込まない。"""
+    """新しい列は ALL_COLUMNS の末尾。真ん中に差し込まない。
+
+    足した順に並ぶ: 進入変更率 (v11) → 3連複・2連複 (v12)。
+    """
     connection = sqlite3.connect(tmp_path / "order.db")
     create_output_schema(connection)
     columns = [row[1] for row in connection.execute("PRAGMA table_info(asof_race_features)")]
-    entry_change = [name for name in columns if name.endswith("_entry_change_rate")]
-    assert entry_change == [f"b{boat}_entry_change_rate" for boat in range(1, 7)]
-    assert columns[-len(entry_change):] == entry_change
+    unordered = [
+        f"{prefix}_{kind}{suffix}"
+        for kind in ("sanrenpuku", "nirenpuku")
+        for prefix, suffix in (("result", ""), ("payout", ""), ("result", "_json"), ("payout", "_json"))
+    ]
+    entry_change = [f"b{boat}_entry_change_rate" for boat in range(1, 7)]
+    assert columns[-len(unordered):] == unordered
+    assert columns[-len(unordered) - len(entry_change):-len(unordered)] == entry_change
+
+
+def test_a_v11_database_gains_the_unordered_columns_at_the_end(tmp_path: Path) -> None:
+    """版11の DB (いまの本番・手元) を開くと、3連複・2連複の列が末尾に足される。
+
+    新しく作った DB と並びが一致しないと、本番への差分配信が丸ごと拒否される。
+    """
+    import src.features.asof_builder as builder
+
+    fresh = sqlite3.connect(tmp_path / "fresh.db")
+    create_output_schema(fresh)
+    fresh_columns = [row[1] for row in fresh.execute("PRAGMA table_info(asof_race_features)")]
+
+    original = builder.ALL_COLUMNS
+    older = sqlite3.connect(tmp_path / "v11.db")
+    try:
+        builder.ALL_COLUMNS = [
+            column for column in original if "renpuku" not in column[0]
+        ]
+        create_output_schema(older)
+    finally:
+        builder.ALL_COLUMNS = original
+    create_output_schema(older)
+    migrated = [row[1] for row in older.execute("PRAGMA table_info(asof_race_features)")]
+
+    assert fresh_columns == migrated
+
+
+@pytest.mark.parametrize(
+    ("value", "legs", "unordered", "expected"),
+    [
+        ("5=1=3", 3, True, "1-3-5"),   # 公式サイト表記・順不同
+        ("5-1-3", 3, True, "1-3-5"),   # Open API 表記・順不同
+        ("2=1", 2, True, "1-2"),
+        ("5-1-3", 3, False, "5-1-3"),  # 3連単は並べ替えない
+        ("1=3=5", 3, False, None),     # 3連単に「=」は来ない (従来どおり読まない)
+        ("不成立", 3, True, None),
+        ("特払", 2, True, None),
+        ("1=1=3", 3, True, None),
+    ],
+)
+def test_unordered_combinations_are_normalized_to_ascending_boats(value, legs, unordered, expected):
+    assert _normalize_combination(value, legs, unordered=unordered) == expected
+
+
+def _replace_unordered_payouts(source: sqlite3.Connection, rows: list[tuple]) -> None:
+    source.execute(
+        "DELETE FROM race_payouts WHERE race_id='target' AND bet_type IN ('trio','quinella')"
+    )
+    source.executemany("INSERT INTO race_payouts VALUES (?,?,?,?,?)", rows)
+
+
+def test_a_payout_recorded_in_both_notations_is_counted_once(tmp_path):
+    """2025-07-15 以降の実データは同じ払戻が「1-2-3」と「1=2=3」で二重に入っている。"""
+    source = _complete_fixture()
+    _replace_unordered_payouts(
+        source,
+        [
+            ("target", "trio", "1-2-3", 310, 1),
+            ("target", "trio", "1=2=3", 310, 1),
+            ("target", "quinella", "1-2", 220, 1),
+            ("target", "quinella", "2=1", 220, 1),
+        ],
+    )
+    output = tmp_path / "double.db"
+
+    result = build_features(source, output, "2025-06-02", "2025-06-02")
+
+    assert result["warnings"] == 0
+    row = _read_row(output)
+    assert json.loads(row["payout_sanrenpuku_json"]) == {"1-2-3": 310}  # 620 ではない
+    assert json.loads(row["payout_nirenpuku_json"]) == {"1-2": 220}
+
+
+def test_conflicting_duplicate_unordered_payouts_blank_only_that_bet_type(tmp_path):
+    source = _complete_fixture()
+    _replace_unordered_payouts(
+        source,
+        [
+            ("target", "trio", "1-2-3", 310, 1),
+            ("target", "trio", "1=2=3", 999, 1),
+            ("target", "quinella", "1-2", 220, 1),
+        ],
+    )
+    output = tmp_path / "conflict.db"
+    stream = io.StringIO()
+
+    result = build_features(
+        source, output, "2025-06-02", "2025-06-02", progress_stream=stream
+    )
+
+    row = _read_row(output)
+    assert result["warnings"] == 1
+    assert row["result_sanrenpuku"] is None
+    assert row["payout_sanrenpuku_json"] is None
+    assert row["result_nirenpuku"] == "1-2"
+    assert row["result_sanrentan"] == "1-2-3"  # ほかの券種は巻き込まない
+    assert "sanrenpuku: expected one payout for 1-2-3, found 2" in stream.getvalue()
+
+
+def test_dead_heat_for_third_gives_two_trio_winners(tmp_path):
+    source = _complete_fixture()
+    source.execute(
+        "UPDATE race_results SET finishing_position=3 WHERE race_id='target' AND boat_number=4"
+    )
+    source.execute("DELETE FROM race_payouts WHERE race_id='target'")
+    source.executemany(
+        "INSERT INTO race_payouts VALUES (?,?,?,?,?)",
+        [
+            ("target", "win", "1", 120, 1),
+            ("target", "exacta", "1-2", 450, 1),
+            ("target", "trifecta", "1-2-3", 1230, 1),
+            ("target", "trifecta", "1-2-4", 2410, 2),
+            ("target", "trio", "1=2=3", 300, 1),
+            ("target", "trio", "1=2=4", 520, 2),
+            ("target", "quinella", "1=2", 220, 1),
+        ],
+    )
+    output = tmp_path / "third-heat.db"
+
+    result = build_features(source, output, "2025-06-02", "2025-06-02")
+
+    assert result["warnings"] == 0
+    row = _read_row(output)
+    assert json.loads(row["result_sanrenpuku_json"]) == ["1-2-3", "1-2-4"]
+    assert json.loads(row["payout_sanrenpuku_json"]) == {"1-2-3": 300, "1-2-4": 520}
+    assert json.loads(row["result_nirenpuku_json"]) == ["1-2"]

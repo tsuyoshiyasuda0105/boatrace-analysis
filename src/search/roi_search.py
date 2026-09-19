@@ -108,7 +108,10 @@ COMPARE_METRICS = frozenset(
 )
 EX_DEV_KEYS = frozenset({"faster_by", "slower_by"})
 KIMARITE_KEYS = frozenset({"nige", "sashi", "makuri", "makurizashi", "nuki", "megumare"})
-BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3}
+BET_LEGS = {"tansho": 1, "nirentan": 2, "sanrentan": 3, "nirenpuku": 2, "sanrenpuku": 3}
+# 着順を問わない券種 (2連複・3連複)。買い目は艇番を小さい順に並べた「1-2-3」で持ち、
+# 特徴量側 (asof_builder) の当たり目の書き方とそろえる。
+UNORDERED_BET_KINDS = frozenset({"nirenpuku", "sanrenpuku"})
 HISTORY_CUTOFF = "2023-05-01"
 # 審査期の事故率・事故点 (本日判定用)。本番の ROI と同じ審査期スナップショットを
 # 引くが、スナップショットが作られ始めたのは 2026-07-26 から。それより前の行は
@@ -231,7 +234,12 @@ def _parse_ticket_legs(raw: Mapping[str, Any], kind: str, label: str) -> int | s
         raise ValueError(f"unused bet key(s) for {kind}: {', '.join(surplus)}")
     legs = [_integer(raw[key], f"{label}.{key}") for key in leg_names]
     if any(leg < 1 or leg > 6 for leg in legs) or len(set(legs)) != len(legs):
+        if kind in UNORDERED_BET_KINDS:
+            raise ValueError("買い目は1〜6号艇から、異なる艇番を選んでください")
         raise ValueError("買い目は1〜6号艇から、着順ごとに異なる艇番を選んでください")
+    if kind in UNORDERED_BET_KINDS:
+        # 順不同なので 3-1-2 と 1-2-3 は同じ 1 点。並べ替えてから重複を判定する。
+        legs = sorted(legs)
     return legs[0] if kind == "tansho" else "-".join(map(str, legs))
 
 
@@ -243,7 +251,7 @@ def _parse_bet(value: Any) -> _Bet:
     _known_keys(raw, allowed, "bet")
     kind = raw.get("type")
     if kind not in BET_LEGS:
-        raise ValueError("bet.type must be tansho, nirentan, or sanrentan")
+        raise ValueError("bet.type must be tansho, nirentan, sanrentan, nirenpuku, or sanrenpuku")
 
     tickets_raw = raw.get("tickets")
     if tickets_raw is None:
@@ -799,6 +807,11 @@ def search_roi(
         columns = {
             str(row[1]) for row in conn.execute("PRAGMA table_info(asof_race_features)")
         }
+        if bet.kind in UNORDERED_BET_KINDS and bet.result_column not in columns:
+            # 列を足す前の DB (本番への反映途中など)。SQL エラーで落とさず案内する。
+            raise ValueError(
+                "買い目は2連複・3連複のデータを準備中です。しばらくお待ちください"
+            )
         result_json_column = f"{bet.result_column}_json"
         payout_json_column = f"{bet.payout_column}_json"
         result_json_sql = result_json_column if result_json_column in columns else "NULL"

@@ -52,7 +52,13 @@ _SAME_DAY_COLUMNS = frozenset({"weather", "wind_dir", "wind_speed"}) | frozenset
     for suffix in ("ex_time", "ex_rank", "ex_dev", "ex_st")
 )
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
-_BET_LABELS = {"tansho": "単勝", "nirentan": "2連単", "sanrentan": "3連単"}
+_BET_LABELS = {
+    "tansho": "単勝",
+    "nirentan": "2連単",
+    "sanrentan": "3連単",
+    "nirenpuku": "2連複",
+    "sanrenpuku": "3連複",
+}
 _JST = ZoneInfo("Asia/Tokyo")
 _VERDICT_LABELS = {
     "promote": "昇格候補",

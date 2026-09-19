@@ -36,7 +36,9 @@ from src.features.accident_history import (
 )
 
 
-SCHEMA_VERSION = 11
+# 12: 3連複・2連複 (sanrenpuku / nirenpuku) の払戻列を末尾に追加。既存列の意味は
+# 変えていない。v11 以前の行はその列が NULL (= 未計算) のまま。
+SCHEMA_VERSION = 12
 SQLITE_VARIABLE_CHUNK_SIZE = 900
 BOATS = range(1, 7)
 KIMARITE_KEYS = ("nige", "sashi", "makuri", "makurizashi", "nuki", "megumare")
@@ -154,8 +156,34 @@ ENTRY_CHANGE_COLUMNS: list[tuple[str, str]] = [
     (f"b{boat}_entry_change_rate", "REAL") for boat in BOATS
 ]
 
+# 3連複・2連複 (v12)。着順を問わない券種なので、組番は艇番の小さい順に並べた
+# 「1-2-3」「1-2」で持つ。上の注意と同じ理由で ALL_COLUMNS の末尾に置く。
+UNORDERED_RESULT_COLUMNS: list[tuple[str, str]] = [
+    ("result_sanrenpuku", "TEXT"),
+    ("payout_sanrenpuku", "INTEGER"),
+    ("result_sanrenpuku_json", "TEXT"),
+    ("payout_sanrenpuku_json", "TEXT"),
+    ("result_nirenpuku", "TEXT"),
+    ("payout_nirenpuku", "INTEGER"),
+    ("result_nirenpuku_json", "TEXT"),
+    ("payout_nirenpuku_json", "TEXT"),
+]
+
 ALL_COLUMNS = (
-    BASE_COLUMNS + _boat_columns() + RESULT_COLUMNS + ENTRY_CHANGE_COLUMNS
+    BASE_COLUMNS
+    + _boat_columns()
+    + RESULT_COLUMNS
+    + ENTRY_CHANGE_COLUMNS
+    + UNORDERED_RESULT_COLUMNS
+)
+
+# (列名の券種, 着数, race_payouts.bet_type, 着順を問わないか)。列を埋める順番。
+BET_PAYOUT_SOURCES: tuple[tuple[str, int, str, bool], ...] = (
+    ("sanrentan", 3, "trifecta", False),
+    ("nirentan", 2, "exacta", False),
+    ("tansho", 1, "win", False),
+    ("sanrenpuku", 3, "trio", True),
+    ("nirenpuku", 2, "quinella", True),
 )
 
 
@@ -992,13 +1020,23 @@ def _female_present(entries: dict[int, dict[str, Any]]) -> int | None:
     return int(2 in genders)
 
 
-def _normalize_combination(value: Any, legs: int) -> str | None:
-    """Return the canonical hyphenated boat combination for a payout row."""
+def _normalize_combination(
+    value: Any, legs: int, *, unordered: bool = False
+) -> str | None:
+    """Return the canonical hyphenated boat combination for a payout row.
+
+    ``unordered`` (3連複・2連複) では艇番を小さい順に並べる。この券種は公式サイト
+    由来の「1=2=3」と Open API 由来の「1-2-3」が混在するので「=」も区切りとして
+    読む。着順のある券種には「=」が 1 件も無く、読み方は従来のまま変えない。
+    """
 
     if value in (None, "不成立"):
         return None
     normalized = str(value).strip()
-    for separator in ("－", "−", "ー", "―", "‐", "ｰ", " "):
+    separators = ("－", "−", "ー", "―", "‐", "ｰ", " ")
+    if unordered:
+        separators += ("=", "＝")
+    for separator in separators:
         normalized = normalized.replace(separator, "-")
     parts = [part.strip() for part in normalized.split("-") if part.strip()]
     if len(parts) != legs:
@@ -1009,6 +1047,8 @@ def _normalize_combination(value: Any, legs: int) -> str | None:
         return None
     if any(boat not in BOATS for boat in boats) or len(set(boats)) != len(boats):
         return None
+    if unordered:
+        boats = sorted(boats)
     return "-".join(str(boat) for boat in boats)
 
 
@@ -1068,20 +1108,44 @@ def _winning_payouts(
     payouts: list[dict[str, Any]],
     kind: str,
     legs: int,
+    *,
+    unordered: bool = False,
 ) -> tuple[list[str] | None, dict[str, int] | None, str | None]:
     winners, error = _winning_combinations(results, legs)
     if winners is None:
         return None, None, error
+    if unordered:
+        # 着順つきの当たり目を、艇番の組 (順不同) にまとめる。1 着同着の
+        # 「1-2-3」「2-1-3」は 3連複では同じ 1 点になる。
+        winners = sorted(
+            {
+                "-".join(str(boat) for boat in sorted(int(part) for part in winner.split("-")))
+                for winner in winners
+            }
+        )
     matching: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in payouts:
         if str(item.get("bet_type")) != kind:
             continue
-        combination = _normalize_combination(item.get("combination"), legs)
+        combination = _normalize_combination(
+            item.get("combination"), legs, unordered=unordered
+        )
         if combination in winners:
             matching[combination].append(item)
     amounts: dict[str, int] = {}
     for winner in winners:
         rows = matching[winner]
+        if unordered and len(rows) > 1:
+            # 2025-07-15 以降、同じ払戻が「1-3-5」と「1=3=5」の 2 表記で二重に
+            # 入っている (約 6.2 万レース)。金額が一致すれば同じ払戻として 1 件に
+            # まとめる。足し合わせると配当が 2 倍に数えられてしまう。金額が
+            # 食い違うときはどちらが正しいか分からないので、従来どおり判定不能にする。
+            try:
+                distinct_amounts = {int(item["payout"]) for item in rows}
+            except (KeyError, TypeError, ValueError):
+                return None, None, f"invalid payout for {winner}"
+            if len(distinct_amounts) == 1:
+                rows = rows[:1]
         if len(rows) != 1:
             return None, None, f"expected one payout for {winner}, found {len(rows)}"
         try:
@@ -1200,13 +1264,14 @@ def _build_row(
         )
     messages = warning_messages if warning_messages is not None else []
     has_results = any(item.get("finishing_position") is not None for item in results)
-    for kind, legs in (("sanrentan", 3), ("nirentan", 2), ("tansho", 1)):
+    for kind, legs, source_kind, unordered in BET_PAYOUT_SOURCES:
         winners: list[str] | None = None
         amounts: dict[str, int] | None = None
         error: str | None = None
         if has_results:
-            source_kind = {"sanrentan": "trifecta", "nirentan": "exacta", "tansho": "win"}[kind]
-            winners, amounts, error = _winning_payouts(results, payouts, source_kind, legs)
+            winners, amounts, error = _winning_payouts(
+                results, payouts, source_kind, legs, unordered=unordered
+            )
         if error is not None:
             messages.append(f"{kind}: {error}")
         representative = winners[0] if winners and amounts else None
