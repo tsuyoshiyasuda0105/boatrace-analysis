@@ -153,3 +153,54 @@ def test_rebuild_that_loses_rows_is_refused_before_touching_slim(tmp_path, monke
     assert "fewer rows" in capsys.readouterr().err
     assert not (tmp_path / "slim.db").exists(), "slim には触れない"
     assert not (tmp_path / "backfill_day_20260907.db").exists(), "差分も作らない"
+
+
+def test_slim_append_adopts_columns_the_search_db_gained_at_the_end(tmp_path):
+    """特徴量に列が増えた夜 (2026-09-19: 3連複・2連複)。slim に列を足してからコピーする。
+
+    足さないと SELECT * の列数が合わず、夜間の差分づくりまで止まる。
+    """
+    search = tmp_path / "search.db"
+    slim = tmp_path / "slim.db"
+    _tiny_db(slim, [("20260907-01-01", "2026-09-07", 1)])
+    _tiny_db(search, [("20260908-01-01", "2026-09-08", 0)])
+    c = sqlite3.connect(search)
+    c.execute("ALTER TABLE asof_race_features ADD COLUMN result_sanrenpuku TEXT")
+    c.execute("ALTER TABLE asof_race_features ADD COLUMN payout_sanrenpuku INTEGER")
+    c.execute("UPDATE asof_race_features SET result_sanrenpuku='1-2-3', payout_sanrenpuku=310")
+    c.commit(); c.close()
+
+    added = refresh._append_to_slim(search, slim, "2026-09-08", "2026-09-08")
+
+    c = sqlite3.connect(slim)
+    names = [row[1] for row in c.execute("PRAGMA table_info(asof_race_features)")]
+    assert names == ["race_id", "race_date", "hit", "result_sanrenpuku", "payout_sanrenpuku"]
+    assert c.execute(
+        "SELECT result_sanrenpuku, payout_sanrenpuku FROM asof_race_features WHERE race_id='20260908-01-01'"
+    ).fetchone() == ("1-2-3", 310)
+    # 列が無かった頃の行は NULL のまま残る
+    assert c.execute(
+        "SELECT hit, result_sanrenpuku FROM asof_race_features WHERE race_id='20260907-01-01'"
+    ).fetchone() == (1, None)
+    c.close()
+    assert added["asof_added"] == 1
+
+
+def test_slim_append_still_refuses_a_column_inserted_in_the_middle(tmp_path):
+    """末尾以外に列がある食い違いは足さない (本当の食い違いとして止める)。"""
+    import pytest
+
+    search = tmp_path / "search.db"
+    slim = tmp_path / "slim.db"
+    _tiny_db(slim, [])
+    c = sqlite3.connect(search)
+    c.execute("CREATE TABLE asof_race_features (race_id TEXT PRIMARY KEY, inserted TEXT, race_date TEXT NOT NULL, hit INTEGER)")
+    c.execute("CREATE TABLE racers (racer_number INTEGER PRIMARY KEY, name TEXT, name_kana TEXT)")
+    c.execute("INSERT INTO asof_race_features VALUES ('x', 'y', '2026-09-08', 0)")
+    c.commit(); c.close()
+
+    with pytest.raises(sqlite3.OperationalError):
+        refresh._append_to_slim(search, slim, "2026-09-08", "2026-09-08")
+    c = sqlite3.connect(slim)
+    assert [row[1] for row in c.execute("PRAGMA table_info(asof_race_features)")] == ["race_id", "race_date", "hit"]
+    c.close()

@@ -48,6 +48,7 @@ sys.path.insert(0, str(ROOT))
 import config  # noqa: E402
 from src.db.connection import connect  # noqa: E402
 from src.features.asof_builder import build_features  # noqa: E402
+from src.kachisuji.delta_transport import _adopt_new_columns  # noqa: E402
 
 SEARCH_DB = ROOT / "data" / "kachisuji_search.db"
 SLIM_DB = ROOT / "data" / "kachisuji_slim.db"
@@ -73,6 +74,36 @@ def _rows_in_range(db: Path, date_from: str, date_to: str) -> int:
         conn.close()
 
 
+def _adopt_search_columns(slim: sqlite3.Connection, search_db: Path) -> list[str]:
+    """検索DBの末尾に増えた列を、コピーの前に slim へ足す。
+
+    下の INSERT は ``SELECT *`` で列を並び順のまま写す。特徴量に列が増えると
+    (2026-09-19: 3連複・2連複の 8 列) 検索DBだけ列が多くなり、「列の数が
+    合わない」で止まる。夜間はここで止まると本番への差分も作られない。
+    本番の取り込み (delta_transport) と同じ規則で、末尾に足すだけで並びが
+    一致する場合に限って足す。途中への差し込みや列の減少は足さずに
+    そのまま INSERT で止める (本当の食い違いなので)。
+    ATTACH の前に行うので、表名が添付先と取り違えられることはない。
+    """
+    search = sqlite3.connect(_readonly_uri(search_db), uri=True)
+    try:
+        search_names = [
+            str(row[1]) for row in search.execute("PRAGMA table_info(asof_race_features)")
+        ]
+    finally:
+        search.close()
+    slim_names = [
+        str(row[1]) for row in slim.execute("PRAGMA main.table_info(asof_race_features)")
+    ]
+    if not search_names or not slim_names or slim_names == search_names:
+        return []
+    added = _adopt_new_columns(slim, "asof_race_features", slim_names, search_names)
+    if added:
+        slim.commit()
+        print(f"[slim] added columns: {', '.join(added)}", flush=True)
+    return added
+
+
 def _append_to_slim(
     search_db: Path, slim_db: Path, date_from: str, date_to: str, *, replace: bool = False
 ) -> dict[str, int]:
@@ -94,6 +125,7 @@ def _append_to_slim(
     # ``mode=ro`` URI on the subsequently attached source (notably on Windows).
     conn = sqlite3.connect(slim_db, uri=True)
     try:
+        _adopt_search_columns(conn, search_db)
         conn.execute("ATTACH DATABASE ? AS src", (_readonly_uri(search_db),))
         before_asof = conn.execute("SELECT COUNT(*) FROM asof_race_features").fetchone()[0]
         before_racers = conn.execute("SELECT COUNT(*) FROM racers").fetchone()[0]
