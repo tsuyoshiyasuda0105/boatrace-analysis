@@ -17,6 +17,7 @@ from src.search.roi_search import (
     BET_LEGS,
     READABLE_SCHEMA_VERSIONS,
     RETIRED_ODDS_CONDITION_KEYS,
+    UNORDERED_BET_KINDS,
     _compile_conditions,
     search_roi,
 )
@@ -60,6 +61,35 @@ _BET_LABELS = {
     "sanrenpuku": "3連複",
 }
 _JST = ZoneInfo("Asia/Tokyo")
+
+# 2連複・3連複を画面に出し、手法として保存できるようにするか。本番の検索 DB へ
+# 過去分の列を継ぎ足し終えるまでは False。それまでは画面の URL に
+# ?preview=renpuku を付けたときだけ選択肢に出す (お試しの検索のみ・保存は不可)。
+# 公開するときはここを True にするだけでよい。
+UNORDERED_BETS_RELEASED = False
+UNORDERED_BETS_PREVIEW_VALUE = "renpuku"
+
+
+def unordered_bets_visible(preview: str | None) -> bool:
+    """画面のプルダウンに 2連複・3連複を出すか。"""
+    return UNORDERED_BETS_RELEASED or preview == UNORDERED_BETS_PREVIEW_VALUE
+
+
+def _reject_unreleased_bet(conditions: Mapping[str, Any]) -> None:
+    """公開前の券種で手法を保存させない。
+
+    お試し中に保存された手法は、公開を取りやめて古いコードへ戻したときに
+    照合できない手法として残る。保存の入口で止めておけば、その心配がない。
+    """
+    bet = conditions.get("bet") if isinstance(conditions, Mapping) else None
+    if (
+        not UNORDERED_BETS_RELEASED
+        and isinstance(bet, Mapping)
+        and bet.get("type") in UNORDERED_BET_KINDS
+    ):
+        raise ValueError(
+            "買い目は2連複・3連複の手法保存を準備中です（検索はお試しいただけます）"
+        )
 _VERDICT_LABELS = {
     "promote": "昇格候補",
     "watch": "監視中",
@@ -190,6 +220,7 @@ def save_strategy(
     if backtest is not None and not isinstance(backtest, Mapping):
         raise ValueError("バックテスト結果はJSONオブジェクトまたはnullで指定してください")
     normalized = _validated_conditions(conditions)
+    _reject_unreleased_bet(normalized)
     conditions_json = _json_text(normalized, "conditions")
     backtest_json = None if backtest is None else _json_text(backtest, "backtest")
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -535,4 +566,5 @@ __all__ = [
     "match_all_strategies",
     "match_races",
     "save_strategy",
+    "unordered_bets_visible",
 ]

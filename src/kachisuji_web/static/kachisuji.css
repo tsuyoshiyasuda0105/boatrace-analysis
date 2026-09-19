@@ -299,3 +299,11 @@ button.is-loading::before { display: inline-block; width: 10px; height: 10px; ma
 .strategy-condition-row dd span { overflow-wrap: anywhere; }
 @media (max-width: 480px) { .strategy-condition-row { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
 @media (prefers-reduced-motion: reduce) { .strategy-conditions > summary::before { transition: none; } }
+
+/* 2連複・3連複の艇チェック欄 (2026-09-19)。.ticket-legs は display を指定している
+   ので hidden 属性だけでは消えない。明示的に隠す。 */
+.ticket-legs[hidden], .ticket-boxes[hidden] { display: none; }
+.ticket-boxes { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.boxchip { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 2.8em; padding: 3px 6px; border-radius: 6px; font-size: 13px; font-weight: 800; cursor: pointer; }
+.boxchip input { margin: 0; }
+.boxchip:has(input:checked) { outline: 2px solid var(--accent); outline-offset: 1px; }

@@ -87,12 +87,20 @@
                 <option value="sanrentan">3連単</option>
                 <option value="nirentan">2連単</option>
                 <option value="tansho">単勝</option>
+                {% if show_unordered_bets %}
+                <option value="sanrenpuku">3連複</option>
+                <option value="nirenpuku">2連複</option>
+                {% endif %}
               </select>
               <span class="ticket-legs">
                 <span class="unit">1着</span><select id="pos1" aria-label="1着艇番"></select>
                 <span id="pos2wrap"><span class="unit">2着</span><select id="pos2" aria-label="2着艇番"></select></span>
                 <span id="pos3wrap"><span class="unit">3着</span><select id="pos3" aria-label="3着艇番"></select></span>
                 <span class="unit">号艇</span>
+              </span>
+              <span class="ticket-boxes" id="boxes0" role="group" aria-label="買い目の艇（順不同）" hidden>
+                {% for boat in range(1, 7) %}<label class="boxchip b{{ boat }}"><input type="checkbox" value="{{ boat }}" data-box>{{ boat }}</label>{% endfor %}
+                <span class="unit" data-box-hint>号艇から3艇（順不同）</span>
               </span>
             </div>
             <div id="extraTickets"></div>
@@ -505,6 +513,28 @@
       ];
     }
 
+    // 2連複・3連複は着順を問わないので、着順の欄の代わりに艇のチェック欄で
+    // 選ぶ (A案)。送る形は従来と同じ first/second/third で、艇番の小さい順に入れる。
+    var UNORDERED_LEGS = {sanrenpuku: 3, nirenpuku: 2};
+
+    function boxGroup(row) {
+      return row === null ? byId('boxes0') : row.querySelector('.ticket-boxes');
+    }
+
+    function legsGroup(row) {
+      return row === null ? byId('pos1').closest('.ticket-legs') : row.querySelector('.ticket-legs');
+    }
+
+    function boxHtml(seq) {
+      var html = '<span class="ticket-boxes" role="group" aria-label="買い目'
+        + (seq + 1) + 'の艇（順不同）" hidden>';
+      for (var boat = 1; boat <= 6; boat += 1) {
+        html += '<label class="boxchip b' + boat + '"><input type="checkbox" value="'
+          + boat + '" data-box>' + boat + '</label>';
+      }
+      return html + '<span class="unit" data-box-hint></span></span>';
+    }
+
     function refreshBetUI() {
       var kind = byId('betType').value;
       byId('pos2wrap').hidden = kind === 'tansho';
@@ -516,6 +546,22 @@
           row.querySelector('[data-legwrap="3"]').hidden = kind !== 'sanrentan';
         }
       );
+      var need = UNORDERED_LEGS[kind] || 0;
+      ticketRows().forEach(function (row) {
+        var legs = legsGroup(row);
+        var boxes = boxGroup(row);
+        legs.hidden = need > 0;
+        boxes.hidden = need === 0;
+        if (need === 0) return;
+        boxes.querySelector('[data-box-hint]').textContent = '号艇から' + need + '艇（順不同）';
+        // 切り替えた直後で何も選んでいなければ、着順の欄で選んでいた艇を引き継ぐ。
+        if (boxes.querySelectorAll('input[data-box]:checked').length === 0) {
+          legSelects(row).slice(0, need).forEach(function (select) {
+            var box = boxes.querySelector('input[data-box][value="' + select.value + '"]');
+            if (box) box.checked = true;
+          });
+        }
+      });
       var count = ticketRows().length;
       byId('ticketCountLabel').textContent =
         count + '点 / 1レース' + (count * 100) + '円';
@@ -542,7 +588,7 @@
           ? select
           : '<span data-legwrap="' + leg + '">' + select + '</span>';
       });
-      html += '<span class="unit">号艇</span></span>'
+      html += '<span class="unit">号艇</span></span>' + boxHtml(seq)
         + '<button type="button" class="ticket-remove" aria-label="この買い目を削除">×</button>';
       row.innerHTML = html;
       byId('extraTickets').appendChild(row);
@@ -565,6 +611,9 @@
       byId(id).addEventListener('change', function () { betConditionTouched = true; });
     });
     byId('betType').addEventListener('change', refreshBetUI);
+    byId('searchForm').addEventListener('change', function (event) {
+      if (event.target.matches && event.target.matches('input[data-box]')) betConditionTouched = true;
+    });
     byId('btnAddTicket').addEventListener('click', addTicketRow);
     // フォームのリセットは form コントロールしか戻さない。追加した買い目行は DOM に
     // 足したものなので自分で消す (探索テストで発見: リセット後も 3 点のまま残った)。
@@ -575,10 +624,26 @@
     });
     refreshBetUI();
 
-    function collectTickets() {
+    function collectTickets(lenient) {
       var kind = byId('betType').value;
-      var legCount = kind === 'tansho' ? 1 : (kind === 'nirentan' ? 2 : 3);
       var names = ['first', 'second', 'third'];
+      var need = UNORDERED_LEGS[kind] || 0;
+      if (need) {
+        return ticketRows().map(function (row, index) {
+          var boats = Array.prototype.map.call(
+            boxGroup(row).querySelectorAll('input[data-box]:checked'),
+            function (box) { return Number(box.value); }
+          ).sort(function (a, b) { return a - b; });
+          if (boats.length !== need && !lenient) {
+            throw new Error('買い目' + (index + 1) + ': ' + optionText('betType', kind)
+              + 'は' + need + '艇を選んでください（いま' + boats.length + '艇）');
+          }
+          var ticket = {};
+          boats.slice(0, need).forEach(function (boat, i) { ticket[names[i]] = boat; });
+          return ticket;
+        });
+      }
+      var legCount = kind === 'tansho' ? 1 : (kind === 'nirentan' ? 2 : 3);
       return ticketRows().map(function (row) {
         var selects = legSelects(row);
         var ticket = {};
@@ -709,10 +774,10 @@
     byId('boats').addEventListener('change', refreshBoatSummaries);
     byId('boats').addEventListener('input', refreshBoatSummaries);
 
-    function collectConditions() {
+    function collectConditions(lenient) {
       var result = {};
       if (betConditionTouched) {
-        var tickets = collectTickets();
+        var tickets = collectTickets(lenient);
         // 1 点のときは従来形式のまま送る。保存済み手法と同じ形なので、
         // 過去に保存した条件と見比べたときに差が出ない。
         result.bet = tickets.length === 1
@@ -789,7 +854,7 @@
       return count;
     }
     function activeConditionCount() {
-      return countConfiguredConditions(collectConditions());
+      return countConfiguredConditions(collectConditions(true));
     }
     function refreshConditionCount() {
       byId('conditionCount').textContent = '条件 ' + activeConditionCount() + '個';

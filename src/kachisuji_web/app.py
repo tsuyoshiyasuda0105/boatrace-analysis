@@ -22,6 +22,7 @@ from src.search.strategies import (
     match_all_strategies,
     match_races,
     save_strategy,
+    unordered_bets_visible,
 )
 
 
@@ -154,7 +155,10 @@ def create_app(
 
     @app.get("/")
     def index() -> str:
-        return render_template("search.html")
+        return render_template(
+            "search.html",
+            show_unordered_bets=unordered_bets_visible(request.args.get("preview")),
+        )
 
     @app.get("/api/racers")
     def api_racers():

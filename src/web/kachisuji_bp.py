@@ -22,6 +22,7 @@ from src.search.strategies import (
     match_all_strategies,
     match_races,
     save_strategy,
+    unordered_bets_visible,
 )
 from src.web.auth import can_use_backtest, login_required, member_only_api
 
@@ -176,6 +177,7 @@ def index():
     return render_template(
         "kachisuji_search.html",
         kachisuji_ready=_search_db_path().is_file(),
+        show_unordered_bets=unordered_bets_visible(request.args.get("preview")),
     )
 
 
