@@ -8021,7 +8021,7 @@ def create_app(
     @app.before_request
     def throttle_guest_requests():
         if (
-            request.path in {"/healthz", "/robots.txt"}
+            request.path in {"/healthz", "/robots.txt", "/sitemap.xml"}
             or request.path.startswith("/static/")
         ):
             return None
@@ -8335,15 +8335,46 @@ def create_app(
 
     # 販売開始までは検索流入を止め、明示的な環境変数だけで解除する。
     # レート制限より前の before_request で除外しているためクローラの取得で枠を消費しない。
+    # 検索エンジンに見せない会員・管理・API・認証系。ここを索引されると
+    # 事故（会員ページが検索に出る等）になるので、索引ONでも必ず塞ぐ。
+    _CRAWL_DISALLOW = (
+        "/api/", "/admin/", "/internal/", "/billing/", "/stripe/", "/alerts/",
+        "/member/", "/plan", "/login", "/login-supabase", "/logout",
+        "/signup-supabase", "/forgot-password", "/reset-password", "/test/", "/healthz",
+    )
+    # 検索に出したい公開ページ（sitemap にも載せる）。
+    _CRAWL_PUBLIC_PATHS = ("/start", "/races", "/guide",
+                           "/legal/terms", "/legal/privacy", "/legal/tokushoho", "/public/roi")
+
     @app.route("/robots.txt")
     def robots_txt():
         allow_indexing = os.environ.get("BOATRACE_ALLOW_INDEXING", "").strip() == "1"
-        directive = "Allow: /" if allow_indexing else "Disallow: /"
-        return (
-            f"User-agent: *\n{directive}\n",
-            200,
-            {"Content-Type": "text/plain; charset=utf-8"},
+        if not allow_indexing:
+            # 既定は全面お断り（開発中や未公開の間の安全側）。
+            body = "User-agent: *\nDisallow: /\n"
+        else:
+            base = request.url_root.rstrip("/")
+            lines = ["User-agent: *"]
+            lines += [f"Disallow: {p}" for p in _CRAWL_DISALLOW]
+            lines += ["Allow: /", f"Sitemap: {base}/sitemap.xml"]
+            body = "\n".join(lines) + "\n"
+        return (body, 200, {"Content-Type": "text/plain; charset=utf-8"})
+
+    @app.route("/sitemap.xml")
+    def sitemap_xml():
+        base = request.url_root.rstrip("/")
+        # トップと主要な公開ページだけ。会員・API・動的な過去日ページは載せない。
+        paths = ["/", *_CRAWL_PUBLIC_PATHS]
+        urls = "".join(
+            f"<url><loc>{base}{p}</loc><changefreq>weekly</changefreq></url>"
+            for p in paths
         )
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"{urls}</urlset>"
+        )
+        return (body, 200, {"Content-Type": "application/xml; charset=utf-8"})
 
     app.jinja_env.auto_reload = True
 

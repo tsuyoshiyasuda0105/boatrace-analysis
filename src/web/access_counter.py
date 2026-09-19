@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
 
 # 数えないパス。静的ファイル・監視・API は「人が見たページ」ではない。
-SKIP_PREFIXES = ("/static/", "/api/", "/healthz", "/favicon", "/robots.txt", "/.well-known/")
+SKIP_PREFIXES = ("/static/", "/api/", "/healthz", "/favicon", "/robots.txt", "/sitemap.xml", "/.well-known/")
 # User-Agent にこれらを含むものは機械とみなす。
 BOT_MARKERS = (
     "bot", "crawler", "spider", "slurp", "crawling", "facebookexternalhit",
