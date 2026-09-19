@@ -61,9 +61,9 @@ def test_take_empties_the_counter():
     c = AccessCounter(flush_interval=0)
     for _ in range(3):
         c.record("/", "GET", 200, "Mozilla/5.0")
-    first = c.take()
+    first, _landing = c.take()
     assert sum(first.values()) == 3
-    assert c.take() == {}, "取り出した分が二重に計上されてはいけない"
+    assert c.take() == ({}, {}), "取り出した分が二重に計上されてはいけない"
 
 
 def test_failed_flush_returns_the_counts(monkeypatch):
@@ -76,7 +76,8 @@ def test_failed_flush_returns_the_counts(monkeypatch):
 
     monkeypatch.setattr("src.db.connection.connect", boom)
     assert c.flush() == 0
-    assert sum(c.take().values()) == 1, "失敗した分が消えている"
+    pv, _landing = c.take()
+    assert sum(pv.values()) == 1, "失敗した分が消えている"
 
 
 def test_add_page_views_accumulates(conn):
@@ -230,3 +231,50 @@ def test_child_after_fork_starts_clean():
     c._after_fork_in_child()
     s = c.status()
     assert s["pending"] == 0 and s["timer_pid"] is None
+
+
+# ---- LP(/start) 流入元別カウント (2026-09-19) ----
+
+def test_landing_records_start_by_utm_source():
+    c = AccessCounter(flush_interval=0)
+    ua = "Mozilla/5.0 (iPhone)"
+    c.record("/start", "GET", 200, ua, utm_source="youtube")
+    c.record("/start", "GET", 200, ua, utm_source="youtube")
+    c.record("/start", "GET", 200, ua, utm_source="x")
+    c.record("/start", "GET", 200, ua)  # utm 無し → (direct)
+    c.record("/races", "GET", 200, ua)  # LPでないので landing に入らない
+    _pv, landing = c.take()
+    by_source = {src: n for (day, src), n in landing.items()}
+    assert by_source == {"youtube": 2, "x": 1, "(direct)": 1}
+
+
+def test_landing_cleans_weird_utm():
+    assert AccessCounter._clean_source(None) == "(direct)"
+    assert AccessCounter._clean_source("  YouTube ") == "youtube"
+    assert AccessCounter._clean_source("a" * 40) == "(other)"
+    assert AccessCounter._clean_source("<script>") == "(other)"
+
+
+def test_add_landing_views_accumulates(conn):
+    from src.access_stats import add_landing_views, load_landing
+    add_landing_views(conn, {("2026-09-19", "youtube"): 3, ("2026-09-19", "x"): 1})
+    add_landing_views(conn, {("2026-09-19", "youtube"): 2})  # 持ち寄り加算
+    rows = {r["source"]: r["views"] for r in load_landing(conn, start="2026-09-01", end="2026-09-30")}
+    assert rows == {"youtube": 5, "x": 1}
+
+
+def test_flush_writes_both_pv_and_landing(conn, monkeypatch):
+    monkeypatch.setattr("src.db.connection.connect", lambda *a, **k: _Keep(conn))
+    c = AccessCounter(flush_interval=0)
+    c.record("/start", "GET", 200, "Mozilla/5.0 (X11)", utm_source="note")
+    c.flush()
+    from src.access_stats import load_landing
+    rows = load_landing(conn, start="2026-09-01", end="2026-12-31")
+    assert any(r["source"] == "note" and r["views"] >= 1 for r in rows)
+
+
+class _Keep:
+    """with connect() as conn: で閉じさせないためのラッパ（テスト用）。"""
+    def __init__(self, conn): self._c = conn
+    def __enter__(self): return self._c
+    def __exit__(self, *a): return False

@@ -55,6 +55,8 @@ class AccessCounter:
 
     def __init__(self, flush_interval: int = FLUSH_INTERVAL_SECONDS) -> None:
         self._counts: dict[str, int] = defaultdict(int)
+        # LP(/start) の訪問を (日付, 流入元utm_source) 別に。全体PVとは別立て。
+        self._landing: dict[tuple[str, str], int] = defaultdict(int)
         self._lock = threading.Lock()
         self._flush_interval = flush_interval
         self._timer: threading.Timer | None = None
@@ -87,13 +89,29 @@ class AccessCounter:
             return False
         return True
 
-    def record(self, path: str, method: str, status: int, user_agent: str) -> None:
+    @staticmethod
+    def _clean_source(utm_source: str | None) -> str:
+        """流入元ラベルを短く安全に整える（過剰・不正な値でテーブルを汚さない）。"""
+        s = (utm_source or "").strip().lower()
+        if not s:
+            return "(direct)"
+        # 想定外の長い/変な値は捨てる（英数と - _ . のみ・32文字まで）。
+        if len(s) > 32 or not re.fullmatch(r"[a-z0-9._-]+", s):
+            return "(other)"
+        return s
+
+    def record(self, path: str, method: str, status: int, user_agent: str,
+               utm_source: str | None = None) -> None:
         if not self.should_count(path, method, status, user_agent):
             return
         today = datetime.now(JST).strftime("%Y-%m-%d")
+        is_landing = path == "/start"
+        source = self._clean_source(utm_source) if is_landing else None
         with self._lock:
             self._counts[today] += 1
             self._recorded += 1
+            if is_landing:
+                self._landing[(today, source)] += 1
         self._ensure_running()
 
     def status(self) -> dict:
@@ -116,35 +134,42 @@ class AccessCounter:
 
     # ---- 書き出し (背後のスレッド) ----
 
-    def take(self) -> dict[str, int]:
-        """溜まった分を取り出して空にする。"""
+    def take(self) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
+        """溜まった分を取り出して空にする（全体PV, LP流入元別）。"""
         with self._lock:
             taken = dict(self._counts)
+            landing = dict(self._landing)
             self._counts.clear()
-        return taken
+            self._landing.clear()
+        return taken, landing
 
-    def give_back(self, counts: dict[str, int]) -> None:
+    def give_back(self, counts: dict[str, int],
+                  landing: dict[tuple[str, str], int] | None = None) -> None:
         """書き込みに失敗した分を戻す（次回に持ち越す）。"""
         with self._lock:
             for date, n in counts.items():
                 self._counts[date] += n
+            for key, n in (landing or {}).items():
+                self._landing[key] += n
 
     def flush(self) -> int:
-        taken = self.take()
-        if not taken:
+        taken, landing = self.take()
+        if not taken and not landing:
             return 0
         try:
-            from src.access_stats import add_page_views
+            from src.access_stats import add_landing_views, add_page_views
             from src.db.connection import connect
 
             with connect() as conn:
                 written = add_page_views(conn, taken)
+                if landing:
+                    add_landing_views(conn, landing)
             self._flushed_days += written
             self._last_flush_at = _now_text()
-            logger.info("access counter flushed: %s", taken)
+            logger.info("access counter flushed: pv=%s landing=%s", taken, landing)
             return written
         except Exception as exc:  # 計測のためにサイトを止めない
-            self.give_back(taken)
+            self.give_back(taken, landing)
             self._last_error = _safe_error(exc)
             self._last_error_at = _now_text()
             logger.warning("access counter flush failed (will retry): %s", self._last_error)
@@ -185,6 +210,7 @@ class AccessCounter:
     def _after_fork_in_child(self) -> None:
         """複製直後の子プロセス: 親の数・ロック・スレッドの記録を引き継がない。"""
         self._counts = defaultdict(int)
+        self._landing = defaultdict(int)
         self._lock = threading.Lock()
         self._start_lock = threading.Lock()
         self._timer = None
@@ -237,6 +263,7 @@ def install(app) -> None:
                 request.method,
                 response.status_code,
                 request.headers.get("User-Agent", ""),
+                utm_source=request.args.get("utm_source"),
             )
         except Exception:  # 計測はページの成否に一切関与しない
             pass

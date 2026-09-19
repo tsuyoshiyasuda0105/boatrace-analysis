@@ -192,6 +192,82 @@ def access_coverage(conn: Any, *, source: str = SOURCE_CLOUDFLARE) -> dict:
     return {"first_date": row[0], "last_date": row[1], "days": int(row[2]), "total_views": int(row[3])}
 
 
+# --- ランディング（/start）の流入元別カウント ---------------------------------
+# LP を「どこ経由で・何回」開かれたかを日別・流入元(utm_source)別に持ち寄り加算する。
+# 全体 PV(site_access_daily) では「LP が効いたか」が分からないので別立て (2026-09-19)。
+_LANDING_SCHEMA_READY = False
+LANDING_DIRECT = "(direct)"  # utm 無しの直接流入
+
+
+def ensure_site_landing_table(conn: Any) -> None:
+    global _LANDING_SCHEMA_READY
+    is_postgres = getattr(conn, "_kind", "") == "postgres"
+    if is_postgres and _LANDING_SCHEMA_READY:
+        return
+    if is_postgres:
+        try:
+            conn.execute("SELECT 1 FROM site_landing_daily LIMIT 0")
+            _LANDING_SCHEMA_READY = True
+            return
+        except Exception:
+            pass
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS site_landing_daily (
+            access_date TEXT NOT NULL,
+            utm_source TEXT NOT NULL,
+            views INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (access_date, utm_source)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_site_landing_daily_date "
+        "ON site_landing_daily(access_date)"
+    )
+    if is_postgres:
+        _LANDING_SCHEMA_READY = True
+
+
+def add_landing_views(conn: Any, counts: dict[tuple[str, str], int]) -> int:
+    """LP 訪問を (日付, 流入元) 別に **足しこむ**。counts: {(date, utm_source): 件数}。"""
+    ensure_site_landing_table(conn)
+    stamp = datetime.now().isoformat(timespec="seconds")
+    written = 0
+    for (date, source), count in sorted(counts.items()):
+        if not date or int(count) <= 0:
+            continue
+        conn.execute(
+            """
+            INSERT INTO site_landing_daily
+                (access_date, utm_source, views, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (access_date, utm_source) DO UPDATE SET
+                views = site_landing_daily.views + EXCLUDED.views,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (date, str(source or LANDING_DIRECT), int(count), stamp),
+        )
+        written += 1
+    return written
+
+
+def load_landing(conn: Any, *, start: str, end: str) -> list[dict]:
+    """期間内の LP 訪問を流入元別に返す（多い順）。"""
+    ensure_site_landing_table(conn)
+    cur = conn.execute(
+        """
+        SELECT utm_source, SUM(views)
+        FROM site_landing_daily
+        WHERE access_date >= ? AND access_date <= ?
+        GROUP BY utm_source ORDER BY SUM(views) DESC
+        """,
+        (start, end),
+    )
+    return [{"source": str(r[0]), "views": int(r[1] or 0)} for r in cur.fetchall()]
+
+
 def _date_range(start: str, end: str) -> Sequence[str]:
     from datetime import date as _date, timedelta
 
