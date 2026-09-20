@@ -1,3 +1,4 @@
+from pathlib import Path
 from scripts import pc_nightly_prepare as nightly
 
 
@@ -318,6 +319,103 @@ def test_pc_nightly_records_forward_exacta_after_kachisuji(monkeypatch):
     assert nightly.main() == 0
 
     fx = [(args, allow) for args, allow in calls if args[:1] == ["scripts/forward_exacta_picks.py"]]
-    assert fx == [(["scripts/forward_exacta_picks.py", "--settle", "--date", "2026-09-19"], True)]
+    # 対象日に加えて、止まった晩の穴を埋めるため直近数日もなぞる (2026-09-20)
+    assert fx[-1] == (
+        ["scripts/forward_exacta_picks.py", "--settle", "--date", "2026-09-19"], True
+    )
+    assert [args[3] for args, _ in fx] == nightly._recent_days(
+        "2026-09-19", nightly.FORWARD_CATCHUP_DAYS
+    )
     # 本番へ書くので allow_prod_sync=True で呼ぶこと (ローカル固定パスから読む)
-    assert fx[0][1] is True
+    assert all(allow for _, allow in fx)
+
+
+# ---- 固まった夜の手当て (2026-09-15/19/20) ---------------------------------
+
+
+def test_steps_run_through_the_watchdog_runner(monkeypatch):
+    """子は -u で、見張り役ごしに走らせる (固まった場所がログに残る)。"""
+    seen = {}
+
+    class _Proc:
+        returncode = 0
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        seen["timeout"] = kwargs.get("timeout")
+        return _Proc()
+
+    monkeypatch.setattr(nightly.subprocess, "run", fake_run)
+    assert nightly._run_local(["scripts/daily_collect.py", "--date", "2026-09-20"]) is True
+
+    assert seen["cmd"][1] == "-u"
+    assert seen["cmd"][2] == "scripts/run_step_watchdog.py"
+    assert seen["cmd"][3] == str(nightly.STEP_WATCHDOG_SECONDS)
+    assert seen["cmd"][4:] == ["scripts/daily_collect.py", "--date", "2026-09-20"]
+    assert seen["env"]["PYTHONUNBUFFERED"] == "1"
+    # 見張り役は親に切られる前に鳴らすこと
+    assert nightly.STEP_WATCHDOG_SECONDS < seen["timeout"] == nightly.STEP_TIMEOUT_SECONDS
+
+
+def test_the_watchdog_runner_exists_and_dumps_where_it_hangs():
+    source = (Path("scripts") / "run_step_watchdog.py").read_text(encoding="utf-8")
+    assert "faulthandler.dump_traceback_later" in source
+    assert "exit=True" in source
+
+
+def test_a_failing_official_download_does_not_stop_the_rest_of_the_night(monkeypatch):
+    """公式DLが固まっても、予測キャッシュと前向き記録まで進む。
+
+    2026-09-15/19/20 は初手で止まり、その晩の下流が丸ごと作られなかった。
+    """
+    calls = []
+
+    def fake_run(args, allow_prod_sync=False):
+        calls.append(args[0])
+        return args[0] != "scripts/backfill_official.py"
+
+    monkeypatch.setattr(nightly, "_run_local", fake_run)
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-09-20", "--skip-sync"])
+
+    assert nightly.main() == 0
+    assert "scripts/cache_predictions.py" in calls
+    assert "scripts/forward_exacta_picks.py" in calls
+
+
+def test_a_failing_required_step_still_stops_the_night(monkeypatch):
+    calls = []
+
+    def fake_run(args, allow_prod_sync=False):
+        calls.append(args[0])
+        return args[0] != "scripts/daily_collect.py"
+
+    monkeypatch.setattr(nightly, "_run_local", fake_run)
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-09-20", "--skip-sync"])
+
+    assert nightly.main() == 1
+    assert "scripts/cache_predictions.py" not in calls
+
+
+def test_forward_exacta_fills_the_days_the_night_missed(monkeypatch):
+    """止まった晩の穴が、次の晩に自分で埋まる (記録は INSERT OR IGNORE)。"""
+    calls = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: calls.append((args, allow_prod_sync)) or True,
+    )
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-09-21", "--skip-sync"])
+
+    assert nightly.main() == 0
+
+    days = [args[3] for args, _ in calls if args[0] == "scripts/forward_exacta_picks.py"]
+    assert days == ["2026-09-19", "2026-09-20", "2026-09-21"]
+    assert all(allow for args, allow in calls if args[0] == "scripts/forward_exacta_picks.py")
+
+
+def test_recent_days_is_oldest_first_and_includes_the_target():
+    assert nightly._recent_days("2026-09-21", 3) == ["2026-09-19", "2026-09-20", "2026-09-21"]
+    assert nightly._recent_days("2026-03-01", 2) == ["2026-02-28", "2026-03-01"]

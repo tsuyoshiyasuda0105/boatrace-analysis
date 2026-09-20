@@ -19,13 +19,24 @@ JST = timezone(timedelta(hours=9))
 # 20 秒で終わるので、深夜だけ通信が返らなくなる類い)。通常は全手順あわせて
 # 3〜4 分なので、30 分で切れば長引く手順を巻き込まずに、固まりだけを止められる。
 STEP_TIMEOUT_SECONDS = 1800
+# 見張り役が自分で現在地を吐く期限。親が切るより先に鳴らす (差の 120 秒は
+# 吐き出しと後始末のため)。
+STEP_WATCHDOG_SECONDS = STEP_TIMEOUT_SECONDS - 120
 
 
 def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
     env = os.environ.copy()
     if not allow_prod_sync:
         env["DATABASE_URL"] = ""
-    cmd = [sys.executable, *args]
+    # 固まったときに出力が消えないよう、子はまとめ書きしない。
+    env["PYTHONUNBUFFERED"] = "1"
+    cmd = [
+        sys.executable,
+        "-u",
+        "scripts/run_step_watchdog.py",
+        str(STEP_WATCHDOG_SECONDS),
+        *args,
+    ]
     print("$ " + " ".join(args), flush=True)
     try:
         proc = subprocess.run(
@@ -41,6 +52,19 @@ def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
         return False
     print(f"exit={proc.returncode}", flush=True)
     return proc.returncode == 0
+
+
+# 二連単の前向き記録をさかのぼって埋める日数 (対象日を含む)。
+FORWARD_CATCHUP_DAYS = 3
+
+
+def _recent_days(target_date: str, days: int) -> list[str]:
+    """対象日とその前の数日を、古い順に返す。"""
+    base = date.fromisoformat(target_date)
+    return [
+        (base - timedelta(days=offset)).isoformat()
+        for offset in range(days - 1, -1, -1)
+    ]
 
 
 def _default_target_date(now: datetime | None = None) -> str:
@@ -294,6 +318,11 @@ def main() -> int:
     sync_end = args.sync_end or target_date
     today = datetime.now().date().isoformat()
 
+    # 外の取りに行く手順 (公式DL・潮汐) は落ちても夜間の本筋を止めない。
+    # Layer 1 は翌晩のさかのぼりで埋まり、番組表は Open API (daily_collect) でも
+    # そろう。2026-09-15/19/20 に初手の公式DLが固まって、下流の予測キャッシュも
+    # 二連単の前向き記録も丸ごと作られなかったことへの手当て。
+    OPTIONAL = {"scripts/backfill_official.py", "scripts/fetch_and_import_jma_tides.py"}
     steps = [
         ["scripts/backfill_official.py", "--start", target_date, "--end", target_date, "--local"],
         ["scripts/daily_collect.py", "--date", target_date],
@@ -308,11 +337,15 @@ def main() -> int:
         ["scripts/build_top_page_snapshot.py", "--date", target_date],
     ]
 
-    ok = True
+    skipped: list[str] = []
     for step in steps:
-        ok &= _run_local(step)
-        if not ok:
-            return 1
+        if _run_local(step):
+            continue
+        if step[0] in OPTIONAL:
+            print(f"[optional] 失敗したが続行: {step[0]}", flush=True)
+            skipped.append(step[0])
+            continue
+        return 1
 
     if not args.skip_sync:
         sync_tables = ",".join(
@@ -355,10 +388,16 @@ def main() -> int:
     # 取る。読みはローカル固定パス、書きは本番なので allow_prod_sync=True で呼ぶ。
     # slim の対象日 forward 行が要るので _run_kachisuji_daily の後に置く。失敗しても
     # 夜間の主目的は既に終わっているので戻り値は 0 のまま (記録は翌晩リトライ)。
-    _run_local(
-        ["scripts/forward_exacta_picks.py", "--settle", "--date", target_date],
-        allow_prod_sync=True,
-    )
+    # 取りこぼした日も埋める。記録は INSERT OR IGNORE なので、既にある日を
+    # もう一度指しても何も起きない (夜間が止まった 9/19・9/20 のような穴が
+    # 翌晩に自分で埋まる)。
+    for day in _recent_days(target_date, FORWARD_CATCHUP_DAYS):
+        _run_local(
+            ["scripts/forward_exacta_picks.py", "--settle", "--date", day],
+            allow_prod_sync=True,
+        )
+    if skipped:
+        print(f"[summary] 任意の手順を飛ばした: {', '.join(skipped)}", flush=True)
     return 0
 
 
