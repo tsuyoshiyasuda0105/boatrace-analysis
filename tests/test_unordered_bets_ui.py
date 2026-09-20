@@ -42,18 +42,30 @@ def search_db(tmp_path: Path) -> Path:
     return path
 
 
-def test_unordered_bets_are_hidden_until_released() -> None:
-    assert strategies.UNORDERED_BETS_RELEASED is False
+ALL_BETS = ["sanrentan", "nirentan", "tansho", "sanrenpuku", "nirenpuku"]
+OLD_BETS = ["sanrentan", "nirentan", "tansho"]
+
+
+def test_unordered_bets_are_public() -> None:
+    """2026-09-20 公開。URL に何も付けなくても選べる。"""
+    assert strategies.UNORDERED_BETS_RELEASED is True
+    assert unordered_bets_visible(None) is True
+    assert unordered_bets_visible("other") is True
+
+
+def test_the_preview_switch_still_works_if_the_release_is_rolled_back(monkeypatch) -> None:
+    """取りやめたときに、お試しだけ続けられる道を残しておく。"""
+    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", False)
     assert unordered_bets_visible(None) is False
     assert unordered_bets_visible("other") is False
     assert unordered_bets_visible("renpuku") is True
 
 
 @pytest.mark.parametrize("preview, expected", [
-    (None, ["sanrentan", "nirentan", "tansho"]),
-    ("renpuku", ["sanrentan", "nirentan", "tansho", "sanrenpuku", "nirenpuku"]),
+    (None, ALL_BETS),
+    ("renpuku", ALL_BETS),
 ])
-def test_production_page_shows_new_bet_types_only_with_the_preview_switch(
+def test_production_page_shows_every_bet_type(
     monkeypatch, tmp_path: Path, preview, expected
 ) -> None:
     available_db = tmp_path / "kachisuji.db"
@@ -73,11 +85,27 @@ def test_production_page_shows_new_bet_types_only_with_the_preview_switch(
     assert len(re.findall(r'<input type="checkbox" value="[1-6]" data-box>', html)) == 6
 
 
+def test_production_page_hides_the_new_bet_types_if_the_release_is_rolled_back(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", False)
+    available_db = tmp_path / "kachisuji.db"
+    available_db.touch()
+    monkeypatch.setenv("KACHISUJI_DB", str(available_db))
+    client = _app(monkeypatch).test_client()
+    _login_as_paid_member(client)
+
+    assert _options(client.get("/kachisuji").get_data(as_text=True)) == OLD_BETS
+    assert _options(
+        client.get("/kachisuji?preview=renpuku").get_data(as_text=True)
+    ) == ALL_BETS
+
+
 @pytest.mark.parametrize("preview, expected", [
-    (None, ["sanrentan", "nirentan", "tansho"]),
-    ("renpuku", ["sanrentan", "nirentan", "tansho", "sanrenpuku", "nirenpuku"]),
+    (None, ALL_BETS),
+    ("renpuku", ALL_BETS),
 ])
-def test_twin_page_shows_new_bet_types_only_with_the_preview_switch(
+def test_twin_page_shows_every_bet_type(
     search_db: Path, tmp_path: Path, preview, expected
 ) -> None:
     app = create_twin_app(search_db, tmp_path / "strategies.db")
@@ -86,6 +114,18 @@ def test_twin_page_shows_new_bet_types_only_with_the_preview_switch(
 
     assert _options(html) == expected
     assert 'id="boxes0"' in html
+
+
+def test_twin_page_hides_the_new_bet_types_if_the_release_is_rolled_back(
+    monkeypatch, search_db: Path, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", False)
+    app = create_twin_app(search_db, tmp_path / "strategies.db")
+    app.config.update(TESTING=True)
+    client = app.test_client()
+
+    assert _options(client.get("/").get_data(as_text=True)) == OLD_BETS
+    assert _options(client.get("/?preview=renpuku").get_data(as_text=True)) == ALL_BETS
 
 
 def test_both_templates_and_stylesheets_carry_the_same_unordered_ui() -> None:
@@ -116,6 +156,7 @@ def test_both_templates_and_stylesheets_carry_the_same_unordered_ui() -> None:
 
 
 def test_saving_an_unordered_strategy_is_refused_before_release(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", False)
     db = tmp_path / "strategies.db"
     monkeypatch.setenv("KACHISUJI_STRATEGY_DB", str(db))
     with pytest.raises(ValueError, match="^買い目は2連複・3連複の手法保存を準備中です"):
@@ -124,14 +165,16 @@ def test_saving_an_unordered_strategy_is_refused_before_release(tmp_path: Path, 
     assert save_strategy("3連単", {"bet": {**TRIO, "type": "sanrentan"}}, db_path=db) > 0
 
 
-def test_saving_an_unordered_strategy_works_after_release(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", True)
+def test_saving_an_unordered_strategy_works_after_release(tmp_path: Path) -> None:
     db = tmp_path / "strategies.db"
     strategy_id = save_strategy("3連複", {"bet": TRIO}, db_path=db)
     assert strategies.get_strategy(strategy_id, db_path=db)["conditions"]["bet"]["type"] == "sanrenpuku"
 
 
-def test_twin_save_api_explains_the_refusal_in_japanese(search_db: Path, tmp_path: Path) -> None:
+def test_twin_save_api_explains_the_refusal_in_japanese(
+    monkeypatch, search_db: Path, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", False)
     app = create_twin_app(search_db, tmp_path / "strategies.db")
     app.config.update(TESTING=True)
     response = app.test_client().post(
@@ -142,6 +185,7 @@ def test_twin_save_api_explains_the_refusal_in_japanese(search_db: Path, tmp_pat
 
 
 def test_production_save_api_explains_the_refusal_in_japanese(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", False)
     monkeypatch.setenv("KACHISUJI_STRATEGY_DB", str(tmp_path / "strategies.db"))
     client = _app(monkeypatch).test_client()
     _login_as_paid_member(client)
@@ -178,10 +222,23 @@ MIXED = {"bet": {"type": "sanrentan", "tickets": [
 ]}}
 
 
-def test_a_mixed_ticket_list_cannot_sneak_an_unreleased_bet_type_past_saving(tmp_path: Path) -> None:
+def test_a_mixed_ticket_list_cannot_sneak_an_unreleased_bet_type_past_saving(
+    monkeypatch, tmp_path: Path
+) -> None:
     """点ごとに券種を選べるので、bet.type だけ見ると 2 点目の 3連複を見落とす。"""
+    monkeypatch.setattr(strategies, "UNORDERED_BETS_RELEASED", False)
     with pytest.raises(ValueError, match="^買い目は2連複・3連複の手法保存を準備中です"):
         save_strategy("混在", MIXED, db_path=tmp_path / "s.db")
+
+
+def test_a_mixed_strategy_can_be_saved_after_release(tmp_path: Path) -> None:
+    """公開後は、点ごとに券種の違う買い目もそのまま保存できる。"""
+    db = tmp_path / "s.db"
+    strategy_id = save_strategy("混在", MIXED, db_path=db)
+    saved = strategies.get_strategy(strategy_id, db_path=db)
+    assert [
+        ticket.get("type") for ticket in saved["conditions"]["bet"]["tickets"]
+    ] == [None, "sanrenpuku"]
 
 
 def test_a_saved_mixed_strategy_with_an_unknown_bet_type_is_skipped(tmp_path: Path) -> None:

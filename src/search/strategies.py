@@ -62,11 +62,11 @@ _BET_LABELS = {
 }
 _JST = ZoneInfo("Asia/Tokyo")
 
-# 2連複・3連複を画面に出し、手法として保存できるようにするか。本番の検索 DB へ
-# 過去分の列を継ぎ足し終えるまでは False。それまでは画面の URL に
-# ?preview=renpuku を付けたときだけ選択肢に出す (お試しの検索のみ・保存は不可)。
-# 公開するときはここを True にするだけでよい。
-UNORDERED_BETS_RELEASED = False
+# 2連複・3連複を画面に出し、手法として保存できるようにするか。
+# 2026-09-20 公開 (本番の検索 DB へ過去分の列を継ぎ足し済み)。
+# 取りやめるときは False に戻す。そのときは ?preview=renpuku を付けた URL で
+# だけ選択肢が出て、保存は断られる (お試しの検索のみ) 状態に戻る。
+UNORDERED_BETS_RELEASED = True
 UNORDERED_BETS_PREVIEW_VALUE = "renpuku"
 
 

@@ -311,11 +311,12 @@ def test_s19_duplicate_message_names_the_colliding_ticket(page):
     expect(alert).to_contain_text("使わない着順は無視")
 
 
-# ---- 2連複・3連複 (A案・?preview=renpuku でだけ出る) -----------------------
+# ---- 2連複・3連複 (A案・2026-09-20 公開) -----------------------------------
 
 
 def _open_with_preview(page, kachisuji_server: str):
-    page.goto(f"{kachisuji_server}/?preview=renpuku", wait_until="networkidle")
+    # 公開後は URL に何も付けずに出る (お試しスイッチは取りやめ用に残してある)。
+    page.goto(f"{kachisuji_server}/", wait_until="networkidle")
 
 
 def _checked_boats(boxes):
