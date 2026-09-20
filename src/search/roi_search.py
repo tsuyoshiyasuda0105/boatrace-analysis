@@ -866,13 +866,56 @@ def search_roi(
                 raise ValueError(
                     "買い目は2連複・3連複のデータを準備中です。しばらくお待ちください"
                 )
-        # 券種ごとに 4 列 (代表値 2 つと JSON 2 つ)。1 券種だけなら従来と同じ形。
+        # 当たり目の突き合わせは SQLite 側 (C) でやる。JSON 文字列を 55 万行ぶん
+        # Python へ運んで json.loads すると、運ぶのに 0.95 秒・解析に 0.79 秒
+        # かかっていた (2026-09-20 実測)。同じ判定を SQL で書くと、1 点の全期間
+        # 検索で 0.74 秒に収まる。JSON がこれまでどおり正で、代表値 (result_/
+        # payout_) は schema_version < 4 の古い行のためだけに残す。
+        #
+        # 券種ごとに 3 列: 代表値 2 つと「JSON が壊れている」印。壊れている行を
+        # 除外する条件は、従来 Python 側で見ていたものと同じ (欠損・壊れた JSON・
+        # 空の当たり目・払戻の無い当たり目)。
+        # 条件で判定不能になる行 (condition_null) は集計に入らない。JSON を読むのは
+        # その判定の後にする。読み飛ばさないと、条件が「値が無い行も残す」形
+        # (例: 展示順位) のとき、捨てる 52 万行ぶんまで JSON を読んでしまう
+        # (2026-09-20: 1.05 秒 → 1.43 秒に悪化したのがこれ)。
+        skip = "" if null_expression == "0" else f"WHEN {null_expression} THEN NULL "
         selected: list[str] = []
         for kind in kinds:
-            for column in (f"result_{kind}", f"payout_{kind}"):
-                selected.append(column)
-            for column in (f"result_{kind}_json", f"payout_{kind}_json"):
-                selected.append(column if column in columns else "NULL")
+            result_json = f"result_{kind}_json"
+            payout_json = f"payout_{kind}_json"
+            selected.append(f"result_{kind}")
+            selected.append(f"payout_{kind}")
+            if result_json in columns and payout_json in columns:
+                selected.append(
+                    "CASE "
+                    + skip
+                    + f" WHEN {result_json} IS NULL OR {payout_json} IS NULL THEN 1"
+                    + f" WHEN json_valid({result_json}) = 0 OR json_valid({payout_json}) = 0 THEN 1"
+                    + f" WHEN json_array_length({result_json}) = 0 THEN 1"
+                    + f" WHEN (SELECT COUNT(*) FROM json_each({result_json}) AS winner"
+                    + f" WHERE json_extract({payout_json}, '$.\"' || winner.value || '\"') IS NULL) > 0"
+                    + " THEN 1 ELSE 0 END"
+                )
+            else:
+                # JSON 列を持たない古い DB (schema_version < 4 の行だけの想定)。
+                selected.append("1")
+        # 点ごとに 1 列: 当たっていればその払戻、外れていれば NULL。
+        # 目は _parse_ticket_legs が 1〜6 の数字とハイフンだけに検証済みなので、
+        # 文字列として SQL に埋めても危険な文字は入らない。
+        for ticket in bet.tickets:
+            result_json = f"result_{ticket.kind}_json"
+            payout_json = f"payout_{ticket.kind}_json"
+            if result_json in columns and payout_json in columns:
+                key = str(ticket.key)
+                selected.append(
+                    "CASE "
+                    + skip
+                    + f"WHEN instr({result_json}, '\"{key}\"') > 0"
+                    + f" THEN json_extract({payout_json}, '$.\"{key}\"') END"
+                )
+            else:
+                selected.append("NULL")
         # グレード別内訳のために grade も引く。古い DB で列が無ければ NULL 扱い。
         grade_sql = "grade" if "grade" in columns else "NULL"
         sql = (
@@ -885,7 +928,18 @@ def search_roi(
 
     excluded_condition = 0
     excluded_result = 0
-    included: list[tuple[str, bool, float, int | None]] = []
+    # 1 レース 1 要素。平均がそのまま ROI% になるよう、点数で割った払戻を入れる。
+    returns: list[float] = []
+    n = 0
+    hits = 0
+    # 年別・月別・季節別・グレード別・日別も同じループで数える (以前は
+    # 55 万行をもう一度なめていた)。値は [レース数, 的中, 払戻合計]。
+    yearly_totals: dict[int, list[float]] = {}
+    monthly_totals: dict[tuple[int, int], list[float]] = {}
+    season_totals: dict[str, list[float]] = {}
+    grade_totals: dict[int | None, list[float]] = {}
+    daily_payout: dict[str, float] = {}
+    daily_races: dict[str, int] = {}
     # 点ごとの成績。合算だけ出すと「どの目が足を引っ張っているか」が見えない。
     ticket_hits: dict[_Ticket, int] = {ticket: 0 for ticket in bet.tickets}
     ticket_payout: dict[_Ticket, float] = {ticket: 0.0 for ticket in bet.tickets}
@@ -896,6 +950,9 @@ def search_roi(
         (ticket, kind_index[ticket.kind], str(ticket.key), ticket.key)
         for ticket in bet.tickets
     ]
+    # 行の並び: 先頭 4 列 → 券種ごとに 3 列 → 点ごとに 1 列。
+    kind_count = len(kinds)
+    ticket_offset = 4 + kind_count * 3
     for row in rows:
         race_date, schema_version, grade_value, condition_null = row[:4]
         if condition_null:
@@ -909,85 +966,49 @@ def search_roi(
         # 券種ごとの当たり目。1 つでも読めない券種があれば、そのレースは
         # 「結果欠損」として全点まとめて除外する (一部の点だけ数えると、
         # 点数で割る回収率が実際より良く出てしまう)。
-        legacy = int(schema_version) < 4
-        parsed: list[tuple[Any, Any]] = []
-        broken = False
-        for index in range(len(kinds)):
-            result, payout, result_json, payout_json = row[4 + index * 4 : 8 + index * 4]
-            if legacy:
-                # schema_version < 4 は代表 1 件しか持たないレガシー列。
-                if result is None or payout is None:
-                    broken = True
-                    break
-                parsed.append((result, float(payout)))
-                continue
-            try:
-                winning_values = json.loads(result_json)
-                payout_values = json.loads(payout_json)
-                if (
-                    not isinstance(winning_values, list)
-                    or not winning_values
-                    or not isinstance(payout_values, dict)
-                    or any(not isinstance(value, str) for value in winning_values)
-                    or any(value not in payout_values for value in winning_values)
-                ):
-                    raise ValueError("invalid winning-ticket payload")
-                parsed.append(
-                    (
-                        winning_values,
-                        {key: float(value) for key, value in payout_values.items()},
-                    )
-                )
-            except (TypeError, ValueError, json.JSONDecodeError):
-                broken = True
-                break
-        if broken:
-            excluded_result += 1
-            continue
+        # 1 つでも読めない券種があれば、そのレースは「結果欠損」として全点まとめて
+        # 除外する (一部の点だけ数えると、点数で割る回収率が実際より良く出てしまう)。
         race_payout = 0.0
         hit = False
-        # 同着があると当たり目は複数入るので、指定した点のうち当たったものを
-        # 全部足す。
-        for ticket, index, key, raw_key in ticket_plan:
-            winners, payouts = parsed[index]
-            if legacy:
-                if winners != raw_key:
+        if int(schema_version) < 4:
+            # schema_version < 4 は代表 1 件しか持たないレガシー列。
+            broken = False
+            for index in range(kind_count):
+                if row[4 + index * 3] is None or row[5 + index * 3] is None:
+                    broken = True
+                    break
+            if broken:
+                excluded_result += 1
+                continue
+            for ticket, index, _key, raw_key in ticket_plan:
+                if row[4 + index * 3] != raw_key:
                     continue
-                amount = payouts
-            else:
-                if key not in winners:
+                amount = float(row[5 + index * 3])
+                hit = True
+                race_payout += amount
+                ticket_hits[ticket] += 1
+                ticket_payout[ticket] += amount
+        else:
+            if any(row[6 + index * 3] for index in range(kind_count)):
+                excluded_result += 1
+                continue
+            # 同着があると当たり目は複数入る。SQL は点ごとに「当たっていれば
+            # その払戻、外れなら NULL」を返すので、当たった点を全部足す。
+            for position, ticket in enumerate(bet.tickets):
+                amount = row[ticket_offset + position]
+                if amount is None:
                     continue
-                amount = payouts[key]
-            hit = True
-            race_payout += amount
-            ticket_hits[ticket] += 1
-            ticket_payout[ticket] += amount
-        included.append((str(race_date), hit, race_payout, grade_key))
-
-    ticket_count = bet.ticket_count
-    # returns を「1 点あたりに均した払戻」にしておくと、平均がそのまま ROI% に
-    # なり、信頼区間の計算 (_bootstrap_ci / _normal_ci) を一切変えずに済む。
-    # 点数 1 のときは従来と同じ値。
-    returns = [item[2] / ticket_count for item in included]
-    n = len(included)
-    hits = sum(item[1] for item in included)
-    roi = float(np.mean(returns)) if returns else 0.0
-    if not returns:
-        ci_low = ci_high = 0.0
-    elif fast:
-        ci_low, ci_high = _normal_ci(returns)
-    else:
-        ci_low, ci_high = _bootstrap_ci(returns, seed, bootstrap_iterations)
-
-    yearly_totals: dict[int, list[float]] = {}
-    monthly_totals: dict[tuple[int, int], list[float]] = {}
-    # 季節別も同じループで数える。別クエリを足すと DB を 2 度読むことになる。
-    season_totals: dict[str, list[float]] = {}
-    grade_totals: dict[int | None, list[float]] = {}
-    daily_profit: dict[str, float] = {}
-    for race_date, hit, payout, grade_key in included:
-        year = int(race_date[:4])
-        month = int(race_date[5:7])
+                amount = float(amount)
+                hit = True
+                race_payout += amount
+                ticket_hits[ticket] += 1
+                ticket_payout[ticket] += amount
+        n += 1
+        hits += hit
+        returns.append(race_payout)
+        date_text = str(race_date)
+        year = int(date_text[:4])
+        month = int(date_text[5:7])
         for totals in (
             yearly_totals.setdefault(year, [0.0, 0.0, 0.0]),
             monthly_totals.setdefault((year, month), [0.0, 0.0, 0.0]),
@@ -996,11 +1017,31 @@ def search_roi(
             grade_totals.setdefault(grade_key, [0.0, 0.0, 0.0]),
         ):
             totals[0] += 1
-            totals[1] += int(hit)
-            totals[2] += payout
-        # 1 レースの投資額は 100 円 × 点数。
-        stake = STAKE_PER_TICKET * ticket_count
-        daily_profit[race_date] = daily_profit.get(race_date, 0.0) + payout - stake
+            totals[1] += hit
+            totals[2] += race_payout
+        daily_payout[date_text] = daily_payout.get(date_text, 0.0) + race_payout
+        daily_races[date_text] = daily_races.get(date_text, 0) + 1
+
+    ticket_count = bet.ticket_count
+    # returns を「1 点あたりに均した払戻」にしておくと、平均がそのまま ROI% に
+    # なり、信頼区間の計算 (_bootstrap_ci / _normal_ci) を一切変えずに済む。
+    # 点数 1 のときは従来と同じ値。
+    if ticket_count != 1:
+        returns = [value / ticket_count for value in returns]
+    roi = float(np.mean(returns)) if returns else 0.0
+    if not returns:
+        ci_low = ci_high = 0.0
+    elif fast:
+        ci_low, ci_high = _normal_ci(returns)
+    else:
+        ci_low, ci_high = _bootstrap_ci(returns, seed, bootstrap_iterations)
+
+    # 1 レースの投資額は 100 円 × 点数。
+    stake = STAKE_PER_TICKET * ticket_count
+    daily_profit = {
+        date_text: payout - stake * daily_races[date_text]
+        for date_text, payout in daily_payout.items()
+    }
 
     # ROI% = 払戻合計 ÷ (レース数 × 点数)。点数 1 なら従来の式と一致する。
     yearly = [
@@ -1027,9 +1068,10 @@ def search_roi(
         warnings.append("n<30: 偶然の可能性が高い")
     elif n < 100:
         warnings.append("n<100: 上振れの可能性")
+    # 集計に入ったレースの日付は、日別の集計の見出しがそのまま持っている。
     effective_range: list[str | None] = [
-        min((item[0] for item in included), default=None),
-        max((item[0] for item in included), default=None),
+        min(daily_races, default=None),
+        max(daily_races, default=None),
     ]
     # 季節別の内訳。季節で 4 分割すると母数が 1/4 になり、「冬の江戸川で 180%」の
     # ような偽の発見が出やすい。全体と同じ基準 (n<30 / n<100) で各行に注意書きを
