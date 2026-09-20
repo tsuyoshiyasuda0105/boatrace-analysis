@@ -13,13 +13,32 @@ sys.path.insert(0, str(ROOT))
 JST = timezone(timedelta(hours=9))
 
 
+# 1 手順の制限時間。タスクスケジューラ側の上限は 2 時間で、そこで切られると
+# 「何も起きないまま朝になる」形になる (2026-09-19・09-20 の 2 晩、初手の
+# backfill_official が固まり、検索DBの更新が丸ごと止まった。手で動かすと
+# 20 秒で終わるので、深夜だけ通信が返らなくなる類い)。通常は全手順あわせて
+# 3〜4 分なので、30 分で切れば長引く手順を巻き込まずに、固まりだけを止められる。
+STEP_TIMEOUT_SECONDS = 1800
+
+
 def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
     env = os.environ.copy()
     if not allow_prod_sync:
         env["DATABASE_URL"] = ""
     cmd = [sys.executable, *args]
     print("$ " + " ".join(args), flush=True)
-    proc = subprocess.run(cmd, cwd=ROOT, env=env, check=False)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=ROOT, env=env, check=False, timeout=STEP_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired:
+        # 子プロセスは subprocess 側で kill 済み。ここで止まったと分かるように
+        # 残す (今までは出力が無いまま 2 時間後に強制終了されていた)。
+        print(
+            f"timeout={STEP_TIMEOUT_SECONDS}s (step killed): {' '.join(args)}",
+            flush=True,
+        )
+        return False
     print(f"exit={proc.returncode}", flush=True)
     return proc.returncode == 0
 

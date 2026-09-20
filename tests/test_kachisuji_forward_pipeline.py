@@ -204,3 +204,16 @@ def test_slim_append_still_refuses_a_column_inserted_in_the_middle(tmp_path):
     c = sqlite3.connect(slim)
     assert [row[1] for row in c.execute("PRAGMA table_info(asof_race_features)")] == ["race_id", "race_date", "hit"]
     c.close()
+
+def test_a_stuck_nightly_step_is_killed_and_reported(monkeypatch, capsys):
+    """固まった手順は制限時間で切る。2 時間後にスケジューラへ切られると何も残らない。"""
+    import subprocess
+
+    def fake_run(cmd, **kwargs):
+        assert kwargs.get("timeout") == nightly.STEP_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(nightly.subprocess, "run", fake_run)
+
+    assert nightly._run_local(["scripts/backfill_official.py"]) is False
+    assert "timeout=1800s (step killed)" in capsys.readouterr().out
