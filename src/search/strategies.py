@@ -75,18 +75,33 @@ def unordered_bets_visible(preview: str | None) -> bool:
     return UNORDERED_BETS_RELEASED or preview == UNORDERED_BETS_PREVIEW_VALUE
 
 
+def _bet_kinds(conditions: Mapping[str, Any]) -> list[str]:
+    """買い目に出てくる券種を全部返す。
+
+    券種は点ごとに違ってよい (2026-09-20)。``bet.type`` だけを見ると、
+    「1点目は3連単・2点目は3連複」のような買い目を見落とす。
+    """
+    bet = conditions.get("bet") if isinstance(conditions, Mapping) else None
+    if not isinstance(bet, Mapping):
+        return []
+    kinds = [bet.get("type")]
+    tickets = bet.get("tickets")
+    if isinstance(tickets, (list, tuple)):
+        for ticket in tickets:
+            if isinstance(ticket, Mapping) and ticket.get("type") is not None:
+                kinds.append(ticket.get("type"))
+    return [kind for kind in kinds if kind is not None]
+
+
 def _reject_unreleased_bet(conditions: Mapping[str, Any]) -> None:
     """公開前の券種で手法を保存させない。
 
     お試し中に保存された手法は、公開を取りやめて古いコードへ戻したときに
     照合できない手法として残る。保存の入口で止めておけば、その心配がない。
     """
-    bet = conditions.get("bet") if isinstance(conditions, Mapping) else None
-    if (
-        not UNORDERED_BETS_RELEASED
-        and isinstance(bet, Mapping)
-        and bet.get("type") in UNORDERED_BET_KINDS
-    ):
+    if UNORDERED_BETS_RELEASED:
+        return
+    if any(kind in UNORDERED_BET_KINDS for kind in _bet_kinds(conditions)):
         raise ValueError(
             "買い目は2連複・3連複の手法保存を準備中です（検索はお試しいただけます）"
         )
@@ -411,13 +426,12 @@ def _bet_kind_is_known(conditions: Mapping[str, Any], strategy_id: Any) -> bool:
     利用者の手法まで巻き添えで表示されなくなるので、その手法だけを外して記録を残す。
     オッズ条件の旧手法はここでは外さない (従来どおり編集を促すエラーを返す)。
     """
-    bet = conditions.get("bet") if isinstance(conditions, Mapping) else None
-    if not isinstance(bet, Mapping):
-        return True  # 買い目の指定なし = 既定の3連単
-    kind = bet.get("type")
-    if kind in BET_LEGS:
-        return True
-    logger.warning("strategy %s skipped: unsupported bet type %r", strategy_id, kind)
+    unknown = [kind for kind in _bet_kinds(conditions) if kind not in BET_LEGS]
+    if not unknown:
+        return True  # 買い目の指定なし (= 既定の3連単) もここを通る
+    logger.warning(
+        "strategy %s skipped: unsupported bet type %r", strategy_id, unknown[0]
+    )
     return False
 
 
@@ -502,7 +516,8 @@ def match_races(
 
     matched: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
-    ticket = _bet_label(bet.kind, bet.expected)
+    # 券種が点ごとに違うことがあるので、先頭の点の券種で見出しを作る。
+    ticket = _bet_label(bet.tickets[0].kind, bet.expected)
     for row in rows:
         missing = [column for column in referenced_columns if row[column] is None]
         # NULL in a prior-day condition is not evidence of a match.

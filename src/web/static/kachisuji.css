@@ -320,3 +320,6 @@ button.compact-button { padding: 5px 10px; font-size: 12px; }
 .boxchip { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 2.8em; padding: 3px 6px; border-radius: 6px; font-size: 13px; font-weight: 800; cursor: pointer; }
 .boxchip input { margin: 0; }
 .boxchip:has(input:checked) { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 買い目ごとの券種 (2026-09-20)。行が折り返しても券種→艇の順に読めるようにする。 */
+.ticket-row > .ticket-type { margin-right: 6px; }

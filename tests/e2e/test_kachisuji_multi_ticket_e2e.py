@@ -54,21 +54,39 @@ def test_s19_add_button_stops_at_the_twenty_ticket_cap(page):
     expect(page.locator("#btnAddTicket")).to_be_disabled()
 
 
-def test_s19_bet_type_change_hides_legs_in_every_row(page):
+def test_s19_each_row_has_its_own_bet_type(page):
+    """券種は買い目 1 点ごと (2026-09-20)。1 点目を変えても他の行は変わらない。"""
     _add_ticket(page, 2, 3, 4)
     row = page.locator("#extraTickets .ticket-row").first
 
-    page.locator("#betType").select_option("nirentan")
+    row.locator(".ticket-type").select_option("nirentan")
     expect(row.locator('[data-legwrap="3"]')).to_be_hidden()
     expect(row.locator('[data-legwrap="2"]')).to_be_visible()
+    # 1 点目は 3連単のまま
+    expect(page.locator("#pos3wrap")).to_be_visible()
 
-    page.locator("#betType").select_option("tansho")
+    row.locator(".ticket-type").select_option("tansho")
     expect(row.locator('[data-legwrap="2"]')).to_be_hidden()
     expect(row.locator('[data-legwrap="3"]')).to_be_hidden()
+    expect(page.locator("#pos3wrap")).to_be_visible()
 
-    page.locator("#betType").select_option("sanrentan")
+    page.locator("#betType").select_option("tansho")
+    expect(page.locator("#pos2wrap")).to_be_hidden()
+    # 2 点目は単勝のまま (1 点目の変更に引きずられない)
+    expect(row.locator(".ticket-type")).to_have_value("tansho")
+
+    row.locator(".ticket-type").select_option("sanrentan")
     expect(row.locator('[data-legwrap="2"]')).to_be_visible()
     expect(row.locator('[data-legwrap="3"]')).to_be_visible()
+    expect(page.locator("#pos2wrap")).to_be_hidden()
+
+
+def test_s19_a_new_row_starts_from_the_first_rows_bet_type(page):
+    page.locator("#betType").select_option("nirentan")
+    row = _add_ticket(page, 2, 3)
+
+    expect(row.locator(".ticket-type")).to_have_value("nirentan")
+    expect(row.locator('[data-legwrap="3"]')).to_be_hidden()
 
 
 def test_s19_single_ticket_still_sends_the_legacy_shape(page):
@@ -281,11 +299,93 @@ def test_s19_duplicate_message_names_the_colliding_ticket(page):
     三連単で 1-2-3 と 1-4-5 を入れて単勝に切り替えると、どちらも「1」になる。
     画面上は別々の行に見えるので、目を名指ししないと何が重複か分からない。
     """
-    _add_ticket(page, 1, 4, 5)
+    row = _add_ticket(page, 1, 4, 5)
     page.locator("#betType").select_option("tansho")
+    row.locator(".ticket-type").select_option("tansho")
     page.locator("#fast").check()
     page.locator("#btnSearch").click()
     alert = page.locator("#resultArea [role=alert]")
     expect(alert).to_be_visible(timeout=30_000)
-    expect(alert).to_contain_text("重複しています: 1")
+    # 券種が点ごとに選べるので、名前にも券種を付ける (3連複 1-2-3 と 3連単 1-2-3 は別の点)
+    expect(alert).to_contain_text("重複しています: 単勝 1")
     expect(alert).to_contain_text("使わない着順は無視")
+
+
+# ---- 2連複・3連複 (A案・?preview=renpuku でだけ出る) -----------------------
+
+
+def _open_with_preview(page, kachisuji_server: str):
+    page.goto(f"{kachisuji_server}/?preview=renpuku", wait_until="networkidle")
+
+
+def _checked_boats(boxes):
+    """艇のチェック欄 (.ticket-boxes) そのものを渡す。"""
+    return boxes.locator('input[data-box]:checked')
+
+
+def test_s20_unordered_bet_swaps_the_finish_order_selects_for_boat_checkboxes(
+    page, kachisuji_server: str
+):
+    _open_with_preview(page, kachisuji_server)
+    page.locator("#betType").select_option("sanrenpuku")
+
+    expect(page.locator("#boxes0")).to_be_visible()
+    expect(page.locator("#pos1").locator("xpath=ancestor::span[@class='ticket-legs']")).to_be_hidden()
+    # 着順の欄で選んでいた艇 (既定 1・2・3) を引き継ぐ
+    expect(_checked_boats(page.locator("#boxes0"))).to_have_count(3)
+    expect(page.locator("#boxes0 [data-box-hint]")).to_have_text("号艇から3艇（順不同）")
+
+    page.locator("#betType").select_option("nirenpuku")
+    expect(page.locator("#boxes0 [data-box-hint]")).to_have_text("号艇から2艇（順不同）")
+
+
+def test_s20_removing_a_row_keeps_the_boats_you_unchecked(page, kachisuji_server: str):
+    """2026-09-20 リッキーさん報告の不具合。
+
+    選び直そうとして全部外した行が、別の行を消しただけで 1・2・3 に戻っていた。
+    """
+    _open_with_preview(page, kachisuji_server)
+    page.locator("#betType").select_option("sanrenpuku")
+    for value in ("1", "2", "3"):
+        page.locator(f'#boxes0 input[data-box][value="{value}"]').uncheck()
+    expect(_checked_boats(page.locator("#boxes0"))).to_have_count(0)
+
+    page.locator("#btnAddTicket").click()
+    expect(page.locator("#extraTickets .ticket-row")).to_have_count(1)
+    expect(_checked_boats(page.locator("#boxes0"))).to_have_count(0)
+
+    page.locator("#extraTickets .ticket-row").first.locator(".ticket-remove").click()
+    expect(page.locator("#extraTickets .ticket-row")).to_have_count(0)
+    expect(_checked_boats(page.locator("#boxes0"))).to_have_count(0)
+
+
+def test_s20_wrong_number_of_boats_names_the_row(page, kachisuji_server: str):
+    _open_with_preview(page, kachisuji_server)
+    page.locator("#betType").select_option("sanrenpuku")
+    page.locator('#boxes0 input[data-box][value="3"]').uncheck()
+    page.locator("#fast").check()
+    page.locator("#btnSearch").click()
+
+    alert = page.locator("#resultArea [role=alert]")
+    expect(alert).to_be_visible(timeout=30_000)
+    expect(alert).to_have_text("買い目1: 3連複は3艇を選んでください（いま2艇）")
+
+
+def test_s20_mixed_bet_types_are_sent_and_broken_down_per_ticket(page, kachisuji_server: str):
+    _open_with_preview(page, kachisuji_server)
+    payloads: list[dict] = []
+    page.route(
+        "**/api/search",
+        lambda route: (payloads.append(route.request.post_data_json), route.continue_()),
+    )
+    row = _add_ticket(page, 1, 2, 3)
+    row.locator(".ticket-type").select_option("sanrenpuku")
+    _run_search(page)
+    expect(page.locator(".kpis")).to_be_visible(timeout=60_000)
+
+    bet = payloads[-1]["bet"]
+    assert [ticket.get("type") for ticket in bet["tickets"]] == ["sanrentan", "sanrenpuku"]
+    rows = page.locator(".tickettbl tbody tr")
+    expect(rows).to_have_count(2)
+    expect(rows.nth(0).locator("td").first).to_have_text("3連単 1-2-3")
+    expect(rows.nth(1).locator("td").first).to_have_text("3連複 1-2-3")

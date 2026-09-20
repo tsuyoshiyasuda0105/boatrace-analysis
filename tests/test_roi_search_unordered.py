@@ -53,7 +53,7 @@ def test_unordered_tickets_are_written_in_ascending_boat_order(bet, expected) ->
 def test_the_same_boats_in_another_order_are_one_duplicated_ticket() -> None:
     bet = {"type": "sanrenpuku", "tickets": [
         {"first": 1, "second": 2, "third": 3}, {"first": 3, "second": 2, "third": 1}]}
-    with pytest.raises(ValueError, match="^買い目は重複しています: 1-2-3"):
+    with pytest.raises(ValueError, match="^買い目は重複しています: 3連複 1-2-3"):
         _parse_bet(bet)
 
 
@@ -156,3 +156,86 @@ def test_database_without_the_new_columns_gets_a_friendly_message(tmp_path: Path
 
     with pytest.raises(ValueError, match="^買い目は2連複・3連複のデータを準備中です"):
         search_roi(path, {"bet": {"type": "sanrenpuku", "first": 1, "second": 2, "third": 3}}, fast=True)
+
+
+# ---- 買い目ごとに券種を選ぶ (2026-09-20 リッキーさん要望) -------------------
+
+
+def test_each_ticket_can_carry_its_own_bet_type() -> None:
+    bet = {"type": "sanrentan", "tickets": [
+        {"first": 1, "second": 2, "third": 3},
+        {"type": "sanrenpuku", "first": 3, "second": 2, "third": 1},
+        {"type": "tansho", "first": 1},
+    ]}
+
+    parsed = _parse_bet(bet)
+
+    assert [(t.kind, t.key) for t in parsed.tickets] == [
+        ("sanrentan", "1-2-3"), ("sanrenpuku", "1-2-3"), ("tansho", 1)]
+    assert parsed.kinds == ("sanrentan", "sanrenpuku", "tansho")
+    assert parsed.mixed is True
+
+
+def test_the_same_numbers_in_two_bet_types_are_two_different_tickets(tmp_path: Path) -> None:
+    """3連単 1-2-3 と 3連複 1-2-3 は別の点。重複にはしない。"""
+    db = _make_db(tmp_path / "mixed.db", [
+        _unordered_row("hit-both", "2026-01-01",
+                       result_sanrentan_json='["1-2-3"]', payout_sanrentan_json='{"1-2-3":1230}'),
+        _unordered_row("trio-only", "2026-01-02",
+                       result_sanrentan="2-1-3", payout_sanrentan=980,
+                       result_sanrentan_json='["2-1-3"]', payout_sanrentan_json='{"2-1-3":980}'),
+    ])
+    bet = {"type": "sanrentan", "tickets": [
+        {"first": 1, "second": 2, "third": 3},
+        {"type": "sanrenpuku", "first": 1, "second": 2, "third": 3},
+    ]}
+
+    result = search_roi(db, {"bet": bet}, fast=True)
+
+    assert result["n"] == 2
+    assert result["ticket_count"] == 2
+    assert result["bet_types"] == ["sanrentan", "sanrenpuku"]
+    # 1 レース目は両方当たり (1230 + 310)、2 レース目は 3連複だけ当たり (310)
+    assert result["hits"] == 2
+    assert result["roi"] == pytest.approx((1230 + 310 + 310) / (2 * 2))
+    assert [(item["bet_label"], item["hits"], item["roi"]) for item in result["ticket_breakdown"]] == [
+        ("3連単 1-2-3", 1, pytest.approx(615.0)),
+        ("3連複 1-2-3", 2, pytest.approx(310.0)),
+    ]
+
+
+def test_a_race_missing_one_of_the_chosen_bet_types_is_excluded(tmp_path: Path) -> None:
+    """片方の券種だけで数えると、点数で割る回収率が実際より良く出てしまう。"""
+    db = _make_db(tmp_path / "half.db", [
+        _unordered_row("both", "2026-01-01",
+                       result_sanrentan_json='["1-2-3"]', payout_sanrentan_json='{"1-2-3":1230}'),
+        _unordered_row("no-trio", "2026-01-02",
+                       result_sanrenpuku=None, payout_sanrenpuku=None,
+                       result_sanrenpuku_json=None, payout_sanrenpuku_json=None),
+    ])
+    bet = {"type": "sanrentan", "tickets": [
+        {"first": 1, "second": 2, "third": 3},
+        {"type": "sanrenpuku", "first": 1, "second": 2, "third": 3},
+    ]}
+
+    result = search_roi(db, {"bet": bet}, fast=True)
+
+    assert result["n"] == 1
+    assert result["excluded"]["result_missing"] == 1
+
+
+def test_an_unknown_bet_type_on_one_ticket_is_rejected() -> None:
+    with pytest.raises(ValueError, match=r"bet\.tickets\[1\]\.type must be"):
+        _parse_bet({"type": "sanrentan", "tickets": [
+            {"first": 1, "second": 2, "third": 3},
+            {"type": "nirensou", "first": 1, "second": 2},
+        ]})
+
+
+def test_mixed_tickets_keep_their_own_leg_count() -> None:
+    """2連複の点に3着を書いたら、その点だけのエラーとして返す。"""
+    with pytest.raises(ValueError, match="unused bet key"):
+        _parse_bet({"type": "sanrentan", "tickets": [
+            {"first": 1, "second": 2, "third": 3},
+            {"type": "nirenpuku", "first": 1, "second": 2, "third": 3},
+        ]})

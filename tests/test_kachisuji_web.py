@@ -253,6 +253,7 @@ def test_search_returns_expected_step2_json_structure(client) -> None:
         # 複数買い目対応で追加。合算 ROI だけだとどの目が効いているか分からない
         # ため、点数・投資額・目ごとの内訳を返す。
         "ticket_count",
+        "bet_types",
         "stake_total",
         "tickets",
         "ticket_breakdown",

@@ -100,7 +100,7 @@
             </div>
             <div class="row">
               <label for="betType">買い目</label>
-              <select id="betType" name="bet_type">
+              <select id="betType" name="bet_type" class="ticket-type" aria-label="買い目1の券種">
                 <option value="sanrentan">3連単</option>
                 <option value="nirentan">2連単</option>
                 <option value="tansho">単勝</option>
@@ -545,6 +545,22 @@
       return row === null ? byId('boxes0') : row.querySelector('.ticket-boxes');
     }
 
+    // 券種は買い目 1 点ごとに選べる (2026-09-20)。1 点目は従来の #betType。
+    function rowKind(row) {
+      return row === null ? byId('betType').value : row.querySelector('.ticket-type').value;
+    }
+
+    function typeSelectHtml(seq) {
+      var options = Array.prototype.map.call(
+        byId('betType').options,
+        function (option) {
+          return '<option value="' + option.value + '">' + option.textContent + '</option>';
+        }
+      ).join('');
+      return '<select class="ticket-type" aria-label="買い目' + (seq + 1) + 'の券種">'
+        + options + '</select>';
+    }
+
     function legsGroup(row) {
       return row === null ? byId('pos1').closest('.ticket-legs') : row.querySelector('.ticket-legs');
     }
@@ -559,31 +575,32 @@
       return html + '<span class="unit" data-box-hint></span></span>';
     }
 
-    function refreshBetUI() {
-      var kind = byId('betType').value;
-      byId('pos2wrap').hidden = kind === 'tansho';
-      byId('pos3wrap').hidden = kind !== 'sanrentan';
-      Array.prototype.forEach.call(
-        document.querySelectorAll('#extraTickets .ticket-row'),
-        function (row) {
-          row.querySelector('[data-legwrap="2"]').hidden = kind === 'tansho';
-          row.querySelector('[data-legwrap="3"]').hidden = kind !== 'sanrentan';
-        }
-      );
-      var need = UNORDERED_LEGS[kind] || 0;
+    // seedRow: 券種を切り替えた行・足したばかりの行だけ、着順の欄で選んでいた艇を
+    // チェック欄へ引き継ぐ。毎回やると、選び直そうとして全部外した瞬間に
+    // 1・2・3 へ戻ってしまう (2026-09-20 リッキーさん報告)。
+    function refreshBetUI(seedRow) {
       ticketRows().forEach(function (row) {
+        var kind = rowKind(row);
+        var need = UNORDERED_LEGS[kind] || 0;
         var legs = legsGroup(row);
         var boxes = boxGroup(row);
+        var wrap2 = row === null ? byId('pos2wrap') : row.querySelector('[data-legwrap="2"]');
+        var wrap3 = row === null ? byId('pos3wrap') : row.querySelector('[data-legwrap="3"]');
+        wrap2.hidden = kind === 'tansho';
+        wrap3.hidden = kind !== 'sanrentan';
         legs.hidden = need > 0;
         boxes.hidden = need === 0;
         if (need === 0) return;
         boxes.querySelector('[data-box-hint]').textContent = '号艇から' + need + '艇（順不同）';
-        // 切り替えた直後で何も選んでいなければ、着順の欄で選んでいた艇を引き継ぐ。
-        if (boxes.querySelectorAll('input[data-box]:checked').length === 0) {
+        var host = row === null ? byId('boxes0') : row;
+        var seeded = host.getAttribute('data-seeded-for');
+        if ((seedRow === true || seedRow === row) && seeded !== kind
+            && boxes.querySelectorAll('input[data-box]:checked').length === 0) {
           legSelects(row).slice(0, need).forEach(function (select) {
             var box = boxes.querySelector('input[data-box][value="' + select.value + '"]');
             if (box) box.checked = true;
           });
+          host.setAttribute('data-seeded-for', kind);
         }
       });
       var count = ticketRows().length;
@@ -601,7 +618,8 @@
       var row = document.createElement('div');
       row.className = 'row ticket-row';
       row.setAttribute('data-ticket-seq', String(seq));
-      var html = '<span class="field-label"></span><span class="ticket-legs">';
+      var html = '<span class="field-label"></span>' + typeSelectHtml(seq)
+        + '<span class="ticket-legs">';
       [1, 2, 3].forEach(function (leg) {
         var label = leg === 1 ? '1着' : (leg === 2 ? '2着' : '3着');
         var id = 'pos' + leg + '_' + seq;
@@ -616,6 +634,11 @@
         + '<button type="button" class="ticket-remove" aria-label="この買い目を削除">×</button>';
       row.innerHTML = html;
       byId('extraTickets').appendChild(row);
+      row.querySelector('.ticket-type').value = byId('betType').value;
+      row.querySelector('.ticket-type').addEventListener('change', function () {
+        betConditionTouched = true;
+        refreshBetUI(row);
+      });
       legSelects(row).forEach(function (select, index) {
         select.innerHTML = optionList(boatNumbers, index + 1);
         select.value = String(index + 1);
@@ -627,14 +650,14 @@
         refreshBetUI();
       });
       betConditionTouched = true;
-      refreshBetUI();
+      refreshBetUI(row);
       return row;
     }
 
     ['betType', 'pos1', 'pos2', 'pos3'].forEach(function (id) {
       byId(id).addEventListener('change', function () { betConditionTouched = true; });
     });
-    byId('betType').addEventListener('change', refreshBetUI);
+    byId('betType').addEventListener('change', function () { refreshBetUI(null); });
     byId('searchForm').addEventListener('change', function (event) {
       if (event.target.matches && event.target.matches('input[data-box]')) betConditionTouched = true;
     });
@@ -643,17 +666,19 @@
     // 足したものなので自分で消す (探索テストで発見: リセット後も 3 点のまま残った)。
     byId('searchForm').addEventListener('reset', function () {
       byId('extraTickets').innerHTML = '';
+      byId('boxes0').removeAttribute('data-seeded-for');
       // コントロールの値が戻るのは reset イベントの後なので、次のティックで描き直す。
-      setTimeout(refreshBetUI, 0);
+      setTimeout(function () { refreshBetUI(true); }, 0);
     });
-    refreshBetUI();
+    refreshBetUI(true);
 
     function collectTickets(lenient) {
-      var kind = byId('betType').value;
       var names = ['first', 'second', 'third'];
-      var need = UNORDERED_LEGS[kind] || 0;
-      if (need) {
-        return ticketRows().map(function (row, index) {
+      return ticketRows().map(function (row, index) {
+        var kind = rowKind(row);
+        var ticket = {type: kind};
+        var need = UNORDERED_LEGS[kind] || 0;
+        if (need) {
           var boats = Array.prototype.map.call(
             boxGroup(row).querySelectorAll('input[data-box]:checked'),
             function (box) { return Number(box.value); }
@@ -662,15 +687,11 @@
             throw new Error('買い目' + (index + 1) + ': ' + optionText('betType', kind)
               + 'は' + need + '艇を選んでください（いま' + boats.length + '艇）');
           }
-          var ticket = {};
           boats.slice(0, need).forEach(function (boat, i) { ticket[names[i]] = boat; });
           return ticket;
-        });
-      }
-      var legCount = kind === 'tansho' ? 1 : (kind === 'nirentan' ? 2 : 3);
-      return ticketRows().map(function (row) {
+        }
+        var legCount = kind === 'tansho' ? 1 : (kind === 'nirentan' ? 2 : 3);
         var selects = legSelects(row);
-        var ticket = {};
         for (var i = 0; i < legCount; i += 1) ticket[names[i]] = Number(selects[i].value);
         return ticket;
       });
@@ -804,9 +825,19 @@
         var tickets = collectTickets(lenient);
         // 1 点のときは従来形式のまま送る。保存済み手法と同じ形なので、
         // 過去に保存した条件と見比べたときに差が出ない。
-        result.bet = tickets.length === 1
-          ? Object.assign({type: byId('betType').value}, tickets[0])
-          : {type: byId('betType').value, tickets: tickets};
+        var kinds = tickets.map(function (ticket) { return ticket.type; });
+        var oneKind = kinds.every(function (kind) { return kind === kinds[0]; });
+        if (oneKind) {
+          // 券種が 1 つだけなら、これまでと同じ形で送る (保存済みの手法と同じ形)。
+          var plain = tickets.map(function (ticket) {
+            var copy = Object.assign({}, ticket); delete copy.type; return copy;
+          });
+          result.bet = plain.length === 1
+            ? Object.assign({type: kinds[0]}, plain[0])
+            : {type: kinds[0], tickets: plain};
+        } else {
+          result.bet = {type: kinds[0], tickets: tickets};
+        }
       }
       var venues = Array.from(document.querySelectorAll('#venue input[name="venue"]:checked')).map(function (checkbox) { return Number(checkbox.value); });
       if (venues.length) result.venue = venues;
@@ -945,14 +976,20 @@
         var betTickets = Array.isArray(conditions.bet.tickets)
           ? conditions.bet.tickets
           : [conditions.bet];
+        var mixed = betTickets.some(function (entry) {
+          return entry.type && entry.type !== conditions.bet.type;
+        });
         var labels = betTickets.map(function (entry) {
           var legs = [entry.first];
           if (entry.second !== undefined) legs.push(entry.second);
           if (entry.third !== undefined) legs.push(entry.third);
-          return legs.join('-');
+          var text = legs.join('-');
+          // 券種が混ざる買い目は、点ごとに券種を書かないと何の目か分からない。
+          return mixed ? optionText('betType', entry.type || conditions.bet.type) + ' ' + text : text;
         });
         race.push(controlLabel('betType', '買い目') + ': '
-          + optionText('betType', conditions.bet.type) + ' ' + labels.join(' / ')
+          + (mixed ? '' : optionText('betType', conditions.bet.type) + ' ')
+          + labels.join(' / ')
           + (labels.length > 1 ? '（' + labels.length + '点）' : ''));
       }
       if (conditions.weather) race.push('天候: ' + conditions.weather.join('・'));
@@ -1112,8 +1149,10 @@
       var breakdown = '';
       var ticketCount = data.ticket_count || 1;
       if (ticketCount > 1 && Array.isArray(data.ticket_breakdown)) {
+        var mixedTypes = Array.isArray(data.bet_types) && data.bet_types.length > 1;
         var rows = data.ticket_breakdown.map(function (item) {
-          return '<tr><td>' + escapeHtml(item.ticket) + '</td><td>' + item.hits + '</td><td>'
+          var name = mixedTypes && item.bet_label ? item.bet_label : item.ticket;
+          return '<tr><td>' + escapeHtml(name) + '</td><td>' + item.hits + '</td><td>'
             + item.hit_rate.toFixed(1) + '%</td><td class="'
             + (item.roi >= 100 ? 'roi-pos' : 'roi-neg') + '">' + item.roi.toFixed(1) + '%</td></tr>';
         }).join('');
@@ -1426,7 +1465,7 @@
           delete input.dataset.racerNumber; delete input.dataset.racerName; closeRacerOptions(input);
         });
         betConditionTouched = false;
-        refreshBetUI(); refreshVenueUI(); refreshBoatSummaries(); refreshConditionCount();
+        refreshBetUI(true); refreshVenueUI(); refreshBoatSummaries(); refreshConditionCount();
         lastConditions = null; lastBacktest = null; byId('btnSaveStrategy').disabled = true;
         byId('miniKpi').hidden = true;
         byId('resultArea').innerHTML = '<div class="empty">左の条件を組んで「検索」を押してください。<br>合致した過去レースの回収率・的中率を表示します。</div>';

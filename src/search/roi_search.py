@@ -158,19 +158,65 @@ ODDS_FILTER_REMOVED_MESSAGE = (
 )
 
 
+BET_LABELS = {
+    "tansho": "単勝",
+    "nirentan": "2連単",
+    "sanrentan": "3連単",
+    "nirenpuku": "2連複",
+    "sanrenpuku": "3連複",
+}
+
+
+@dataclass(frozen=True)
+class _Ticket:
+    """買い目 1 点。券種は点ごとに違ってよい (3連単 1-2-3 と 3連複 1-2-3 など)。"""
+
+    kind: str
+    key: int | str
+
+    @property
+    def result_column(self) -> str:
+        return f"result_{self.kind}"
+
+    @property
+    def payout_column(self) -> str:
+        return f"payout_{self.kind}"
+
+    @property
+    def label(self) -> str:
+        return f"{BET_LABELS.get(self.kind, self.kind)} {self.key}"
+
+
 @dataclass(frozen=True)
 class _Bet:
-    kind: str
-    result_column: str
-    payout_column: str
     # 買い目は複数点を持てる。1 点でも必ずタプルに入れ、呼び出し側が単数・複数を
-    # 場合分けしなくて済むようにする。券種は全点で共通 (SQL が券種ごとの列を引く
-    # 作りのため、券種混在は扱わない)。
-    expected: tuple[int | str, ...]
+    # 場合分けしなくて済むようにする。
+    tickets: tuple[_Ticket, ...]
 
     @property
     def ticket_count(self) -> int:
-        return len(self.expected)
+        return len(self.tickets)
+
+    @property
+    def kinds(self) -> tuple[str, ...]:
+        """使われている券種を、指定された順で重複なく返す。"""
+        seen: dict[str, None] = {}
+        for ticket in self.tickets:
+            seen.setdefault(ticket.kind, None)
+        return tuple(seen)
+
+    @property
+    def mixed(self) -> bool:
+        return len(self.kinds) > 1
+
+    # 単一券種だった頃の呼び出し側 (strategies など) が使う読み出し。
+    @property
+    def kind(self) -> str:
+        return self.tickets[0].kind
+
+    @property
+    def expected(self) -> tuple[int | str, ...]:
+        return tuple(ticket.key for ticket in self.tickets)
 
 
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
@@ -257,8 +303,7 @@ def _parse_bet(value: Any) -> _Bet:
     if tickets_raw is None:
         # 単数形式 (type + first/second/third)。保存済みの手法や外部から来る
         # 既存リクエストはこの形なので、そのまま受け続ける。
-        expected = (_parse_ticket_legs(raw, kind, "bet"),)
-        return _Bet(kind, f"result_{kind}", f"payout_{kind}", expected)
+        return _Bet((_Ticket(kind, _parse_ticket_legs(raw, kind, "bet")),))
 
     # 複数形式。単数キーとの併用は、どちらが正か曖昧になるので許さない。
     conflicting = sorted(
@@ -274,27 +319,34 @@ def _parse_bet(value: Any) -> _Bet:
     entries = _sequence(tickets_raw, "bet.tickets")
     if len(entries) > MAX_BET_TICKETS:
         raise ValueError(f"買い目は最大{MAX_BET_TICKETS}点までです")
-    expected_list: list[int | str] = []
+    tickets: list[_Ticket] = []
     for index, entry in enumerate(entries):
         label = f"bet.tickets[{index}]"
         ticket_raw = _mapping(entry, label)
-        _known_keys(ticket_raw, frozenset({"first", "second", "third"}), label)
-        expected_list.append(_parse_ticket_legs(ticket_raw, kind, label))
-    seen: set[int | str] = set()
+        _known_keys(ticket_raw, frozenset({"type", "first", "second", "third"}), label)
+        # 点ごとの券種。省略したときは bet.type (画面の 1 点目の券種) を使う。
+        ticket_kind = ticket_raw.get("type", kind)
+        if ticket_kind not in BET_LEGS:
+            raise ValueError(
+                f"{label}.type must be tansho, nirentan, sanrentan, nirenpuku, or sanrenpuku"
+            )
+        tickets.append(_Ticket(ticket_kind, _parse_ticket_legs(ticket_raw, ticket_kind, label)))
+    seen: set[_Ticket] = set()
     duplicated: list[str] = []
-    for ticket in expected_list:
-        if ticket in seen and str(ticket) not in duplicated:
-            duplicated.append(str(ticket))
+    for ticket in tickets:
+        if ticket in seen and ticket.label not in duplicated:
+            duplicated.append(ticket.label)
         seen.add(ticket)
     if duplicated:
         # どの目が衝突したかを出す。単勝・2連単に切り替えると隠れた着順が
         # 落ちて同じ目になるが、画面には別々の行に見えるので、目を名指し
-        # しないと何が重複なのか分からない (探索テストで指摘)。
+        # しないと何が重複なのか分からない (探索テストで指摘)。券種が違えば
+        # 同じ「1-2-3」でも別の点なので、名前には券種も付ける。
         raise ValueError(
             "買い目は重複しています: " + ", ".join(duplicated)
-            + "（同じ目は1回だけ指定してください。単勝・2連単では使わない着順は無視されます）"
+            + "（同じ券種の同じ目は1回だけ指定してください。単勝・2連単では使わない着順は無視されます）"
         )
-    return _Bet(kind, f"result_{kind}", f"payout_{kind}", tuple(expected_list))
+    return _Bet(tuple(tickets))
 
 
 def _add_predicate(
@@ -807,25 +859,27 @@ def search_roi(
         columns = {
             str(row[1]) for row in conn.execute("PRAGMA table_info(asof_race_features)")
         }
-        if bet.kind in UNORDERED_BET_KINDS and bet.result_column not in columns:
-            # 列を足す前の DB (本番への反映途中など)。SQL エラーで落とさず案内する。
-            raise ValueError(
-                "買い目は2連複・3連複のデータを準備中です。しばらくお待ちください"
-            )
-        result_json_column = f"{bet.result_column}_json"
-        payout_json_column = f"{bet.payout_column}_json"
-        result_json_sql = result_json_column if result_json_column in columns else "NULL"
-        payout_json_sql = payout_json_column if payout_json_column in columns else "NULL"
+        kinds = bet.kinds
+        for kind in kinds:
+            if kind in UNORDERED_BET_KINDS and f"result_{kind}" not in columns:
+                # 列を足す前の DB (本番への反映途中など)。SQL エラーで落とさず案内する。
+                raise ValueError(
+                    "買い目は2連複・3連複のデータを準備中です。しばらくお待ちください"
+                )
+        # 券種ごとに 4 列 (代表値 2 つと JSON 2 つ)。1 券種だけなら従来と同じ形。
+        selected: list[str] = []
+        for kind in kinds:
+            for column in (f"result_{kind}", f"payout_{kind}"):
+                selected.append(column)
+            for column in (f"result_{kind}_json", f"payout_{kind}_json"):
+                selected.append(column if column in columns else "NULL")
         # グレード別内訳のために grade も引く。古い DB で列が無ければ NULL 扱い。
         grade_sql = "grade" if "grade" in columns else "NULL"
         sql = (
             f"SELECT race_date, schema_version, {grade_sql} AS grade_value, "
-            f"{bet.result_column} AS result_value, "
-            f"{bet.payout_column} AS payout_value, "
-            f"{result_json_sql} AS result_values_json, "
-            f"{payout_json_sql} AS payout_values_json, "
-            f"CASE WHEN {null_expression} THEN 1 ELSE 0 END AS condition_null "
-            f"FROM asof_race_features AS asof WHERE {where}"
+            f"CASE WHEN {null_expression} THEN 1 ELSE 0 END AS condition_null, "
+            + ", ".join(selected)
+            + f" FROM asof_race_features AS asof WHERE {where}"
         )
         rows = conn.execute(sql, params).fetchall()
 
@@ -833,9 +887,17 @@ def search_roi(
     excluded_result = 0
     included: list[tuple[str, bool, float, int | None]] = []
     # 点ごとの成績。合算だけ出すと「どの目が足を引っ張っているか」が見えない。
-    ticket_hits: dict[int | str, int] = {ticket: 0 for ticket in bet.expected}
-    ticket_payout: dict[int | str, float] = {ticket: 0.0 for ticket in bet.expected}
-    for race_date, schema_version, grade_value, result, payout, result_json, payout_json, condition_null in rows:
+    ticket_hits: dict[_Ticket, int] = {ticket: 0 for ticket in bet.tickets}
+    ticket_payout: dict[_Ticket, float] = {ticket: 0.0 for ticket in bet.tickets}
+    # 行ループは 55 万回まわる。点ごとに「何番目の券種か」を先に引いておき、
+    # ループ内では添字で取り出す (辞書を作り直すと 1 検索あたり +0.2 秒)。
+    kind_index = {kind: index for index, kind in enumerate(kinds)}
+    ticket_plan = [
+        (ticket, kind_index[ticket.kind], str(ticket.key), ticket.key)
+        for ticket in bet.tickets
+    ]
+    for row in rows:
+        race_date, schema_version, grade_value, condition_null = row[:4]
         if condition_null:
             excluded_condition += 1
             continue
@@ -844,7 +906,21 @@ def search_roi(
         grade_key: int | None = (
             int(grade_value) if grade_value is not None and int(grade_value) in GRADE_LABELS else None
         )
-        if int(schema_version) >= 4:
+        # 券種ごとの当たり目。1 つでも読めない券種があれば、そのレースは
+        # 「結果欠損」として全点まとめて除外する (一部の点だけ数えると、
+        # 点数で割る回収率が実際より良く出てしまう)。
+        legacy = int(schema_version) < 4
+        parsed: list[tuple[Any, Any]] = []
+        broken = False
+        for index in range(len(kinds)):
+            result, payout, result_json, payout_json = row[4 + index * 4 : 8 + index * 4]
+            if legacy:
+                # schema_version < 4 は代表 1 件しか持たないレガシー列。
+                if result is None or payout is None:
+                    broken = True
+                    break
+                parsed.append((result, float(payout)))
+                continue
             try:
                 winning_values = json.loads(result_json)
                 payout_values = json.loads(payout_json)
@@ -856,39 +932,37 @@ def search_roi(
                     or any(value not in payout_values for value in winning_values)
                 ):
                     raise ValueError("invalid winning-ticket payload")
-                payout_values = {
-                    key: float(value) for key, value in payout_values.items()
-                }
+                parsed.append(
+                    (
+                        winning_values,
+                        {key: float(value) for key, value in payout_values.items()},
+                    )
+                )
             except (TypeError, ValueError, json.JSONDecodeError):
-                excluded_result += 1
-                continue
-            race_payout = 0.0
-            hit = False
-            # 同着があると winning_values は複数入るので、指定した点のうち
-            # 当たったものを全部足す。
-            for ticket in bet.expected:
-                key = str(ticket)
-                if key in winning_values:
-                    hit = True
-                    amount = payout_values[key]
-                    race_payout += amount
-                    ticket_hits[ticket] += 1
-                    ticket_payout[ticket] += amount
-            included.append((str(race_date), hit, race_payout, grade_key))
-        else:
-            if result is None or payout is None:
-                excluded_result += 1
-                continue
-            # schema_version < 4 は代表 1 件しか持たないレガシー列。
-            race_payout = 0.0
-            hit = False
-            for ticket in bet.expected:
-                if result == ticket:
-                    hit = True
-                    race_payout += float(payout)
-                    ticket_hits[ticket] += 1
-                    ticket_payout[ticket] += float(payout)
-            included.append((str(race_date), hit, race_payout, grade_key))
+                broken = True
+                break
+        if broken:
+            excluded_result += 1
+            continue
+        race_payout = 0.0
+        hit = False
+        # 同着があると当たり目は複数入るので、指定した点のうち当たったものを
+        # 全部足す。
+        for ticket, index, key, raw_key in ticket_plan:
+            winners, payouts = parsed[index]
+            if legacy:
+                if winners != raw_key:
+                    continue
+                amount = payouts
+            else:
+                if key not in winners:
+                    continue
+                amount = payouts[key]
+            hit = True
+            race_payout += amount
+            ticket_hits[ticket] += 1
+            ticket_payout[ticket] += amount
+        included.append((str(race_date), hit, race_payout, grade_key))
 
     ticket_count = bet.ticket_count
     # returns を「1 点あたりに均した払戻」にしておくと、平均がそのまま ROI% に
@@ -1004,12 +1078,16 @@ def search_roi(
     # 「その点の払戻合計 ÷ レース数」。内訳 ROI の平均が合算 ROI に一致する。
     ticket_breakdown = [
         {
-            "ticket": str(ticket),
+            # 券種が混ざるときは、どの点かが分かるように券種も返す。混ざって
+            # いないときの "ticket" は従来どおり目だけ。
+            "ticket": str(ticket.key),
+            "bet_type": ticket.kind,
+            "bet_label": ticket.label,
             "hits": ticket_hits[ticket],
             "hit_rate": round(ticket_hits[ticket] * 100.0 / n, 1) if n else 0.0,
             "roi": round(ticket_payout[ticket] / n, 1) if n else 0.0,
         }
-        for ticket in bet.expected
+        for ticket in bet.tickets
     ]
     result = {
         "n": n,
@@ -1019,7 +1097,8 @@ def search_roi(
         "roi": round(roi, 1),
         "ticket_count": ticket_count,
         "stake_total": int(n * ticket_count * STAKE_PER_TICKET),
-        "tickets": [str(ticket) for ticket in bet.expected],
+        "tickets": [str(ticket.key) for ticket in bet.tickets],
+        "bet_types": list(bet.kinds),
         "ticket_breakdown": ticket_breakdown,
         "seasonal": seasonal,
         "grade_breakdown": grade_breakdown,

@@ -97,6 +97,13 @@ def test_both_templates_and_stylesheets_carry_the_same_unordered_ui() -> None:
         "collectConditions(true)",
         "艇を選んでください（いま",
         "{% if show_unordered_bets %}",
+        # 買い目ごとの券種 (2026-09-20)
+        "function rowKind(row)",
+        "function typeSelectHtml(seq)",
+        'class="ticket-type"',
+        # チェックの引き継ぎは券種を変えた行だけ (行を消しても戻らない)
+        "function refreshBetUI(seedRow)",
+        "data-seeded-for",
     ]
     for path in TEMPLATES:
         source = path.read_text(encoding="utf-8")
@@ -143,3 +150,48 @@ def test_production_save_api_explains_the_refusal_in_japanese(monkeypatch, tmp_p
     )
     assert response.status_code == 400
     assert response.get_json()["error"].startswith("買い目は2連複・3連複の手法保存を準備中です")
+
+
+def test_the_first_ticket_type_select_is_also_a_row_selector() -> None:
+    """1 点目の券種は従来の #betType のまま。行ごとの扱いに入れるため印を付ける。"""
+    for path in TEMPLATES:
+        source = path.read_text(encoding="utf-8")
+        assert '<select id="betType" name="bet_type" class="ticket-type"' in source, path.name
+
+
+def test_deleting_a_ticket_row_does_not_reseed_the_boat_checkboxes() -> None:
+    """行を消したときの再描画は引き継ぎ無しで呼ぶ (呼び出しの形で固定する)。
+
+    引き継ぎ有りで呼ぶと、選び直そうとして全部外した行が 1・2・3 に戻る
+    (2026-09-20 リッキーさん報告)。
+    """
+    for path in TEMPLATES:
+        source = path.read_text(encoding="utf-8")
+        remove_handler = source.split(".ticket-remove').addEventListener")[1][:200]
+        assert "refreshBetUI();" in remove_handler, path.name
+        assert "refreshBetUI(true)" not in remove_handler, path.name
+
+
+MIXED = {"bet": {"type": "sanrentan", "tickets": [
+    {"first": 1, "second": 2, "third": 3},
+    {"type": "sanrenpuku", "first": 1, "second": 2, "third": 3},
+]}}
+
+
+def test_a_mixed_ticket_list_cannot_sneak_an_unreleased_bet_type_past_saving(tmp_path: Path) -> None:
+    """点ごとに券種を選べるので、bet.type だけ見ると 2 点目の 3連複を見落とす。"""
+    with pytest.raises(ValueError, match="^買い目は2連複・3連複の手法保存を準備中です"):
+        save_strategy("混在", MIXED, db_path=tmp_path / "s.db")
+
+
+def test_a_saved_mixed_strategy_with_an_unknown_bet_type_is_skipped(tmp_path: Path) -> None:
+    """公開後に古いコードへ戻したときの守り。1 件のために全員の一覧を止めない。"""
+    from src.search.strategies import _bet_kind_is_known
+
+    future = {"bet": {"type": "sanrentan", "tickets": [
+        {"first": 1, "second": 2, "third": 3},
+        {"type": "mirai", "first": 1, "second": 2},
+    ]}}
+    assert _bet_kind_is_known(future, 1) is False
+    assert _bet_kind_is_known(MIXED, 2) is True
+    assert _bet_kind_is_known({}, 3) is True

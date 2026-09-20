@@ -314,9 +314,14 @@ def _search_rows_with_ids(
             params.append(odds.maximum)
         odds_filter = " AND ((" + " AND ".join(comparisons) + ") OR ticket_odds.odds IS NULL)"
         null_expression = f"({null_expression}) OR ticket_odds.odds IS NULL"
+    if bet.mixed:
+        # 採用戦略の照合用。券種が点ごとに違う買い目は検索画面だけの機能で、
+        # ここでは列を 1 組しか引かないので受け付けない。
+        raise ValueError("crosscheck does not support mixed bet types")
+    first = bet.tickets[0]
     sql = (
-        f"SELECT race_id,race_date,schema_version,{bet.result_column},{bet.payout_column},"
-        f"{bet.result_column}_json,{bet.payout_column}_json,"
+        f"SELECT race_id,race_date,schema_version,{first.result_column},{first.payout_column},"
+        f"{first.result_column}_json,{first.payout_column}_json,"
         f"CASE WHEN {null_expression} THEN 1 ELSE 0 END "
         f"FROM asof_race_features AS asof{join_sql} WHERE {where}{odds_filter}"
     )
