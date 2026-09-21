@@ -176,6 +176,7 @@ def test_run_one_pass_collects_exacta_after_t5_success(monkeypatch):
     monkeypatch.setattr(sch, "find_due_snapshots", lambda now, lookahead_min=30: [("20260919-01-01", "T-5min"), ("20260919-01-02", "T-1d")])
     monkeypatch.setattr(sch, "collect_one_race", lambda rid, snapshot_label: {"race_id": rid, "snapshot_label": snapshot_label, "odds_inserted": 120})
     monkeypatch.setattr(sch, "collect_one_race_exacta", lambda rid, snapshot_label: calls.append((rid, snapshot_label)) or {"race_id": rid, "snapshot_label": snapshot_label, "odds_inserted": 30})
+    monkeypatch.setattr(sch, "collect_one_race_trio", lambda rid, snapshot_label: {"race_id": rid, "snapshot_label": snapshot_label, "odds_inserted": 20})
     monkeypatch.setattr(sch, "_auto_paper_trade", lambda rid, verbose=False: 0)
     recorded = []
     monkeypatch.setattr(sch.odds_fetch_status, "record", lambda rows: recorded.extend(rows) or len(rows))

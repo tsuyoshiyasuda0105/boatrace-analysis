@@ -316,6 +316,34 @@ CREATE TABLE IF NOT EXISTS odds_exacta (
 CREATE INDEX IF NOT EXISTS idx_odds_exacta_race
   ON odds_exacta(race_id, snapshot_label);
 
+CREATE TABLE IF NOT EXISTS odds_quinella (
+  -- 二連複オッズ (15通り、組は昇順 '1-3')。二連単と同じ odds2tf ページから同時に取る。
+  race_id        TEXT NOT NULL,
+  combination    TEXT NOT NULL,
+  odds           REAL NOT NULL,
+  is_final       INTEGER NOT NULL,
+  recorded_at    TEXT NOT NULL,
+  snapshot_label TEXT,
+  PRIMARY KEY (race_id, combination, recorded_at),
+  FOREIGN KEY (race_id) REFERENCES races(race_id)
+);
+CREATE INDEX IF NOT EXISTS idx_odds_quinella_race
+  ON odds_quinella(race_id, snapshot_label);
+
+CREATE TABLE IF NOT EXISTS odds_trio (
+  -- 三連複オッズ (20通り、組は昇順 '1-2-5')。odds3f ページを締切5分前に取る。
+  race_id        TEXT NOT NULL,
+  combination    TEXT NOT NULL,
+  odds           REAL NOT NULL,
+  is_final       INTEGER NOT NULL,
+  recorded_at    TEXT NOT NULL,
+  snapshot_label TEXT,
+  PRIMARY KEY (race_id, combination, recorded_at),
+  FOREIGN KEY (race_id) REFERENCES races(race_id)
+);
+CREATE INDEX IF NOT EXISTS idx_odds_trio_race
+  ON odds_trio(race_id, snapshot_label);
+
 -- ============================================================
 -- 予測 / バックテスト
 -- ============================================================

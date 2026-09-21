@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.collectors.odds import collect_one_race, collect_one_race_exacta
+from src.collectors.odds import collect_one_race, collect_one_race_exacta, collect_one_race_trio
 from src import odds_fetch_status
 from src.db.connection import connect as db_connect
 
@@ -148,9 +148,30 @@ def _forward_exacta_pick_race_ids(conn, target_dates: list[str]) -> set[str]:
     return {r[0] for r in rows}
 
 
+def _env_flag(name: str, default: str) -> bool:
+    return os.getenv(name, default).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
 def exacta_enabled() -> bool:
-    """二連単オッズも取るか。BOATRACE_ODDS_EXACTA=0 で止められる (既定は取る)。"""
-    return os.getenv("BOATRACE_ODDS_EXACTA", "1").strip().lower() not in {"0", "false", "no", "off"}
+    """二連単・二連複オッズ (同じページ) も取るか。BOATRACE_ODDS_EXACTA=0 で止められる (既定は取る)。"""
+    return _env_flag("BOATRACE_ODDS_EXACTA", "1")
+
+
+def trio_enabled() -> bool:
+    """三連複オッズも取るか。BOATRACE_ODDS_TRIO=0 で止められる (既定は取る)。"""
+    return _env_flag("BOATRACE_ODDS_TRIO", "1")
+
+
+def all_races_enabled() -> bool:
+    """L4 候補に絞らず全レースの締切5分前オッズを取るか (BOATRACE_ODDS_ALL_RACES=1)。
+
+    既定は従来どおり絞る。全レースにすると 1 日約 156 レース × 3 ページ
+    (三連単 / 二連単・二連複 / 三連複) で約 470 回の取得になる。5 分ごとの
+    1 回に重なるのは平均 1.4・最大 4 レース (2026-08-22〜09-21 実測)。1 ページは
+    応答込みで約 8〜10 秒 (2026-09-21 実測) なので、1 回あたり平均約 40 秒・最大約
+    110 秒で 5 分の枠に収まる (2 秒間隔・並列なしの決まりのまま)。
+    """
+    return _env_flag("BOATRACE_ODDS_ALL_RACES", "0")
 
 
 def _is_big_race(race: dict) -> bool:
@@ -232,7 +253,7 @@ def find_due_snapshots(now_jst: datetime, lookahead_min: int = 30) -> list[tuple
     # みなして全レースを対象 (safety net)
     today_iso = now_jst.date().isoformat()
     today_candidates = {rid for rid in l4_candidates if rid.startswith(today_iso.replace("-", ""))}
-    use_l4_filter = len(today_candidates) > 0
+    use_l4_filter = len(today_candidates) > 0 and not all_races_enabled()
 
     due: list[tuple[str, str]] = []
     keys = ["race_id", "race_date", "race_closed_at",
@@ -283,21 +304,28 @@ def run_one_pass(verbose: bool = False) -> dict:
             if verbose:
                 print(f"  {race_id} [{label}] inserted={r.get('odds_inserted', 0)}")
 
-            # 三連単が取れた締切5分前は、同じレースの二連単も 1 ページ取る。
-            # 失敗しても三連単側の成否には混ぜず、別 label で記録だけ残す。
-            if label == "T-5min" and r.get("odds_inserted", 0) > 0 and exacta_enabled():
-                try:
-                    rx = collect_one_race_exacta(race_id, snapshot_label=label)
-                    xstate, xdetail, xcount = odds_fetch_status.outcome(rx)
-                    status_rows.append((race_id, f"{label}/exacta", xstate, xdetail, xcount))
-                    if xcount > 0:
-                        summary["n_exacta"] = summary.get("n_exacta", 0) + 1
-                    if verbose:
-                        print(f"  {race_id} [{label}/exacta] inserted={xcount}")
-                except Exception as e:  # noqa: BLE001
-                    xstate, xdetail, _ = odds_fetch_status.outcome(None, e)
-                    status_rows.append((race_id, f"{label}/exacta", xstate, xdetail, 0))
-                    print(f"  {race_id} [{label}/exacta] ERROR: {e}", flush=True)
+            # 三連単が取れた締切5分前は、同じレースの二連単・二連複 (1 ページ) と
+            # 三連複 (1 ページ) も取る。失敗しても三連単側の成否には混ぜず、
+            # 別 label で記録だけ残す。
+            if label == "T-5min" and r.get("odds_inserted", 0) > 0:
+                for kind, enabled, collect in (
+                    ("exacta", exacta_enabled, collect_one_race_exacta),
+                    ("trio", trio_enabled, collect_one_race_trio),
+                ):
+                    if not enabled():
+                        continue
+                    try:
+                        rx = collect(race_id, snapshot_label=label)
+                        xstate, xdetail, xcount = odds_fetch_status.outcome(rx)
+                        status_rows.append((race_id, f"{label}/{kind}", xstate, xdetail, xcount))
+                        if xcount > 0:
+                            summary[f"n_{kind}"] = summary.get(f"n_{kind}", 0) + 1
+                        if verbose:
+                            print(f"  {race_id} [{label}/{kind}] inserted={xcount}")
+                    except Exception as e:  # noqa: BLE001
+                        xstate, xdetail, _ = odds_fetch_status.outcome(None, e)
+                        status_rows.append((race_id, f"{label}/{kind}", xstate, xdetail, 0))
+                        print(f"  {race_id} [{label}/{kind}] ERROR: {e}", flush=True)
 
             # T-5min スナップショット取得直後にペーパートレード記録
             if label == "T-5min" and r.get("odds_inserted", 0) > 0:

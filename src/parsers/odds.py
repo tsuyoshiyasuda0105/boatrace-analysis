@@ -197,3 +197,94 @@ def parse_exacta_odds(html: str) -> dict[str, float]:
             break
 
     return odds_map
+
+
+def _six_boat_header_tables(soup):
+    """ヘッダ行に 1〜6 の艇番がそろう表だけを返す (オッズ表の共通の目印)。"""
+    for tbl in soup.find_all("table"):
+        rows = tbl.find_all("tr")
+        if len(rows) < 3:
+            continue
+        head_cells = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+        if len({c for c in head_cells if c in {"1", "2", "3", "4", "5", "6"}}) == 6:
+            yield tbl
+
+
+def parse_quinella_odds(html: str) -> dict[str, float]:
+    """二連複オッズ (odds2tf ページの 2 つ目の表) を {'1-2': 3.1, ...} (最大15通り) にする。
+
+    二連単と同じページ・同じ形 (1着艇ごとに [相手艇, オッズ] の 2 列) だが、
+    左上から三角形に埋まり「小さい艇番-大きい艇番」の組しか並ばない。
+    二連単の表は 1-2 と 2-1 の両方を持つので、「昇順の組しか出てこない表」を
+    二連複とみなす。欠場などで数字が欠けた組は読み飛ばし、取れた分だけ返す
+    (15 通りそろったかは呼び出し側が数えて記録する)。
+    """
+    soup = BeautifulSoup(_strip_xml_prolog(html), "lxml")
+    for tbl in _six_boat_header_tables(soup):
+        grid = _expand_rowspan(tbl)
+        # 二連単・二連複の表は データ 5 行 × 12 列 (6 艇 × [相手, オッズ])。
+        # 三連複 (10 行 × 18 列) や三連単 (20 行 × 18 列) を 2 列ずつ読むと
+        # 偶然「昇順の組」に見える値を拾うので、形で先に弾く。
+        if len(grid) != 6 or max((len(r) for r in grid[1:]), default=0) > 12:
+            continue
+        found: dict[str, float] = {}
+        ascending_only = True
+        for row in grid[1:6]:
+            for block in range(6):
+                first_no = block + 1
+                col_off = block * 2
+                if len(row) < col_off + 2:
+                    continue
+                try:
+                    second_no = int(row[col_off].strip())
+                except (ValueError, AttributeError):
+                    continue
+                if not (1 <= second_no <= 6) or second_no == first_no:
+                    continue
+                o = _to_odds(row[col_off + 1])
+                if o is None:
+                    continue
+                if second_no < first_no:
+                    ascending_only = False
+                found[f"{first_no}-{second_no}"] = o
+        if found and ascending_only:
+            return found
+    return {}
+
+
+def parse_trio_odds(html: str) -> dict[str, float]:
+    """三連複オッズ (odds3f ページ) を {'1-2-3': 4.2, ...} (最大20通り) にする。
+
+    三連単と同じく 1 着艇ごとの 3 列ブロック [2番目, 3番目, オッズ] だが、
+    組は昇順 (1<2<3) だけ・左上から三角形に埋まり、2番目の艇は rowspan で
+    縦に続く。空セルや数字でない組 (欠場など) は読み飛ばし、取れた分だけ返す。
+    """
+    soup = BeautifulSoup(_strip_xml_prolog(html), "lxml")
+    best: dict[str, float] = {}
+    for tbl in _six_boat_header_tables(soup):
+        grid = _expand_rowspan(tbl)
+        # 三連複の表は データ 10 行 (三連単は 20 行)。三連単の表から昇順の組だけ
+        # 拾ってしまわないよう、形で先に弾く。
+        if len(grid) != 11:
+            continue
+        found: dict[str, float] = {}
+        for row in grid[1:]:
+            for block in range(6):
+                first_no = block + 1
+                col_off = block * 3
+                if len(row) < col_off + 3:
+                    continue
+                try:
+                    second_no = int(row[col_off].strip())
+                    third_no = int(row[col_off + 1].strip())
+                except (ValueError, AttributeError):
+                    continue
+                if not (first_no < second_no < third_no <= 6):
+                    continue
+                o = _to_odds(row[col_off + 2])
+                if o is None:
+                    continue
+                found[f"{first_no}-{second_no}-{third_no}"] = o
+        if len(found) > len(best):
+            best = found
+    return best

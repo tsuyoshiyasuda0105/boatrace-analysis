@@ -16,7 +16,12 @@ from typing import Optional
 import config
 from src.collectors._http import fetch_html
 from src.db.connection import connect as db_connect
-from src.parsers.odds import parse_exacta_odds, parse_trifecta_odds
+from src.parsers.odds import (
+    parse_exacta_odds,
+    parse_quinella_odds,
+    parse_trifecta_odds,
+    parse_trio_odds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -178,71 +183,132 @@ def collect_for_date(
 
 
 # ============================================================
-# 二連単オッズ (odds_exacta)
+# 二連単・二連複・三連複オッズ (odds_exacta / odds_quinella / odds_trio)
 # ============================================================
 # 三連単と同じ (race_id, combination, recorded_at) を主キーにし、同じ label の
-# 取り直しは INSERT OR REPLACE で上書きされる。表は本番 Postgres にも無いので、
-# 初回書き込み時に作る (paper_trades / odds_fetch_status と同じ流儀)。
+# 取り直しは INSERT OR REPLACE で上書きされる。表は本番 Postgres に初回書き込み
+# 時に作る (paper_trades / odds_fetch_status と同じ流儀)。
+# 二連単と二連複は同じページ (odds2tf) に載るので 1 回の取得で両方を保存する。
+# 三連複は別ページ (odds3f)。組は二連複・三連複とも艇番の昇順 ('1-3', '1-2-5')。
+# SQL は表ごとに固定文字列で持つ (f-string SQL の監査対象を増やさないため)。
+
+_ODDS_DDL_BODY = """(
+    race_id        TEXT NOT NULL,
+    combination    TEXT NOT NULL,
+    odds           REAL NOT NULL,
+    is_final       INTEGER NOT NULL,
+    recorded_at    TEXT NOT NULL,
+    snapshot_label TEXT,
+    PRIMARY KEY (race_id, combination, recorded_at)
+)"""
+
+_EXTRA_ODDS_TABLES = {
+    "odds_exacta": {
+        "ddl": "CREATE TABLE IF NOT EXISTS odds_exacta " + _ODDS_DDL_BODY + ";\n"
+               "CREATE INDEX IF NOT EXISTS idx_odds_exacta_race ON odds_exacta(race_id, snapshot_label);",
+        "rls": "ALTER TABLE odds_exacta ENABLE ROW LEVEL SECURITY;",
+        "insert": """
+            INSERT OR REPLACE INTO odds_exacta
+                (race_id, combination, odds, is_final, recorded_at, snapshot_label)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        "expected": 30,
+    },
+    "odds_quinella": {
+        "ddl": "CREATE TABLE IF NOT EXISTS odds_quinella " + _ODDS_DDL_BODY + ";\n"
+               "CREATE INDEX IF NOT EXISTS idx_odds_quinella_race ON odds_quinella(race_id, snapshot_label);",
+        "rls": "ALTER TABLE odds_quinella ENABLE ROW LEVEL SECURITY;",
+        "insert": """
+            INSERT OR REPLACE INTO odds_quinella
+                (race_id, combination, odds, is_final, recorded_at, snapshot_label)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        "expected": 15,
+    },
+    "odds_trio": {
+        "ddl": "CREATE TABLE IF NOT EXISTS odds_trio " + _ODDS_DDL_BODY + ";\n"
+               "CREATE INDEX IF NOT EXISTS idx_odds_trio_race ON odds_trio(race_id, snapshot_label);",
+        "rls": "ALTER TABLE odds_trio ENABLE ROW LEVEL SECURITY;",
+        "insert": """
+            INSERT OR REPLACE INTO odds_trio
+                (race_id, combination, odds, is_final, recorded_at, snapshot_label)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        "expected": 20,
+    },
+}
+
+
+def ensure_odds_table(conn, table: str) -> None:
+    spec = _EXTRA_ODDS_TABLES[table]
+    script = spec["ddl"]
+    if getattr(conn, "_kind", "") == "postgres":
+        script = script + "\n" + spec["rls"]
+    conn.executescript(script)
+
 
 def ensure_odds_exacta_table(conn) -> None:
-    if getattr(conn, "_kind", "") == "postgres":
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS odds_exacta (
-                race_id        TEXT NOT NULL,
-                combination    TEXT NOT NULL,
-                odds           REAL NOT NULL,
-                is_final       INTEGER NOT NULL,
-                recorded_at    TEXT NOT NULL,
-                snapshot_label TEXT,
-                PRIMARY KEY (race_id, combination, recorded_at)
-            );
-            CREATE INDEX IF NOT EXISTS idx_odds_exacta_race
-                ON odds_exacta(race_id, snapshot_label);
-            ALTER TABLE odds_exacta ENABLE ROW LEVEL SECURITY;
-            """
-        )
-        return
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS odds_exacta (
-            race_id        TEXT NOT NULL,
-            combination    TEXT NOT NULL,
-            odds           REAL NOT NULL,
-            is_final       INTEGER NOT NULL,
-            recorded_at    TEXT NOT NULL,
-            snapshot_label TEXT,
-            PRIMARY KEY (race_id, combination, recorded_at)
-        );
-        CREATE INDEX IF NOT EXISTS idx_odds_exacta_race
-            ON odds_exacta(race_id, snapshot_label);
-        """
-    )
+    """互換用 (2026-09-18 版の呼び名)。"""
+    ensure_odds_table(conn, "odds_exacta")
 
 
-def _upsert_exacta_odds(
-    conn,
-    race_id: str,
-    odds_map: dict[str, float],
-    recorded_at: str,
-    is_final: int,
-    snapshot_label: str,
-) -> int:
+def _upsert_extra_odds(conn, table: str, race_id: str, odds_map: dict[str, float],
+                       recorded_at: str, is_final: int, snapshot_label: str) -> int:
     if not odds_map:
         return 0
     rows = [
         (race_id, comb, float(odds), is_final, recorded_at, snapshot_label)
         for comb, odds in odds_map.items()
     ]
-    conn.executemany(
-        """
-        INSERT OR REPLACE INTO odds_exacta
-            (race_id, combination, odds, is_final, recorded_at, snapshot_label)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        rows,
-    )
+    conn.executemany(_EXTRA_ODDS_TABLES[table]["insert"], rows)
     return len(rows)
+
+
+def _upsert_exacta_odds(conn, race_id, odds_map, recorded_at, is_final, snapshot_label) -> int:
+    return _upsert_extra_odds(conn, "odds_exacta", race_id, odds_map, recorded_at, is_final, snapshot_label)
+
+
+def _collect_extra(race_id: str, snapshot_label: str, db_path: Optional[str], html: Optional[str],
+                   url_template: str, parsed: list, bet_type: str) -> dict:
+    """1 ページを取り、parsed に並べた (表名, 読み取り関数) をすべて保存する。
+
+    summary の odds_inserted は先頭の表 (主役の券種) の件数。二連複は
+    quinella_inserted に入れる。通り数がそろわなければ error に残す
+    (取れた分は保存する)。
+    """
+    config.ensure_dirs()
+    recorded_at = datetime.utcnow().isoformat(timespec="seconds")
+    summary: dict = {"race_id": race_id, "snapshot_label": snapshot_label,
+                     "odds_inserted": 0, "bet_type": bet_type}
+    date_str, jcd_str, rno_str = race_id.split("-")
+    if html is None:
+        html = fetch_html(url_template.format(jcd=int(jcd_str), date=date_str, rno=int(rno_str)))
+    if not html:
+        summary["error"] = "no html"
+        return summary
+    results = [(table, fn(html)) for table, fn in parsed]
+    problems = [f"{t.removeprefix('odds_')} parsed {len(m)}/{_EXTRA_ODDS_TABLES[t]['expected']}"
+                for t, m in results if len(m) < _EXTRA_ODDS_TABLES[t]["expected"]]
+    if problems:
+        summary["error"] = "; ".join(problems)
+    if not any(m for _, m in results):
+        return summary
+    conn = db_connect(db_path)
+    try:
+        is_final = 1 if _is_finalized(conn, race_id) else 0
+        for i, (table, odds_map) in enumerate(results):
+            if not odds_map:
+                continue
+            ensure_odds_table(conn, table)
+            n = _upsert_extra_odds(conn, table, race_id, odds_map, recorded_at, is_final, snapshot_label)
+            if i == 0:
+                summary["odds_inserted"] = n
+            else:
+                summary[f"{table.removeprefix('odds_')}_inserted"] = n
+        conn.commit()
+    finally:
+        conn.close()
+    return summary
 
 
 def collect_one_race_exacta(
@@ -251,35 +317,28 @@ def collect_one_race_exacta(
     db_path: Optional[str] = None,
     html: Optional[str] = None,
 ) -> dict:
-    """単一レースの二連単オッズを 1 回スナップショット取得。
+    """二連単と二連複 (同じ odds2tf ページ) を 1 回スナップショット取得。
 
     戻り値は collect_one_race と同じ形 (odds_fetch_status.outcome に渡せる)。
+    odds_inserted は二連単、quinella_inserted は二連複の件数。
     ``html`` を渡すと取得を省略する (テスト用)。
     """
-    config.ensure_dirs()
-    conn = db_connect(db_path)
-    recorded_at = datetime.utcnow().isoformat(timespec="seconds")
-    summary = {"race_id": race_id, "snapshot_label": snapshot_label, "odds_inserted": 0,
-               "bet_type": "exacta"}
-    try:
-        date_str, jcd_str, rno_str = race_id.split("-")
-        if html is None:
-            url = config.ODDS_EXACTA_URL.format(jcd=int(jcd_str), date=date_str, rno=int(rno_str))
-            html = fetch_html(url)
-        if not html:
-            summary["error"] = "no html"
-            return summary
-        odds_map = parse_exacta_odds(html)
-        if len(odds_map) < 30:
-            summary["error"] = f"exacta parsed {len(odds_map)}/30"
-            if not odds_map:
-                return summary
-        ensure_odds_exacta_table(conn)
-        is_final = 1 if _is_finalized(conn, race_id) else 0
-        summary["odds_inserted"] = _upsert_exacta_odds(
-            conn, race_id, odds_map, recorded_at, is_final, snapshot_label
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    return summary
+    return _collect_extra(
+        race_id, snapshot_label, db_path, html, config.ODDS_EXACTA_URL,
+        [("odds_exacta", parse_exacta_odds), ("odds_quinella", parse_quinella_odds)],
+        "exacta",
+    )
+
+
+def collect_one_race_trio(
+    race_id: str,
+    snapshot_label: str,
+    db_path: Optional[str] = None,
+    html: Optional[str] = None,
+) -> dict:
+    """三連複 (odds3f ページ) を 1 回スナップショット取得。"""
+    return _collect_extra(
+        race_id, snapshot_label, db_path, html, config.ODDS_TRIO_URL,
+        [("odds_trio", parse_trio_odds)],
+        "trio",
+    )
