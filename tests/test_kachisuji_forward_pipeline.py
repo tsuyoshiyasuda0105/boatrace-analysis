@@ -209,11 +209,20 @@ def test_a_stuck_nightly_step_is_killed_and_reported(monkeypatch, capsys):
     """固まった手順は制限時間で切る。2 時間後にスケジューラへ切られると何も残らない。"""
     import subprocess
 
-    def fake_run(cmd, **kwargs):
-        assert kwargs.get("timeout") == nightly.STEP_TIMEOUT_SECONDS
-        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+    class _Stuck:
+        pid = 1
 
-    monkeypatch.setattr(nightly.subprocess, "run", fake_run)
+        def __init__(self, cmd, **kwargs):
+            self.cmd = cmd
+
+        def wait(self, timeout=None):
+            assert timeout in (nightly.STEP_TIMEOUT_SECONDS, 60)
+            raise subprocess.TimeoutExpired(self.cmd, timeout)
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(nightly.subprocess, "Popen", _Stuck)
 
     assert nightly._run_local(["scripts/backfill_official.py"]) is False
     assert "timeout=1800s (step killed)" in capsys.readouterr().out

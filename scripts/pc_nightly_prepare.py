@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import os
 import subprocess
 import sys
+import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -22,6 +24,26 @@ STEP_TIMEOUT_SECONDS = 1800
 # 見張り役が自分で現在地を吐く期限。親が切るより先に鳴らす (差の 120 秒は
 # 吐き出しと後始末のため)。
 STEP_WATCHDOG_SECONDS = STEP_TIMEOUT_SECONDS - 120
+# 親が生きているかを残す間隔。2026-09-23・24 は見張り役も 30 分の制限も鳴らない
+# まま朝まで止まった (電源の記録にスリープは無し)。プロセスごと凍っていたのか、
+# 子の起動 (CreateProcess) で止まっていたのかを次に切り分けるため。
+HEARTBEAT_SECONDS = 300
+
+
+def _clock() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _start_heartbeat(interval: float = HEARTBEAT_SECONDS) -> threading.Event:
+    """interval ごとに時刻を 1 行残す。返した Event を set すると止まる。"""
+    stop = threading.Event()
+
+    def beat() -> None:
+        while not stop.wait(interval):
+            print(f"[heartbeat] {_clock()}", flush=True)
+
+    threading.Thread(target=beat, name="nightly-heartbeat", daemon=True).start()
+    return stop
 
 
 def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
@@ -39,19 +61,29 @@ def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
     ]
     print("$ " + " ".join(args), flush=True)
     try:
-        proc = subprocess.run(
-            cmd, cwd=ROOT, env=env, check=False, timeout=STEP_TIMEOUT_SECONDS
-        )
+        proc = subprocess.Popen(cmd, cwd=ROOT, env=env)
+    except OSError as exc:
+        print(f"[step] could not start: {exc}", flush=True)
+        return False
+    # ここまで出れば子の起動 (CreateProcess) は済んでいる。
+    print(f"[step] child pid={proc.pid} started {_clock()}", flush=True)
+    try:
+        returncode = proc.wait(timeout=STEP_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        # 子プロセスは subprocess 側で kill 済み。ここで止まったと分かるように
-        # 残す (今までは出力が無いまま 2 時間後に強制終了されていた)。
+        proc.kill()
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            pass
+        # ここで止まったと分かるように残す (今までは出力が無いまま 2 時間後に
+        # 強制終了されていた)。
         print(
             f"timeout={STEP_TIMEOUT_SECONDS}s (step killed): {' '.join(args)}",
             flush=True,
         )
         return False
-    print(f"exit={proc.returncode}", flush=True)
-    return proc.returncode == 0
+    print(f"exit={returncode}", flush=True)
+    return returncode == 0
 
 
 # 二連単の前向き記録をさかのぼって埋める日数 (対象日を含む)。
@@ -312,6 +344,18 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    stop = _start_heartbeat()
+    # 親の居場所も残す。手順ひとつの制限 + 5 分たっても戻らなければ、その時点で
+    # 親の全スレッドの現在地を吐く (止まっても終わらせはしない)。
+    faulthandler.dump_traceback_later(STEP_TIMEOUT_SECONDS + 300, repeat=True)
+    try:
+        return _main()
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        stop.set()
+
+
+def _main() -> int:
     args = parse_args()
     target_date = args.date
     sync_start = args.sync_start or target_date

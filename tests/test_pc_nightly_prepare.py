@@ -333,21 +333,25 @@ def test_pc_nightly_records_forward_exacta_after_kachisuji(monkeypatch):
 # ---- 固まった夜の手当て (2026-09-15/19/20) ---------------------------------
 
 
-def test_steps_run_through_the_watchdog_runner(monkeypatch):
+def test_steps_run_through_the_watchdog_runner(monkeypatch, capsys):
     """子は -u で、見張り役ごしに走らせる (固まった場所がログに残る)。"""
     seen = {}
 
     class _Proc:
-        returncode = 0
+        pid = 4242
 
-    def fake_run(cmd, **kwargs):
-        seen["cmd"] = cmd
-        seen["env"] = kwargs.get("env")
-        seen["timeout"] = kwargs.get("timeout")
-        return _Proc()
+        def __init__(self, cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["env"] = kwargs.get("env")
 
-    monkeypatch.setattr(nightly.subprocess, "run", fake_run)
+        def wait(self, timeout=None):
+            seen["timeout"] = timeout
+            return 0
+
+    monkeypatch.setattr(nightly.subprocess, "Popen", _Proc)
     assert nightly._run_local(["scripts/daily_collect.py", "--date", "2026-09-20"]) is True
+    # 子の起動が済んだことがログに残る (起動で固まったのかを切り分けるため)
+    assert "[step] child pid=4242 started" in capsys.readouterr().out
 
     assert seen["cmd"][1] == "-u"
     assert seen["cmd"][2] == "scripts/run_step_watchdog.py"
@@ -419,3 +423,41 @@ def test_forward_exacta_fills_the_days_the_night_missed(monkeypatch):
 def test_recent_days_is_oldest_first_and_includes_the_target():
     assert nightly._recent_days("2026-09-21", 3) == ["2026-09-19", "2026-09-20", "2026-09-21"]
     assert nightly._recent_days("2026-03-01", 2) == ["2026-02-28", "2026-03-01"]
+
+
+def test_a_step_that_never_returns_is_killed_and_reported(monkeypatch, capsys):
+    killed = []
+
+    class _Proc:
+        pid = 7
+
+        def __init__(self, cmd, **kwargs):
+            pass
+
+        def wait(self, timeout=None):
+            if not killed:
+                raise nightly.subprocess.TimeoutExpired("cmd", timeout)
+            return -9
+
+        def kill(self):
+            killed.append(True)
+
+    monkeypatch.setattr(nightly.subprocess, "Popen", _Proc)
+    assert nightly._run_local(["scripts/backfill_official.py"]) is False
+    assert killed == [True]
+    assert "timeout=1800s (step killed): scripts/backfill_official.py" in capsys.readouterr().out
+
+
+def test_heartbeat_prints_until_stopped(capsys):
+    """親が生きている限り、一定間隔で時刻を残す (2026-09-23/24 の切り分け用)。"""
+    import time
+
+    stop = nightly._start_heartbeat(interval=0.05)
+    time.sleep(0.18)
+    stop.set()
+    time.sleep(0.08)
+    beats = capsys.readouterr().out.count("[heartbeat]")
+    assert beats >= 2
+    time.sleep(0.12)
+    assert capsys.readouterr().out.count("[heartbeat]") == 0
+
