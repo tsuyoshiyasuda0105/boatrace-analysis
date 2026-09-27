@@ -8404,6 +8404,7 @@ def create_app(
     app.register_blueprint(__import__("src.web.legal_bp", fromlist=["bp"]).bp)
     app.register_blueprint(__import__("src.web.guide_bp", fromlist=["bp"]).bp)
     app.register_blueprint(__import__("src.web.lp_bp", fromlist=["bp"]).bp)
+    app.register_blueprint(__import__("src.web.promo_bp", fromlist=["bp"]).bp)
     # Cloudflare のビーコンは Render ドメインだと CORS で弾かれて取りこぼすので、
     # アプリ自身でもページ表示を数える。リクエスト中は DB に触らない実装。
     __import__("src.web.access_counter", fromlist=["install"]).install(app)
@@ -8587,6 +8588,10 @@ def create_app(
     app.jinja_env.globals["current_role"] = current_role
     app.jinja_env.globals["current_auth_provider"] = current_auth_provider
     app.jinja_env.globals["has_view"] = lambda endpoint: endpoint in app.view_functions
+    # 登録者向けの期間限定特典（リンクは /admin/promo で設定）。トップ画面は context processor を
+    # 通らない描き方をするので、グローバル関数で渡す。
+    from src.web.promo_bp import member_promo
+    app.jinja_env.globals["member_promo"] = member_promo
 
     # 静的ファイル cache busting 用バージョン
     # CSS/JS が変更されたら自動的に新規取得されるよう、

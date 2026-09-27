@@ -200,7 +200,11 @@ def test_robots_txt_disallows_by_default_and_can_allow_indexing(monkeypatch):
 
     monkeypatch.setenv("BOATRACE_ALLOW_INDEXING", "1")
     allowed = client.get("/robots.txt")
-    assert allowed.get_data(as_text=True) == "User-agent: *\nAllow: /\n"
+    body = allowed.get_data(as_text=True)
+    # 公開を許可しても、管理画面・API は索引させない（2026-09-19 の索引公開で仕様変更）
+    assert body.startswith("User-agent: *\n")
+    assert "Disallow: /admin/\n" in body and "Disallow: /api/\n" in body
+    assert "Allow: /\n" in body and "Sitemap: " in body
 
 
 def test_500_response_hides_internal_exception_but_logs_it(monkeypatch, caplog):

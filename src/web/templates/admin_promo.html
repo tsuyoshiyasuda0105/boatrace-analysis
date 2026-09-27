@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}期間限定特典の設定{% endblock %}
+{% block content %}
+<div class="login-wrap promo-admin">
+  <h2>期間限定特典の設定</h2>
+  <p class="login-hint">
+    登録者（無料会員を含む）のメニューに出る「特典」ボタンのリンク先です。
+    Google Drive で「リンクを知っている全員が閲覧可」にした共有リンクを貼ってください。
+    リンクを空にして保存すると、ボタンは消えます。
+  </p>
+
+  <p class="promo-admin-state {{ 'is-on' if active else 'is-off' }}">
+    {% if active %}
+      いま表示中：「{{ active.label }}」{% if active.until %}（{{ active.until }} まで）{% endif %}
+    {% else %}
+      いまは表示していません
+    {% endif %}
+  </p>
+
+  {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+  {% if message %}<div class="promo-admin-ok">{{ message }}</div>{% endif %}
+
+  <form method="post" action="{{ url_for('promo.admin_promo') }}" class="login-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>
+      <span>Google Drive のリンク</span>
+      <input type="url" name="url" value="{{ form.url }}" placeholder="https://drive.google.com/file/d/…/view" inputmode="url">
+    </label>
+    <label>
+      <span>ボタンの文字（20文字以内）</span>
+      <input type="text" name="label" value="{{ form.label }}" maxlength="20">
+    </label>
+    <label>
+      <span>表示する期限（この日まで・空欄なら期限なし）</span>
+      <input type="date" name="until" value="{{ form.until }}">
+    </label>
+    <button type="submit">保存する</button>
+  </form>
+
+  {% if active %}
+  <p class="login-hint promo-admin-check">
+    確認：<a href="{{ url_for('promo.open_promo') }}" target="_blank" rel="noopener noreferrer">ボタンの行き先を開く</a>
+    （会員が押したときと同じ動きです。押された回数はアクセス集計の /promo で数えます）
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

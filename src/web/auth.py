@@ -690,6 +690,19 @@ def register_auth_routes(app):
                     "class_name": "",
                 },
             ])
+            from src.web.promo_bp import current_promo
+
+            promo = current_promo()
+            if promo:
+                items.append(
+                    {
+                        "href": url_for("promo.open_promo"),
+                        "icon": "特",
+                        "label": promo["label"],
+                        "class_name": "nav-btn-promo",
+                        "new_tab": True,
+                    }
+                )
             if is_admin():
                 items.extend(
                     [
@@ -733,6 +746,14 @@ def register_auth_routes(app):
                         "href": url_for("admin_memberships"),
                         "icon": "管",
                         "label": "管理",
+                        "class_name": "nav-btn-health",
+                    }
+                )
+                items.append(
+                    {
+                        "href": url_for("promo.admin_promo"),
+                        "icon": "設",
+                        "label": "特典設定",
                         "class_name": "nav-btn-health",
                     }
                 )

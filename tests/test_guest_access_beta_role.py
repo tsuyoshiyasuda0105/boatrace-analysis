@@ -347,7 +347,7 @@ def test_session_navigation_restores_member_race_link_without_guest_leak(monkeyp
     assert member_payload["is_member"] is True
     assert [item["label"] for item in member_payload["items"]] == [
         "本日のレース", "バックテスト", "プラン申込", "ROI", "月別推移",
-        "健全度", "事故率", "展示精度", "管理",
+        "健全度", "事故率", "展示精度", "管理", "特典設定",
     ]
     assert member_payload["items"][0]["href"] == "/member/today-races"
 
