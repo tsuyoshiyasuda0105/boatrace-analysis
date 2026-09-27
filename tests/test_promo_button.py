@@ -150,8 +150,31 @@ def test_admin_rejects_bad_link_and_keeps_input(db):
 
 def test_admin_post_requires_csrf(db):
     r = _client("admin").post("/admin/promo", data={"csrf_token": "wrong", "url": DRIVE})
-    assert r.status_code == 400
-    assert promo_bp.current_promo() is None
+    body = r.get_data(as_text=True)
+    assert r.status_code == 200 and "もう一度「保存する」" in body   # 素の Bad Request にしない
+    assert DRIVE in body                                             # 入れた内容は残す
+    assert promo_bp.current_promo() is None                          # 保存はしない
+
+
+def test_admin_real_flow_uses_token_from_page(db):
+    """画面を開いて、画面の確認コードで保存する（本物の流れ）。"""
+    admin = _client("admin")
+    with admin.session_transaction() as s:
+        s.pop("csrf_token", None)
+    html = admin.get("/admin/promo").get_data(as_text=True)
+    token = re.search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+    r = admin.post("/admin/promo", data={"csrf_token": token, "url": DRIVE, "label": "特典", "until": ""})
+    assert "保存しました" in r.get_data(as_text=True)
+    assert promo_bp.current_promo()["url"] == DRIVE
+
+
+def test_save_failure_shows_message(db, monkeypatch):
+    def broken_save(*a, **k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(promo_bp, "save_settings", broken_save)
+    r = _client("admin").post("/admin/promo", data={"csrf_token": "tok", "url": DRIVE, "label": "", "until": ""})
+    assert r.status_code == 200 and "保存できませんでした" in r.get_data(as_text=True)
 
 
 def test_admin_can_turn_off(db):

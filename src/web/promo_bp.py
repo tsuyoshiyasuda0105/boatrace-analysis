@@ -243,17 +243,28 @@ def open_promo():
 @admin_required
 def admin_promo():
     error = message = None
-    if request.method == "POST":
-        if not _verify_csrf_token():
-            abort(400)
+    if request.method == "POST" and not _verify_csrf_token():
+        # 素の「Bad Request」ではなく、画面を出し直して押し直してもらう（保存はしない）。
+        # 本番で 400 が出た (2026-09-27) ので、どの確認で落ちたかをログに残す。
+        logger.warning(
+            "admin promo csrf failed: session_token=%s form_token=%s",
+            bool(session.get("csrf_token")), bool(request.form.get("csrf_token")),
+        )
+        error = "画面の確認コードが古くなっていました。保存はしていません。もう一度「保存する」を押してください。"
+    elif request.method == "POST":
         values, error = validate(
             request.form.get("url", ""), request.form.get("label", ""), request.form.get("until", "")
         )
         if error is None:
-            with _connect() as conn:
-                save_settings(conn, values, session.get("email"))
-            clear_cache()
-            message = "保存しました。" if values[KEY_URL] else "特典を止めました（ボタンは出ません）。"
+            try:
+                with _connect() as conn:
+                    save_settings(conn, values, session.get("email"))
+            except Exception as exc:
+                logger.warning("promo settings not saved: %s", type(exc).__name__)
+                error = "保存できませんでした。少し時間をおいて、もう一度「保存する」を押してください。"
+            else:
+                clear_cache()
+                message = "保存しました。" if values[KEY_URL] else "特典を止めました（ボタンは出ません）。"
     saved: dict[str, str] = {}
     clicks = None
     try:
