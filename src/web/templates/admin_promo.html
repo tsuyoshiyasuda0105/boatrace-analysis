@@ -17,6 +17,10 @@
     {% endif %}
   </p>
 
+  {% if clicks %}
+  <p class="promo-admin-clicks">押された回数：今日 <b>{{ clicks.today }}</b> ／ 直近7日 <b>{{ clicks.week }}</b> ／ 累計 <b>{{ clicks.total }}</b></p>
+  {% endif %}
+
   {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
   {% if message %}<div class="promo-admin-ok">{{ message }}</div>{% endif %}
 
@@ -40,7 +44,7 @@
   {% if active %}
   <p class="login-hint promo-admin-check">
     確認：<a href="{{ url_for('promo.open_promo') }}" target="_blank" rel="noopener noreferrer">ボタンの行き先を開く</a>
-    （会員が押したときと同じ動きです。押された回数はアクセス集計の /promo で数えます）
+    （会員が押したときと同じ動きです。ここで開いた分も回数に入ります）
   </p>
   {% endif %}
 </div>

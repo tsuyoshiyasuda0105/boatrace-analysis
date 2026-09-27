@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,7 +31,10 @@ ALLOWED_HOSTS = frozenset({"drive.google.com", "docs.google.com"})
 MAX_LABEL = 20
 CACHE_SECONDS = 60.0
 
+JST = timezone(timedelta(hours=9))  # 期限と「押された日」は日本時間で数える（本番のサーバーは UTC）
+
 _SCHEMA_READY = False
+_CLICKS_READY = False
 _cache: dict[str, Any] = {"at": 0.0, "value": None}
 _cache_lock = threading.Lock()
 
@@ -62,6 +65,64 @@ def ensure_site_settings_table(conn: Any) -> None:
     )
     if is_postgres:
         _SCHEMA_READY = True
+
+
+def ensure_promo_clicks_table(conn: Any) -> None:
+    """特典ボタンが押された回数（日ごと）の表を作る。"""
+    global _CLICKS_READY
+    is_postgres = getattr(conn, "_kind", "") == "postgres"
+    if is_postgres and _CLICKS_READY:
+        return
+    if is_postgres:
+        try:
+            conn.execute("SELECT 1 FROM promo_clicks LIMIT 0")
+            _CLICKS_READY = True
+            return
+        except Exception:
+            pass
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS promo_clicks (
+            click_date TEXT PRIMARY KEY,
+            clicks INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    if is_postgres:
+        _CLICKS_READY = True
+
+
+def today_jst() -> date:
+    return datetime.now(JST).date()
+
+
+def record_click(day: date | None = None) -> None:
+    """押された回数を1足す。数えられなくても Drive へは送る（ページを止めない）。"""
+    try:
+        with _connect() as conn:
+            ensure_promo_clicks_table(conn)
+            conn.execute(
+                """
+                INSERT INTO promo_clicks (click_date, clicks) VALUES (?, 1)
+                ON CONFLICT (click_date) DO UPDATE SET clicks = promo_clicks.clicks + 1
+                """,
+                ((day or today_jst()).isoformat(),),
+            )
+    except Exception as exc:
+        logger.warning("promo click not recorded: %s", type(exc).__name__)
+
+
+def click_summary(conn: Any, day: date | None = None) -> dict[str, int]:
+    """今日・直近7日・累計の押された回数。"""
+    ensure_promo_clicks_table(conn)
+    day = day or today_jst()
+    week_from = (day - timedelta(days=6)).isoformat()
+    rows = conn.execute("SELECT click_date, clicks FROM promo_clicks").fetchall()
+    return {
+        "today": sum(int(c) for d, c in rows if d == day.isoformat()),
+        "week": sum(int(c) for d, c in rows if week_from <= d <= day.isoformat()),
+        "total": sum(int(c) for _, c in rows),
+    }
 
 
 def load_settings(conn: Any, keys: tuple[str, ...], *, create: bool = True) -> dict[str, str]:
@@ -150,7 +211,7 @@ def current_promo(today: date | None = None) -> dict[str, str] | None:
             values = {}
         with _cache_lock:
             _cache.update(at=now, value=values)
-    return _active(values, today or date.today())
+    return _active(values, today or today_jst())
 
 
 def clear_cache() -> None:
@@ -168,12 +229,13 @@ def member_promo() -> dict[str, str] | None:
 # ---------------------------------------------------------------- 画面
 @bp.get("/promo")
 def open_promo():
-    """ボタンの行き先。会員だけ Drive へ送る (このページの表示数＝押された回数)。"""
+    """ボタンの行き先。会員だけ Drive へ送り、押された回数を日ごとに数える。"""
     if not is_member():
         return redirect(url_for("login", next=request.path))
     promo = current_promo()
     if promo is None:
         abort(404)
+    record_click()
     return redirect(promo["url"], code=302)
 
 
@@ -192,15 +254,20 @@ def admin_promo():
                 save_settings(conn, values, session.get("email"))
             clear_cache()
             message = "保存しました。" if values[KEY_URL] else "特典を止めました（ボタンは出ません）。"
+    saved: dict[str, str] = {}
+    clicks = None
     try:
         saved = _read_from_db(create=True)
+        with _connect() as conn:
+            clicks = click_summary(conn)
     except Exception as exc:
         logger.warning("promo settings unavailable: %s", type(exc).__name__)
-        saved, error = {}, error or "設定を読み込めませんでした。時間をおいて開き直してください。"
+        error = error or "設定を読み込めませんでした。時間をおいて開き直してください。"
     form = {
         "url": request.form.get("url", saved.get(KEY_URL, "")) if error else saved.get(KEY_URL, ""),
         "label": (request.form.get("label", "") if error else saved.get(KEY_LABEL, "")) or DEFAULT_LABEL,
         "until": request.form.get("until", saved.get(KEY_UNTIL, "")) if error else saved.get(KEY_UNTIL, ""),
     }
-    active = _active(saved, date.today())
-    return render_template("admin_promo.html", form=form, active=active, error=error, message=message)
+    active = _active(saved, today_jst())
+    return render_template("admin_promo.html", form=form, active=active, clicks=clicks,
+                           error=error, message=message)

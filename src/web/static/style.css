@@ -7943,3 +7943,5 @@ main h2 {
   margin-bottom: 16px;
 }
 .promo-admin-check { margin: 20px 0 0; }
+.promo-admin-clicks { font-size: 13px; color: var(--text-dim); margin: 0 0 16px; font-variant-numeric: tabular-nums; }
+.promo-admin-clicks b { color: var(--text, #e9edf6); font-size: 15px; }

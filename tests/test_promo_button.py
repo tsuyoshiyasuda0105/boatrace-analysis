@@ -170,3 +170,37 @@ def test_reading_does_not_create_table(tmp_path, monkeypatch):
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT name FROM sqlite_master WHERE name='site_settings'").fetchall() == []
     promo_bp.clear_cache()
+
+
+def test_presses_are_counted_per_day_and_shown_to_admin(db):
+    _save(db, promo_url=DRIVE, promo_label="特典", promo_until="")
+    member = _client("free_member")
+    for _ in range(3):
+        assert member.get("/promo").status_code == 302
+    with sqlite3.connect(db) as conn:
+        assert promo_bp.click_summary(conn) == {"today": 3, "week": 3, "total": 3}
+        conn.execute("INSERT INTO promo_clicks (click_date, clicks) VALUES ('2000-01-01', 5)")
+        assert promo_bp.click_summary(conn) == {"today": 3, "week": 3, "total": 8}
+    body = _client("admin").get("/admin/promo").get_data(as_text=True)
+    assert "今日 <b>3</b>" in body and "累計 <b>8</b>" in body
+
+
+def test_guest_and_off_state_are_not_counted(db):
+    _client().get("/promo")                       # ログイン前は数えない
+    _client("free_member").get("/promo")          # 特典が止まっている間も数えない (404)
+    with sqlite3.connect(db) as conn:
+        assert promo_bp.click_summary(conn)["total"] == 0
+
+
+def test_count_failure_still_sends_to_drive(db, monkeypatch):
+    _save(db, promo_url=DRIVE, promo_label="特典", promo_until="")
+    promo_bp.current_promo()                      # 設定は覚えた状態にしてから DB を壊す
+    monkeypatch.setattr(promo_bp, "_connect", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
+    r = _client("free_member").get("/promo")
+    assert r.status_code == 302 and r.headers["Location"] == DRIVE
+
+
+def test_expiry_uses_japan_date(db, monkeypatch):
+    _save(db, promo_url=DRIVE, promo_label="特典", promo_until="2026-10-31")
+    monkeypatch.setattr(promo_bp, "today_jst", lambda: date(2026, 11, 1))
+    assert promo_bp.current_promo() is None
