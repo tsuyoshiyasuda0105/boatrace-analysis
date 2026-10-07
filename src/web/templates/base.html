@@ -162,6 +162,10 @@
     </div>
   </header>
 
+  {% if site_notice %}
+  <div class="site-notice" role="status"><div class="container">{{ site_notice }}</div></div>
+  {% endif %}
+
   <main class="container">
     {% block content %}{% endblock %}
   </main>

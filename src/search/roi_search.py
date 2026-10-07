@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from datetime import date
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
+import threading
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -827,7 +829,45 @@ def _downsample_curve(
     return [points[index] for index in indexes]
 
 
-def search_roi(
+# 同時に走らせる検索の数。最小構成（Render Starter・メモリ 512MB）では 1 にする。
+# 全期間 20 点の検索で約 380MB 使う（2026-10-07 手元で実測）ので、2 件同時だと
+# メモリが足りない。0（既定）なら制限しない＝今までどおり。
+SEARCH_CONCURRENCY_ENV = "KACHISUJI_SEARCH_CONCURRENCY"
+SEARCH_WAIT_SECONDS = 90
+BUSY_MESSAGE = "ただいま検索が混み合っています。少し時間をおいて、もう一度お試しください"
+_search_slots: threading.BoundedSemaphore | None = None
+_search_slots_size = 0
+_search_slots_lock = threading.Lock()
+
+
+def _slots() -> threading.BoundedSemaphore | None:
+    """環境変数の値に合わせた枠を返す。値が変わったら作り直す（テスト用）。"""
+    global _search_slots, _search_slots_size
+    try:
+        size = max(0, int(os.environ.get(SEARCH_CONCURRENCY_ENV, "0") or "0"))
+    except ValueError:
+        size = 0
+    with _search_slots_lock:
+        if size != _search_slots_size:
+            _search_slots = threading.BoundedSemaphore(size) if size else None
+            _search_slots_size = size
+        return _search_slots
+
+
+def search_roi(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """_search_roi を、同時に走る数を制限して呼ぶ（制限は環境変数で入れる）。"""
+    slots = _slots()
+    if slots is None:
+        return _search_roi(*args, **kwargs)
+    if not slots.acquire(timeout=SEARCH_WAIT_SECONDS):
+        raise ValueError(BUSY_MESSAGE)
+    try:
+        return _search_roi(*args, **kwargs)
+    finally:
+        slots.release()
+
+
+def _search_roi(
     db_path: str | Path,
     conditions: Mapping[str, Any] | None = None,
     *,

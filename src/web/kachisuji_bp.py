@@ -109,6 +109,7 @@ def _user_validation_message(error: ValueError) -> str:
     message = str(error)
     user_message_prefixes = (
         "検索条件は",
+        "ただいま検索が混み合っています",
         "リクエストは",
         "高速集計の指定は",
         "選手名には",

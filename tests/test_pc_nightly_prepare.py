@@ -461,3 +461,25 @@ def test_heartbeat_prints_until_stopped(capsys):
     time.sleep(0.12)
     assert capsys.readouterr().out.count("[heartbeat]") == 0
 
+
+
+def test_the_night_sends_yesterdays_results_to_production(monkeypatch):
+    """最小構成では日中の結果取得を止めるので、前日の結果と払戻は夜間で本番へ送る。"""
+    calls = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: calls.append((args, allow_prod_sync)) or True,
+    )
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr(nightly, "_completed_date", lambda now=None: "2026-10-07")
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-10-08"])
+
+    assert nightly.main() == 0
+    results = [
+        (args, allow) for args, allow in calls
+        if args[0] == "scripts/sync_to_supabase.py" and "race_results,race_payouts" in args
+    ]
+    assert results == [([
+        "scripts/sync_to_supabase.py", "--start", "2026-10-07", "--end", "2026-10-07",
+        "--tables", "race_results,race_payouts",
+    ], True)]

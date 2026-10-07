@@ -7945,3 +7945,7 @@ main h2 {
 .promo-admin-check { margin: 20px 0 0; }
 .promo-admin-clicks { font-size: 13px; color: var(--text-dim); margin: 0 0 16px; font-variant-numeric: tabular-nums; }
 .promo-admin-clicks b { color: var(--text, #e9edf6); font-size: 15px; }
+
+/* サイト上部のお知らせ（BOATRACE_SITE_NOTICE） */
+.site-notice { background: #fff6d6; color: #5a4300; border-bottom: 1px solid #f0d98a; font-size: 0.92rem; line-height: 1.6; }
+.site-notice .container { padding-top: 8px; padding-bottom: 8px; }

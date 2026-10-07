@@ -422,6 +422,22 @@ def _main() -> int:
         if not sync_ok:
             return 1
 
+        # 前の日のレース結果と払戻も本番へ送る。最小構成（2026-10〜）では日中の
+        # 結果取得の定期実行を止めるので、結果は翌朝にここで入る。いつもの構成でも
+        # 同じ値を上書きするだけ（列は手元と本番で同じ）。失敗しても夜間は止めない。
+        _run_local(
+            [
+                "scripts/sync_to_supabase.py",
+                "--start",
+                _completed_date(),
+                "--end",
+                _completed_date(),
+                "--tables",
+                "race_results,race_payouts",
+            ],
+            allow_prod_sync=True,
+        )
+
     # This transport is intentionally isolated from the established nightly
     # outcome. A failed upload remains visible in logs and can be retried by
     # rerunning the task; the dated local delta is deliberately retained.

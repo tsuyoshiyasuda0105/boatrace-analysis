@@ -8622,6 +8622,11 @@ def create_app(
         os.environ.get("BOATRACE_CF_BEACON") or _CF_BEACON_DEFAULT
     ).strip()
 
+    # サイト上部のお知らせ。最小構成（2026-10〜）で「当日の直前情報の自動更新を
+    # お休みしています」などを出すため。空なら何も出さない。ビーコンと同じ理由で
+    # Jinja グローバルにする（全描画経路で出るように）。
+    app.jinja_env.globals["site_notice"] = os.environ.get("BOATRACE_SITE_NOTICE", "").strip()
+
     # Jinja2 カスタムフィルタ: カンマ区切り符号付き整数 (Python %-format は ',' 非対応)
     def _signed_comma(value):
         try:
