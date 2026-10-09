@@ -170,9 +170,18 @@ def test_worker_redundancy_stays_inside_the_connection_budget():
     render_yaml = Path("render.yaml").read_text(encoding="utf-8")
     m = re.search(r"startCommand: gunicorn -w (\d+)", render_yaml)
     assert m, "gunicorn の worker 数を読めない"
-    assert int(m.group(1)) == 2, (
-        "1 worker は凍結 = 全断。3 worker 以上は接続予算 15 本に収まらない"
-    )
+    plan = re.search(r"name: boatrace-web\r?\n(?:.*\r?\n)*?\s+plan: (\w+)", render_yaml).group(1)
+    if plan == "starter":
+        # 2026-10-10 最小構成: 512MB に 2 worker は入らない（全期間20点の検索で約380MB）。
+        # 1 worker にする代わりに、検索を同時 1 件に絞ってメモリを守る。
+        assert int(m.group(1)) == 1, "starter (512MB) では 1 worker"
+        assert re.search(r'key: KACHISUJI_SEARCH_CONCURRENCY\s+value: "1"', render_yaml), (
+            "starter では検索を同時 1 件に絞ること（KACHISUJI_SEARCH_CONCURRENCY=1）"
+        )
+    else:
+        assert int(m.group(1)) == 2, (
+            "1 worker は凍結 = 全断。3 worker 以上は接続予算 15 本に収まらない"
+        )
 
 
 def test_every_thread_can_hold_two_connections_at_once():

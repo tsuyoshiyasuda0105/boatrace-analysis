@@ -21,13 +21,14 @@
 | boatrace-exhibition-detail-cron | 展示後のレース詳細とタグ | 一時停止 |
 | boatrace-accident-external-check-cron | 朝の事故データ点検 | 一時停止 |
 
-## 当日の手順（10月下旬）
+## 当日の手順（2026-10-10 に前倒しで実施）
+※スレッドは 2（「スレッド数×2 ≦ DB接続数4」の決まり。tests/test_db_pool_warmth.py が検算）。
 1. サイトのお知らせ文を決める（下書きは下）。LINE・X の文はリッキーさんが送る。
 2. Render の web（boatrace-web）の Environment に追加（**リッキーさんが押す・保存で再起動**）:
    - `KACHISUJI_SEARCH_CONCURRENCY` = `1`
    - `BOATRACE_SITE_NOTICE` = お知らせ文
 3. web の Start Command を 1 台に（メモリ 512MB に収めるため）:
-   `gunicorn -w 1 --worker-class gthread --threads 4 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'`
+   `gunicorn -w 1 --worker-class gthread --threads 2 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'`
 4. web の Instance Type を **Starter** に（料金の操作なのでリッキーさん）。
 5. 上の表の「一時停止」4本を Render の各サービス画面で **Suspend**（Resume で戻る）。
 6. render.yaml も同じ内容に直してコミット（plan: starter・startCommand）。**Blueprint の自動同期が有効だと、画面で変えた値が render.yaml で戻される**ので、2〜4 と同じ日に揃える。

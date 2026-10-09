@@ -5,7 +5,9 @@ services:
   - type: web
     name: boatrace-web
     runtime: python
-    plan: standard
+    # 2026-10-10: 最小構成（お客さんがいない間の節約）。standard -> starter (512MB)。
+    # 戻すときは standard と下の startCommand の -w 2 に。docs/minimal_mode_runbook.md
+    plan: starter
     branch: main
     region: singapore
     autoDeploy: true
@@ -26,7 +28,9 @@ services:
     # 接続予算: worker数 2 x POOL_SIZE 4 = 8 + cron 6 = 14 ≦ 15 (Supavisor 上限)。
     # 膠着回避則 (スレッド x 2 ≦ POOL_SIZE) も 2 x 2 = 4 で満たす。
     # 検算は tests/test_db_pool_warmth.py が render.yaml を読んで行う。
-    startCommand: gunicorn -w 2 --worker-class gthread --threads 2 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
+    # 2026-10-10: 最小構成で worker 2 -> 1（512MB に収める。全期間20点の検索で約380MB）。
+    # 日中の cron 4 本を止めるので、8/25 の凍結の元だった接続の取り合いは減る。
+    startCommand: gunicorn -w 1 --worker-class gthread --threads 2 -b 0.0.0.0:$PORT --timeout 120 --graceful-timeout 30 'src.web.app:create_app(cached_predictions_only=True)'
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
@@ -59,6 +63,12 @@ services:
         value: "boatrace-analysis/0.8 (+https://github.com/tsuyoshiyasuda0105/boatrace-analysis)"
       - key: BOATRACE_DB_LIMIT_MB
         value: "8192"
+      # 2026-10-10 最小構成: バックテスト検索を同時 1 件に（512MB で落ちないように）
+      - key: KACHISUJI_SEARCH_CONCURRENCY
+        value: "1"
+      # 2026-10-10 最小構成: サイト上部のお知らせ（空にすると消える）
+      - key: BOATRACE_SITE_NOTICE
+        value: "【お知らせ】データ検証に集中するため、当日の直前情報（展示タイム・オッズなど）の自動更新を一時お休みしています。出走表・朝の予想・バックテストはこれまでどおりご利用いただけます。直前情報はボートレース公式サイトの「直前情報」をご確認ください。"
     # Optional paid persistent disk sample for kachisuji search (not enabled):
     # disk:
     #   name: kachisuji-data
