@@ -438,6 +438,12 @@ def _main() -> int:
             allow_prod_sync=True,
         )
 
+        # 本番DB（Supabase 無料枠 500MB）の古い分を消す。PC が正本で、本番は表示用の写し。
+        # 残す期間は scripts/prune_prod_db.py（主要5表200日・払戻など30日・ページの
+        # 一時保存2日）。毎晩は容量を詰める VACUUM FULL を省く（消した場所は再利用される）。
+        # 失敗しても夜間は止めない。
+        _run_local(["scripts/prune_prod_db.py", "--apply", "--no-vacuum"], allow_prod_sync=True)
+
     # This transport is intentionally isolated from the established nightly
     # outcome. A failed upload remains visible in logs and can be retried by
     # rerunning the task; the dated local delta is deliberately retained.

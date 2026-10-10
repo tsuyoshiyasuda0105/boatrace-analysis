@@ -483,3 +483,19 @@ def test_the_night_sends_yesterdays_results_to_production(monkeypatch):
         "scripts/sync_to_supabase.py", "--start", "2026-10-07", "--end", "2026-10-07",
         "--tables", "race_results,race_payouts",
     ], True)]
+
+
+def test_the_night_trims_the_production_database(monkeypatch):
+    """本番DBを無料枠に収めるため、毎晩古い分を消す（容量を詰めるのは省く）。"""
+    calls = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: calls.append((args, allow_prod_sync)) or True,
+    )
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-10-11"])
+
+    assert nightly.main() == 0
+    prune = [(a, allow) for a, allow in calls if a[0] == "scripts/prune_prod_db.py"]
+    assert prune == [(["scripts/prune_prod_db.py", "--apply", "--no-vacuum"], True)]
+
