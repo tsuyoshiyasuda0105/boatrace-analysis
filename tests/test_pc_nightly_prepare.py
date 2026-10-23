@@ -479,10 +479,45 @@ def test_the_night_sends_yesterdays_results_to_production(monkeypatch):
         (args, allow) for args, allow in calls
         if args[0] == "scripts/sync_to_supabase.py" and "race_results,race_payouts" in args
     ]
+    # 止まった晩の分も埋まるよう、完成日を含む直近3日を送る
     assert results == [([
-        "scripts/sync_to_supabase.py", "--start", "2026-10-07", "--end", "2026-10-07",
+        "scripts/sync_to_supabase.py", "--start", "2026-10-05", "--end", "2026-10-07",
         "--tables", "race_results,race_payouts",
     ], True)]
+
+
+def test_results_are_sent_after_the_k_results_are_imported(monkeypatch):
+    """手元の結果は _run_kachisuji_daily が K 成績から入れる。送るのはその後。
+
+    前に置いていたため 2026-10-11〜10-22 は毎晩 0 件しか送れず、本番に結果が無かった。
+    """
+    order = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: order.append(" ".join(args)) or True,
+    )
+    monkeypatch.setattr(
+        nightly, "_run_kachisuji_daily", lambda *a, **k: order.append("kachisuji") or True
+    )
+    monkeypatch.setattr(nightly, "_completed_date", lambda now=None: "2026-10-22")
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-10-23"])
+
+    assert nightly.main() == 0
+    sent = next(i for i, s in enumerate(order) if "race_results,race_payouts" in s)
+    assert order.index("kachisuji") < sent
+
+
+def test_skip_sync_does_not_send_results(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: calls.append(args) or True,
+    )
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-10-23", "--skip-sync"])
+
+    assert nightly.main() == 0
+    assert not any("race_results,race_payouts" in a for a in calls)
 
 
 def test_the_night_trims_the_production_database(monkeypatch):

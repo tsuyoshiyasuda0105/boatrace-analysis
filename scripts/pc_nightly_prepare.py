@@ -88,6 +88,8 @@ def _run_local(args: list[str], *, allow_prod_sync: bool = False) -> bool:
 
 # 二連単の前向き記録をさかのぼって埋める日数 (対象日を含む)。
 FORWARD_CATCHUP_DAYS = 3
+# 前日の結果・払戻を本番へ送るときにさかのぼる日数 (完成日を含む)。
+RESULTS_SYNC_DAYS = 3
 
 
 def _recent_days(target_date: str, days: int) -> list[str]:
@@ -422,22 +424,6 @@ def _main() -> int:
         if not sync_ok:
             return 1
 
-        # 前の日のレース結果と払戻も本番へ送る。最小構成（2026-10〜）では日中の
-        # 結果取得の定期実行を止めるので、結果は翌朝にここで入る。いつもの構成でも
-        # 同じ値を上書きするだけ（列は手元と本番で同じ）。失敗しても夜間は止めない。
-        _run_local(
-            [
-                "scripts/sync_to_supabase.py",
-                "--start",
-                _completed_date(),
-                "--end",
-                _completed_date(),
-                "--tables",
-                "race_results,race_payouts",
-            ],
-            allow_prod_sync=True,
-        )
-
         # 本番DB（Supabase 無料枠 500MB）の古い分を消す。PC が正本で、本番は表示用の写し。
         # 残す期間は scripts/prune_prod_db.py（主要5表200日・払戻など30日・ページの
         # 一時保存2日）。毎晩は容量を詰める VACUUM FULL を省く（消した場所は再利用される）。
@@ -448,6 +434,26 @@ def _main() -> int:
     # outcome. A failed upload remains visible in logs and can be retried by
     # rerunning the task; the dated local delta is deliberately retained.
     _run_kachisuji_daily(_completed_date(), target_date)
+
+    # 前の日のレース結果と払戻も本番へ送る。最小構成（2026-10〜）では日中の
+    # 結果取得の定期実行を止めるので、結果は翌朝にここで入る。手元の結果は
+    # 上の _run_kachisuji_daily が K 成績ファイルから入れるので、必ずその後に送る
+    # （前に置いていたため 10/11〜10/22 は毎晩 0 件で、本番に結果が無かった）。
+    # 止まった晩の分も埋まるよう直近数日を送る。同じ値を上書きするだけ。
+    # 失敗しても夜間は止めない。
+    if not args.skip_sync:
+        _run_local(
+            [
+                "scripts/sync_to_supabase.py",
+                "--start",
+                _recent_days(_completed_date(), RESULTS_SYNC_DAYS)[0],
+                "--end",
+                _completed_date(),
+                "--tables",
+                "race_results,race_payouts",
+            ],
+            allow_prod_sync=True,
+        )
 
     # 二連単の前向き記録 (forward test)。前日の結果を確定し、対象日の本命候補を
     # 本番へ載せる。odds cron はこの表に載ったレースの二連単オッズも締切5分前に
