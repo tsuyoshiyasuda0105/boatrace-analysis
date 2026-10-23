@@ -53,7 +53,9 @@ def _stadium_name_to_number() -> dict[str, int]:
 ROW_RE = re.compile(
     r"^([1-6])\s+(\d{4})(.+?)(\d{2})(\S{2})(\d{2})([AB][12])"
     r"\s+(-?\d+\.\d{2})\s+(\d+\.\d{2})"
-    r"\s+(-?\d+\.\d{2})\s+(\d+\.\d{2})"
+    # The local rates can touch the national 2-rate when the local win rate
+    # reaches 10.00, for example ``50.4110.00100.00`` (2026-10-18 onward).
+    r"\s*(-?\d{1,2}\.\d{2})\s*((?:100\.00|\d{1,2}\.\d{2}))"
     # Fixed-width columns can touch when a rate is 100.00 or a boat number
     # has three digits, for example ``8100.00`` and ``49.51123``.
     r"\s+(\d+?)\s*((?:100\.00|\d{1,2}\.\d{2}))"
