@@ -424,6 +424,17 @@ def _main() -> int:
         if not sync_ok:
             return 1
 
+        # 対象日の TOP スナップショットを本番にも作る。上の build_top_page_snapshot は
+        # DATABASE_URL を空にして手元 SQLite にしか書かない。最小構成では 22 時の
+        # 翌日先回り (regular-cron) を止めているので、これが無いと 0:00〜朝メンテ
+        # (06:20) の間は本番に当日分が無く、ゲストのトップが混雑画面になる。
+        # 番組表と予想を本番へ送った直後に作る。失敗しても夜間は止めない
+        # (朝メンテが作り直す)。
+        _run_local(
+            ["scripts/build_top_page_snapshot.py", "--date", target_date],
+            allow_prod_sync=True,
+        )
+
         # 本番DB（Supabase 無料枠 500MB）の古い分を消す。PC が正本で、本番は表示用の写し。
         # 残す期間は scripts/prune_prod_db.py（主要5表200日・払戻など30日・ページの
         # 一時保存2日）。毎晩は容量を詰める VACUUM FULL を省く（消した場所は再利用される）。

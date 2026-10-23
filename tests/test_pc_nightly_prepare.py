@@ -534,3 +534,40 @@ def test_the_night_trims_the_production_database(monkeypatch):
     prune = [(a, allow) for a, allow in calls if a[0] == "scripts/prune_prod_db.py"]
     assert prune == [(["scripts/prune_prod_db.py", "--apply", "--no-vacuum"], True)]
 
+
+
+def test_the_night_builds_the_top_snapshot_in_production_after_sync(monkeypatch):
+    """0:00〜朝メンテの間も本番にトップの控えがあるよう、同期の直後に本番向けに作る。"""
+    calls = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: calls.append((args, allow_prod_sync)) or True,
+    )
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-10-24"])
+
+    assert nightly.main() == 0
+    snaps = [(a, allow) for a, allow in calls if a[0] == "scripts/build_top_page_snapshot.py"]
+    # 手元向け (今まで通り) と本番向けの2回
+    assert snaps == [
+        (["scripts/build_top_page_snapshot.py", "--date", "2026-10-24"], False),
+        (["scripts/build_top_page_snapshot.py", "--date", "2026-10-24"], True),
+    ]
+    order = [a[0] for a, _ in calls]
+    prod_snap = len(order) - 1 - order[::-1].index("scripts/build_top_page_snapshot.py")
+    assert order.index("scripts/sync_to_supabase.py") < prod_snap
+
+
+def test_skip_sync_does_not_build_the_production_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        nightly, "_run_local",
+        lambda args, allow_prod_sync=False: calls.append((args, allow_prod_sync)) or True,
+    )
+    monkeypatch.setattr(nightly, "_run_kachisuji_daily", lambda *a, **k: True)
+    monkeypatch.setattr("sys.argv", ["pc_nightly_prepare.py", "--date", "2026-10-24", "--skip-sync"])
+
+    assert nightly.main() == 0
+    assert not any(
+        allow for a, allow in calls if a[0] == "scripts/build_top_page_snapshot.py"
+    )
